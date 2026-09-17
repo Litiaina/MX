@@ -32,8 +32,8 @@ mod macros;
 mod middleware;
 mod util;
 
-pub const ENV_FILE: &str = "lux.env";
-pub const CONFIG_FILE: &str = "lux.config";
+pub const ENV_FILE: &str = "aris.env";
+pub const CONFIG_FILE: &str = "aris.config";
 
 #[derive(Debug, Clone, Copy)]
 pub struct Ports {

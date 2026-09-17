@@ -2365,7 +2365,7 @@
   <section class="login-overlay" id="loginOverlay">
     <div class="login-card">
       <div class="login-brand">
-        <div class="login-brand-mark">A</div>
+        <div class="login-brand-mark" style="border-radius:50%;overflow:hidden;padding:0;"><img src="images/system-icon.png" alt="ARIS" style="width:100%;height:100%;display:block;object-fit:cover;border-radius:50%;"></div>
         <h1>ARIS · DGS Dashboard</h1>
         <p>
           Sign in with your ARIS account to view operational records statistics. Your permissions remain enforced by the ARIS backend.
@@ -3716,11 +3716,11 @@
 </main>
 </div>
  LOGIN MODAL 
-<div aria-hidden="false" class="modal-backdrop" id="loginModal">
+<div aria-hidden="true" class="modal-backdrop hidden" id="loginModal">
 <div aria-labelledby="loginTitle" aria-modal="true" class="modal-card login-card" role="dialog">
 <div class="modal-header">
 <div>
-<div class="login-logo">ARIS</div>
+<div class="login-logo" style="border-radius:50%;overflow:hidden;padding:0;"><img src="images/system-icon.png" alt="ARIS" style="width:100%;height:100%;display:block;object-fit:cover;border-radius:50%;"></div>
 <h2 id="loginTitle">Sign in to ARIS</h2>
 <p>Use your ARIS account. OTP is only required when 2FA is enabled for your account.</p>
 </div>
@@ -4206,11 +4206,15 @@ const TOKEN_KEYS = {
 };
 
 function getAccessToken() {
-  return sessionStorage.getItem(TOKEN_KEYS.access) || "";
+  return window.ARIS_AUTH
+    ? window.ARIS_AUTH.getAccessToken()
+    : (sessionStorage.getItem(TOKEN_KEYS.access) || "");
 }
 
 function getRefreshToken() {
-  return sessionStorage.getItem(TOKEN_KEYS.refresh) || "";
+  return window.ARIS_AUTH
+    ? window.ARIS_AUTH.getRefreshToken()
+    : (sessionStorage.getItem(TOKEN_KEYS.refresh) || "");
 }
 
 function storeTokens(data) {
@@ -4218,9 +4222,13 @@ function storeTokens(data) {
     throw new Error("ARIS did not return access and refresh tokens.");
   }
 
+  if (window.ARIS_AUTH) {
+    window.ARIS_AUTH.setTokens(data);
+    return;
+  }
+
   sessionStorage.setItem(TOKEN_KEYS.access, data.access_token);
   sessionStorage.setItem(TOKEN_KEYS.refresh, data.refresh_token);
-
   scheduleTokenRefresh(data.access_token);
 }
 
@@ -4278,6 +4286,10 @@ function scheduleTokenRefresh(accessToken) {
 }
 
 async function refreshAccessToken() {
+  if (window.ARIS_AUTH) {
+    return window.ARIS_AUTH.refreshAccessToken();
+  }
+
   if (state.refreshPromise) {
     return state.refreshPromise;
   }
@@ -4320,6 +4332,10 @@ async function refreshAccessToken() {
 }
 
 async function authenticatedFetch(path, options = {}, retry = true) {
+  if (window.ARIS_AUTH) {
+    return window.ARIS_AUTH.apiFetch(`${API_BASE}${path}`, options, retry);
+  }
+
   const headers = authHeaders(options.headers || {});
 
   const response = await fetch(`${API_BASE}${path}`, {
@@ -4551,10 +4567,12 @@ function applySessionUi() {
 }
 
 async function loadSession() {
-  const session = await requestJson(
-    ENDPOINTS.session,
-    { method: "GET" }
-  );
+  const session = window.ARIS_AUTH
+    ? await window.ARIS_AUTH.ensureSession()
+    : await requestJson(
+        ENDPOINTS.session,
+        { method: "GET" }
+      );
 
   state.session = session;
   applySessionUi();
@@ -4563,6 +4581,26 @@ async function loadSession() {
 }
 
 async function bootstrapSession() {
+  if (window.ARIS_AUTH) {
+    try {
+      await loadSession();
+
+      if (!canReadAris()) {
+        throw new Error("This account does not have ARIS access.");
+      }
+
+      hideLogin();
+      await loadPage(1);
+    } catch (error) {
+      state.session = null;
+      applySessionUi();
+      hideLogin();
+      window.ARIS_AUTH.requireLogin(error.message);
+    }
+
+    return;
+  }
+
   try {
     if (!getAccessToken() && getRefreshToken()) {
       await refreshAccessToken();
@@ -7903,10 +7941,10 @@ Database restoration should place ARIS into maintenance mode and be performed as
 </div>
 </section>
 </main>
-<section class="auth-wrap" id="authApp">
+<section class="auth-wrap hidden" id="authApp">
 <div class="card">
 <div class="card-header">
-<div class="logo">ARIS</div>
+<div class="logo" style="border-radius:50%;overflow:hidden;padding:0;"><img src="images/system-icon.png" alt="ARIS" style="width:100%;height:100%;display:block;object-fit:cover;border-radius:50%;"></div>
 <h2 id="authTitle">Administrator Login</h2>
 <p id="authSubtitle">Authenticate with an Administrator account.</p>
 </div>
@@ -8122,11 +8160,15 @@ function showToast(message, type = "success") {
 }
 
 function getAccessToken() {
-  return sessionStorage.getItem(TOKEN_KEYS.access) || "";
+  return window.ARIS_AUTH
+    ? window.ARIS_AUTH.getAccessToken()
+    : (sessionStorage.getItem(TOKEN_KEYS.access) || "");
 }
 
 function getRefreshToken() {
-  return sessionStorage.getItem(TOKEN_KEYS.refresh) || "";
+  return window.ARIS_AUTH
+    ? window.ARIS_AUTH.getRefreshToken()
+    : (sessionStorage.getItem(TOKEN_KEYS.refresh) || "");
 }
 
 function decodeJwtPayload(token) {
@@ -8148,6 +8190,11 @@ function decodeJwtPayload(token) {
 function storeTokens(data) {
   if (!data?.access_token || !data?.refresh_token) {
     throw new Error("ARIS did not return access and refresh tokens.");
+  }
+
+  if (window.ARIS_AUTH) {
+    window.ARIS_AUTH.setTokens(data);
+    return;
   }
 
   sessionStorage.setItem(TOKEN_KEYS.access, data.access_token);
@@ -8184,6 +8231,10 @@ function scheduleTokenRefresh(accessToken) {
 }
 
 async function refreshAccessToken() {
+  if (window.ARIS_AUTH) {
+    return window.ARIS_AUTH.refreshAccessToken();
+  }
+
   if (state.refreshPromise) {
     return state.refreshPromise;
   }
@@ -8225,6 +8276,10 @@ async function refreshAccessToken() {
 }
 
 async function authenticatedFetch(path, options = {}, retry = true) {
+  if (window.ARIS_AUTH) {
+    return window.ARIS_AUTH.apiFetch(`${API_BASE}${path}`, options, retry);
+  }
+
   const token = getAccessToken();
   const headers = {
     ...(options.headers || {}),
@@ -8314,10 +8369,12 @@ function showAdminApp() {
 }
 
 async function loadSession() {
-  const session = await requestJson(
-    ENDPOINTS.session,
-    { method: "GET" }
-  );
+  const session = window.ARIS_AUTH
+    ? await window.ARIS_AUTH.ensureSession()
+    : await requestJson(
+        ENDPOINTS.session,
+        { method: "GET" }
+      );
 
   state.session = session;
 
@@ -9124,6 +9181,25 @@ async function refreshAdminData() {
 }
 
 async function initialize() {
+  if (window.ARIS_AUTH) {
+    try {
+      await loadSession();
+      showAdminApp();
+
+      await Promise.all([
+        loadAccounts(),
+        loadBackups(),
+        loadAudit(1)
+      ]);
+    } catch (error) {
+      state.session = null;
+      els.authApp.classList.add("hidden");
+      window.ARIS_AUTH.requireLogin(error.message);
+    }
+
+    return;
+  }
+
   try {
     const bootstrap = await getBootstrapStatus();
 
@@ -9964,6 +10040,42 @@ initialize();
       renderSession();
       return state.session;
     }
+
+    async function ensureSharedSession() {
+      if (!getAccessToken() && getRefreshToken()) {
+        await refreshAccessToken();
+      }
+
+      if (!getAccessToken()) {
+        throw new Error("Sign in to continue.");
+      }
+
+      if (state.session) {
+        return state.session;
+      }
+
+      return loadSession();
+    }
+
+    function requireSharedLogin(message = "Sign in to continue.") {
+      clearTokens();
+      state.session = null;
+      els.loginOverlay.classList.remove("hidden");
+      els.loginStatus.textContent = message;
+    }
+
+    window.ARIS_AUTH = Object.freeze({
+      getAccessToken,
+      getRefreshToken,
+      setTokens,
+      clearTokens,
+      refreshAccessToken,
+      apiFetch,
+      apiJson,
+      ensureSession: ensureSharedSession,
+      requireLogin: requireSharedLogin,
+      session: () => state.session
+    });
 
     async function login(event) {
       event.preventDefault();
@@ -11090,13 +11202,9 @@ initialize();
     attachEvents();
     updateCustomRangeVisibility();
 
-    const requestedWorkspace =
-      location.hash.replace(/^#/, "") || "dashboard";
-
+    // Do not mount Records/Admin before the single shell session is valid.
     setWorkspace(
-      requestedWorkspace === "admin"
-        ? "dashboard"
-        : requestedWorkspace,
+      "dashboard",
       { updateHash: false }
     );
 
