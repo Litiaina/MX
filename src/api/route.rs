@@ -16,6 +16,7 @@ use crate::api::aris::handler::{
 };
 
 use crate::api::audit::{audit_request, get_audit_log};
+use crate::api::backup::{create_backup, download_backup, list_backups, verify_backup};
 use crate::api::user::handler::{create_user, delete_user, modify_user};
 
 use crate::config::load_config::CONFIG;
@@ -51,6 +52,15 @@ fn bootstrap_routes() -> Router {
 fn admin_routes() -> Router {
     Router::new()
         .route("/aris/v1/admin/audit", get(get_audit_log))
+        .route(
+            "/aris/v1/admin/backups",
+            get(list_backups).post(create_backup),
+        )
+        .route("/aris/v1/admin/backups/{uid}/verify", post(verify_backup))
+        .route(
+            "/aris/v1/admin/backups/{uid}/download",
+            get(download_backup),
+        )
         .route("/aris/v1/auth/get", post(get_user))
         .route("/aris/v1/auth/modify", patch(modify_super_user))
         .route("/aris/v1/auth/delete", delete(delete_super_user))

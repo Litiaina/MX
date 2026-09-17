@@ -80,10 +80,7 @@ pub struct AuditPage {
     pub has_next: bool,
 }
 
-pub async fn audit_request(
-    request: Request,
-    next: Next,
-) -> Response {
+pub async fn audit_request(request: Request, next: Next) -> Response {
     let (mut parts, body) = request.into_parts();
 
     let method = parts.method.clone();
@@ -95,10 +92,7 @@ pub async fn audit_request(
         .and_then(|value| value.to_str().ok())
         .map(str::to_string);
 
-    let claims =
-        Claims::from_request_parts(&mut parts, &())
-            .await
-            .ok();
+    let claims = Claims::from_request_parts(&mut parts, &()).await.ok();
 
     let request = Request::from_parts(parts, body);
     let response = next.run(request).await;
@@ -107,9 +101,7 @@ pub async fn audit_request(
         return response;
     };
 
-    let Some(classification) =
-        classify_action(&method, &path)
-    else {
+    let Some(classification) = classify_action(&method, &path) else {
         return response;
     };
 
@@ -123,9 +115,7 @@ pub async fn audit_request(
         action: classification.action.to_string(),
         method: method.as_str().to_string(),
         path,
-        target_type: classification
-            .target_type
-            .map(str::to_string),
+        target_type: classification.target_type.map(str::to_string),
         target_uid: classification.target_uid,
         status_code,
         success: status_code < 400,
@@ -134,20 +124,13 @@ pub async fn audit_request(
     };
 
     if let Err(error) = record_audit_event(write).await {
-        crate::report_error!(
-            error,
-            "audit",
-            "audit_request()"
-        );
+        crate::report_error!(error, "audit", "audit_request()");
     }
 
     response
 }
 
-pub async fn get_audit_log(
-    claims: Claims,
-    Query(query): Query<AuditQuery>,
-) -> Response {
+pub async fn get_audit_log(claims: Claims, Query(query): Query<AuditQuery>) -> Response {
     if !claims.can_manage_accounts() {
         return (
             StatusCode::FORBIDDEN,
@@ -164,17 +147,9 @@ pub async fn get_audit_log(
         .unwrap_or(DEFAULT_AUDIT_LIMIT)
         .clamp(1, MAX_AUDIT_LIMIT);
 
-    let user_filter = query
-        .user
-        .unwrap_or_default()
-        .trim()
-        .to_string();
+    let user_filter = query.user.unwrap_or_default().trim().to_string();
 
-    let action_filter = query
-        .action
-        .unwrap_or_default()
-        .trim()
-        .to_string();
+    let action_filter = query.action.unwrap_or_default().trim().to_string();
 
     let result_filter = match query
         .result
@@ -198,39 +173,27 @@ pub async fn get_audit_log(
         }
     };
 
-    let offset = page
-        .saturating_sub(1)
-        .saturating_mul(limit);
+    let offset = page.saturating_sub(1).saturating_mul(limit);
 
     let database_result =
-        tokio::task::spawn_blocking(
-            move || -> Result<AuditPage, SqliteDatabaseError> {
-                with_sql_connection(|connection| {
-                    ensure_audit_schema(connection)?;
+        tokio::task::spawn_blocking(move || -> Result<AuditPage, SqliteDatabaseError> {
+            with_sql_connection(|connection| {
+                ensure_audit_schema(connection)?;
 
-                    let user_enabled =
-                        if user_filter.is_empty() {
-                            0_i64
-                        } else {
-                            1_i64
-                        };
+                let user_enabled = if user_filter.is_empty() { 0_i64 } else { 1_i64 };
 
-                    let action_enabled =
-                        if action_filter.is_empty() {
-                            0_i64
-                        } else {
-                            1_i64
-                        };
+                let action_enabled = if action_filter.is_empty() {
+                    0_i64
+                } else {
+                    1_i64
+                };
 
-                    let user_like =
-                        format!("%{}%", user_filter);
+                let user_like = format!("%{}%", user_filter);
 
-                    let action_like =
-                        format!("%{}%", action_filter);
+                let action_like = format!("%{}%", action_filter);
 
-                    let total: i64 = connection
-                        .query_row(
-                            r#"
+                let total: i64 = connection.query_row(
+                    r#"
                             SELECT COUNT(*)
                             FROM aris_audit_log
                             WHERE (
@@ -250,19 +213,18 @@ pub async fn get_audit_log(
                                 OR success = ?5
                             )
                             "#,
-                            params![
-                                user_enabled,
-                                user_like,
-                                action_enabled,
-                                action_like,
-                                result_filter,
-                            ],
-                            |row| row.get(0),
-                        )?;
+                    params![
+                        user_enabled,
+                        user_like,
+                        action_enabled,
+                        action_like,
+                        result_filter,
+                    ],
+                    |row| row.get(0),
+                )?;
 
-                    let mut statement = connection
-                        .prepare(
-                            r#"
+                let mut statement = connection.prepare(
+                    r#"
                             SELECT
                                 id,
                                 event_uid,
@@ -299,96 +261,67 @@ pub async fn get_audit_log(
                             ORDER BY id DESC
                             LIMIT ?6 OFFSET ?7
                             "#,
-                        )?;
+                )?;
 
-                    let rows = statement
-                        .query_map(
-                            params![
-                                user_enabled,
-                                user_like,
-                                action_enabled,
-                                action_like,
-                                result_filter,
-                                limit as i64,
-                                offset as i64,
-                            ],
-                            |row| {
-                                let success: i64 =
-                                    row.get("success")?;
+                let rows = statement.query_map(
+                    params![
+                        user_enabled,
+                        user_like,
+                        action_enabled,
+                        action_like,
+                        result_filter,
+                        limit as i64,
+                        offset as i64,
+                    ],
+                    |row| {
+                        let success: i64 = row.get("success")?;
 
-                                Ok(AuditEntry {
-                                    id: row.get("id")?,
-                                    event_uid:
-                                        row.get("event_uid")?,
-                                    actor_uid:
-                                        row.get("actor_uid")?,
-                                    actor_name:
-                                        row.get("actor_name")?,
-                                    actor_email:
-                                        row.get("actor_email")?,
-                                    access_level:
-                                        row.get("access_level")?,
-                                    action:
-                                        row.get("action")?,
-                                    method:
-                                        row.get("method")?,
-                                    path:
-                                        row.get("path")?,
-                                    target_type:
-                                        row.get("target_type")?,
-                                    target_uid:
-                                        row.get("target_uid")?,
-                                    status_code:
-                                        row.get("status_code")?,
-                                    success: success != 0,
-                                    user_agent:
-                                        row.get("user_agent")?,
-                                    created_at:
-                                        row.get("created_at")?,
-                                })
-                            },
-                        )?;
+                        Ok(AuditEntry {
+                            id: row.get("id")?,
+                            event_uid: row.get("event_uid")?,
+                            actor_uid: row.get("actor_uid")?,
+                            actor_name: row.get("actor_name")?,
+                            actor_email: row.get("actor_email")?,
+                            access_level: row.get("access_level")?,
+                            action: row.get("action")?,
+                            method: row.get("method")?,
+                            path: row.get("path")?,
+                            target_type: row.get("target_type")?,
+                            target_uid: row.get("target_uid")?,
+                            status_code: row.get("status_code")?,
+                            success: success != 0,
+                            user_agent: row.get("user_agent")?,
+                            created_at: row.get("created_at")?,
+                        })
+                    },
+                )?;
 
-                    let mut data = Vec::new();
+                let mut data = Vec::new();
 
-                    for row in rows {
-                        data.push(row?);
-                    }
+                for row in rows {
+                    data.push(row?);
+                }
 
-                    let total = total.max(0) as usize;
-                    let total_pages = if total == 0 {
-                        0
-                    } else {
-                        total.div_ceil(limit)
-                    };
+                let total = total.max(0) as usize;
+                let total_pages = if total == 0 { 0 } else { total.div_ceil(limit) };
 
-                    Ok(AuditPage {
-                        data,
-                        page,
-                        limit,
-                        total,
-                        total_pages,
-                        has_next:
-                            page < total_pages,
-                    })
+                Ok(AuditPage {
+                    data,
+                    page,
+                    limit,
+                    total,
+                    total_pages,
+                    has_next: page < total_pages,
                 })
-            },
-        )
+            })
+        })
         .await;
 
     match database_result {
-        Ok(Ok(result)) => (
-            StatusCode::OK,
-            Json(json!(result)),
-        )
-            .into_response(),
+        Ok(Ok(result)) => (StatusCode::OK, Json(json!(result))).into_response(),
 
         Ok(Err(error)) => {
-            crate::report_error!(
-                error,
-                "audit",
-                "get_audit_log()"
-            );
+            crate::report_error!(error, "audit", "get_audit_log()");
 
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -402,9 +335,7 @@ pub async fn get_audit_log(
 
         Err(error) => {
             crate::report_error!(
-                format!(
-                    "audit log blocking task failed: {error}"
-                ),
+                format!("audit log blocking task failed: {error}"),
                 "audit",
                 "get_audit_log()"
             );
@@ -421,36 +352,29 @@ pub async fn get_audit_log(
     }
 }
 
-async fn record_audit_event(
-    write: AuditWrite,
-) -> Result<(), String> {
+async fn record_audit_event(write: AuditWrite) -> Result<(), String> {
     let database_result =
-        tokio::task::spawn_blocking(
-            move || -> Result<(), SqliteDatabaseError> {
-                with_sql_connection(|connection| {
-                    ensure_audit_schema(connection)?;
+        tokio::task::spawn_blocking(move || -> Result<(), SqliteDatabaseError> {
+            with_sql_connection(|connection| {
+                ensure_audit_schema(connection)?;
 
-                    let actor_name: Option<String> =
-                        connection
-                            .query_row(
-                                r#"
+                let actor_name: Option<String> = connection
+                    .query_row(
+                        r#"
                                 SELECT name
                                 FROM users
                                 WHERE uid = ?1
                                 LIMIT 1
                                 "#,
-                                params![&write.actor_uid],
-                                |row| row.get(0),
-                            )
-                            .optional()?;
+                        params![&write.actor_uid],
+                        |row| row.get(0),
+                    )
+                    .optional()?;
 
-                    let actor_name = actor_name
-                        .unwrap_or_else(|| {
-                            write.actor_email.clone()
-                        });
+                let actor_name = actor_name.unwrap_or_else(|| write.actor_email.clone());
 
-                    connection.execute(
-                        r#"
+                connection.execute(
+                    r#"
                         INSERT INTO aris_audit_log (
                             event_uid,
                             actor_uid,
@@ -471,50 +395,39 @@ async fn record_audit_event(
                             ?8, ?9, ?10, ?11, ?12, ?13, ?14
                         )
                         "#,
-                        params![
-                            write.event_uid,
-                            write.actor_uid,
-                            actor_name,
-                            write.actor_email,
-                            write.access_level,
-                            write.action,
-                            write.method,
-                            write.path,
-                            write.target_type,
-                            write.target_uid,
-                            write.status_code as i64,
-                            if write.success {
-                                1_i64
-                            } else {
-                                0_i64
-                            },
-                            write.user_agent,
-                            write.created_at,
-                        ],
-                    )?;
+                    params![
+                        write.event_uid,
+                        write.actor_uid,
+                        actor_name,
+                        write.actor_email,
+                        write.access_level,
+                        write.action,
+                        write.method,
+                        write.path,
+                        write.target_type,
+                        write.target_uid,
+                        write.status_code as i64,
+                        if write.success { 1_i64 } else { 0_i64 },
+                        write.user_agent,
+                        write.created_at,
+                    ],
+                )?;
 
-                    Ok(())
-                })
-            },
-        )
+                Ok(())
+            })
+        })
         .await;
 
     match database_result {
         Ok(Ok(())) => Ok(()),
 
-        Ok(Err(error)) => Err(format!(
-            "failed to write ARIS audit event: {error}"
-        )),
+        Ok(Err(error)) => Err(format!("failed to write ARIS audit event: {error}")),
 
-        Err(error) => Err(format!(
-            "audit write blocking task failed: {error}"
-        )),
+        Err(error) => Err(format!("audit write blocking task failed: {error}")),
     }
 }
 
-fn ensure_audit_schema(
-    connection: &rusqlite::Connection,
-) -> Result<(), rusqlite::Error> {
+fn ensure_audit_schema(connection: &rusqlite::Connection) -> Result<(), rusqlite::Error> {
     connection.execute_batch(
         r#"
         CREATE TABLE IF NOT EXISTS aris_audit_log (
@@ -586,18 +499,10 @@ fn ensure_audit_schema(
     )
 }
 
-fn classify_action(
-    method: &Method,
-    path: &str,
-) -> Option<AuditClassification> {
-    let segments = path
-        .trim_matches('/')
-        .split('/')
-        .collect::<Vec<_>>();
+fn classify_action(method: &Method, path: &str) -> Option<AuditClassification> {
+    let segments = path.trim_matches('/').split('/').collect::<Vec<_>>();
 
-    if path == "/aris/v1/admin/audit"
-        && method == Method::GET
-    {
+    if path == "/aris/v1/admin/audit" && method == Method::GET {
         return Some(AuditClassification {
             action: "audit.view",
             target_type: None,
@@ -605,9 +510,40 @@ fn classify_action(
         });
     }
 
-    if path == "/aris/v1/db/query"
-        && method == Method::POST
+    if path == "/aris/v1/admin/backups" && method == Method::POST {
+        return Some(AuditClassification {
+            action: "backup.create",
+            target_type: Some("database-backup"),
+            target_uid: None,
+        });
+    }
+
+    if segments.len() == 6
+        && segments[0] == "aris"
+        && segments[1] == "v1"
+        && segments[2] == "admin"
+        && segments[3] == "backups"
     {
+        let backup_uid = segments.get(4).map(|value| value.to_string());
+
+        if segments[5] == "verify" && method == Method::POST {
+            return Some(AuditClassification {
+                action: "backup.verify",
+                target_type: Some("database-backup"),
+                target_uid: backup_uid,
+            });
+        }
+
+        if segments[5] == "download" && method == Method::GET {
+            return Some(AuditClassification {
+                action: "backup.download",
+                target_type: Some("database-backup"),
+                target_uid: backup_uid,
+            });
+        }
+    }
+
+    if path == "/aris/v1/db/query" && method == Method::POST {
         return Some(AuditClassification {
             action: "database.query",
             target_type: Some("database"),
@@ -615,9 +551,7 @@ fn classify_action(
         });
     }
 
-    if path == "/aris/v1/auth/get"
-        && method == Method::POST
-    {
+    if path == "/aris/v1/auth/get" && method == Method::POST {
         return Some(AuditClassification {
             action: "account.list",
             target_type: Some("account"),
@@ -625,9 +559,7 @@ fn classify_action(
         });
     }
 
-    if path == "/aris/v1/auth/modify"
-        && method == Method::PATCH
-    {
+    if path == "/aris/v1/auth/modify" && method == Method::PATCH {
         return Some(AuditClassification {
             action: "account.modify",
             target_type: Some("account"),
@@ -635,9 +567,7 @@ fn classify_action(
         });
     }
 
-    if path == "/aris/v1/auth/delete"
-        && method == Method::DELETE
-    {
+    if path == "/aris/v1/auth/delete" && method == Method::DELETE {
         return Some(AuditClassification {
             action: "account.delete",
             target_type: Some("account"),
@@ -645,9 +575,7 @@ fn classify_action(
         });
     }
 
-    if path == "/aris/v1/auth/enable_2fa"
-        && method == Method::POST
-    {
+    if path == "/aris/v1/auth/enable_2fa" && method == Method::POST {
         return Some(AuditClassification {
             action: "account.2fa.enable",
             target_type: Some("account"),
@@ -655,9 +583,7 @@ fn classify_action(
         });
     }
 
-    if path == "/aris/v1/auth/disable_2fa"
-        && method == Method::POST
-    {
+    if path == "/aris/v1/auth/disable_2fa" && method == Method::POST {
         return Some(AuditClassification {
             action: "account.2fa.disable",
             target_type: Some("account"),
@@ -665,9 +591,7 @@ fn classify_action(
         });
     }
 
-    if path == "/aris/v1/user/create"
-        && method == Method::POST
-    {
+    if path == "/aris/v1/user/create" && method == Method::POST {
         return Some(AuditClassification {
             action: "account.create",
             target_type: Some("account"),
@@ -675,9 +599,7 @@ fn classify_action(
         });
     }
 
-    if path == "/aris/v1/user/modify"
-        && method == Method::PATCH
-    {
+    if path == "/aris/v1/user/modify" && method == Method::PATCH {
         return Some(AuditClassification {
             action: "account.self.modify",
             target_type: Some("account"),
@@ -685,9 +607,7 @@ fn classify_action(
         });
     }
 
-    if path == "/aris/v1/user/delete"
-        && method == Method::DELETE
-    {
+    if path == "/aris/v1/user/delete" && method == Method::DELETE {
         return Some(AuditClassification {
             action: "account.self.delete",
             target_type: Some("account"),
@@ -715,13 +635,10 @@ fn classify_action(
         return None;
     }
 
-    let record_uid =
-        segments.get(3).map(|value| value.to_string());
+    let record_uid = segments.get(3).map(|value| value.to_string());
 
     if segments.len() == 4 {
-        if method == Method::PUT
-            || method == Method::PATCH
-        {
+        if method == Method::PUT || method == Method::PATCH {
             return Some(AuditClassification {
                 action: "record.update",
                 target_type: Some("record"),
@@ -744,9 +661,7 @@ fn classify_action(
         return None;
     }
 
-    if segments.len() == 5
-        && method == Method::POST
-    {
+    if segments.len() == 5 && method == Method::POST {
         return Some(AuditClassification {
             action: "attachment.upload",
             target_type: Some("record"),
@@ -754,12 +669,9 @@ fn classify_action(
         });
     }
 
-    let attachment_uid =
-        segments.get(5).map(|value| value.to_string());
+    let attachment_uid = segments.get(5).map(|value| value.to_string());
 
-    if segments.len() == 6
-        && method == Method::DELETE
-    {
+    if segments.len() == 6 && method == Method::DELETE {
         return Some(AuditClassification {
             action: "attachment.delete",
             target_type: Some("attachment"),
@@ -767,9 +679,7 @@ fn classify_action(
         });
     }
 
-    if segments.len() == 7
-        && method == Method::GET
-    {
+    if segments.len() == 7 && method == Method::GET {
         return match segments[6] {
             "preview" => Some(AuditClassification {
                 action: "attachment.preview",

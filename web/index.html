@@ -3,8 +3,26 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="light">
-  <title>ARIS · DGS Unified Workspace</title>
+  <meta name="color-scheme" content="light dark">
+  <title>ARIS · Unified Workspace</title>
+  <link rel="icon" type="image/png" href="images/system-icon.png">
+
+  <script id="aris-theme-bootstrap">
+    (() => {
+      const key = "aris_theme";
+
+      try {
+        const saved = localStorage.getItem(key);
+        const theme = saved === "dark" ? "dark" : "light";
+
+        document.documentElement.dataset.theme = theme;
+        document.documentElement.style.colorScheme = theme;
+      } catch (_) {
+        document.documentElement.dataset.theme = "light";
+        document.documentElement.style.colorScheme = "light";
+      }
+    })();
+  </script>
 
   <style>
     :root {
@@ -138,12 +156,22 @@
       width: 42px;
       height: 42px;
       flex: 0 0 42px;
-      border-radius: 12px;
-      color: #172554;
-      background: linear-gradient(135deg, #bfdbfe, #3b82f6);
-      box-shadow: inset 0 1px 0 rgba(255, 255, 255, .45);
-      font-weight: 950;
-      letter-spacing: -.06em;
+      overflow: hidden;
+      border-radius: 50%;
+      background: var(--surface);
+      border: 1px solid rgba(255, 255, 255, .14);
+      box-shadow:
+        0 0 0 2px rgba(59, 130, 246, .14),
+        0 4px 12px rgba(0, 0, 0, .18);
+    }
+
+    .brand-logo {
+      width: 100%;
+      height: 100%;
+      display: block;
+      object-fit: cover;
+      object-position: center;
+      border-radius: 50%;
     }
 
     .brand-copy strong {
@@ -1493,6 +1521,174 @@
       }
     }
 
+
+    /* ------------------------------------------------------------------ */
+    /* Theme system                                                        */
+    /* ------------------------------------------------------------------ */
+
+    :root[data-theme="dark"] {
+      --bg: #07101f;
+      --surface: #0f172a;
+      --surface-2: #111c2f;
+      --surface-3: #1b2940;
+
+      --text: #e8eef8;
+      --text-2: #cbd5e1;
+      --muted: #94a3b8;
+      --muted-2: #64748b;
+
+      --line: #26364a;
+      --line-strong: #334155;
+
+      --primary: #60a5fa;
+      --primary-2: #3b82f6;
+      --primary-soft: #172554;
+      --primary-soft-2: #1e3a8a;
+
+      --blue: #60a5fa;
+      --blue-soft: #172554;
+      --amber: #f59e0b;
+      --amber-soft: #422006;
+      --red: #f87171;
+      --red-soft: #451a1a;
+      --violet: #a78bfa;
+      --violet-soft: #2e1065;
+      --cyan: #22d3ee;
+      --cyan-soft: #083344;
+
+      --sidebar: #020617;
+      --sidebar-2: #0b1220;
+      --sidebar-text: #f8fafc;
+      --sidebar-muted: #94a3b8;
+
+      --shadow-sm: 0 1px 2px rgba(0, 0, 0, .22);
+      --shadow: 0 8px 28px rgba(0, 0, 0, .24);
+      --shadow-lg: 0 28px 72px rgba(0, 0, 0, .42);
+    }
+
+    :root[data-theme="dark"] html,
+    :root[data-theme="dark"] body {
+      background: #07101f;
+    }
+
+    :root[data-theme="dark"] body {
+      background:
+        radial-gradient(circle at 92% -8%, rgba(59, 130, 246, .12), transparent 27rem),
+        var(--bg);
+    }
+
+    :root[data-theme="dark"] .topbar {
+      background: rgba(7, 16, 31, .92);
+      border-bottom-color: rgba(51, 65, 85, .78);
+    }
+
+    :root[data-theme="dark"] .workspace-tabs {
+      background: #0b1220;
+      border-bottom-color: var(--line);
+      box-shadow: 0 1px 0 rgba(0, 0, 0, .18);
+    }
+
+    :root[data-theme="dark"] .btn {
+      background: var(--surface);
+      color: var(--text-2);
+      border-color: var(--line-strong);
+      box-shadow: var(--shadow-sm);
+    }
+
+    /* Keep blue actions opaque and readable on hover/focus. */
+    .btn-primary:hover:not(:disabled),
+    .btn-primary:focus-visible {
+      color: #ffffff !important;
+      background: #1e40af !important;
+      border-color: #1e40af !important;
+      opacity: 1 !important;
+    }
+
+    :root[data-theme="dark"] .btn-primary {
+      color: #ffffff;
+      background: #2563eb;
+      border-color: #2563eb;
+    }
+
+    :root[data-theme="dark"] .btn-primary:hover:not(:disabled),
+    :root[data-theme="dark"] .btn-primary:focus-visible {
+      color: #ffffff !important;
+      background: #1d4ed8 !important;
+      border-color: #1d4ed8 !important;
+      opacity: 1 !important;
+    }
+
+    .theme-toggle {
+      min-width: 116px;
+    }
+
+    .theme-toggle svg {
+      width: 16px;
+      height: 16px;
+      flex: 0 0 16px;
+    }
+
+    :root[data-theme="dark"] .field select,
+    :root[data-theme="dark"] .field input,
+    :root[data-theme="dark"] .section-tag,
+    :root[data-theme="dark"] .insight,
+    :root[data-theme="dark"] .card,
+    :root[data-theme="dark"] .quality-icon,
+    :root[data-theme="dark"] .audit-action,
+    :root[data-theme="dark"] .login-card {
+      color: var(--text);
+      background: var(--surface);
+      border-color: var(--line);
+    }
+
+    :root[data-theme="dark"] .kpi,
+    :root[data-theme="dark"] .quality-row {
+      background: var(--surface-2);
+      border-color: var(--line);
+    }
+
+    :root[data-theme="dark"] .data-table tbody tr:hover {
+      background: #111c2f;
+    }
+
+    :root[data-theme="dark"] .pill {
+      color: #cbd5e1;
+      background: #1e293b;
+    }
+
+    :root[data-theme="dark"] .donut {
+      background: conic-gradient(
+        var(--primary) calc(var(--value) * 1%),
+        #26364a 0
+      );
+    }
+
+    :root[data-theme="dark"] .donut::before {
+      background: var(--surface);
+    }
+
+    :root[data-theme="dark"] .result-badge.success {
+      color: #86efac;
+      background: #14532d;
+    }
+
+    :root[data-theme="dark"] .result-badge.failed {
+      color: #fca5a5;
+      background: #450a0a;
+    }
+
+    :root[data-theme="dark"] .login-body,
+    :root[data-theme="dark"] .login-card form {
+      color: var(--text);
+      background: var(--surface);
+    }
+
+    @media (max-width: 760px) {
+      .theme-toggle {
+        min-width: 38px;
+      }
+    }
+
     @media print {
       .sidebar,
       .topbar,
@@ -1530,7 +1726,13 @@
   <div class="app">
     <aside class="sidebar" id="sidebar">
       <div class="brand">
-        <div class="brand-mark">A</div>
+        <div class="brand-mark">
+          <img
+            src="images/system-icon.png"
+            alt="ARIS"
+            class="brand-logo"
+          >
+        </div>
         <div class="brand-copy">
           <strong>ARIS</strong>
           <span>Atomic Record Information System</span>
@@ -1637,6 +1839,19 @@
         </div>
 
         <div class="topbar-actions">
+          <button
+            class="btn theme-toggle"
+            id="themeToggleBtn"
+            type="button"
+            aria-label="Switch color theme"
+            title="Switch color theme"
+          >
+            <svg id="themeToggleIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true">
+              <path d="M20.5 14.2A8.5 8.5 0 0 1 9.8 3.5 8.5 8.5 0 1 0 20.5 14.2Z"/>
+            </svg>
+            <span id="themeToggleLabel">Dark mode</span>
+          </button>
+
           <button class="btn btn-primary" id="refreshBtn" type="button">
             <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9">
               <path d="M20 7v5h-5"/>
@@ -3114,11 +3329,31 @@
 
 <style>
   :host {
+    --bg:#edf3fa;
+    --panel:#ffffff;
+    --panel-soft:#f8fafc;
+    --header:#0f172a;
+    --header-2:#172554;
+    --text:#0f172a;
+    --muted:#52657d;
+    --line:#cbd8e6;
+    --line-soft:#e4ebf3;
+    --primary:#1d4ed8;
+    --primary-dark:#1e40af;
+    --primary-soft:#dbeafe;
+    --success:#067647;
+    --success-soft:#dcfae6;
+    --danger:#b42318;
+    --danger-soft:#fee4e2;
+    --warn:#b54708;
+    --warn-soft:#fef0c7;
+
     display:block;
     height:100%;
     overflow:hidden;
-    background:#edf3fa;
-    color:#0f172a;
+    background:var(--bg);
+    color:var(--text);
+    color-scheme:light;
     font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
   }
 
@@ -3133,7 +3368,8 @@
   .app-main {
     height:100% !important;
     padding:16px 18px 20px !important;
-    background:#edf3fa !important;
+    background:var(--bg) !important;
+    color:var(--text) !important;
   }
 
   .main {
@@ -3146,6 +3382,168 @@
   select,
   textarea {
     font-family:inherit !important;
+  }
+
+  .btn-primary:hover:not(:disabled),
+  .btn-primary:focus-visible {
+    color:#ffffff !important;
+    background:#1e40af !important;
+    border-color:#1e40af !important;
+    opacity:1 !important;
+  }
+
+  :host([data-theme="dark"]) {
+    --bg:#07101f;
+    --panel:#0f172a;
+    --panel-soft:#111c2f;
+    --header:#020617;
+    --header-2:#0b1220;
+    --text:#e8eef8;
+    --muted:#94a3b8;
+    --line:#334155;
+    --line-soft:#26364a;
+    --primary:#60a5fa;
+    --primary-dark:#2563eb;
+    --primary-soft:#172554;
+    --success:#86efac;
+    --success-soft:#14532d;
+    --danger:#fca5a5;
+    --danger-soft:#450a0a;
+    --warn:#fbbf24;
+    --warn-soft:#422006;
+
+    color-scheme:dark;
+    background:var(--bg);
+    color:var(--text);
+  }
+
+  :host([data-theme="dark"]) .app-main {
+    background:var(--bg) !important;
+  }
+
+  :host([data-theme="dark"]) .search-panel,
+  :host([data-theme="dark"]) .status-strip,
+  :host([data-theme="dark"]) .table-card,
+  :host([data-theme="dark"]) .table-wrap,
+  :host([data-theme="dark"]) .modal-card,
+  :host([data-theme="dark"]) .form-section,
+  :host([data-theme="dark"]) .preview-card,
+  :host([data-theme="dark"]) .preview-fallback,
+  :host([data-theme="dark"]) .attachment-row,
+  :host([data-theme="dark"]) .account-row {
+    color:var(--text) !important;
+    background:var(--panel) !important;
+    border-color:var(--line) !important;
+  }
+
+  :host([data-theme="dark"]) .advanced-panel,
+  :host([data-theme="dark"]) .pagination,
+  :host([data-theme="dark"]) .modal-header,
+  :host([data-theme="dark"]) .auth-note,
+  :host([data-theme="dark"]) .account-toolbar,
+  :host([data-theme="dark"]) .role-legend,
+  :host([data-theme="dark"]) .file-drop {
+    color:var(--text) !important;
+    background:var(--panel-soft) !important;
+    border-color:var(--line) !important;
+  }
+
+  :host([data-theme="dark"]) input,
+  :host([data-theme="dark"]) select,
+  :host([data-theme="dark"]) textarea,
+  :host([data-theme="dark"]) .btn-light,
+  :host([data-theme="dark"]) .icon-btn {
+    color:var(--text) !important;
+    background:#111c2f !important;
+    border-color:#334155 !important;
+  }
+
+  :host([data-theme="dark"]) input::placeholder,
+  :host([data-theme="dark"]) textarea::placeholder {
+    color:#64748b !important;
+  }
+
+  :host([data-theme="dark"]) .btn-soft {
+    color:#bfdbfe !important;
+    background:#172554 !important;
+    border-color:#1e3a8a !important;
+  }
+
+  :host([data-theme="dark"]) .btn-danger {
+    color:#fecaca !important;
+    background:#450a0a !important;
+    border-color:#7f1d1d !important;
+  }
+
+  :host([data-theme="dark"]) .btn-primary {
+    color:#ffffff !important;
+    background:#2563eb !important;
+  }
+
+  :host([data-theme="dark"]) .btn-primary:hover:not(:disabled),
+  :host([data-theme="dark"]) .btn-primary:focus-visible {
+    color:#ffffff !important;
+    background:#1d4ed8 !important;
+    border-color:#1d4ed8 !important;
+    opacity:1 !important;
+  }
+
+  :host([data-theme="dark"]) thead th,
+  :host([data-theme="dark"]) thead .sticky-actions {
+    color:#cbd5e1 !important;
+    background:#172033 !important;
+    border-color:var(--line) !important;
+  }
+
+  :host([data-theme="dark"]) tbody td {
+    color:var(--text) !important;
+    background:var(--panel) !important;
+    border-color:var(--line-soft) !important;
+  }
+
+  :host([data-theme="dark"]) tbody tr:hover td {
+    background:#111c2f !important;
+  }
+
+  :host([data-theme="dark"]) .row-num {
+    color:#94a3b8 !important;
+    background:#0b1220 !important;
+  }
+
+  :host([data-theme="dark"]) .control-cell,
+  :host([data-theme="dark"]) .attachment-count {
+    color:#bfdbfe !important;
+  }
+
+  :host([data-theme="dark"]) .attachment-count {
+    background:#172554 !important;
+  }
+
+  :host([data-theme="dark"]) .upload-progress-panel {
+    background:#0c1b36 !important;
+    border-color:#1e3a8a !important;
+  }
+
+  :host([data-theme="dark"]) .upload-progress-head {
+    color:#bfdbfe !important;
+  }
+
+  :host([data-theme="dark"]) .upload-progress-track {
+    background:#26364a !important;
+  }
+
+  :host([data-theme="dark"]) .preview-body {
+    background:#020617 !important;
+  }
+
+  :host([data-theme="dark"]) .preview-text {
+    color:#e2e8f0 !important;
+    background:#0b1220 !important;
+  }
+
+  :host([data-theme="dark"]) .readonly-field {
+    color:#94a3b8 !important;
+    background:#111827 !important;
   }
 </style>
 
@@ -6955,6 +7353,72 @@ bootstrapSession();
       font-weight: 750;
     }
 
+    .backup-summary-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+
+    .backup-summary {
+      padding: 13px;
+      border: 1px solid var(--line-soft);
+      border-radius: 11px;
+      background: #f8fafc;
+    }
+
+    .backup-summary span {
+      display: block;
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 850;
+      letter-spacing: .05em;
+      text-transform: uppercase;
+    }
+
+    .backup-summary strong {
+      display: block;
+      margin-top: 7px;
+      font-size: 17px;
+      line-height: 1.2;
+    }
+
+    .backup-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 13px;
+      flex-wrap: wrap;
+    }
+
+    .backup-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .backup-note {
+      margin-bottom: 14px;
+      padding: 11px 12px;
+      border: 1px solid #bfdbfe;
+      border-radius: 10px;
+      background: #eff6ff;
+      color: #1e3a8a;
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    .backup-status-ok {
+      color: #166534;
+      font-weight: 900;
+    }
+
+    .backup-status-failed {
+      color: #991b1b;
+      font-weight: 900;
+    }
+
     .audit-toolbar {
       display: grid;
       grid-template-columns: 1.2fr 1.2fr .8fr auto;
@@ -7085,7 +7549,8 @@ bootstrapSession();
 
       .account-toolbar,
       .account-row,
-      .audit-toolbar {
+      .audit-toolbar,
+      .backup-summary-grid {
         grid-template-columns: 1fr;
       }
     }
@@ -7093,11 +7558,23 @@ bootstrapSession();
 
 <style>
   :host {
+    --bg:#edf3fa;
+    --panel:#ffffff;
+    --text:#0f172a;
+    --muted:#64748b;
+    --line:#cbd5e1;
+    --line-soft:#e2e8f0;
+    --primary:#1d4ed8;
+    --primary-dark:#1e40af;
+    --danger:#b91c1c;
+    --success:#166534;
+
     display:block;
     height:100%;
     overflow:auto;
-    background:#edf3fa;
-    color:#0f172a;
+    background:var(--bg);
+    color:var(--text);
+    color-scheme:light;
     font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
   }
 
@@ -7107,7 +7584,8 @@ bootstrapSession();
 
   .shell {
     min-height:100% !important;
-    background:#edf3fa !important;
+    background:var(--bg) !important;
+    color:var(--text) !important;
   }
 
   .main {
@@ -7119,6 +7597,118 @@ bootstrapSession();
   input,
   select {
     font-family:inherit !important;
+  }
+
+  .btn-primary:hover:not(:disabled),
+  .btn-primary:focus-visible {
+    color:#ffffff !important;
+    background:#1e40af !important;
+    border-color:#1e40af !important;
+    opacity:1 !important;
+  }
+
+  :host([data-theme="dark"]) {
+    --bg:#07101f;
+    --panel:#0f172a;
+    --text:#e8eef8;
+    --muted:#94a3b8;
+    --line:#334155;
+    --line-soft:#26364a;
+    --primary:#60a5fa;
+    --primary-dark:#2563eb;
+    --danger:#fca5a5;
+    --success:#86efac;
+
+    color-scheme:dark;
+    background:var(--bg);
+    color:var(--text);
+  }
+
+  :host([data-theme="dark"]) .shell {
+    background:var(--bg) !important;
+  }
+
+  :host([data-theme="dark"]) .card,
+  :host([data-theme="dark"]) .account-row,
+  :host([data-theme="dark"]) .audit-table-wrap {
+    color:var(--text) !important;
+    background:var(--panel) !important;
+    border-color:var(--line) !important;
+  }
+
+  :host([data-theme="dark"]) .role-legend,
+  :host([data-theme="dark"]) .backup-summary,
+  :host([data-theme="dark"]) .audit-table th {
+    color:var(--muted) !important;
+    background:#111c2f !important;
+    border-color:var(--line) !important;
+  }
+
+  :host([data-theme="dark"]) input,
+  :host([data-theme="dark"]) select,
+  :host([data-theme="dark"]) .btn-light {
+    color:var(--text) !important;
+    background:#111c2f !important;
+    border-color:#334155 !important;
+  }
+
+  :host([data-theme="dark"]) input::placeholder {
+    color:#64748b !important;
+  }
+
+  :host([data-theme="dark"]) .btn-soft {
+    color:#bfdbfe !important;
+    background:#172554 !important;
+    border-color:#1e3a8a !important;
+  }
+
+  :host([data-theme="dark"]) .btn-danger {
+    color:#fecaca !important;
+    background:#450a0a !important;
+    border-color:#7f1d1d !important;
+  }
+
+  :host([data-theme="dark"]) .btn-primary {
+    color:#ffffff !important;
+    background:#2563eb !important;
+  }
+
+  :host([data-theme="dark"]) .btn-primary:hover:not(:disabled),
+  :host([data-theme="dark"]) .btn-primary:focus-visible {
+    color:#ffffff !important;
+    background:#1d4ed8 !important;
+    border-color:#1d4ed8 !important;
+    opacity:1 !important;
+  }
+
+  :host([data-theme="dark"]) .auth-note,
+  :host([data-theme="dark"]) .backup-note {
+    color:#bfdbfe !important;
+    background:#0c1b36 !important;
+    border-color:#1e3a8a !important;
+  }
+
+  :host([data-theme="dark"]) .audit-table td {
+    color:var(--text) !important;
+    border-color:var(--line-soft) !important;
+  }
+
+  :host([data-theme="dark"]) .audit-badge.success {
+    color:#86efac !important;
+    background:#14532d !important;
+  }
+
+  :host([data-theme="dark"]) .audit-badge.failed {
+    color:#fca5a5 !important;
+    background:#450a0a !important;
+  }
+
+  :host([data-theme="dark"]) .backup-status-ok {
+    color:#86efac !important;
+  }
+
+  :host([data-theme="dark"]) .backup-status-failed {
+    color:#fca5a5 !important;
   }
 </style>
 
@@ -7176,6 +7766,69 @@ bootstrapSession();
 <div class="account-list" id="accountList"></div>
 </div>
 </section>
+<section class="card" id="backupCard">
+<div class="card-header">
+<h2>Database Backups</h2>
+<p>Create a consistent live SQLite snapshot, verify it with <code>PRAGMA integrity_check</code>, and store the verified database in the dedicated ARIS backup namespace in N1.</p>
+</div>
+<div class="card-body">
+<div class="backup-note">
+<b>Restore is intentionally not exposed as a one-click browser action.</b>
+Database restoration should place ARIS into maintenance mode and be performed as a deliberate recovery operation. This panel handles safe creation, verification, history, and download of backup snapshots.
+</div>
+
+<div class="backup-summary-grid">
+<div class="backup-summary">
+<span>Backups</span>
+<strong id="backupCount">—</strong>
+</div>
+<div class="backup-summary">
+<span>Latest backup</span>
+<strong id="backupLatest">—</strong>
+</div>
+<div class="backup-summary">
+<span>Latest size</span>
+<strong id="backupLatestSize">—</strong>
+</div>
+<div class="backup-summary">
+<span>Integrity</span>
+<strong id="backupIntegrity">—</strong>
+</div>
+</div>
+
+<div class="backup-toolbar">
+<div>
+<div class="status" id="backupStatus">Loading backup history...</div>
+<div class="muted">N1 namespace: <code>__aris/backups/database/YYYY/MM/DD/</code></div>
+</div>
+<div class="backup-actions">
+<button class="btn btn-light" id="backupRefreshBtn" type="button">Refresh</button>
+<button class="btn btn-primary" id="backupNowBtn" type="button">Back Up Now</button>
+</div>
+</div>
+
+<div class="audit-table-wrap">
+<table class="audit-table">
+<thead>
+<tr>
+<th>Created</th>
+<th>Backup</th>
+<th>Size</th>
+<th>Integrity</th>
+<th>Verified</th>
+<th>Actions</th>
+</tr>
+</thead>
+<tbody id="backupTableBody">
+<tr>
+<td class="muted" colspan="6">Loading backup history...</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+</section>
+
 <section class="card">
 <div class="card-header">
 <h2>Audit Log</h2>
@@ -7334,7 +7987,16 @@ const ENDPOINTS = {
     delete: "/aris/v1/auth/delete"
   },
 
-  audit: "/aris/v1/admin/audit"
+  audit: "/aris/v1/admin/audit",
+
+  backups: {
+    list: "/aris/v1/admin/backups",
+    create: "/aris/v1/admin/backups",
+    verify: uid =>
+      `/aris/v1/admin/backups/${encodeURIComponent(uid)}/verify`,
+    download: uid =>
+      `/aris/v1/admin/backups/${encodeURIComponent(uid)}/download`
+  }
 };
 
 const TOKEN_KEYS = {
@@ -7347,7 +8009,9 @@ const state = {
   refreshTimer: null,
   refreshPromise: null,
   auditPage: 1,
-  auditTotalPages: 0
+  auditTotalPages: 0,
+  backupBusy: false,
+  backups: []
 };
 
 const els = {
@@ -7393,6 +8057,16 @@ const els = {
   auditPrevBtn: document.getElementById("auditPrevBtn"),
   auditNextBtn: document.getElementById("auditNextBtn"),
   auditRefreshBtn: document.getElementById("auditRefreshBtn"),
+
+  backupCount: document.getElementById("backupCount"),
+  backupLatest: document.getElementById("backupLatest"),
+  backupLatestSize: document.getElementById("backupLatestSize"),
+  backupIntegrity: document.getElementById("backupIntegrity"),
+  backupStatus: document.getElementById("backupStatus"),
+  backupTableBody: document.getElementById("backupTableBody"),
+  backupRefreshBtn: document.getElementById("backupRefreshBtn"),
+  backupNowBtn: document.getElementById("backupNowBtn"),
+
   toast: document.getElementById("toast")
 };
 
@@ -7728,6 +8402,7 @@ async function bootstrapAdministrator(event) {
     showAdminApp();
     await Promise.all([
       loadAccounts(),
+      loadBackups(),
       loadAudit(1)
     ]);
     showToast("Administrator account created.");
@@ -7772,6 +8447,7 @@ async function login(event) {
     showAdminApp();
     await Promise.all([
       loadAccounts(),
+      loadBackups(),
       loadAudit(1)
     ]);
   } catch (error) {
@@ -7973,7 +8649,10 @@ const AUDIT_ACTION_LABELS = {
   "account.2fa.enable": "Enabled 2FA",
   "account.2fa.disable": "Disabled 2FA",
   "database.query": "Ran database query",
-  "audit.view": "Viewed audit log"
+  "audit.view": "Viewed audit log",
+  "backup.create": "Created database backup",
+  "backup.verify": "Verified database backup",
+  "backup.download": "Downloaded database backup"
 };
 
 function auditActionLabel(action) {
@@ -8071,6 +8750,313 @@ function renderAuditRows(rows) {
   }).join("");
 }
 
+
+function formatBackupBytes(value) {
+  const bytes = Number(value || 0);
+
+  if (!Number.isFinite(bytes) || bytes <= 0) {
+    return "0 B";
+  }
+
+  const units = ["B", "KiB", "MiB", "GiB", "TiB"];
+  let current = bytes;
+  let index = 0;
+
+  while (current >= 1024 && index < units.length - 1) {
+    current /= 1024;
+    index += 1;
+  }
+
+  const digits = index === 0 || current >= 100 ? 0 : 1;
+  return `${current.toFixed(digits)} ${units[index]}`;
+}
+
+function renderBackupRows(backups) {
+  state.backups = backups;
+
+  els.backupCount.textContent =
+    String(backups.length);
+
+  const latest = backups[0];
+
+  els.backupLatest.textContent =
+    latest
+      ? formatAuditTime(latest.created_at)
+      : "None";
+
+  els.backupLatestSize.textContent =
+    latest
+      ? formatBackupBytes(latest.size)
+      : "—";
+
+  els.backupIntegrity.textContent =
+    latest
+      ? (
+          latest.status === "verified"
+            ? "Verified"
+            : "Attention"
+        )
+      : "—";
+
+  els.backupIntegrity.className =
+    latest?.status === "verified"
+      ? "backup-status-ok"
+      : (
+          latest
+            ? "backup-status-failed"
+            : ""
+        );
+
+  if (!backups.length) {
+    els.backupTableBody.innerHTML = `
+      <tr>
+        <td colspan="6" class="muted">
+          No ARIS database backups have been created yet.
+        </td>
+      </tr>
+    `;
+    return;
+  }
+
+  els.backupTableBody.innerHTML =
+    backups.map(backup => {
+      const verified =
+        backup.verified_at
+          ? formatAuditTime(backup.verified_at)
+          : "Not verified";
+
+      const integrityClass =
+        backup.status === "verified"
+          ? "backup-status-ok"
+          : "backup-status-failed";
+
+      return `
+        <tr>
+          <td>${escapeHtml(formatAuditTime(backup.created_at))}</td>
+          <td>
+            <b>${escapeHtml(backup.file_name)}</b>
+            <div class="audit-path">
+              ${escapeHtml(backup.object_key)}
+            </div>
+          </td>
+          <td>${escapeHtml(formatBackupBytes(backup.size))}</td>
+          <td>
+            <span class="${integrityClass}">
+              ${escapeHtml(backup.integrity_check || backup.status)}
+            </span>
+          </td>
+          <td>${escapeHtml(verified)}</td>
+          <td>
+            <div class="backup-actions">
+              <button
+                class="btn btn-soft btn-small"
+                type="button"
+                data-verify-backup="${escapeHtml(backup.uid)}"
+              >
+                Verify
+              </button>
+              <button
+                class="btn btn-light btn-small"
+                type="button"
+                data-download-backup="${escapeHtml(backup.uid)}"
+                data-backup-file="${escapeHtml(backup.file_name)}"
+              >
+                Download
+              </button>
+            </div>
+          </td>
+        </tr>
+      `;
+    }).join("");
+}
+
+async function loadBackups() {
+  els.backupStatus.textContent =
+    "Loading backup history...";
+
+  try {
+    const data =
+      await requestJson(
+        ENDPOINTS.backups.list,
+        { method: "GET" }
+      );
+
+    const backups =
+      Array.isArray(data?.backups)
+        ? data.backups
+        : [];
+
+    renderBackupRows(backups);
+
+    if (data?.backup_running) {
+      els.backupStatus.textContent =
+        "A database backup is currently running.";
+      els.backupNowBtn.disabled = true;
+    } else {
+      els.backupStatus.textContent =
+        `${backups.length} stored backup${backups.length === 1 ? "" : "s"}`;
+      els.backupNowBtn.disabled =
+        state.backupBusy;
+    }
+  } catch (error) {
+    els.backupStatus.textContent =
+      error.message;
+
+    els.backupTableBody.innerHTML = `
+      <tr>
+        <td colspan="6" class="muted">
+          ${escapeHtml(error.message)}
+        </td>
+      </tr>
+    `;
+
+    showToast(
+      error.message,
+      "error"
+    );
+  }
+}
+
+async function createDatabaseBackup() {
+  if (state.backupBusy) return;
+
+  const confirmed = confirm(
+    "Create an ARIS database backup now?\n\n" +
+    "ARIS will create a consistent live SQLite snapshot, run integrity_check, " +
+    "and upload the verified snapshot to N1."
+  );
+
+  if (!confirmed) return;
+
+  state.backupBusy = true;
+  els.backupNowBtn.disabled = true;
+  els.backupNowBtn.textContent = "Backing Up...";
+  els.backupStatus.textContent =
+    "Creating and verifying SQLite snapshot...";
+
+  try {
+    const result =
+      await requestJson(
+        ENDPOINTS.backups.create,
+        { method: "POST" }
+      );
+
+    showToast(
+      result?.response ||
+      "Database backup created."
+    );
+
+    await Promise.all([
+      loadBackups(),
+      loadAudit(1)
+    ]);
+  } catch (error) {
+    showToast(
+      error.message,
+      "error"
+    );
+
+    els.backupStatus.textContent =
+      error.message;
+  } finally {
+    state.backupBusy = false;
+    els.backupNowBtn.disabled = false;
+    els.backupNowBtn.textContent = "Back Up Now";
+  }
+}
+
+async function verifyDatabaseBackup(uid) {
+  try {
+    const result =
+      await requestJson(
+        ENDPOINTS.backups.verify(uid),
+        { method: "POST" }
+      );
+
+    showToast(
+      result?.response ||
+      "Backup verified."
+    );
+
+    await Promise.all([
+      loadBackups(),
+      loadAudit(1)
+    ]);
+  } catch (error) {
+    showToast(
+      error.message,
+      "error"
+    );
+
+    await loadBackups();
+  }
+}
+
+async function downloadDatabaseBackup(
+  uid,
+  fileName
+) {
+  try {
+    const response =
+      await authenticatedFetch(
+        ENDPOINTS.backups.download(uid),
+        {
+          method: "GET",
+          headers: {
+            "Accept": "application/vnd.sqlite3"
+          }
+        }
+      );
+
+    if (!response.ok) {
+      const text =
+        await response
+          .text()
+          .catch(() => "");
+
+      throw new Error(
+        readableError(
+          text,
+          response.status
+        )
+      );
+    }
+
+    const blob =
+      await response.blob();
+
+    const url =
+      URL.createObjectURL(blob);
+
+    const anchor =
+      window.document
+        .createElement("a");
+
+    anchor.href = url;
+    anchor.download =
+      fileName || "aris-backup.db";
+
+    window.document.body
+      .appendChild(anchor);
+
+    anchor.click();
+    anchor.remove();
+
+    URL.revokeObjectURL(url);
+
+    showToast(
+      "Backup download started."
+    );
+
+    loadAudit(1);
+  } catch (error) {
+    showToast(
+      error.message,
+      "error"
+    );
+  }
+}
+
 async function loadAudit(page = 1) {
   els.auditStatus.textContent = "Loading audit log...";
 
@@ -8132,6 +9118,7 @@ async function loadAudit(page = 1) {
 async function refreshAdminData() {
   await Promise.all([
     loadAccounts(),
+    loadBackups(),
     loadAudit(state.auditPage)
   ]);
 }
@@ -8159,6 +9146,7 @@ async function initialize() {
     showAdminApp();
     await Promise.all([
       loadAccounts(),
+      loadBackups(),
       loadAudit(1)
     ]);
   } catch (error) {
@@ -8188,6 +9176,45 @@ els.auditNextBtn.addEventListener("click", () => {
 els.auditRefreshBtn.addEventListener("click", () => {
   loadAudit(state.auditPage);
 });
+els.backupRefreshBtn.addEventListener(
+  "click",
+  loadBackups
+);
+
+els.backupNowBtn.addEventListener(
+  "click",
+  createDatabaseBackup
+);
+
+els.backupTableBody.addEventListener(
+  "click",
+  event => {
+    const verifyButton =
+      event.target.closest(
+        "[data-verify-backup]"
+      );
+
+    if (verifyButton) {
+      verifyDatabaseBackup(
+        verifyButton.dataset.verifyBackup
+      );
+      return;
+    }
+
+    const downloadButton =
+      event.target.closest(
+        "[data-download-backup]"
+      );
+
+    if (downloadButton) {
+      downloadDatabaseBackup(
+        downloadButton.dataset.downloadBackup,
+        downloadButton.dataset.backupFile
+      );
+    }
+  }
+);
+
 els.refreshBtn.addEventListener("click", refreshAdminData);
 els.logoutBtn.addEventListener("click", () => logout(true));
 
@@ -8218,7 +9245,8 @@ initialize();
       refresh: "/aris/v1/auth/refresh",
       session: "/aris/v1/auth/session",
       records: "/aris/v1/records",
-      audit: "/aris/v1/admin/audit"
+      audit: "/aris/v1/admin/audit",
+      backups: "/aris/v1/admin/backups"
     };
 
     const STORAGE_KEYS = {
@@ -8268,6 +9296,9 @@ initialize();
       mobileMenuBtn: document.getElementById("mobileMenuBtn"),
       logoutBtn: document.getElementById("logoutBtn"),
       refreshBtn: document.getElementById("refreshBtn"),
+      themeToggleBtn: document.getElementById("themeToggleBtn"),
+      themeToggleIcon: document.getElementById("themeToggleIcon"),
+      themeToggleLabel: document.getElementById("themeToggleLabel"),
       exportBtn: document.getElementById("exportBtn"),
       sidebarExportBtn: document.getElementById("sidebarExportBtn"),
 
@@ -8339,6 +9370,146 @@ initialize();
 
       toast: document.getElementById("toast")
     };
+
+    const THEME_STORAGE_KEY = "aris_theme";
+
+    function getStoredTheme() {
+      try {
+        return localStorage.getItem(THEME_STORAGE_KEY) === "dark"
+          ? "dark"
+          : "light";
+      } catch (_) {
+        return document.documentElement.dataset.theme === "dark"
+          ? "dark"
+          : "light";
+      }
+    }
+
+    function themeIconMarkup(theme) {
+      if (theme === "dark") {
+        return `
+          <circle cx="12" cy="12" r="4"/>
+          <path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.42-1.41M17.66 6.34l1.41-1.41"/>
+        `;
+      }
+
+      return `
+        <path d="M20.5 14.2A8.5 8.5 0 0 1 9.8 3.5 8.5 8.5 0 1 0 20.5 14.2Z"/>
+      `;
+    }
+
+    function syncThemeButton(theme) {
+      if (!els.themeToggleBtn) return;
+
+      const nextLabel =
+        theme === "dark"
+          ? "Light mode"
+          : "Dark mode";
+
+      els.themeToggleBtn.setAttribute(
+        "aria-label",
+        `Switch to ${nextLabel.toLowerCase()}`
+      );
+
+      els.themeToggleBtn.title =
+        `Switch to ${nextLabel.toLowerCase()}`;
+
+      if (els.themeToggleLabel) {
+        els.themeToggleLabel.textContent =
+          nextLabel;
+      }
+
+      if (els.themeToggleIcon) {
+        els.themeToggleIcon.innerHTML =
+          themeIconMarkup(theme);
+      }
+    }
+
+    function applyTheme(
+      theme,
+      {
+        persist = true,
+        redraw = true
+      } = {}
+    ) {
+      const resolved =
+        theme === "dark"
+          ? "dark"
+          : "light";
+
+      document.documentElement.dataset.theme =
+        resolved;
+
+      document.documentElement.style.colorScheme =
+        resolved;
+
+      if (persist) {
+        try {
+          localStorage.setItem(
+            THEME_STORAGE_KEY,
+            resolved
+          );
+        } catch (_) {
+          // Theme still applies for this session.
+        }
+      }
+
+      if (els.recordsHost) {
+        els.recordsHost.dataset.theme =
+          resolved;
+      }
+
+      if (els.adminHost) {
+        els.adminHost.dataset.theme =
+          resolved;
+      }
+
+      syncThemeButton(resolved);
+
+      if (
+        redraw &&
+        (state.filtered.length || state.records.length)
+      ) {
+        requestAnimationFrame(() => {
+          renderTrend(state.filtered);
+          renderMonthlyThroughput();
+        });
+      }
+    }
+
+    function toggleTheme() {
+      const next =
+        document.documentElement.dataset.theme === "dark"
+          ? "light"
+          : "dark";
+
+      applyTheme(next);
+    }
+
+    function chartTheme() {
+      const dark =
+        document.documentElement.dataset.theme === "dark";
+
+      return dark
+        ? {
+            grid: "#26364a",
+            axis: "#94a3b8",
+            text: "#cbd5e1",
+            line: "#60a5fa",
+            bar: "#3b82f6",
+            fillTop: "rgba(96, 165, 250, .24)",
+            fillBottom: "rgba(59, 130, 246, 0)"
+          }
+        : {
+            grid: "#e9edf2",
+            axis: "#98a2b3",
+            text: "#667085",
+            line: "#1d4ed8",
+            bar: "#1d4ed8",
+            fillTop: "rgba(29, 78, 216, .20)",
+            fillBottom: "rgba(29, 78, 216, 0)"
+          };
+    }
 
     function escapeHtml(value) {
       return String(value ?? "")
@@ -8680,8 +9851,12 @@ initialize();
 
     function mountSystemModule(host, templateId, scriptId) {
       if (host.shadowRoot) {
+        host.dataset.theme = getStoredTheme();
         return host.shadowRoot;
       }
+
+      host.dataset.theme =
+        document.documentElement.dataset.theme || getStoredTheme();
 
       const template = document.getElementById(templateId);
       const scriptNode = document.getElementById(scriptId);
@@ -9221,6 +10396,7 @@ initialize();
 
       ctx.clearRect(0, 0, width, height);
 
+      const colors = chartTheme();
       const padding = { left: 42, right: 12, top: 16, bottom: 34 };
       const chartWidth = width - padding.left - padding.right;
       const chartHeight = height - padding.top - padding.bottom;
@@ -9235,20 +10411,20 @@ initialize();
         const y = padding.top + (chartHeight / steps) * i;
         const value = Math.round(max - (max / steps) * i);
 
-        ctx.strokeStyle = "#e9edf2";
+        ctx.strokeStyle = colors.grid;
         ctx.lineWidth = 1;
         ctx.beginPath();
         ctx.moveTo(padding.left, y);
         ctx.lineTo(width - padding.right, y);
         ctx.stroke();
 
-        ctx.fillStyle = "#98a2b3";
+        ctx.fillStyle = colors.axis;
         ctx.textAlign = "right";
         ctx.fillText(String(value), padding.left - 8, y);
       }
 
       if (!values.length) {
-        ctx.fillStyle = "#667085";
+        ctx.fillStyle = colors.text;
         ctx.textAlign = "center";
         ctx.fillText("No dated records in this scope", width / 2, height / 2);
         return;
@@ -9263,8 +10439,8 @@ initialize();
         padding.top + chartHeight - (value / max) * chartHeight;
 
       const gradient = ctx.createLinearGradient(0, padding.top, 0, height - padding.bottom);
-      gradient.addColorStop(0, "rgba(29, 78, 216, .20)");
-      gradient.addColorStop(1, "rgba(22, 101, 52, 0)");
+      gradient.addColorStop(0, colors.fillTop);
+      gradient.addColorStop(1, colors.fillBottom);
 
       ctx.beginPath();
       values.forEach((value, index) => {
@@ -9287,7 +10463,7 @@ initialize();
         if (index === 0) ctx.moveTo(x, y);
         else ctx.lineTo(x, y);
       });
-      ctx.strokeStyle = "#1d4ed8";
+      ctx.strokeStyle = colors.line;
       ctx.lineWidth = 2.25;
       ctx.lineJoin = "round";
       ctx.lineCap = "round";
@@ -9299,7 +10475,7 @@ initialize();
         labels.length - 1
       ]);
 
-      ctx.fillStyle = "#667085";
+      ctx.fillStyle = colors.text;
       ctx.textAlign = "center";
       ctx.textBaseline = "top";
 
@@ -9323,12 +10499,13 @@ initialize();
       ctx.scale(dpr, dpr);
       ctx.clearRect(0, 0, width, height);
 
+      const colors = chartTheme();
       const padding = { left: 32, right: 8, top: 12, bottom: 34 };
       const chartWidth = width - padding.left - padding.right;
       const chartHeight = height - padding.top - padding.bottom;
       const max = Math.max(...values, 1);
 
-      ctx.strokeStyle = "#edf0f3";
+      ctx.strokeStyle = colors.grid;
       ctx.lineWidth = 1;
 
       for (let i = 0; i <= 3; i += 1) {
@@ -9340,7 +10517,7 @@ initialize();
       }
 
       if (!values.length) {
-        ctx.fillStyle = "#667085";
+        ctx.fillStyle = colors.text;
         ctx.font = "10px system-ui, sans-serif";
         ctx.textAlign = "center";
         ctx.fillText("No dated records", width / 2, height / 2);
@@ -9355,7 +10532,7 @@ initialize();
         const x = padding.left + index * slot + (slot - barWidth) / 2;
         const y = padding.top + chartHeight - barHeight;
 
-        ctx.fillStyle = "#1d4ed8";
+        ctx.fillStyle = colors.bar;
         ctx.beginPath();
         if (ctx.roundRect) {
           ctx.roundRect(x, y, barWidth, Math.max(1, barHeight), 3);
@@ -9365,7 +10542,7 @@ initialize();
         }
       });
 
-      ctx.fillStyle = "#667085";
+      ctx.fillStyle = colors.text;
       ctx.font = "9px system-ui, sans-serif";
       ctx.textAlign = "center";
       ctx.textBaseline = "top";
@@ -9858,6 +11035,7 @@ initialize();
       });
 
       els.logoutBtn.addEventListener("click", logout);
+      els.themeToggleBtn.addEventListener("click", toggleTheme);
       els.refreshBtn.addEventListener("click", refreshAllData);
 
       els.exportBtn.addEventListener("click", exportCsv);
@@ -9900,6 +11078,14 @@ initialize();
         }, 120);
       });
     }
+
+    applyTheme(
+      document.documentElement.dataset.theme || getStoredTheme(),
+      {
+        persist: false,
+        redraw: false
+      }
+    );
 
     attachEvents();
     updateCustomRangeVisibility();
