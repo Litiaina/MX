@@ -644,11 +644,26 @@ where
 
         let token_data = decode::<Claims>(bearer.token(), &JWT_KEYS.decoding, &validation)
             .map_err(|error| {
-                crate::report_error!(
-                    format!("failed to extract JWT claims: {}", error),
-                    "function",
-                    "Claims::from_request_parts()"
-                );
+                /*
+                 * Access-token expiration is expected during a normal
+                 * session. The client receives 401, exchanges the refresh
+                 * token, and retries the request.
+                 *
+                 * Do not report ExpiredSignature as an application ERROR.
+                 * Other JWT failures remain error-level because they can
+                 * indicate malformed, invalid, or incorrectly signed
+                 * tokens.
+                 */
+                if !matches!(
+                    error.kind(),
+                    jsonwebtoken::errors::ErrorKind::ExpiredSignature
+                ) {
+                    crate::report_error!(
+                        format!("failed to extract JWT claims: {}", error),
+                        "function",
+                        "Claims::from_request_parts()"
+                    );
+                }
 
                 AuthError::InvalidToken
             })?;
