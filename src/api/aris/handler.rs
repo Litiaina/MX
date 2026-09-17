@@ -49,16 +49,16 @@ use crate::{
 };
 
 /*
-DGS/N1 design
+ARIS/N1 design
 
 SQLite:
-- owns DGS business records and attachment metadata;
+- owns ARIS business records and attachment metadata;
 - generates control numbers atomically per year;
 - control numbers never get reused after a committed entry is created.
 
 N1:
 - owns the actual attachment bytes;
-- uses a dedicated DGS fragment;
+- uses a dedicated ARIS fragment;
 - stores files in a human-navigable layout:
 
     <office>/<date>/<zero-padded-control-no>__<file-name>
@@ -67,7 +67,7 @@ Example:
 
     MISO/2026-09-17/000125__purchase_request.pdf
 
-The UI never supplies control_no. Lux generates it.
+The UI never supplies control_no. ARIS generates it.
 
 Required configuration:
 
@@ -75,13 +75,13 @@ config.ini
 
 [n1]
 base_url=https://127.0.0.1:50001
-fragment=<DGS_FRAGMENT_HASH>
+fragment=<ARIS_FRAGMENT_HASH>
 insecure_tls=true
 attachment_max_size_mb=50
 
 .env
 
-N1_DGS_SECRET=<DGS_FRAGMENT_SECRET>
+N1_ARIS_SECRET=<ARIS_FRAGMENT_SECRET>
 */
 
 const DEFAULT_PAGE_LIMIT: usize = 256;
@@ -91,20 +91,20 @@ static N1_CLIENT: OnceLock<Client> = OnceLock::new();
 static N1_TOKEN_CACHE: OnceLock<RwLock<Option<CachedN1Token>>> = OnceLock::new();
 
 #[derive(Debug)]
-pub enum DgsOperationError {
+pub enum ArisOperationError {
     Sqlite(SqliteError),
     N1(String),
     InvalidRequest(String),
 }
 
-impl From<SqliteError> for DgsOperationError {
+impl From<SqliteError> for ArisOperationError {
     fn from(value: SqliteError) -> Self {
         Self::Sqlite(value)
     }
 }
 
 #[derive(Debug, Deserialize, Clone, Default)]
-pub struct DgsListQuery {
+pub struct ArisListQuery {
     pub page: Option<usize>,
     pub limit: Option<usize>,
 
@@ -132,7 +132,7 @@ pub struct DgsListQuery {
 }
 
 #[derive(Debug, Serialize)]
-pub struct DgsPage {
+pub struct ArisPage {
     pub data: Vec<Entry>,
     pub page: usize,
     pub limit: usize,
@@ -192,53 +192,53 @@ fn api_json(status: StatusCode, body: JsonValue) -> Response {
     (status, Json(body)).into_response()
 }
 
-fn dgs_access_denied() -> Response {
+fn aris_access_denied() -> Response {
     api_json(
         StatusCode::FORBIDDEN,
         json!({
-            "response": "your account does not have permission for this DGS operation"
+            "response": "your account does not have permission for this ARIS operation"
         }),
     )
 }
 
-fn map_dgs_error(error: DgsOperationError) -> Response {
+fn map_aris_error(error: ArisOperationError) -> Response {
     match error {
-        DgsOperationError::Sqlite(SqliteError::Conflict) => api_json(
+        ArisOperationError::Sqlite(SqliteError::Conflict) => api_json(
             StatusCode::CONFLICT,
             json!({
-                "response": "DGS entry or attachment conflicts with an existing record."
+                "response": "ARIS entry or attachment conflicts with an existing record."
             }),
         ),
 
-        DgsOperationError::Sqlite(SqliteError::NotFound) => api_json(
+        ArisOperationError::Sqlite(SqliteError::NotFound) => api_json(
             StatusCode::NOT_FOUND,
             json!({
-                "response": "DGS entry or attachment was not found."
+                "response": "ARIS entry or attachment was not found."
             }),
         ),
 
-        DgsOperationError::InvalidRequest(reason) => api_json(
+        ArisOperationError::InvalidRequest(reason) => api_json(
             StatusCode::BAD_REQUEST,
             json!({ "response": reason }),
         ),
 
-        DgsOperationError::N1(reason) => {
+        ArisOperationError::N1(reason) => {
             crate::report_error!(
                 reason.clone(),
                 "n1",
-                "DGS attachment operation"
+                "ARIS attachment operation"
             );
 
             api_json(
                 StatusCode::BAD_GATEWAY,
                 json!({
                     "response":
-                        "The DGS database is available, but N1 could not complete the attachment operation."
+                        "The ARIS database is available, but N1 could not complete the attachment operation."
                 }),
             )
         }
 
-        DgsOperationError::Sqlite(_) => api_json(
+        ArisOperationError::Sqlite(_) => api_json(
             StatusCode::INTERNAL_SERVER_ERROR,
             json!({
                 "response": "SQLite database operation failed."
@@ -253,14 +253,14 @@ fn validate_required_fields(
     requestor: &str,
     subject: &str,
     routed_to_div: &str,
-) -> Result<(), DgsOperationError> {
+) -> Result<(), ArisOperationError> {
     if date.trim().is_empty()
         || office.trim().is_empty()
         || requestor.trim().is_empty()
         || subject.trim().is_empty()
         || routed_to_div.trim().is_empty()
     {
-        return Err(DgsOperationError::InvalidRequest(
+        return Err(ArisOperationError::InvalidRequest(
             "Date, office, requestor, subject, and routed-to division are required."
                 .to_string(),
         ));
@@ -271,7 +271,7 @@ fn validate_required_fields(
     Ok(())
 }
 
-fn parse_entry_year(date: &str) -> Result<i32, DgsOperationError> {
+fn parse_entry_year(date: &str) -> Result<i32, ArisOperationError> {
     let bytes = date.as_bytes();
 
     if bytes.len() != 10
@@ -281,7 +281,7 @@ fn parse_entry_year(date: &str) -> Result<i32, DgsOperationError> {
         || !bytes[5..7].iter().all(|byte| byte.is_ascii_digit())
         || !bytes[8..10].iter().all(|byte| byte.is_ascii_digit())
     {
-        return Err(DgsOperationError::InvalidRequest(
+        return Err(ArisOperationError::InvalidRequest(
             "Date must use YYYY-MM-DD format.".to_string(),
         ));
     }
@@ -289,14 +289,14 @@ fn parse_entry_year(date: &str) -> Result<i32, DgsOperationError> {
     let year = date[0..4]
         .parse::<i32>()
         .map_err(|_| {
-            DgsOperationError::InvalidRequest(
-                "Invalid DGS entry year.".to_string(),
+            ArisOperationError::InvalidRequest(
+                "Invalid ARIS entry year.".to_string(),
             )
         })?;
 
     if !(1900..=9999).contains(&year) {
-        return Err(DgsOperationError::InvalidRequest(
-            "Invalid DGS entry year.".to_string(),
+        return Err(ArisOperationError::InvalidRequest(
+            "Invalid ARIS entry year.".to_string(),
         ));
     }
 
@@ -307,11 +307,11 @@ fn parse_entry_year(date: &str) -> Result<i32, DgsOperationError> {
 /* N1 configuration/auth                                                      */
 /* -------------------------------------------------------------------------- */
 
-fn n1_base_url() -> Result<String, DgsOperationError> {
+fn n1_base_url() -> Result<String, ArisOperationError> {
     let value = CONFIG.n1.base_url.trim();
 
     if value.is_empty() {
-        return Err(DgsOperationError::N1(
+        return Err(ArisOperationError::N1(
             "config.ini [n1].base_url is empty.".to_string(),
         ));
     }
@@ -319,11 +319,11 @@ fn n1_base_url() -> Result<String, DgsOperationError> {
     Ok(value.trim_end_matches('/').to_string())
 }
 
-fn n1_fragment() -> Result<String, DgsOperationError> {
+fn n1_fragment() -> Result<String, ArisOperationError> {
     let value = CONFIG.n1.fragment.trim();
 
     if value.is_empty() {
-        return Err(DgsOperationError::N1(
+        return Err(ArisOperationError::N1(
             "config.ini [n1].fragment is empty.".to_string(),
         ));
     }
@@ -331,19 +331,19 @@ fn n1_fragment() -> Result<String, DgsOperationError> {
     Ok(value.to_string())
 }
 
-fn n1_secret() -> Result<String, DgsOperationError> {
-    env::var("N1_DGS_SECRET")
+fn n1_secret() -> Result<String, ArisOperationError> {
+    env::var("N1_ARIS_SECRET")
         .map(|value| value.trim().to_string())
         .map_err(|_| {
-            DgsOperationError::N1(
-                "N1_DGS_SECRET is missing from the Lux environment/.env."
+            ArisOperationError::N1(
+                "N1_ARIS_SECRET is missing from the ARIS environment/.env."
                     .to_string(),
             )
         })
         .and_then(|value| {
             if value.is_empty() {
-                Err(DgsOperationError::N1(
-                    "N1_DGS_SECRET is empty.".to_string(),
+                Err(ArisOperationError::N1(
+                    "N1_ARIS_SECRET is empty.".to_string(),
                 ))
             } else {
                 Ok(value)
@@ -359,7 +359,7 @@ fn max_attachment_size_bytes() -> usize {
         .saturating_mul(1024 * 1024)
 }
 
-fn n1_client() -> Result<&'static Client, DgsOperationError> {
+fn n1_client() -> Result<&'static Client, ArisOperationError> {
     if let Some(client) = N1_CLIENT.get() {
         return Ok(client);
     }
@@ -368,7 +368,7 @@ fn n1_client() -> Result<&'static Client, DgsOperationError> {
         .danger_accept_invalid_certs(CONFIG.n1.insecure_tls)
         .build()
         .map_err(|error| {
-            DgsOperationError::N1(format!(
+            ArisOperationError::N1(format!(
                 "failed to build N1 HTTP client: {error}"
             ))
         })?;
@@ -376,7 +376,7 @@ fn n1_client() -> Result<&'static Client, DgsOperationError> {
     let _ = N1_CLIENT.set(client);
 
     N1_CLIENT.get().ok_or_else(|| {
-        DgsOperationError::N1(
+        ArisOperationError::N1(
             "failed to initialize N1 HTTP client".to_string(),
         )
     })
@@ -386,7 +386,7 @@ fn n1_token_cache() -> &'static RwLock<Option<CachedN1Token>> {
     N1_TOKEN_CACHE.get_or_init(|| RwLock::new(None))
 }
 
-async fn n1_access_token() -> Result<String, DgsOperationError> {
+async fn n1_access_token() -> Result<String, ArisOperationError> {
     let safety_window = Duration::from_secs(30);
 
     {
@@ -426,7 +426,7 @@ async fn n1_access_token() -> Result<String, DgsOperationError> {
         .send()
         .await
         .map_err(|error| {
-            DgsOperationError::N1(format!(
+            ArisOperationError::N1(format!(
                 "failed to authenticate to N1: {error}"
             ))
         })?;
@@ -435,14 +435,14 @@ async fn n1_access_token() -> Result<String, DgsOperationError> {
     let text = response.text().await.unwrap_or_default();
 
     if !status.is_success() {
-        return Err(DgsOperationError::N1(format!(
+        return Err(ArisOperationError::N1(format!(
             "N1 fragment authentication failed with HTTP {status}: {text}"
         )));
     }
 
     let auth: N1AuthResponse =
         serde_json::from_str(&text).map_err(|error| {
-            DgsOperationError::N1(format!(
+            ArisOperationError::N1(format!(
                 "invalid N1 authentication response: {error}"
             ))
         })?;
@@ -522,7 +522,7 @@ fn attachment_object_key(
 async fn n1_ensure_directory(
     path: &str,
     token: &str,
-) -> Result<(), DgsOperationError> {
+) -> Result<(), ArisOperationError> {
     let base_url = n1_base_url()?;
 
     let response = n1_client()?
@@ -532,7 +532,7 @@ async fn n1_ensure_directory(
         .send()
         .await
         .map_err(|error| {
-            DgsOperationError::N1(format!(
+            ArisOperationError::N1(format!(
                 "failed to stat N1 directory '{path}': {error}"
             ))
         })?;
@@ -545,7 +545,7 @@ async fn n1_ensure_directory(
         let status = response.status();
         let text = response.text().await.unwrap_or_default();
 
-        return Err(DgsOperationError::N1(format!(
+        return Err(ArisOperationError::N1(format!(
             "N1 stat failed for '{path}' with HTTP {status}: {text}"
         )));
     }
@@ -557,7 +557,7 @@ async fn n1_ensure_directory(
         .send()
         .await
         .map_err(|error| {
-            DgsOperationError::N1(format!(
+            ArisOperationError::N1(format!(
                 "failed to create N1 directory '{path}': {error}"
             ))
         })?;
@@ -573,7 +573,7 @@ async fn n1_ensure_directory(
     let status = response.status();
     let text = response.text().await.unwrap_or_default();
 
-    Err(DgsOperationError::N1(format!(
+    Err(ArisOperationError::N1(format!(
         "N1 mkdir failed for '{path}' with HTTP {status}: {text}"
     )))
 }
@@ -582,7 +582,7 @@ async fn n1_prepare_attachment_directory(
     office: &str,
     date: &str,
     token: &str,
-) -> Result<(), DgsOperationError> {
+) -> Result<(), ArisOperationError> {
     let office = office_folder(office);
     let date_path = format!("{office}/{date}");
 
@@ -597,7 +597,7 @@ async fn n1_upload_one_shot(
     mime_type: &str,
     bytes: Vec<u8>,
     token: &str,
-) -> Result<(), DgsOperationError> {
+) -> Result<(), ArisOperationError> {
     let base_url = n1_base_url()?;
 
     let response = n1_client()?
@@ -610,7 +610,7 @@ async fn n1_upload_one_shot(
         .send()
         .await
         .map_err(|error| {
-            DgsOperationError::N1(format!(
+            ArisOperationError::N1(format!(
                 "failed to upload '{object_key}' to N1: {error}"
             ))
         })?;
@@ -620,7 +620,7 @@ async fn n1_upload_one_shot(
     if !status.is_success() {
         let text = response.text().await.unwrap_or_default();
 
-        return Err(DgsOperationError::N1(format!(
+        return Err(ArisOperationError::N1(format!(
             "N1 upload failed for '{object_key}' with HTTP {status}: {text}"
         )));
     }
@@ -630,7 +630,7 @@ async fn n1_upload_one_shot(
 
 async fn n1_soft_delete(
     object_key: &str,
-) -> Result<(), DgsOperationError> {
+) -> Result<(), ArisOperationError> {
     let base_url = n1_base_url()?;
     let token = n1_access_token().await?;
 
@@ -642,7 +642,7 @@ async fn n1_soft_delete(
         .send()
         .await
         .map_err(|error| {
-            DgsOperationError::N1(format!(
+            ArisOperationError::N1(format!(
                 "failed to soft-delete '{object_key}' from N1: {error}"
             ))
         })?;
@@ -656,14 +656,14 @@ async fn n1_soft_delete(
     let status = response.status();
     let text = response.text().await.unwrap_or_default();
 
-    Err(DgsOperationError::N1(format!(
+    Err(ArisOperationError::N1(format!(
         "N1 soft-delete failed for '{object_key}' with HTTP {status}: {text}"
     )))
 }
 
 async fn n1_recover(
     object_key: &str,
-) -> Result<(), DgsOperationError> {
+) -> Result<(), ArisOperationError> {
     let base_url = n1_base_url()?;
     let token = n1_access_token().await?;
 
@@ -675,7 +675,7 @@ async fn n1_recover(
         .send()
         .await
         .map_err(|error| {
-            DgsOperationError::N1(format!(
+            ArisOperationError::N1(format!(
                 "failed to recover '{object_key}' in N1: {error}"
             ))
         })?;
@@ -685,7 +685,7 @@ async fn n1_recover(
     if !status.is_success() {
         let text = response.text().await.unwrap_or_default();
 
-        return Err(DgsOperationError::N1(format!(
+        return Err(ArisOperationError::N1(format!(
             "N1 recovery failed for '{object_key}' with HTTP {status}: {text}"
         )));
     }
@@ -697,7 +697,7 @@ async fn n1_rename(
     source_key: &str,
     destination_key: &str,
     token: &str,
-) -> Result<(), DgsOperationError> {
+) -> Result<(), ArisOperationError> {
     if source_key == destination_key {
         return Ok(());
     }
@@ -719,7 +719,7 @@ async fn n1_rename(
         .send()
         .await
         .map_err(|error| {
-            DgsOperationError::N1(format!(
+            ArisOperationError::N1(format!(
                 "failed to move N1 object '{source_key}' to '{destination_key}': {error}"
             ))
         })?;
@@ -729,7 +729,7 @@ async fn n1_rename(
     if !status.is_success() {
         let text = response.text().await.unwrap_or_default();
 
-        return Err(DgsOperationError::N1(format!(
+        return Err(ArisOperationError::N1(format!(
             "N1 move failed from '{source_key}' to '{destination_key}' with HTTP {status}: {text}"
         )));
     }
@@ -740,7 +740,7 @@ async fn n1_rename(
 async fn n1_download(
     object_key: &str,
     file_name: &str,
-) -> Result<Vec<u8>, DgsOperationError> {
+) -> Result<Vec<u8>, ArisOperationError> {
     let base_url = n1_base_url()?;
     let token = n1_access_token().await?;
 
@@ -756,7 +756,7 @@ async fn n1_download(
         .send()
         .await
         .map_err(|error| {
-            DgsOperationError::N1(format!(
+            ArisOperationError::N1(format!(
                 "failed to download '{object_key}' from N1: {error}"
             ))
         })?;
@@ -766,13 +766,13 @@ async fn n1_download(
     if !status.is_success() {
         let text = response.text().await.unwrap_or_default();
 
-        return Err(DgsOperationError::N1(format!(
+        return Err(ArisOperationError::N1(format!(
             "N1 download failed for '{object_key}' with HTTP {status}: {text}"
         )));
     }
 
     let bytes = response.bytes().await.map_err(|error| {
-        DgsOperationError::N1(format!(
+        ArisOperationError::N1(format!(
             "failed to read N1 download body for '{object_key}': {error}"
         ))
     })?;
@@ -1025,6 +1025,66 @@ fn inline_attachment_response(
     response
 }
 
+
+/* -------------------------------------------------------------------------- */
+/* SQLite: ARIS record schema                                                 */
+/* -------------------------------------------------------------------------- */
+
+fn ensure_aris_record_schema(
+    connection: &rusqlite::Connection,
+) -> Result<(), rusqlite::Error> {
+    connection.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS aris_control_sequence (
+            year        INTEGER PRIMARY KEY NOT NULL,
+            last_value  INTEGER NOT NULL DEFAULT 0 CHECK(last_value >= 0)
+        );
+
+        CREATE TABLE IF NOT EXISTS aris_records (
+            uid             TEXT PRIMARY KEY NOT NULL,
+            control_year    INTEGER NOT NULL,
+            control_no      INTEGER NOT NULL CHECK(control_no > 0),
+            date            TEXT NOT NULL,
+            office          TEXT NOT NULL,
+            requestor       TEXT NOT NULL,
+            subject         TEXT NOT NULL,
+            routed_to_div   TEXT NOT NULL,
+            remarks         TEXT NOT NULL,
+            UNIQUE(control_year, control_no)
+        );
+
+        CREATE TABLE IF NOT EXISTS aris_attachments (
+            uid         TEXT PRIMARY KEY NOT NULL,
+            entry_uid   TEXT NOT NULL,
+            file_name   TEXT NOT NULL COLLATE NOCASE,
+            mime_type   TEXT NOT NULL,
+            size        INTEGER NOT NULL CHECK(size >= 0),
+            object_key  TEXT NOT NULL UNIQUE,
+            version_id  TEXT,
+            FOREIGN KEY (entry_uid)
+                REFERENCES aris_records(uid)
+                ON DELETE CASCADE,
+            UNIQUE(entry_uid, file_name)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_aris_records_date
+            ON aris_records(date DESC, control_no DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_aris_records_office
+            ON aris_records(office COLLATE NOCASE);
+
+        CREATE INDEX IF NOT EXISTS idx_aris_records_requestor
+            ON aris_records(requestor COLLATE NOCASE);
+
+        CREATE INDEX IF NOT EXISTS idx_aris_attachments_entry_uid
+            ON aris_attachments(entry_uid);
+
+        CREATE INDEX IF NOT EXISTS idx_aris_attachments_file_name
+            ON aris_attachments(file_name COLLATE NOCASE);
+        "#,
+    )
+}
+
 /* -------------------------------------------------------------------------- */
 /* Search SQL                                                                 */
 /* -------------------------------------------------------------------------- */
@@ -1103,15 +1163,15 @@ fn build_attachment_name_condition(
     format!(
         "EXISTS (
             SELECT 1
-            FROM dgs_attachments af
+            FROM aris_attachments af
             WHERE af.entry_uid = e.uid
               AND {inner}
         )"
     )
 }
 
-fn build_dgs_where_clause(
-    query: &DgsListQuery,
+fn build_aris_where_clause(
+    query: &ArisListQuery,
 ) -> (String, Vec<SqlValue>) {
     let mut conditions: Vec<String> = Vec::new();
     let mut sql_params: Vec<SqlValue> = Vec::new();
@@ -1286,7 +1346,7 @@ fn build_dgs_where_clause(
             conditions.push(
                 "EXISTS (
                     SELECT 1
-                    FROM dgs_attachments af
+                    FROM aris_attachments af
                     WHERE af.entry_uid = e.uid
                 )"
                 .to_string(),
@@ -1297,7 +1357,7 @@ fn build_dgs_where_clause(
             conditions.push(
                 "NOT EXISTS (
                     SELECT 1
-                    FROM dgs_attachments af
+                    FROM aris_attachments af
                     WHERE af.entry_uid = e.uid
                 )"
                 .to_string(),
@@ -1317,7 +1377,7 @@ fn build_dgs_where_clause(
     }
 }
 
-fn build_order_clause(query: &DgsListQuery) -> String {
+fn build_order_clause(query: &ArisListQuery) -> String {
     let direction = match query
         .sort_dir
         .as_deref()
@@ -1368,7 +1428,7 @@ fn build_order_clause(query: &DgsListQuery) -> String {
 /* SQLite: create/update/list                                                 */
 /* -------------------------------------------------------------------------- */
 
-pub async fn execute_create_dgs_entry(
+pub async fn execute_create_aris_record(
     request: CreateEntryRequest,
     year: i32,
     content_type: &str,
@@ -1383,8 +1443,9 @@ pub async fn execute_create_dgs_entry(
         tokio::task::spawn_blocking(
             move || -> Result<Entry, SqliteDatabaseError> {
                 with_sql_connection(|connection| {
+                    ensure_aris_record_schema(connection)?;
                     /*
-                    The sequence increment and the new DGS row live in the same
+                    The sequence increment and the new ARIS row live in the same
                     SQLite transaction.
 
                     SQLite serializes writers. With WAL + busy_timeout this is a
@@ -1399,7 +1460,7 @@ pub async fn execute_create_dgs_entry(
 
                     transaction.execute(
                         r#"
-                        INSERT OR IGNORE INTO dgs_control_sequence (
+                        INSERT OR IGNORE INTO aris_control_sequence (
                             year,
                             last_value
                         ) VALUES (?1, 0)
@@ -1409,7 +1470,7 @@ pub async fn execute_create_dgs_entry(
 
                     transaction.execute(
                         r#"
-                        UPDATE dgs_control_sequence
+                        UPDATE aris_control_sequence
                         SET last_value = last_value + 1
                         WHERE year = ?1
                         "#,
@@ -1419,7 +1480,7 @@ pub async fn execute_create_dgs_entry(
                     let control_no: i64 = transaction.query_row(
                         r#"
                         SELECT last_value
-                        FROM dgs_control_sequence
+                        FROM aris_control_sequence
                         WHERE year = ?1
                         "#,
                         params![year],
@@ -1428,7 +1489,7 @@ pub async fn execute_create_dgs_entry(
 
                     transaction.execute(
                         r#"
-                        INSERT INTO dgs_entries (
+                        INSERT INTO aris_records (
                             uid,
                             control_year,
                             control_no,
@@ -1506,7 +1567,7 @@ pub async fn execute_create_dgs_entry(
     }
 }
 
-async fn execute_update_dgs_entry_db(
+async fn execute_update_aris_record_db(
     uid: String,
     request: UpdateEntryRequest,
     attachment_moves: Vec<AttachmentMove>,
@@ -1515,12 +1576,13 @@ async fn execute_update_dgs_entry_db(
         tokio::task::spawn_blocking(
             move || -> Result<(), SqliteDatabaseError> {
                 with_sql_connection(|connection| {
+                    ensure_aris_record_schema(connection)?;
                     let transaction =
                         connection.unchecked_transaction()?;
 
                     let affected = transaction.execute(
                         r#"
-                        UPDATE dgs_entries
+                        UPDATE aris_records
                         SET
                             date = ?2,
                             office = ?3,
@@ -1550,7 +1612,7 @@ async fn execute_update_dgs_entry_db(
                     for moved in attachment_moves {
                         transaction.execute(
                             r#"
-                            UPDATE dgs_attachments
+                            UPDATE aris_attachments
                             SET object_key = ?2
                             WHERE uid = ?1
                             "#,
@@ -1589,11 +1651,11 @@ async fn execute_update_dgs_entry_db(
     }
 }
 
-pub async fn execute_list_dgs_entries(
-    query: DgsListQuery,
+pub async fn execute_list_aris_records(
+    query: ArisListQuery,
     content_type: &str,
     function_name: &str,
-) -> Result<DgsPage, SqliteError> {
+) -> Result<ArisPage, SqliteError> {
     let page = query.page.unwrap_or(1).max(1);
     let limit = query
         .limit
@@ -1609,15 +1671,16 @@ pub async fn execute_list_dgs_entries(
 
     let database_result =
         tokio::task::spawn_blocking(
-            move || -> Result<DgsPage, SqliteDatabaseError> {
+            move || -> Result<ArisPage, SqliteDatabaseError> {
                 with_sql_connection(|connection| {
+                    ensure_aris_record_schema(connection)?;
                     let (where_clause, base_params) =
-                        build_dgs_where_clause(&query);
+                        build_aris_where_clause(&query);
 
                     let count_sql = format!(
                         r#"
                         SELECT COUNT(*)
-                        FROM dgs_entries e
+                        FROM aris_records e
                         {where_clause}
                         "#
                     );
@@ -1642,7 +1705,7 @@ pub async fn execute_list_dgs_entries(
                             e.subject,
                             e.routed_to_div,
                             e.remarks
-                        FROM dgs_entries e
+                        FROM aris_records e
                         {where_clause}
                         {order_clause}
                         LIMIT ? OFFSET ?
@@ -1687,7 +1750,7 @@ pub async fn execute_list_dgs_entries(
 
                     /*
                     Fetch all attachments for the current 256-row page in one
-                    SQL query instead of one query per DGS entry.
+                    SQL query instead of one query per ARIS entry.
                     */
                     if !entries.is_empty() {
                         let placeholders =
@@ -1706,7 +1769,7 @@ pub async fn execute_list_dgs_entries(
                                 size,
                                 object_key,
                                 version_id
-                            FROM dgs_attachments
+                            FROM aris_attachments
                             WHERE entry_uid IN ({placeholders})
                             ORDER BY entry_uid, rowid ASC
                             "#
@@ -1793,7 +1856,7 @@ pub async fn execute_list_dgs_entries(
                     let has_next =
                         page < total_pages;
 
-                    Ok(DgsPage {
+                    Ok(ArisPage {
                         data: entries,
                         page,
                         limit,
@@ -1842,6 +1905,7 @@ async fn execute_get_stored_entry(
         tokio::task::spawn_blocking(
             move || -> Result<StoredEntry, SqliteDatabaseError> {
                 with_sql_connection(|connection| {
+                    ensure_aris_record_schema(connection)?;
                     let (
                         uid,
                         control_year,
@@ -1874,7 +1938,7 @@ async fn execute_get_stored_entry(
                             subject,
                             routed_to_div,
                             remarks
-                        FROM dgs_entries
+                        FROM aris_records
                         WHERE uid = ?1
                         "#,
                         params![entry_uid],
@@ -1903,7 +1967,7 @@ async fn execute_get_stored_entry(
                                 size,
                                 object_key,
                                 version_id
-                            FROM dgs_attachments
+                            FROM aris_attachments
                             WHERE entry_uid = ?1
                             ORDER BY rowid ASC
                             "#,
@@ -1977,6 +2041,7 @@ async fn execute_get_storage_identity(
                 SqliteDatabaseError,
             > {
                 with_sql_connection(|connection| {
+                    ensure_aris_record_schema(connection)?;
                     connection
                         .query_row(
                             r#"
@@ -1985,7 +2050,7 @@ async fn execute_get_storage_identity(
                                 control_no,
                                 date,
                                 office
-                            FROM dgs_entries
+                            FROM aris_records
                             WHERE uid = ?1
                             "#,
                             params![entry_uid],
@@ -2029,11 +2094,12 @@ async fn execute_attachment_name_exists(
         tokio::task::spawn_blocking(
             move || -> Result<bool, SqliteDatabaseError> {
                 with_sql_connection(|connection| {
+                    ensure_aris_record_schema(connection)?;
                     let exists = connection
                         .query_row(
                             r#"
                             SELECT 1
-                            FROM dgs_attachments
+                            FROM aris_attachments
                             WHERE entry_uid = ?1
                               AND file_name = ?2 COLLATE NOCASE
                             LIMIT 1
@@ -2068,9 +2134,10 @@ async fn execute_insert_attachment(
         tokio::task::spawn_blocking(
             move || -> Result<(), SqliteDatabaseError> {
                 with_sql_connection(|connection| {
+                    ensure_aris_record_schema(connection)?;
                     connection.execute(
                         r#"
-                        INSERT INTO dgs_attachments (
+                        INSERT INTO aris_attachments (
                             uid,
                             entry_uid,
                             file_name,
@@ -2126,6 +2193,7 @@ async fn execute_get_attachment(
                 SqliteDatabaseError,
             > {
                 with_sql_connection(|connection| {
+                    ensure_aris_record_schema(connection)?;
                     let attachment =
                         connection.query_row(
                             r#"
@@ -2136,7 +2204,7 @@ async fn execute_get_attachment(
                                 size,
                                 object_key,
                                 version_id
-                            FROM dgs_attachments
+                            FROM aris_attachments
                             WHERE uid = ?1
                               AND entry_uid = ?2
                             "#,
@@ -2192,6 +2260,7 @@ async fn execute_list_attachments_for_entry(
                 SqliteDatabaseError,
             > {
                 with_sql_connection(|connection| {
+                    ensure_aris_record_schema(connection)?;
                     let mut statement =
                         connection.prepare(
                             r#"
@@ -2202,7 +2271,7 @@ async fn execute_list_attachments_for_entry(
                                 size,
                                 object_key,
                                 version_id
-                            FROM dgs_attachments
+                            FROM aris_attachments
                             WHERE entry_uid = ?1
                             ORDER BY rowid ASC
                             "#,
@@ -2255,9 +2324,10 @@ async fn execute_delete_attachment_metadata(
         tokio::task::spawn_blocking(
             move || -> Result<(), SqliteDatabaseError> {
                 with_sql_connection(|connection| {
+                    ensure_aris_record_schema(connection)?;
                     let affected = connection.execute(
                         r#"
-                        DELETE FROM dgs_attachments
+                        DELETE FROM aris_attachments
                         WHERE uid = ?1
                           AND entry_uid = ?2
                         "#,
@@ -2298,12 +2368,13 @@ async fn execute_delete_entry_metadata(
         tokio::task::spawn_blocking(
             move || -> Result<(), SqliteDatabaseError> {
                 with_sql_connection(|connection| {
+                    ensure_aris_record_schema(connection)?;
                     let transaction =
                         connection.unchecked_transaction()?;
 
                     transaction.execute(
                         r#"
-                        DELETE FROM dgs_attachments
+                        DELETE FROM aris_attachments
                         WHERE entry_uid = ?1
                         "#,
                         params![&entry_uid],
@@ -2311,7 +2382,7 @@ async fn execute_delete_entry_metadata(
 
                     let affected = transaction.execute(
                         r#"
-                        DELETE FROM dgs_entries
+                        DELETE FROM aris_records
                         WHERE uid = ?1
                         "#,
                         params![&entry_uid],
@@ -2347,14 +2418,14 @@ async fn execute_delete_entry_metadata(
 /* Attachment operations                                                      */
 /* -------------------------------------------------------------------------- */
 
-pub async fn execute_upload_dgs_attachment(
+pub async fn execute_upload_aris_attachment(
     entry_uid: String,
     file_name: String,
     mime_type: String,
     bytes: Vec<u8>,
-) -> Result<FileAttachment, DgsOperationError> {
+) -> Result<FileAttachment, ArisOperationError> {
     if bytes.is_empty() {
-        return Err(DgsOperationError::InvalidRequest(
+        return Err(ArisOperationError::InvalidRequest(
             "Attachment is empty.".to_string(),
         ));
     }
@@ -2362,8 +2433,8 @@ pub async fn execute_upload_dgs_attachment(
     let max_size = max_attachment_size_bytes();
 
     if bytes.len() > max_size {
-        return Err(DgsOperationError::InvalidRequest(format!(
-            "Attachment exceeds the configured {} MiB DGS limit.",
+        return Err(ArisOperationError::InvalidRequest(format!(
+            "Attachment exceeds the configured {} MiB ARIS limit.",
             CONFIG.n1.attachment_max_size_mb.max(1)
         )));
     }
@@ -2374,7 +2445,7 @@ pub async fn execute_upload_dgs_attachment(
     )
     .await?
     {
-        return Err(DgsOperationError::InvalidRequest(format!(
+        return Err(ArisOperationError::InvalidRequest(format!(
             "The entry already has an attachment named '{file_name}'. Remove the old attachment first if you want to replace it."
         )));
     }
@@ -2425,20 +2496,20 @@ pub async fn execute_upload_dgs_attachment(
     {
         /*
         SQLite failed after N1 committed the object. Move the object into N1
-        trash so Lux does not intentionally leave a live unreferenced DGS file.
+        trash so ARIS does not intentionally leave a live unreferenced ARIS file.
         */
         let _ = n1_soft_delete(&object_key).await;
 
-        return Err(DgsOperationError::Sqlite(error));
+        return Err(ArisOperationError::Sqlite(error));
     }
 
     Ok(attachment)
 }
 
-pub async fn execute_delete_dgs_attachment(
+pub async fn execute_delete_aris_attachment(
     entry_uid: String,
     attachment_uid: String,
-) -> Result<(), DgsOperationError> {
+) -> Result<(), ArisOperationError> {
     let attachment =
         execute_get_attachment(
             entry_uid.clone(),
@@ -2461,15 +2532,15 @@ pub async fn execute_delete_dgs_attachment(
         let _ =
             n1_recover(&attachment.object_key).await;
 
-        return Err(DgsOperationError::Sqlite(error));
+        return Err(ArisOperationError::Sqlite(error));
     }
 
     Ok(())
 }
 
-pub async fn execute_delete_dgs_entry_with_attachments(
+pub async fn execute_delete_aris_record_with_attachments(
     entry_uid: String,
-) -> Result<(), DgsOperationError> {
+) -> Result<(), ArisOperationError> {
     // Ensure the entry exists before touching N1.
     execute_get_storage_identity(
         entry_uid.clone()
@@ -2521,7 +2592,7 @@ pub async fn execute_delete_dgs_entry_with_attachments(
         }
 
         return Err(
-            DgsOperationError::Sqlite(error)
+            ArisOperationError::Sqlite(error)
         );
     }
 
@@ -2537,7 +2608,7 @@ pub async fn execute_delete_dgs_entry_with_attachments(
 async fn execute_update_entry_with_n1_moves(
     entry_uid: String,
     request: UpdateEntryRequest,
-) -> Result<Entry, DgsOperationError> {
+) -> Result<Entry, ArisOperationError> {
     validate_required_fields(
         &request.date,
         &request.office,
@@ -2560,12 +2631,12 @@ async fn execute_update_entry_with_n1_moves(
 
     Changing 2026 -> 2027 would require assigning a brand-new 2027 control
     number and would make an "edit" behave like a new record. We reject that
-    operation instead of silently renumbering an existing DGS record.
+    operation instead of silently renumbering an existing ARIS record.
     */
     if new_year != existing.control_year {
-        return Err(DgsOperationError::InvalidRequest(
+        return Err(ArisOperationError::InvalidRequest(
             format!(
-                "The entry year cannot be changed from {} to {} after control number {} has been assigned. Create a new DGS entry instead.",
+                "The entry year cannot be changed from {} to {} after control number {} has been assigned. Create a new ARIS entry instead.",
                 existing.control_year,
                 new_year,
                 existing.entry.control_no
@@ -2617,7 +2688,7 @@ async fn execute_update_entry_with_n1_moves(
                 new_key.clone()
             ) {
                 return Err(
-                    DgsOperationError::InvalidRequest(
+                    ArisOperationError::InvalidRequest(
                         "Two attachment names resolve to the same N1 destination path."
                             .to_string(),
                     ),
@@ -2675,7 +2746,7 @@ async fn execute_update_entry_with_n1_moves(
     }
 
     if let Err(error) =
-        execute_update_dgs_entry_db(
+        execute_update_aris_record_db(
             entry_uid.clone(),
             request.clone(),
             moves.clone(),
@@ -2701,7 +2772,7 @@ async fn execute_update_entry_with_n1_moves(
         }
 
         return Err(
-            DgsOperationError::Sqlite(error)
+            ArisOperationError::Sqlite(error)
         );
     }
 
@@ -2745,12 +2816,12 @@ async fn execute_update_entry_with_n1_moves(
 /* Axum handlers                                                              */
 /* -------------------------------------------------------------------------- */
 
-pub async fn create_dgs_entry(
+pub async fn create_aris_record(
     claims: Claims,
     Json(request): Json<CreateEntryRequest>,
 ) -> Response {
-    if !claims.can_write_dgs() {
-        return dgs_access_denied();
+    if !claims.can_write_records() {
+        return aris_access_denied();
     }
 
     if let Err(error) =
@@ -2762,7 +2833,7 @@ pub async fn create_dgs_entry(
             &request.routed_to_div,
         )
     {
-        return map_dgs_error(error);
+        return map_aris_error(error);
     }
 
     let year = match parse_entry_year(
@@ -2770,15 +2841,15 @@ pub async fn create_dgs_entry(
     ) {
         Ok(year) => year,
         Err(error) => {
-            return map_dgs_error(error);
+            return map_aris_error(error);
         }
     };
 
-    match execute_create_dgs_entry(
+    match execute_create_aris_record(
         request,
         year,
         "api",
-        "create_dgs_entry()",
+        "create_aris_record()",
     )
     .await
     {
@@ -2790,20 +2861,20 @@ pub async fn create_dgs_entry(
         }
 
         Err(error) => {
-            map_dgs_error(
-                DgsOperationError::Sqlite(error)
+            map_aris_error(
+                ArisOperationError::Sqlite(error)
             )
         }
     }
 }
 
-pub async fn update_dgs_entry(
+pub async fn update_aris_record(
     claims: Claims,
     Path(uid): Path<String>,
     Json(request): Json<UpdateEntryRequest>,
 ) -> Response {
-    if !claims.can_write_dgs() {
-        return dgs_access_denied();
+    if !claims.can_write_records() {
+        return aris_access_denied();
     }
 
     match execute_update_entry_with_n1_moves(
@@ -2819,22 +2890,22 @@ pub async fn update_dgs_entry(
             )
         }
 
-        Err(error) => map_dgs_error(error),
+        Err(error) => map_aris_error(error),
     }
 }
 
-pub async fn list_dgs_entries(
+pub async fn list_aris_records(
     claims: Claims,
-    Query(query): Query<DgsListQuery>,
+    Query(query): Query<ArisListQuery>,
 ) -> Response {
-    if !claims.can_read_dgs() {
-        return dgs_access_denied();
+    if !claims.can_read_records() {
+        return aris_access_denied();
     }
 
-    match execute_list_dgs_entries(
+    match execute_list_aris_records(
         query,
         "api",
-        "list_dgs_entries()",
+        "list_aris_records()",
     )
     .await
     {
@@ -2846,22 +2917,22 @@ pub async fn list_dgs_entries(
         }
 
         Err(error) => {
-            map_dgs_error(
-                DgsOperationError::Sqlite(error)
+            map_aris_error(
+                ArisOperationError::Sqlite(error)
             )
         }
     }
 }
 
-pub async fn delete_dgs_entry(
+pub async fn delete_aris_record(
     claims: Claims,
     Path(uid): Path<String>,
 ) -> Response {
-    if !claims.can_delete_dgs() {
-        return dgs_access_denied();
+    if !claims.can_delete_records() {
+        return aris_access_denied();
     }
 
-    match execute_delete_dgs_entry_with_attachments(
+    match execute_delete_aris_record_with_attachments(
         uid
     )
     .await
@@ -2870,17 +2941,17 @@ pub async fn delete_dgs_entry(
             StatusCode::NO_CONTENT.into_response()
         }
 
-        Err(error) => map_dgs_error(error),
+        Err(error) => map_aris_error(error),
     }
 }
 
-pub async fn upload_dgs_attachments(
+pub async fn upload_aris_attachments(
     claims: Claims,
     Path(entry_uid): Path<String>,
     mut multipart: Multipart,
 ) -> Response {
-    if !claims.can_write_dgs() {
-        return dgs_access_denied();
+    if !claims.can_write_records() {
+        return aris_access_denied();
     }
 
     let mut uploaded:
@@ -2941,7 +3012,7 @@ pub async fn upload_dgs_attachments(
                 }
             };
 
-        match execute_upload_dgs_attachment(
+        match execute_upload_aris_attachment(
             entry_uid.clone(),
             file_name,
             mime_type,
@@ -2954,7 +3025,7 @@ pub async fn upload_dgs_attachments(
             }
 
             Err(error) => {
-                return map_dgs_error(error);
+                return map_aris_error(error);
             }
         }
     }
@@ -2977,16 +3048,16 @@ pub async fn upload_dgs_attachments(
     )
 }
 
-pub async fn delete_dgs_attachment(
+pub async fn delete_aris_attachment(
     claims: Claims,
     Path((entry_uid, attachment_uid)):
         Path<(String, String)>,
 ) -> Response {
-    if !claims.can_delete_dgs() {
-        return dgs_access_denied();
+    if !claims.can_delete_records() {
+        return aris_access_denied();
     }
 
-    match execute_delete_dgs_attachment(
+    match execute_delete_aris_attachment(
         entry_uid,
         attachment_uid,
     )
@@ -2996,7 +3067,7 @@ pub async fn delete_dgs_attachment(
             StatusCode::NO_CONTENT.into_response()
         }
 
-        Err(error) => map_dgs_error(error),
+        Err(error) => map_aris_error(error),
     }
 }
 
@@ -3005,8 +3076,8 @@ pub async fn preview_aris_attachment(
     Path((entry_uid, attachment_uid)):
         Path<(String, String)>,
 ) -> Response {
-    if !claims.can_read_dgs() {
-        return dgs_access_denied();
+    if !claims.can_read_records() {
+        return aris_access_denied();
     }
 
     let attachment =
@@ -3019,8 +3090,8 @@ pub async fn preview_aris_attachment(
             Ok(attachment) => attachment,
 
             Err(error) => {
-                return map_dgs_error(
-                    DgsOperationError::Sqlite(error)
+                return map_aris_error(
+                    ArisOperationError::Sqlite(error)
                 );
             }
         };
@@ -3034,7 +3105,7 @@ pub async fn preview_aris_attachment(
         {
             Ok(bytes) => bytes,
             Err(error) => {
-                return map_dgs_error(error);
+                return map_aris_error(error);
             }
         };
 
@@ -3116,13 +3187,13 @@ pub async fn preview_aris_attachment(
     )
 }
 
-pub async fn download_dgs_attachment(
+pub async fn download_aris_attachment(
     claims: Claims,
     Path((entry_uid, attachment_uid)):
         Path<(String, String)>,
 ) -> Response {
-    if !claims.can_read_dgs() {
-        return dgs_access_denied();
+    if !claims.can_read_records() {
+        return aris_access_denied();
     }
 
     let attachment =
@@ -3135,8 +3206,8 @@ pub async fn download_dgs_attachment(
             Ok(attachment) => attachment,
 
             Err(error) => {
-                return map_dgs_error(
-                    DgsOperationError::Sqlite(error)
+                return map_aris_error(
+                    ArisOperationError::Sqlite(error)
                 );
             }
         };
@@ -3150,7 +3221,7 @@ pub async fn download_dgs_attachment(
         {
             Ok(bytes) => bytes,
             Err(error) => {
-                return map_dgs_error(error);
+                return map_aris_error(error);
             }
         };
 

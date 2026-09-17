@@ -5,3 +5,4 @@ pub mod route;
 pub mod user;
 pub mod query_handler;
 pub mod aris;
+pub mod audit;

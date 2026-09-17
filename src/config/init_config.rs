@@ -12,7 +12,7 @@ pub fn init_default_config<P: AsRef<Path>>(path: P) -> io::Result<()> {
         .set("key_path", "");
 
     conf.with_section(Some("database"))
-        .set("db_path", "lux.db")
+        .set("db_path", "aris.db")
         .set("pool_max_size", "16")
         .set("pool_min_idle", "4")
         .set("pool_connection_timeout_seconds", "10")
@@ -30,8 +30,8 @@ pub fn init_default_config<P: AsRef<Path>>(path: P) -> io::Result<()> {
     conf.with_section(Some("static_site_hosting"))
         .set("static_site_path", "");
 
-    // DGS attachment storage.
-    // "fragment" is the hash of the dedicated N1 DGS fragment.
+    // ARIS attachment storage.
+    // "fragment" is the hash of the dedicated N1 ARIS fragment.
     conf.with_section(Some("n1"))
         .set("base_url", "https://127.0.0.1:50001")
         .set("fragment", "")

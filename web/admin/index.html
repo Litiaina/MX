@@ -286,6 +286,98 @@
       font-weight: 750;
     }
 
+    .audit-toolbar {
+      display: grid;
+      grid-template-columns: 1.2fr 1.2fr .8fr auto;
+      gap: 10px;
+      align-items: end;
+      margin-bottom: 14px;
+    }
+
+    .audit-table-wrap {
+      overflow: auto;
+      border: 1px solid var(--line-soft);
+      border-radius: 11px;
+      background: white;
+    }
+
+    .audit-table {
+      width: 100%;
+      min-width: 980px;
+      border-collapse: collapse;
+      font-size: 12px;
+    }
+
+    .audit-table th,
+    .audit-table td {
+      padding: 10px 11px;
+      border-bottom: 1px solid var(--line-soft);
+      text-align: left;
+      vertical-align: top;
+    }
+
+    .audit-table th {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      background: #f8fafc;
+      color: #475569;
+      font-size: 11px;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+    }
+
+    .audit-table tr:last-child td {
+      border-bottom: 0;
+    }
+
+    .audit-user {
+      font-weight: 850;
+      color: var(--text);
+    }
+
+    .audit-path {
+      max-width: 360px;
+      word-break: break-word;
+      color: var(--muted);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 11px;
+    }
+
+    .audit-badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 4px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 900;
+      white-space: nowrap;
+    }
+
+    .audit-badge.success {
+      background: #dcfce7;
+      color: #166534;
+    }
+
+    .audit-badge.failed {
+      background: #fee2e2;
+      color: #991b1b;
+    }
+
+    .audit-pager {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-top: 12px;
+      flex-wrap: wrap;
+    }
+
+    .audit-pager-actions {
+      display: flex;
+      gap: 8px;
+    }
+
     .toast {
       position: fixed;
       right: 18px;
@@ -323,7 +415,8 @@
       }
 
       .account-toolbar,
-      .account-row {
+      .account-row,
+      .audit-toolbar {
         grid-template-columns: 1fr;
       }
     }
@@ -340,7 +433,7 @@
     <div class="topbar-actions">
       <div class="pill" id="serverPill">ARIS API</div>
       <div class="pill hidden" id="userPill"></div>
-      <button class="btn btn-light hidden" id="refreshBtn" type="button">Refresh Accounts</button>
+      <button class="btn btn-light hidden" id="refreshBtn" type="button">Refresh</button>
       <button class="btn btn-light hidden" id="logoutBtn" type="button">Logout</button>
     </div>
   </header>
@@ -391,6 +484,110 @@
 
         <div class="status" id="accountStatus">Loading accounts...</div>
         <div class="account-list" id="accountList"></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-header">
+        <h2>Audit Log</h2>
+        <p>
+          Read-only accountability history for important ARIS actions.
+          ARIS records the authenticated user, action, target, result, and time.
+          Passwords, tokens, uploaded file contents, and request bodies are never stored here.
+        </p>
+      </div>
+
+      <div class="card-body">
+        <form class="audit-toolbar" id="auditFilterForm">
+          <label>
+            USER
+            <input
+              id="auditUserFilter"
+              autocomplete="off"
+              placeholder="Name, email, or UID"
+            >
+          </label>
+
+          <label>
+            ACTION / TARGET
+            <input
+              id="auditActionFilter"
+              autocomplete="off"
+              placeholder="record, attachment, account..."
+            >
+          </label>
+
+          <label>
+            RESULT
+            <select id="auditResultFilter">
+              <option value="all">All</option>
+              <option value="success">Success</option>
+              <option value="failed">Failed</option>
+            </select>
+          </label>
+
+          <button class="btn btn-primary" type="submit">
+            Apply
+          </button>
+        </form>
+
+        <div class="status" id="auditStatus">
+          Loading audit log...
+        </div>
+
+        <div class="audit-table-wrap">
+          <table class="audit-table">
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>User</th>
+                <th>Action</th>
+                <th>Target</th>
+                <th>Result</th>
+                <th>Request</th>
+              </tr>
+            </thead>
+            <tbody id="auditTableBody">
+              <tr>
+                <td colspan="6" class="muted">
+                  Loading audit log...
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="audit-pager">
+          <div class="muted" id="auditPageInfo">
+            Page 1
+          </div>
+
+          <div class="audit-pager-actions">
+            <button
+              class="btn btn-light btn-small"
+              id="auditPrevBtn"
+              type="button"
+            >
+              Previous
+            </button>
+
+            <button
+              class="btn btn-light btn-small"
+              id="auditRefreshBtn"
+              type="button"
+            >
+              Refresh Audit
+            </button>
+
+            <button
+              class="btn btn-light btn-small"
+              id="auditNextBtn"
+              type="button"
+            >
+              Next
+            </button>
+          </div>
+        </div>
       </div>
     </section>
   </main>
@@ -486,7 +683,9 @@ const ENDPOINTS = {
     create: "/aris/v1/user/create",
     modify: "/aris/v1/auth/modify",
     delete: "/aris/v1/auth/delete"
-  }
+  },
+
+  audit: "/aris/v1/admin/audit"
 };
 
 const TOKEN_KEYS = {
@@ -497,7 +696,9 @@ const TOKEN_KEYS = {
 const state = {
   session: null,
   refreshTimer: null,
-  refreshPromise: null
+  refreshPromise: null,
+  auditPage: 1,
+  auditTotalPages: 0
 };
 
 const els = {
@@ -533,6 +734,16 @@ const els = {
   createAccountBtn: document.getElementById("createAccountBtn"),
   accountStatus: document.getElementById("accountStatus"),
   accountList: document.getElementById("accountList"),
+  auditFilterForm: document.getElementById("auditFilterForm"),
+  auditUserFilter: document.getElementById("auditUserFilter"),
+  auditActionFilter: document.getElementById("auditActionFilter"),
+  auditResultFilter: document.getElementById("auditResultFilter"),
+  auditStatus: document.getElementById("auditStatus"),
+  auditTableBody: document.getElementById("auditTableBody"),
+  auditPageInfo: document.getElementById("auditPageInfo"),
+  auditPrevBtn: document.getElementById("auditPrevBtn"),
+  auditNextBtn: document.getElementById("auditNextBtn"),
+  auditRefreshBtn: document.getElementById("auditRefreshBtn"),
   toast: document.getElementById("toast")
 };
 
@@ -866,7 +1077,10 @@ async function bootstrapAdministrator(event) {
     storeTokens(JSON.parse(loginText));
     await loadSession();
     showAdminApp();
-    await loadAccounts();
+    await Promise.all([
+      loadAccounts(),
+      loadAudit(1)
+    ]);
     showToast("Administrator account created.");
   } catch (error) {
     els.bootstrapStatus.textContent = error.message;
@@ -907,7 +1121,10 @@ async function login(event) {
     els.loginOtp.value = "";
     await loadSession();
     showAdminApp();
-    await loadAccounts();
+    await Promise.all([
+      loadAccounts(),
+      loadAudit(1)
+    ]);
   } catch (error) {
     clearTokens();
     state.session = null;
@@ -1089,6 +1306,187 @@ async function deleteAccount(uid) {
   }
 }
 
+
+const AUDIT_ACTION_LABELS = {
+  "record.create": "Created record",
+  "record.update": "Updated record",
+  "record.delete": "Deleted record",
+  "attachment.upload": "Uploaded attachment",
+  "attachment.delete": "Deleted attachment",
+  "attachment.preview": "Previewed attachment",
+  "attachment.download": "Downloaded attachment",
+  "account.list": "Viewed accounts",
+  "account.create": "Created account",
+  "account.modify": "Changed account",
+  "account.delete": "Deleted account",
+  "account.self.modify": "Changed own account",
+  "account.self.delete": "Deleted own account",
+  "account.2fa.enable": "Enabled 2FA",
+  "account.2fa.disable": "Disabled 2FA",
+  "database.query": "Ran database query",
+  "audit.view": "Viewed audit log"
+};
+
+function auditActionLabel(action) {
+  return AUDIT_ACTION_LABELS[action] || action || "Unknown action";
+}
+
+function formatAuditTime(value) {
+  const numeric = Number(value);
+
+  if (!Number.isFinite(numeric)) {
+    return String(value || "");
+  }
+
+  const millis =
+    numeric > 10_000_000_000
+      ? numeric
+      : numeric * 1000;
+
+  const date = new Date(millis);
+
+  if (Number.isNaN(date.getTime())) {
+    return String(value || "");
+  }
+
+  return date.toLocaleString();
+}
+
+function renderAuditRows(rows) {
+  if (!rows.length) {
+    els.auditTableBody.innerHTML = `
+      <tr>
+        <td colspan="6" class="muted">
+          No audit events match the current filters.
+        </td>
+      </tr>
+    `;
+    return;
+  }
+
+  els.auditTableBody.innerHTML = rows.map(entry => {
+    const target =
+      entry.target_uid
+        ? `${entry.target_type || "target"} · ${entry.target_uid}`
+        : (entry.target_type || "—");
+
+    const resultClass =
+      entry.success ? "success" : "failed";
+
+    const resultText =
+      entry.success
+        ? `Success · ${entry.status_code}`
+        : `Failed · ${entry.status_code}`;
+
+    return `
+      <tr>
+        <td>${escapeHtml(formatAuditTime(entry.created_at))}</td>
+
+        <td>
+          <div class="audit-user">
+            ${escapeHtml(entry.actor_name || entry.actor_email)}
+          </div>
+          <div class="muted">
+            ${escapeHtml(entry.actor_email)}
+          </div>
+          <div class="muted">
+            ${escapeHtml(accessName(entry.access_level))}
+          </div>
+        </td>
+
+        <td>
+          <b>${escapeHtml(auditActionLabel(entry.action))}</b>
+          <div class="muted">
+            ${escapeHtml(entry.action)}
+          </div>
+        </td>
+
+        <td class="audit-path">
+          ${escapeHtml(target)}
+        </td>
+
+        <td>
+          <span class="audit-badge ${resultClass}">
+            ${escapeHtml(resultText)}
+          </span>
+        </td>
+
+        <td>
+          <div><b>${escapeHtml(entry.method)}</b></div>
+          <div class="audit-path">
+            ${escapeHtml(entry.path)}
+          </div>
+        </td>
+      </tr>
+    `;
+  }).join("");
+}
+
+async function loadAudit(page = 1) {
+  els.auditStatus.textContent = "Loading audit log...";
+
+  const params = new URLSearchParams({
+    page: String(page),
+    limit: "100",
+    user: els.auditUserFilter.value.trim(),
+    action: els.auditActionFilter.value.trim(),
+    result: els.auditResultFilter.value
+  });
+
+  try {
+    const data = await requestJson(
+      `${ENDPOINTS.audit}?${params.toString()}`,
+      {
+        method: "GET"
+      }
+    );
+
+    const rows =
+      Array.isArray(data?.data)
+        ? data.data
+        : [];
+
+    state.auditPage =
+      Number(data?.page || page);
+
+    state.auditTotalPages =
+      Number(data?.total_pages || 0);
+
+    renderAuditRows(rows);
+
+    els.auditStatus.textContent =
+      `${Number(data?.total || 0)} audit event${Number(data?.total || 0) === 1 ? "" : "s"}`;
+
+    els.auditPageInfo.textContent =
+      state.auditTotalPages > 0
+        ? `Page ${state.auditPage} of ${state.auditTotalPages}`
+        : "No pages";
+
+    els.auditPrevBtn.disabled =
+      state.auditPage <= 1;
+
+    els.auditNextBtn.disabled =
+      !data?.has_next;
+  } catch (error) {
+    els.auditStatus.textContent = error.message;
+    els.auditTableBody.innerHTML = `
+      <tr>
+        <td colspan="6" class="muted">
+          ${escapeHtml(error.message)}
+        </td>
+      </tr>
+    `;
+    showToast(error.message, "error");
+  }
+}
+
+async function refreshAdminData() {
+  await Promise.all([
+    loadAccounts(),
+    loadAudit(state.auditPage)
+  ]);
+}
+
 async function initialize() {
   try {
     const bootstrap = await getBootstrapStatus();
@@ -1110,7 +1508,10 @@ async function initialize() {
 
     await loadSession();
     showAdminApp();
-    await loadAccounts();
+    await Promise.all([
+      loadAccounts(),
+      loadAudit(1)
+    ]);
   } catch (error) {
     clearTokens();
     state.session = null;
@@ -1121,7 +1522,24 @@ async function initialize() {
 els.bootstrapForm.addEventListener("submit", bootstrapAdministrator);
 els.loginForm.addEventListener("submit", login);
 els.createAccountForm.addEventListener("submit", createAccount);
-els.refreshBtn.addEventListener("click", loadAccounts);
+els.auditFilterForm.addEventListener("submit", event => {
+  event.preventDefault();
+  loadAudit(1);
+});
+els.auditPrevBtn.addEventListener("click", () => {
+  if (state.auditPage > 1) {
+    loadAudit(state.auditPage - 1);
+  }
+});
+els.auditNextBtn.addEventListener("click", () => {
+  if (state.auditPage < state.auditTotalPages) {
+    loadAudit(state.auditPage + 1);
+  }
+});
+els.auditRefreshBtn.addEventListener("click", () => {
+  loadAudit(state.auditPage);
+});
+els.refreshBtn.addEventListener("click", refreshAdminData);
 els.logoutBtn.addEventListener("click", () => logout(true));
 
 els.accountList.addEventListener("click", event => {

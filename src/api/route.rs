@@ -11,12 +11,11 @@ use crate::api::admin::handler::{
 };
 
 use crate::api::aris::handler::{
-    create_dgs_entry as create_aris_record, delete_dgs_attachment as delete_aris_attachment,
-    delete_dgs_entry as delete_aris_record, download_dgs_attachment as download_aris_attachment,
-    list_dgs_entries as list_aris_records, preview_aris_attachment,
-    update_dgs_entry as update_aris_record, upload_dgs_attachments as upload_aris_attachments,
+    create_aris_record, delete_aris_attachment, delete_aris_record, download_aris_attachment,
+    list_aris_records, preview_aris_attachment, update_aris_record, upload_aris_attachments,
 };
 
+use crate::api::audit::{audit_request, get_audit_log};
 use crate::api::user::handler::{create_user, delete_user, modify_user};
 
 use crate::config::load_config::CONFIG;
@@ -31,6 +30,7 @@ pub fn api_route() -> Router {
         .merge(admin_routes())
         .merge(user_routes())
         .merge(aris_routes())
+        .layer(axum::middleware::from_fn(audit_request))
         .layer(cors_layer())
 }
 
@@ -50,6 +50,7 @@ fn bootstrap_routes() -> Router {
 
 fn admin_routes() -> Router {
     Router::new()
+        .route("/aris/v1/admin/audit", get(get_audit_log))
         .route("/aris/v1/auth/get", post(get_user))
         .route("/aris/v1/auth/modify", patch(modify_super_user))
         .route("/aris/v1/auth/delete", delete(delete_super_user))
