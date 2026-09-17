@@ -5,200 +5,95 @@
     width="150"
     height="150"
   />
+
   <h1>Litiaina ARIS</h1>
+
   <p>
-    Atomic Record Information System — Litiaina's programmable platform for
-    structured records, rich attachments, search, routing, and custom
-    information systems.
+    <b>Atomic Record Information System</b><br>
+    A programmable records platform built around structured data, searchable metadata,
+    rich attachments, access control, audit logging, and N1 object storage.
   </p>
 </div>
 
 ---
 
-ARIS, the **Atomic Record Information System**, is Litiaina's foundation for
-building custom information systems around structured records and rich data.
+## Overview
 
-ARIS treats every business record as an atomic unit containing structured
-information, metadata, searchable fields, routing information, remarks, and
-zero or more attachments. A record can represent a document transaction,
-procurement request, administrative communication, incident report, equipment
-record, referral, inventory item, workflow request, or another domain-specific
-business object.
+ARIS is a reusable information-system core for organizations that need structured records rather than simple file storage.
 
-The goal of ARIS is not to provide one fixed document-tracking application.
-It provides a reusable information-system core that can be customized
-programmatically for different organizations and workflows.
+A record can represent a document transaction, procurement request, incident report, equipment record, referral, workflow request, inventory item, or another domain-specific business object.
 
-SQLite owns ARIS record metadata, queries, control numbers, relationships, and
-attachment metadata. N1 owns the durable attachment bytes. This separation keeps
-business information independently queryable while allowing large or rich files
-to remain under N1's storage lifecycle and durability model.
-
-Attachments are first-class parts of a record. ARIS can store and serve images,
-PDF documents, text files, audio, video, Microsoft Office documents,
-OpenDocument files, and arbitrary binary data. Supported Office documents can
-be converted into cached PDF previews through a local headless LibreOffice
-installation while the original uploaded object remains unchanged in N1.
-
-ARIS is designed for environments where users need more than simple file
-storage. Records can be filtered and searched across multiple business fields,
-sorted, paginated, associated with attachments, moved logically when identifying
-record information changes, protected through role-based authorization, and
-tracked through an administrator audit trail for accountability.
-
-## Core Model
+ARIS separates queryable business data from attachment storage:
 
 ```text
-Atomic Record
-  |
-  +-- UID
-  +-- Control Number
-  +-- Date
-  +-- Office
-  +-- Requestor
-  +-- Subject
-  +-- Routing
-  +-- Remarks
-  |
-  +-- Attachments
-        |
-        +-- File Name
-        +-- MIME Type
-        +-- Size
-        +-- N1 Object Key
-        +-- N1 Version ID
+ARIS
+├── SQLite
+│   ├── records
+│   ├── control numbers
+│   ├── users and permissions
+│   ├── attachment metadata
+│   ├── audit history
+│   └── backup metadata
+│
+└── N1
+    ├── original attachment bytes
+    └── verified ARIS database backups
 ```
 
-Each record has an immutable UID used internally by ARIS.
+SQLite handles structured information and transactions. N1 handles durable binary objects.
 
-Human-facing control numbers are generated server-side and are not supplied by
-clients. Control numbers are unique within their configured yearly sequence,
-increase atomically, are never reused after committed creation, and may reset
-when a new year begins.
+## Core Features
 
-Attachments use their own immutable UIDs and remain independently addressable
-through the ARIS API.
+- atomic server-generated control numbers
+- structured records with stable UIDs
+- advanced search, filtering, sorting, and pagination
+- attachments stored in N1 instead of SQLite
+- image, PDF, text, audio, video, and Office previews
+- Microsoft Office and OpenDocument preview through headless LibreOffice
+- role-based authorization
+- JWT authentication with refresh tokens
+- optional TOTP two-factor authentication
+- administrator audit log
+- live SQLite database backups stored in N1
+- unified Dashboard, Records, and Administration interface
+- persistent light and dark themes
 
-## Architecture
+## Record Model
 
 ```text
-                         ARIS
-                          |
-          +---------------+---------------+
-          |                               |
-          v                               v
-       SQLite                             N1
-          |                               |
-  Record metadata                  Attachment bytes
-  Control numbers                  Object versions
-  Search/filter data               Durable storage
-  User accounts                    Storage recovery
-  Attachment metadata              Object lifecycle
-  Audit history
-          |
-          v
-     ARIS API
-          |
-     +----+----+
-     |         |
-     v         v
- ARIS UI   Administrator UI
-               |
-               v
-           Audit Log
+Record
+├── UID
+├── Control Number
+├── Date
+├── Office
+├── Requestor
+├── Subject
+├── Routing
+├── Remarks
+└── Attachments
+    ├── UID
+    ├── File Name
+    ├── MIME Type
+    ├── Size
+    ├── N1 Object Key
+    └── N1 Version ID
 ```
 
-ARIS does not place large object data inside SQLite.
+Control numbers are generated by ARIS and allocated transactionally. Clients do not supply or edit them.
 
-SQLite is responsible for information that must be queried efficiently. N1 is
-responsible for the actual attachment bytes.
+## Storage
 
-A stored attachment therefore resembles:
-
-```text
-SQLite
-  file_name
-  mime_type
-  size
-  object_key
-  version_id
-       |
-       v
-      N1
-       |
-       v
-Original immutable object bytes
-```
-
-This lets ARIS provide rich business queries without forcing the object-storage
-engine to behave like a relational database.
-
-The current ARIS persistence layer uses dedicated ARIS tables including:
+ARIS currently uses these main SQLite tables:
 
 ```text
 aris_records
 aris_attachments
 aris_control_sequence
 aris_audit_log
+aris_backups
 ```
 
-## Concurrency and Data Safety
-
-ARIS is designed so two users performing operations at nearly the same time do
-not accidentally receive the same control number or leave inconsistent record
-state.
-
-Record creation uses a short SQLite transaction:
-
-```text
-Begin transaction
-      |
-      +-- ensure yearly sequence exists
-      +-- increment sequence
-      +-- read new control number
-      +-- insert ARIS record
-      |
-Commit
-```
-
-The control-number increment and the record insert are part of the same
-transaction. SQLite serializes the short write section, so concurrent record
-creation cannot successfully assign the same yearly sequence value. If the
-record insert fails, the sequence increment is rolled back with it.
-
-ARIS uses SQLite WAL mode and a busy timeout so normal readers can continue
-while short writes are coordinated safely.
-
-Attachment creation follows a storage-first sequence:
-
-```text
-Validate request
-      |
-      v
-Authenticate to N1
-      |
-      v
-Prepare N1 namespace
-      |
-      v
-Upload original object to N1
-      |
-      v
-Insert attachment metadata into SQLite
-```
-
-ARIS does not create the SQLite attachment reference until N1 has accepted the
-object. If the N1 upload fails, no attachment row is committed. If N1 succeeds
-but the SQLite metadata insert fails, ARIS attempts to soft-delete the uploaded
-N1 object so it does not intentionally leave a live unreferenced attachment.
-
-This keeps the relational metadata and object-storage state coordinated without
-placing large binary files inside SQLite.
-
-## N1 Attachment Layout
-
-ARIS stores attachments in a human-readable N1 namespace derived from their
-record:
+Attachments are stored in a readable N1 namespace:
 
 ```text
 <office>/<date>/<control-number>__<file-name>
@@ -210,111 +105,9 @@ Example:
 MISO/2026-09-17/000125__purchase_request.docx
 ```
 
-The control number is padded in the object key to preserve natural lexical
-ordering.
-
-If identifying record information such as office or date changes, ARIS can move
-the corresponding attachment objects while preserving the record and attachment
-identities.
-
-The original attachment stored in N1 remains authoritative.
-
-Derived data such as previews or indexes may be discarded and regenerated.
-
-## Rich Attachment Preview
-
-ARIS provides native browser previews where possible:
-
-```text
-Images       -> browser image viewer
-PDF          -> embedded PDF viewer
-Text         -> text viewer
-Audio        -> browser audio player
-Video        -> browser video player
-Office       -> LibreOffice -> PDF preview
-Other files  -> download / browser-supported fallback
-```
-
-Office preview currently supports common Microsoft Office and OpenDocument
-formats:
-
-```text
-Word
-  .doc
-  .docx
-  .docm
-  .rtf
-  .odt
-
-Excel
-  .xls
-  .xlsx
-  .xlsm
-  .ods
-
-PowerPoint
-  .ppt
-  .pptx
-  .pptm
-  .odp
-```
-
-Office files are downloaded internally from N1, converted through headless
-LibreOffice, and returned to the browser as PDF previews.
-
-The original Office file is never replaced.
-
-Generated previews are cached using the attachment identity and N1 version so
-repeated views do not require repeated conversion.
-
-```text
-N1 original
-    |
-    v
-ARIS Preview Engine
-    |
-    +-- cached preview exists -> return PDF
-    |
-    +-- no cached preview
-            |
-            v
-       LibreOffice
-            |
-            v
-           PDF
-```
-
-## Search and Query
-
-ARIS is designed around information retrieval rather than simple filename
-browsing.
-
-Current record queries can combine fields such as:
-
-```text
-Control Number
-Date Range
-Office
-Requestor
-Subject
-Routing
-Remarks
-Attachment File Name
-Attachment Presence
-Universal Search
-```
-
-Results are paginated and can be sorted without loading the entire record
-collection into the browser.
-
-ARIS is intended to grow toward full attachment-content indexing as well.
-Extracted document text can eventually be indexed independently from the
-original N1 objects so searches can locate information inside Word documents,
-PDFs, spreadsheets, presentations, and other supported formats.
+The original object in N1 remains authoritative. Preview files and indexes are derived data and may be regenerated.
 
 ## Access Levels
-
-ARIS uses four access levels:
 
 ```text
 0 = Administrator
@@ -323,52 +116,36 @@ ARIS uses four access levels:
 3 = Viewer
 ```
 
-Their intended capabilities are:
+| Role | Capabilities |
+|---|---|
+| Administrator | Full record access, account management, database administration, audit, and backups |
+| Manager | Read, create, edit, upload, download, and delete |
+| Editor | Read, create, edit, upload, and download; no delete |
+| Viewer | Read, search, preview, and download only |
+
+Authorization is enforced by the backend, not only by the UI.
+
+## Attachment Preview
+
+ARIS previews supported files directly where possible:
 
 ```text
-Administrator
-  - manage user accounts
-  - read records
-  - create records
-  - edit records
-  - upload attachments
-  - download and preview attachments
-  - delete records and attachments
-  - database administration
-
-Manager
-  - read and search records
-  - create records
-  - edit records
-  - upload attachments
-  - download and preview attachments
-  - delete records and attachments
-
-Editor
-  - read and search records
-  - create records
-  - edit records
-  - upload attachments
-  - download and preview attachments
-  - cannot delete
-
-Viewer
-  - read and search records
-  - download and preview attachments
-  - cannot create, edit, upload, or delete
+Images       -> browser image viewer
+PDF          -> embedded PDF viewer
+Text         -> text viewer
+Audio        -> browser audio player
+Video        -> browser video player
+Office       -> LibreOffice -> PDF preview
+Other files  -> download
 ```
 
-Authorization is enforced by the backend through the authenticated JWT claims,
-not only by hiding controls in the browser.
+Office preview supports common Word, Excel, PowerPoint, and OpenDocument formats while keeping the original uploaded object unchanged in N1.
 
-## Accountability and Audit Logging
+## Audit Logging
 
-ARIS includes an Administrator-visible audit log for accountability. The audit
-middleware records selected authenticated actions after the request has
-completed, allowing ARIS to record both the attempted action and its HTTP
-result.
+ARIS records selected authenticated actions for administrator review.
 
-Current audited actions include:
+Examples:
 
 ```text
 record.create
@@ -380,101 +157,100 @@ attachment.delete
 attachment.preview
 attachment.download
 
-account.list
 account.create
 account.modify
 account.delete
-account.self.modify
-account.self.delete
 account.2fa.enable
 account.2fa.disable
 
 database.query
 audit.view
+
+backup.create
+backup.verify
+backup.download
 ```
 
-Each audit event can contain:
+Passwords, JWTs, authentication keys, request bodies, uploaded file bytes, and SQL text are not copied into the audit log.
+
+## Database Backups
+
+Administrators can create a live SQLite backup from the ARIS Administration interface.
+
+Backup flow:
 
 ```text
-Event UID
-Actor UID
-Actor Name
-Actor Email
-Access Level
-Action
-HTTP Method
-Request Path
-Target Type
-Target UID
-HTTP Status
-Success / Failure
-User Agent
-Timestamp
+SQLite
+  ↓
+VACUUM INTO
+  ↓
+standalone .db snapshot
+  ↓
+PRAGMA integrity_check
+  ↓
+N1
 ```
 
-ARIS intentionally does **not** place passwords, JWT access tokens, refresh
-tokens, `AUTH_KEYS`, uploaded file contents, or request bodies in the audit log.
-The database-administration action is recorded as an action event rather than
-copying sensitive SQL text into the audit history.
-
-The audit table is:
+Verified backups are stored under:
 
 ```text
-aris_audit_log
+__aris/backups/database/YYYY/MM/DD/
 ```
 
-It is protected by SQLite triggers that reject ordinary `UPDATE` and `DELETE`
-operations against audit rows, making the application audit history append-only
-during normal operation.
-
-Administrators can search the audit view by user, action/target, and result, and
-the results are paginated.
-
-> **Note:** the built-in database-administration endpoint gives an Administrator
-> direct database capability. The SQLite audit triggers protect the log from
-> ordinary modification, but ARIS does not claim that the local audit database
-> is cryptographically tamper-proof against a deliberately malicious database
-> administrator. Deployments requiring that threat model should use a separate
-> external or independently protected audit ledger.
-
-## Components
+Example:
 
 ```text
-src/
-  api/
-    admin/             Administrator account and database operations
-    aris/              Atomic record, attachment, search, and N1 operations
-    hosting/           Hosted UI support
-    user/              User self-service operations
-    audit.rs           Accountability audit middleware and audit query API
-    api_error.rs       Shared API error definitions
-    query_handler.rs   SQLite account/query helpers
-    route.rs           ARIS HTTP route definitions
-
-  config/
-    init_config.rs     Configuration initialization
-    init_env.rs        Environment initialization
-    load_config.rs     Runtime configuration loading
-
-  db/
-    connector.rs       SQLite connection handling
-    init_db.rs         Database and ARIS schema initialization
-
-  middleware/
-    auth.rs            JWT authentication and access-level authorization
-    totp.rs            TOTP verification
-
-  macros/
-    error.rs           Error-reporting helpers
-
-  util/                Shared utilities
-  main.rs              ARIS application entry point
-
-aris.html              Main ARIS record interface
-admin.html             Administrator, account-management, and audit interface
-aris.config            Runtime configuration
-aris.env               Local secrets
+__aris/backups/database/2026/09/18/aris-20260918T020000Z.db
 ```
+
+ARIS can also download a backup and re-verify it by opening the downloaded database and running `PRAGMA integrity_check`.
+
+### Recovery
+
+Database recovery is intentionally an offline administrative operation.
+
+Stop ARIS first:
+
+```bash
+sudo systemctl stop litiaina-aris
+```
+
+Preserve the current database files:
+
+```bash
+mkdir -p recovery-before-restore
+
+cp -a aris.db recovery-before-restore/ 2>/dev/null || true
+cp -a aris.db-wal recovery-before-restore/ 2>/dev/null || true
+cp -a aris.db-shm recovery-before-restore/ 2>/dev/null || true
+```
+
+Verify the selected backup:
+
+```bash
+sqlite3 aris-backup.db "PRAGMA integrity_check;"
+```
+
+Expected result:
+
+```text
+ok
+```
+
+Restore it:
+
+```bash
+cp aris-backup.db aris.db
+rm -f aris.db-wal aris.db-shm
+```
+
+Then start ARIS again:
+
+```bash
+sudo systemctl start litiaina-aris
+```
+
+Do not replace the database or remove WAL/SHM files while ARIS is running.
 
 ## API
 
@@ -490,22 +266,6 @@ POST /aris/v1/auth/refresh
 GET  /aris/v1/auth/session
 ```
 
-### User Administration
-
-```http
-POST   /aris/v1/auth/get
-PATCH  /aris/v1/auth/modify
-DELETE /aris/v1/auth/delete
-
-POST /aris/v1/auth/enable_2fa
-POST /aris/v1/auth/disable_2fa
-POST /aris/v1/auth/check_2fa
-
-POST   /aris/v1/user/create
-PATCH  /aris/v1/user/modify
-DELETE /aris/v1/user/delete
-```
-
 ### Records
 
 ```http
@@ -518,42 +278,32 @@ DELETE /aris/v1/records/{uid}
 ### Attachments
 
 ```http
-POST /aris/v1/records/{uid}/attachments
-
+POST   /aris/v1/records/{uid}/attachments
 GET    /aris/v1/records/{record_uid}/attachments/{attachment_uid}/preview
 GET    /aris/v1/records/{record_uid}/attachments/{attachment_uid}/download
 DELETE /aris/v1/records/{record_uid}/attachments/{attachment_uid}
 ```
 
-### Database Administration
+### Administration
 
 ```http
+GET  /aris/v1/admin/audit
+
+GET  /aris/v1/admin/backups
+POST /aris/v1/admin/backups
+POST /aris/v1/admin/backups/{uid}/verify
+GET  /aris/v1/admin/backups/{uid}/download
+
 POST /aris/v1/db/query
 ```
 
-Database administration requires an Administrator account.
-
-### Audit
-
-```http
-GET /aris/v1/admin/audit
-```
-
-The audit endpoint is Administrator-only and supports pagination plus optional
-filters for user, action, and result.
-
-Example query:
-
-```http
-GET /aris/v1/admin/audit?page=1&limit=100&user=&action=record&result=all
-```
+Administrator-only endpoints require an Administrator account.
 
 ## Configuration
 
-ARIS reads its normal runtime settings from `aris.config` and sensitive values
-from `aris.env`.
+ARIS reads normal runtime settings from `aris.config` and secrets from `aris.env`.
 
-N1 integration resembles:
+N1 configuration:
 
 ```ini
 [n1]
@@ -563,22 +313,13 @@ insecure_tls=true
 attachment_max_size_mb=50
 ```
 
-The N1 fragment secret is kept separately in the environment file:
+N1 secret:
 
 ```env
 N1_ARIS_SECRET=<ARIS_FRAGMENT_SECRET>
 ```
 
-`N1_ARIS_SECRET` must contain the secret paired with the configured N1 fragment.
-
-The configured attachment size limit is used by both the HTTP multipart layer
-and the attachment handler. ARIS reserves a small amount of additional HTTP
-body capacity for multipart framing while enforcing the configured value as the
-actual attachment limit.
-
 ## Office Preview Requirements
-
-Office preview requires LibreOffice on the ARIS server.
 
 On Debian:
 
@@ -591,37 +332,22 @@ sudo apt install -y \
   libreoffice-impress
 ```
 
-Verify the headless converter:
+Verify:
 
 ```bash
 libreoffice --headless --version
 ```
 
-ARIS uses LibreOffice only as a conversion worker. Users do not interact with
-the LibreOffice desktop application.
-
-Generated previews are stored in the operating system temporary directory:
-
-```text
-/tmp/aris-preview-cache/
-```
-
-They are derived data and may be regenerated from the authoritative N1 object.
-
 ## Build
 
-```bash
-cargo build --release
-```
-
-For development:
+Development:
 
 ```bash
 cargo check
 cargo run
 ```
 
-For production:
+Production:
 
 ```bash
 cargo build --release
@@ -630,112 +356,56 @@ cargo build --release
 
 ## First Administrator
 
-A fresh ARIS deployment begins without user accounts.
+A fresh ARIS deployment starts without users.
 
-The first administrator is created through:
+The first Administrator is created through:
 
 ```http
 POST /aris/v1/auth/create
 ```
 
-The request requires one configured `AUTH_KEYS` value.
+This bootstrap operation requires a configured `AUTH_KEYS` value and is only available while the user table is empty.
 
-ARIS only allows this bootstrap operation while the user table is empty. The
-first account is always created as:
-
-```text
-Access Level 0
-Administrator
-```
-
-After bootstrap, additional accounts are created and managed through the
-Administrator interface.
-
-## Authentication
-
-ARIS uses short-lived JWT access tokens and longer-lived refresh tokens.
+## Project Structure
 
 ```text
-Login
-  |
-  +-- Access Token
-  |     short-lived
-  |
-  +-- Refresh Token
-        longer-lived
+src/
+├── api/
+│   ├── admin/
+│   ├── aris/
+│   ├── user/
+│   ├── audit.rs
+│   ├── backup.rs
+│   ├── query_handler.rs
+│   └── route.rs
+├── config/
+├── db/
+├── middleware/
+├── macros/
+├── util/
+└── main.rs
+
+aris.html
+aris.config
+aris.env
 ```
 
-When an access token expires, the client may exchange its refresh token for a
-new session.
+`aris.html` is the unified application containing the Dashboard, Records, and Administration workspaces.
 
-Role information is reloaded from SQLite during the refresh process so account
-changes can take effect without permanently embedding old permissions into
-long-lived sessions.
+## Design
 
-Optional TOTP-based two-factor authentication is supported for accounts.
+ARIS follows a small set of rules:
 
-## Custom Information Systems
+- stable record identities
+- server-generated control numbers
+- backend-enforced authorization
+- SQLite for structured queryable state
+- N1 for durable binary objects
+- original uploads remain authoritative
+- short transactional database writes
+- large binary data stays out of SQLite
+- meaningful administrator actions are auditable
+- backups are verified before being treated as valid
+- the core remains reusable for different organizational workflows
 
-ARIS is intentionally domain-neutral.
-
-The same core can be customized into systems such as:
-
-```text
-Document Tracking System
-Procurement Information System
-Administrative Routing System
-Incident Reporting System
-Equipment Registry
-Inventory Information System
-Referral Tracking System
-Project Record System
-Request Management System
-Records Management System
-```
-
-A custom ARIS deployment can change its user interface, record fields, workflows,
-queries, terminology, and reporting while keeping the same underlying model:
-
-```text
-Atomic Records
-+
-Structured Metadata
-+
-Rich Attachments
-+
-Search
-+
-Authorization
-+
-N1 Storage
-```
-
-ARIS therefore acts as the reusable information layer rather than a
-single-purpose application.
-
-## Design Principles
-
-ARIS follows several core rules:
-
-- records have stable immutable identities;
-- human control numbers are generated by the server;
-- authorization is enforced by backend handlers;
-- SQLite stores queryable business state;
-- N1 stores durable attachment bytes;
-- original uploaded files remain authoritative;
-- previews and indexes are derived and rebuildable;
-- attachment storage paths remain understandable to administrators;
-- large binary data is not placed inside the relational database;
-- destructive permissions are separate from normal editing permissions;
-- record-number allocation is transactionally coordinated to avoid duplicate
-  numbers during concurrent creation;
-- attachment metadata is committed only after N1 accepts the original object;
-- accountability-relevant authenticated actions are written to an audit trail;
-- audit rows are append-only during normal application operation;
-- custom information systems can be built without redesigning the storage
-  foundation.
-
-ARIS is designed to make organizational information searchable, structured,
-durable, accountable, and programmable without forcing every new internal
-system to rebuild the same record, attachment, authentication, authorization,
-audit, and storage infrastructure.
+ARIS is intended to provide one dependable foundation for building searchable, structured, and auditable information systems without rebuilding the same storage, authentication, attachment, and record-management layers for every application.
