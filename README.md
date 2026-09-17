@@ -5,7 +5,7 @@
     width="150"
     height="150"
   />
-  <h1>Litiaina Aris</h1>
+  <h1>Litiaina ARIS</h1>
   <p>
     Atomic Record Information System — Litiaina's programmable platform for
     structured records, rich attachments, search, routing, and custom
@@ -43,7 +43,8 @@ installation while the original uploaded object remains unchanged in N1.
 ARIS is designed for environments where users need more than simple file
 storage. Records can be filtered and searched across multiple business fields,
 sorted, paginated, associated with attachments, moved logically when identifying
-record information changes, and protected through role-based authorization.
+record information changes, protected through role-based authorization, and
+tracked through an administrator audit trail for accountability.
 
 ## Core Model
 
@@ -93,12 +94,18 @@ through the ARIS API.
   Search/filter data               Durable storage
   User accounts                    Storage recovery
   Attachment metadata              Object lifecycle
+  Audit history
           |
           v
      ARIS API
           |
-          v
-      ARIS Web UI
+     +----+----+
+     |         |
+     v         v
+ ARIS UI   Administrator UI
+               |
+               v
+           Audit Log
 ```
 
 ARIS does not place large object data inside SQLite.
@@ -125,6 +132,68 @@ Original immutable object bytes
 
 This lets ARIS provide rich business queries without forcing the object-storage
 engine to behave like a relational database.
+
+The current ARIS persistence layer uses dedicated ARIS tables including:
+
+```text
+aris_records
+aris_attachments
+aris_control_sequence
+aris_audit_log
+```
+
+## Concurrency and Data Safety
+
+ARIS is designed so two users performing operations at nearly the same time do
+not accidentally receive the same control number or leave inconsistent record
+state.
+
+Record creation uses a short SQLite transaction:
+
+```text
+Begin transaction
+      |
+      +-- ensure yearly sequence exists
+      +-- increment sequence
+      +-- read new control number
+      +-- insert ARIS record
+      |
+Commit
+```
+
+The control-number increment and the record insert are part of the same
+transaction. SQLite serializes the short write section, so concurrent record
+creation cannot successfully assign the same yearly sequence value. If the
+record insert fails, the sequence increment is rolled back with it.
+
+ARIS uses SQLite WAL mode and a busy timeout so normal readers can continue
+while short writes are coordinated safely.
+
+Attachment creation follows a storage-first sequence:
+
+```text
+Validate request
+      |
+      v
+Authenticate to N1
+      |
+      v
+Prepare N1 namespace
+      |
+      v
+Upload original object to N1
+      |
+      v
+Insert attachment metadata into SQLite
+```
+
+ARIS does not create the SQLite attachment reference until N1 has accepted the
+object. If the N1 upload fails, no attachment row is committed. If N1 succeeds
+but the SQLite metadata insert fails, ARIS attempts to soft-delete the uploaded
+N1 object so it does not intentionally leave a live unreferenced attachment.
+
+This keeps the relational metadata and object-storage state coordinated without
+placing large binary files inside SQLite.
 
 ## N1 Attachment Layout
 
@@ -292,6 +361,82 @@ Viewer
 Authorization is enforced by the backend through the authenticated JWT claims,
 not only by hiding controls in the browser.
 
+## Accountability and Audit Logging
+
+ARIS includes an Administrator-visible audit log for accountability. The audit
+middleware records selected authenticated actions after the request has
+completed, allowing ARIS to record both the attempted action and its HTTP
+result.
+
+Current audited actions include:
+
+```text
+record.create
+record.update
+record.delete
+
+attachment.upload
+attachment.delete
+attachment.preview
+attachment.download
+
+account.list
+account.create
+account.modify
+account.delete
+account.self.modify
+account.self.delete
+account.2fa.enable
+account.2fa.disable
+
+database.query
+audit.view
+```
+
+Each audit event can contain:
+
+```text
+Event UID
+Actor UID
+Actor Name
+Actor Email
+Access Level
+Action
+HTTP Method
+Request Path
+Target Type
+Target UID
+HTTP Status
+Success / Failure
+User Agent
+Timestamp
+```
+
+ARIS intentionally does **not** place passwords, JWT access tokens, refresh
+tokens, `AUTH_KEYS`, uploaded file contents, or request bodies in the audit log.
+The database-administration action is recorded as an action event rather than
+copying sensitive SQL text into the audit history.
+
+The audit table is:
+
+```text
+aris_audit_log
+```
+
+It is protected by SQLite triggers that reject ordinary `UPDATE` and `DELETE`
+operations against audit rows, making the application audit history append-only
+during normal operation.
+
+Administrators can search the audit view by user, action/target, and result, and
+the results are paginated.
+
+> **Note:** the built-in database-administration endpoint gives an Administrator
+> direct database capability. The SQLite audit triggers protect the log from
+> ordinary modification, but ARIS does not claim that the local audit database
+> is cryptographically tamper-proof against a deliberately malicious database
+> administrator. Deployments requiring that threat model should use a separate
+> external or independently protected audit ledger.
+
 ## Components
 
 ```text
@@ -301,6 +446,7 @@ src/
     aris/              Atomic record, attachment, search, and N1 operations
     hosting/           Hosted UI support
     user/              User self-service operations
+    audit.rs           Accountability audit middleware and audit query API
     api_error.rs       Shared API error definitions
     query_handler.rs   SQLite account/query helpers
     route.rs           ARIS HTTP route definitions
@@ -325,7 +471,7 @@ src/
   main.rs              ARIS application entry point
 
 aris.html              Main ARIS record interface
-admin.html             Administrator and account-management interface
+admin.html             Administrator, account-management, and audit interface
 aris.config            Runtime configuration
 aris.env               Local secrets
 ```
@@ -387,6 +533,21 @@ POST /aris/v1/db/query
 
 Database administration requires an Administrator account.
 
+### Audit
+
+```http
+GET /aris/v1/admin/audit
+```
+
+The audit endpoint is Administrator-only and supports pagination plus optional
+filters for user, action, and result.
+
+Example query:
+
+```http
+GET /aris/v1/admin/audit?page=1&limit=100&user=&action=record&result=all
+```
+
 ## Configuration
 
 ARIS reads its normal runtime settings from `aris.config` and sensitive values
@@ -402,7 +563,13 @@ insecure_tls=true
 attachment_max_size_mb=50
 ```
 
-The N1 fragment secret is kept separately in the environment file.
+The N1 fragment secret is kept separately in the environment file:
+
+```env
+N1_ARIS_SECRET=<ARIS_FRAGMENT_SECRET>
+```
+
+`N1_ARIS_SECRET` must contain the secret paired with the configured N1 fragment.
 
 The configured attachment size limit is used by both the HTTP multipart layer
 and the attachment handler. ARIS reserves a small amount of additional HTTP
@@ -560,9 +727,15 @@ ARIS follows several core rules:
 - attachment storage paths remain understandable to administrators;
 - large binary data is not placed inside the relational database;
 - destructive permissions are separate from normal editing permissions;
+- record-number allocation is transactionally coordinated to avoid duplicate
+  numbers during concurrent creation;
+- attachment metadata is committed only after N1 accepts the original object;
+- accountability-relevant authenticated actions are written to an audit trail;
+- audit rows are append-only during normal application operation;
 - custom information systems can be built without redesigning the storage
   foundation.
 
 ARIS is designed to make organizational information searchable, structured,
-durable, and programmable without forcing every new internal system to rebuild
-the same record, attachment, authentication, and storage infrastructure.
+durable, accountable, and programmable without forcing every new internal
+system to rebuild the same record, attachment, authentication, authorization,
+audit, and storage infrastructure.
