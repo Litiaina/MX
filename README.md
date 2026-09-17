@@ -5,7 +5,7 @@
     width="150"
     height="150"
   />
-  <h1>ARIS</h1>
+  <h1>Litiaina Aris</h1>
   <p>
     Atomic Record Information System — Litiaina's programmable platform for
     structured records, rich attachments, search, routing, and custom
