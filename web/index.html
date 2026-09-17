@@ -1408,7 +1408,7 @@
             </label>
 
             <div class="muted" style="margin-top:8px;font-size:13px;">
-              Choose files here, or drag and drop files onto any field in this form. Files are stored in N1 under OFFICE / DATE / CONTROL-NO__FILENAME. Default limit: 50 MiB per attachment.
+              Choose files here, or drag and drop files onto any field in this form. Word, Excel, PowerPoint, OpenDocument, PDF, images, text, audio, and video can be viewed from ARIS after upload. Files are stored in N1 under OFFICE / DATE / CONTROL-NO__FILENAME. Default limit: 50 MiB per attachment.
             </div>
           </div>
 
@@ -1552,6 +1552,9 @@ const ENDPOINTS = {
 
   attachment: (entryUid, attachmentUid) =>
     `/aris/v1/records/${encodeURIComponent(entryUid)}/attachments/${encodeURIComponent(attachmentUid)}`,
+
+  preview: (entryUid, attachmentUid) =>
+    `/aris/v1/records/${encodeURIComponent(entryUid)}/attachments/${encodeURIComponent(attachmentUid)}/preview`,
 
   download: (entryUid, attachmentUid) =>
     `/aris/v1/records/${encodeURIComponent(entryUid)}/attachments/${encodeURIComponent(attachmentUid)}/download`
@@ -2858,6 +2861,11 @@ function closeAttachmentPreview() {
   state.previewBlob = null;
 }
 
+function previewLooksOffice(fileName) {
+  return /\.(doc|docx|docm|rtf|odt|xls|xlsx|xlsm|ods|ppt|pptx|pptm|odp)$/i
+    .test(String(fileName || ""));
+}
+
 function previewLooksTextual(mimeType, fileName) {
   const mime = String(mimeType || "").toLowerCase();
   const name = String(fileName || "").toLowerCase();
@@ -2950,6 +2958,20 @@ async function showAttachmentPreview(blob, fileName, mimeType) {
     return;
   }
 
+  if (previewLooksOffice(fileName)) {
+    const fallback = document.createElement("div");
+    fallback.className = "preview-fallback";
+    fallback.innerHTML = `
+      <h3 style="margin-top:0;">Office preview is ready after upload</h3>
+      <p class="muted">
+        ${escapeHtml(fileName || "This Office document")} will be converted to a PDF preview by ARIS after the record is saved and the attachment is stored.
+      </p>
+    `;
+
+    els.previewBody.appendChild(fallback);
+    return;
+  }
+
   const object = document.createElement("object");
   object.data = objectUrl;
   object.type = type;
@@ -2983,14 +3005,16 @@ async function previewStoredAttachment(
       fileName || "Attachment Preview";
 
     els.previewMeta.textContent =
-      "Loading attachment from N1…";
+      previewLooksOffice(fileName)
+        ? "Loading from N1 · generating Office preview if needed…"
+        : "Loading attachment from N1…";
 
     els.previewBody.innerHTML =
       `<div class="muted">Loading actual file…</div>`;
 
     const response =
       await authenticatedFetch(
-        ENDPOINTS.download(entryUid, attachmentUid),
+        ENDPOINTS.preview(entryUid, attachmentUid),
         {
           method: "GET"
         }
@@ -3013,7 +3037,7 @@ async function previewStoredAttachment(
     await showAttachmentPreview(
       blob,
       fileName,
-      mimeType || blob.type
+      blob.type || mimeType
     );
   } catch (error) {
     closeAttachmentPreview();

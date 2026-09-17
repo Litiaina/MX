@@ -13,8 +13,8 @@ use crate::api::admin::handler::{
 use crate::api::aris::handler::{
     create_dgs_entry as create_aris_record, delete_dgs_attachment as delete_aris_attachment,
     delete_dgs_entry as delete_aris_record, download_dgs_attachment as download_aris_attachment,
-    list_dgs_entries as list_aris_records, update_dgs_entry as update_aris_record,
-    upload_dgs_attachments as upload_aris_attachments,
+    list_dgs_entries as list_aris_records, preview_aris_attachment,
+    update_dgs_entry as update_aris_record, upload_dgs_attachments as upload_aris_attachments,
 };
 
 use crate::api::user::handler::{create_user, delete_user, modify_user};
@@ -92,6 +92,10 @@ fn aris_routes() -> Router {
         .route(
             "/aris/v1/records/{record_uid}/attachments/{attachment_uid}",
             delete(delete_aris_attachment),
+        )
+        .route(
+            "/aris/v1/records/{record_uid}/attachments/{attachment_uid}/preview",
+            get(preview_aris_attachment),
         )
         .route(
             "/aris/v1/records/{record_uid}/attachments/{attachment_uid}/download",

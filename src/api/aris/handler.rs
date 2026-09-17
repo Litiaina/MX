@@ -1,6 +1,9 @@
 use std::{
     collections::{HashMap, HashSet},
     env,
+    fs,
+    path::PathBuf,
+    process::Command,
     sync::OnceLock,
     time::{Duration, Instant},
 };
@@ -775,6 +778,251 @@ async fn n1_download(
     })?;
 
     Ok(bytes.to_vec())
+}
+
+fn attachment_extension(file_name: &str) -> Option<String> {
+    let extension = file_name
+        .rsplit_once('.')
+        .map(|(_, extension)| extension.trim().to_ascii_lowercase())?;
+
+    if extension.is_empty() {
+        None
+    } else {
+        Some(extension)
+    }
+}
+
+fn office_preview_supported(file_name: &str) -> bool {
+    matches!(
+        attachment_extension(file_name).as_deref(),
+        Some(
+            "doc"
+                | "docx"
+                | "docm"
+                | "rtf"
+                | "odt"
+                | "xls"
+                | "xlsx"
+                | "xlsm"
+                | "ods"
+                | "ppt"
+                | "pptx"
+                | "pptm"
+                | "odp"
+        )
+    )
+}
+
+fn safe_cache_component(value: &str) -> String {
+    let mut result = String::with_capacity(value.len());
+
+    for character in value.chars() {
+        if character.is_ascii_alphanumeric()
+            || character == '-'
+            || character == '_'
+            || character == '.'
+        {
+            result.push(character);
+        } else {
+            result.push('_');
+        }
+    }
+
+    if result.is_empty() {
+        "unknown".to_string()
+    } else {
+        result
+    }
+}
+
+fn aris_preview_cache_path(
+    attachment: &FileAttachment,
+) -> PathBuf {
+    let cache_root = env::temp_dir()
+        .join("aris-preview-cache");
+
+    let version = attachment
+        .version_id
+        .as_deref()
+        .unwrap_or("original");
+
+    cache_root.join(format!(
+        "{}__{}.pdf",
+        safe_cache_component(&attachment.uid),
+        safe_cache_component(version),
+    ))
+}
+
+fn generate_office_pdf_preview(
+    attachment: FileAttachment,
+    original_bytes: Vec<u8>,
+) -> Result<Vec<u8>, String> {
+    let cache_path =
+        aris_preview_cache_path(&attachment);
+
+    if cache_path.is_file() {
+        return fs::read(&cache_path).map_err(|error| {
+            format!(
+                "failed to read cached ARIS preview '{}': {error}",
+                cache_path.display()
+            )
+        });
+    }
+
+    let extension =
+        attachment_extension(&attachment.file_name)
+            .ok_or_else(|| {
+                "attachment has no supported Office extension"
+                    .to_string()
+            })?;
+
+    let work_dir = env::temp_dir().join(format!(
+        "aris-preview-work-{}",
+        Uuid::new_v4()
+    ));
+
+    let profile_dir = work_dir.join("lo-profile");
+    let source_path =
+        work_dir.join(format!("source.{extension}"));
+    let generated_pdf = work_dir.join("source.pdf");
+
+    let result = (|| -> Result<Vec<u8>, String> {
+        fs::create_dir_all(&profile_dir).map_err(
+            |error| {
+                format!(
+                    "failed to create ARIS preview work directory: {error}"
+                )
+            },
+        )?;
+
+        fs::write(&source_path, original_bytes).map_err(
+            |error| {
+                format!(
+                    "failed to stage Office attachment for preview: {error}"
+                )
+            },
+        )?;
+
+        let profile_uri = format!(
+            "file://{}",
+            profile_dir.to_string_lossy()
+        );
+
+        let output = Command::new("libreoffice")
+            .arg("--headless")
+            .arg("--nologo")
+            .arg("--nodefault")
+            .arg("--nolockcheck")
+            .arg("--nofirststartwizard")
+            .arg(format!(
+                "-env:UserInstallation={profile_uri}"
+            ))
+            .arg("--convert-to")
+            .arg("pdf")
+            .arg("--outdir")
+            .arg(&work_dir)
+            .arg(&source_path)
+            .output()
+            .map_err(|error| {
+                if error.kind()
+                    == std::io::ErrorKind::NotFound
+                {
+                    "LibreOffice is not installed or is not available in PATH"
+                        .to_string()
+                } else {
+                    format!(
+                        "failed to start LibreOffice: {error}"
+                    )
+                }
+            })?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(
+                &output.stderr
+            );
+            let stdout = String::from_utf8_lossy(
+                &output.stdout
+            );
+
+            return Err(format!(
+                "LibreOffice preview conversion failed. stdout='{}' stderr='{}'",
+                stdout.trim(),
+                stderr.trim(),
+            ));
+        }
+
+        if !generated_pdf.is_file() {
+            return Err(
+                "LibreOffice completed without producing a PDF preview"
+                    .to_string(),
+            );
+        }
+
+        let pdf_bytes = fs::read(&generated_pdf)
+            .map_err(|error| {
+                format!(
+                    "failed to read generated PDF preview: {error}"
+                )
+            })?;
+
+        if let Some(parent) = cache_path.parent() {
+            fs::create_dir_all(parent).map_err(
+                |error| {
+                    format!(
+                        "failed to create ARIS preview cache: {error}"
+                    )
+                },
+            )?;
+        }
+
+        fs::write(&cache_path, &pdf_bytes).map_err(
+            |error| {
+                format!(
+                    "failed to cache generated ARIS preview: {error}"
+                )
+            },
+        )?;
+
+        Ok(pdf_bytes)
+    })();
+
+    let _ = fs::remove_dir_all(&work_dir);
+
+    result
+}
+
+fn inline_attachment_response(
+    bytes: Vec<u8>,
+    content_type: &str,
+    file_name: &str,
+) -> Response {
+    let safe_name = file_name.replace('"', "_");
+
+    let mut response =
+        Response::new(Body::from(bytes));
+
+    *response.status_mut() = StatusCode::OK;
+
+    response.headers_mut().insert(
+        CONTENT_TYPE,
+        HeaderValue::from_str(content_type)
+            .unwrap_or_else(|_| {
+                HeaderValue::from_static(
+                    "application/octet-stream"
+                )
+            }),
+    );
+
+    if let Ok(value) = HeaderValue::from_str(
+        &format!("inline; filename=\"{safe_name}\"")
+    ) {
+        response.headers_mut().insert(
+            CONTENT_DISPOSITION,
+            value,
+        );
+    }
+
+    response
 }
 
 /* -------------------------------------------------------------------------- */
@@ -2750,6 +2998,122 @@ pub async fn delete_dgs_attachment(
 
         Err(error) => map_dgs_error(error),
     }
+}
+
+pub async fn preview_aris_attachment(
+    claims: Claims,
+    Path((entry_uid, attachment_uid)):
+        Path<(String, String)>,
+) -> Response {
+    if !claims.can_read_dgs() {
+        return dgs_access_denied();
+    }
+
+    let attachment =
+        match execute_get_attachment(
+            entry_uid,
+            attachment_uid,
+        )
+        .await
+        {
+            Ok(attachment) => attachment,
+
+            Err(error) => {
+                return map_dgs_error(
+                    DgsOperationError::Sqlite(error)
+                );
+            }
+        };
+
+    let original_bytes =
+        match n1_download(
+            &attachment.object_key,
+            &attachment.file_name,
+        )
+        .await
+        {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                return map_dgs_error(error);
+            }
+        };
+
+    if office_preview_supported(
+        &attachment.file_name
+    ) {
+        let attachment_for_preview =
+            attachment.clone();
+
+        let preview_result =
+            tokio::task::spawn_blocking(move || {
+                generate_office_pdf_preview(
+                    attachment_for_preview,
+                    original_bytes,
+                )
+            })
+            .await;
+
+        let pdf_bytes = match preview_result {
+            Ok(Ok(bytes)) => bytes,
+
+            Ok(Err(error)) => {
+                crate::report_error!(
+                    error,
+                    "preview",
+                    "preview_aris_attachment()"
+                );
+
+                return api_json(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    json!({
+                        "response": "ARIS could not generate the Office preview. Verify that LibreOffice Writer, Calc, and Impress are installed on the ARIS server."
+                    }),
+                );
+            }
+
+            Err(error) => {
+                crate::report_error!(
+                    format!(
+                        "Office preview blocking task failed: {error}"
+                    ),
+                    "preview",
+                    "preview_aris_attachment()"
+                );
+
+                return api_json(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    json!({
+                        "response": "ARIS Office preview task failed."
+                    }),
+                );
+            }
+        };
+
+        let preview_name = attachment
+            .file_name
+            .rsplit_once('.')
+            .map(|(stem, _)| {
+                format!("{stem}.pdf")
+            })
+            .unwrap_or_else(|| {
+                format!(
+                    "{}.pdf",
+                    attachment.file_name
+                )
+            });
+
+        return inline_attachment_response(
+            pdf_bytes,
+            "application/pdf",
+            &preview_name,
+        );
+    }
+
+    inline_attachment_response(
+        original_bytes,
+        &attachment.mime_type,
+        &attachment.file_name,
+    )
 }
 
 pub async fn download_dgs_attachment(
