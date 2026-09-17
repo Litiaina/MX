@@ -17,6 +17,7 @@ use crate::api::aris::handler::{
 
 use crate::api::audit::{audit_request, get_audit_log};
 use crate::api::backup::{create_backup, download_backup, list_backups, verify_backup};
+use crate::api::dashboard::{get_dashboard_summary, get_records_revision};
 use crate::api::user::handler::{create_user, delete_user, modify_user};
 
 use crate::config::load_config::CONFIG;
@@ -88,6 +89,8 @@ fn aris_routes() -> Router {
         .saturating_add(1024 * 1024);
 
     Router::new()
+        .route("/aris/v1/dashboard/summary", get(get_dashboard_summary))
+        .route("/aris/v1/status/revision", get(get_records_revision))
         .route(
             "/aris/v1/records",
             get(list_aris_records).post(create_aris_record),
@@ -121,7 +124,9 @@ fn cors_layer() -> CorsLayer {
         .allow_headers([
             HeaderName::from_static("authorization"),
             HeaderName::from_static("content-type"),
+            HeaderName::from_static("if-none-match"),
         ])
+        .expose_headers([HeaderName::from_static("etag")])
         .allow_methods([
             Method::GET,
             Method::POST,

@@ -1,6 +1,7 @@
 use std::{
     collections::{HashMap, HashSet},
-    env, fs,
+    env,
+    fs,
     path::PathBuf,
     process::Command,
     sync::OnceLock,
@@ -8,29 +9,42 @@ use std::{
 };
 
 use axum::{
-    Json,
     body::Body,
     extract::{Multipart, Path, Query},
     http::{
-        HeaderValue, StatusCode,
         header::{CONTENT_DISPOSITION, CONTENT_TYPE},
+        HeaderValue, StatusCode,
     },
     response::{IntoResponse, Response},
+    Json,
 };
 use reqwest::Client;
-use rusqlite::{OptionalExtension, params, params_from_iter, types::Value as SqlValue};
+use rusqlite::{
+    params,
+    params_from_iter,
+    types::Value as SqlValue,
+    OptionalExtension,
+};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value as JsonValue, json};
+use serde_json::{json, Value as JsonValue};
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
 use crate::{
     api::{
         api_error::SqliteError,
-        aris::model::{CreateEntryRequest, Entry, FileAttachment, UpdateEntryRequest},
+        aris::model::{
+            CreateEntryRequest,
+            Entry,
+            FileAttachment,
+            UpdateEntryRequest,
+        },
     },
     config::load_config::CONFIG,
-    db::connector::{SqliteDatabaseError, with_sql_connection},
+    db::connector::{
+        with_sql_connection,
+        SqliteDatabaseError,
+    },
     middleware::auth::Claims,
 };
 
@@ -203,12 +217,17 @@ fn map_aris_error(error: ArisOperationError) -> Response {
             }),
         ),
 
-        ArisOperationError::InvalidRequest(reason) => {
-            api_json(StatusCode::BAD_REQUEST, json!({ "response": reason }))
-        }
+        ArisOperationError::InvalidRequest(reason) => api_json(
+            StatusCode::BAD_REQUEST,
+            json!({ "response": reason }),
+        ),
 
         ArisOperationError::N1(reason) => {
-            crate::report_error!(reason.clone(), "n1", "ARIS attachment operation");
+            crate::report_error!(
+                reason.clone(),
+                "n1",
+                "ARIS attachment operation"
+            );
 
             api_json(
                 StatusCode::BAD_GATEWAY,
@@ -242,7 +261,8 @@ fn validate_required_fields(
         || routed_to_div.trim().is_empty()
     {
         return Err(ArisOperationError::InvalidRequest(
-            "Date, office, requestor, subject, and routed-to division are required.".to_string(),
+            "Date, office, requestor, subject, and routed-to division are required."
+                .to_string(),
         ));
     }
 
@@ -268,7 +288,11 @@ fn parse_entry_year(date: &str) -> Result<i32, ArisOperationError> {
 
     let year = date[0..4]
         .parse::<i32>()
-        .map_err(|_| ArisOperationError::InvalidRequest("Invalid ARIS entry year.".to_string()))?;
+        .map_err(|_| {
+            ArisOperationError::InvalidRequest(
+                "Invalid ARIS entry year.".to_string(),
+            )
+        })?;
 
     if !(1900..=9999).contains(&year) {
         return Err(ArisOperationError::InvalidRequest(
@@ -312,7 +336,8 @@ fn n1_secret() -> Result<String, ArisOperationError> {
         .map(|value| value.trim().to_string())
         .map_err(|_| {
             ArisOperationError::N1(
-                "N1_ARIS_SECRET is missing from the ARIS environment/.env.".to_string(),
+                "N1_ARIS_SECRET is missing from the ARIS environment/.env."
+                    .to_string(),
             )
         })
         .and_then(|value| {
@@ -343,14 +368,18 @@ fn n1_client() -> Result<&'static Client, ArisOperationError> {
         .danger_accept_invalid_certs(CONFIG.n1.insecure_tls)
         .build()
         .map_err(|error| {
-            ArisOperationError::N1(format!("failed to build N1 HTTP client: {error}"))
+            ArisOperationError::N1(format!(
+                "failed to build N1 HTTP client: {error}"
+            ))
         })?;
 
     let _ = N1_CLIENT.set(client);
 
-    N1_CLIENT
-        .get()
-        .ok_or_else(|| ArisOperationError::N1("failed to initialize N1 HTTP client".to_string()))
+    N1_CLIENT.get().ok_or_else(|| {
+        ArisOperationError::N1(
+            "failed to initialize N1 HTTP client".to_string(),
+        )
+    })
 }
 
 fn n1_token_cache() -> &'static RwLock<Option<CachedN1Token>> {
@@ -397,7 +426,9 @@ pub(crate) async fn n1_access_token() -> Result<String, ArisOperationError> {
         .send()
         .await
         .map_err(|error| {
-            ArisOperationError::N1(format!("failed to authenticate to N1: {error}"))
+            ArisOperationError::N1(format!(
+                "failed to authenticate to N1: {error}"
+            ))
         })?;
 
     let status = response.status();
@@ -409,15 +440,19 @@ pub(crate) async fn n1_access_token() -> Result<String, ArisOperationError> {
         )));
     }
 
-    let auth: N1AuthResponse = serde_json::from_str(&text).map_err(|error| {
-        ArisOperationError::N1(format!("invalid N1 authentication response: {error}"))
-    })?;
+    let auth: N1AuthResponse =
+        serde_json::from_str(&text).map_err(|error| {
+            ArisOperationError::N1(format!(
+                "invalid N1 authentication response: {error}"
+            ))
+        })?;
 
     let usable_seconds = auth.expires_in.saturating_sub(30).max(1);
 
     *guard = Some(CachedN1Token {
         access_token: auth.access_token.clone(),
-        expires_at: Instant::now() + Duration::from_secs(usable_seconds),
+        expires_at: Instant::now()
+            + Duration::from_secs(usable_seconds),
     });
 
     Ok(auth.access_token)
@@ -449,7 +484,11 @@ fn sanitize_namespace_component(value: &str, fallback: &str) -> String {
     }
 
     let output = output
-        .trim_matches(|character| character == '.' || character == '_' || character == '-')
+        .trim_matches(|character| {
+            character == '.'
+                || character == '_'
+                || character == '-'
+        })
         .to_string();
 
     if output.is_empty() {
@@ -467,7 +506,10 @@ fn office_folder(office: &str) -> String {
     sanitize_namespace_component(office, "UNKNOWN_OFFICE")
 }
 
-fn attachment_object_key(identity: &StorageIdentity, file_name: &str) -> String {
+fn attachment_object_key(
+    identity: &StorageIdentity,
+    file_name: &str,
+) -> String {
     format!(
         "{}/{}/{:06}__{}",
         office_folder(&identity.office),
@@ -477,7 +519,10 @@ fn attachment_object_key(identity: &StorageIdentity, file_name: &str) -> String 
     )
 }
 
-pub(crate) async fn n1_ensure_directory(path: &str, token: &str) -> Result<(), ArisOperationError> {
+pub(crate) async fn n1_ensure_directory(
+    path: &str,
+    token: &str,
+) -> Result<(), ArisOperationError> {
     let base_url = n1_base_url()?;
 
     let response = n1_client()?
@@ -487,7 +532,9 @@ pub(crate) async fn n1_ensure_directory(path: &str, token: &str) -> Result<(), A
         .send()
         .await
         .map_err(|error| {
-            ArisOperationError::N1(format!("failed to stat N1 directory '{path}': {error}"))
+            ArisOperationError::N1(format!(
+                "failed to stat N1 directory '{path}': {error}"
+            ))
         })?;
 
     if response.status().is_success() {
@@ -510,10 +557,14 @@ pub(crate) async fn n1_ensure_directory(path: &str, token: &str) -> Result<(), A
         .send()
         .await
         .map_err(|error| {
-            ArisOperationError::N1(format!("failed to create N1 directory '{path}': {error}"))
+            ArisOperationError::N1(format!(
+                "failed to create N1 directory '{path}': {error}"
+            ))
         })?;
 
-    if response.status().is_success() || response.status() == StatusCode::CONFLICT {
+    if response.status().is_success()
+        || response.status() == StatusCode::CONFLICT
+    {
         // 409 is acceptable here because another concurrent request may have
         // created the same office/date directory after our stat request.
         return Ok(());
@@ -550,14 +601,18 @@ pub(crate) async fn n1_upload_one_shot(
     let base_url = n1_base_url()?;
 
     let response = n1_client()?
-        .post(format!("{base_url}/noa/v1/upload/one-shot/{object_key}"))
+        .post(format!(
+            "{base_url}/noa/v1/upload/one-shot/{object_key}"
+        ))
         .bearer_auth(token)
         .header(CONTENT_TYPE, mime_type)
         .body(bytes)
         .send()
         .await
         .map_err(|error| {
-            ArisOperationError::N1(format!("failed to upload '{object_key}' to N1: {error}"))
+            ArisOperationError::N1(format!(
+                "failed to upload '{object_key}' to N1: {error}"
+            ))
         })?;
 
     let status = response.status();
@@ -573,12 +628,16 @@ pub(crate) async fn n1_upload_one_shot(
     Ok(())
 }
 
-pub(crate) async fn n1_soft_delete(object_key: &str) -> Result<(), ArisOperationError> {
+pub(crate) async fn n1_soft_delete(
+    object_key: &str,
+) -> Result<(), ArisOperationError> {
     let base_url = n1_base_url()?;
     let token = n1_access_token().await?;
 
     let response = n1_client()?
-        .delete(format!("{base_url}/noa/v1/objects/{object_key}"))
+        .delete(format!(
+            "{base_url}/noa/v1/objects/{object_key}"
+        ))
         .bearer_auth(token)
         .send()
         .await
@@ -588,7 +647,9 @@ pub(crate) async fn n1_soft_delete(object_key: &str) -> Result<(), ArisOperation
             ))
         })?;
 
-    if response.status().is_success() || response.status() == StatusCode::NOT_FOUND {
+    if response.status().is_success()
+        || response.status() == StatusCode::NOT_FOUND
+    {
         return Ok(());
     }
 
@@ -600,17 +661,23 @@ pub(crate) async fn n1_soft_delete(object_key: &str) -> Result<(), ArisOperation
     )))
 }
 
-async fn n1_recover(object_key: &str) -> Result<(), ArisOperationError> {
+async fn n1_recover(
+    object_key: &str,
+) -> Result<(), ArisOperationError> {
     let base_url = n1_base_url()?;
     let token = n1_access_token().await?;
 
     let response = n1_client()?
-        .post(format!("{base_url}/noa/v1/objects/recover/{object_key}"))
+        .post(format!(
+            "{base_url}/noa/v1/objects/recover/{object_key}"
+        ))
         .bearer_auth(token)
         .send()
         .await
         .map_err(|error| {
-            ArisOperationError::N1(format!("failed to recover '{object_key}' in N1: {error}"))
+            ArisOperationError::N1(format!(
+                "failed to recover '{object_key}' in N1: {error}"
+            ))
         })?;
 
     let status = response.status();
@@ -639,7 +706,9 @@ async fn n1_rename(
     let fragment = n1_fragment()?;
 
     let response = n1_client()?
-        .post(format!("{base_url}/noa/v1/objects/rename"))
+        .post(format!(
+            "{base_url}/noa/v1/objects/rename"
+        ))
         .bearer_auth(token)
         .json(&json!({
             "source_fragment": fragment,
@@ -676,9 +745,14 @@ pub(crate) async fn n1_download(
     let token = n1_access_token().await?;
 
     let response = n1_client()?
-        .get(format!("{base_url}/noa/v1/objects/download"))
+        .get(format!(
+            "{base_url}/noa/v1/objects/download"
+        ))
         .bearer_auth(token)
-        .query(&[("object_key", object_key), ("filename", file_name)])
+        .query(&[
+            ("object_key", object_key),
+            ("filename", file_name),
+        ])
         .send()
         .await
         .map_err(|error| {
@@ -761,10 +835,16 @@ fn safe_cache_component(value: &str) -> String {
     }
 }
 
-fn aris_preview_cache_path(attachment: &FileAttachment) -> PathBuf {
-    let cache_root = env::temp_dir().join("aris-preview-cache");
+fn aris_preview_cache_path(
+    attachment: &FileAttachment,
+) -> PathBuf {
+    let cache_root = env::temp_dir()
+        .join("aris-preview-cache");
 
-    let version = attachment.version_id.as_deref().unwrap_or("original");
+    let version = attachment
+        .version_id
+        .as_deref()
+        .unwrap_or("original");
 
     cache_root.join(format!(
         "{}__{}.pdf",
@@ -777,7 +857,8 @@ fn generate_office_pdf_preview(
     attachment: FileAttachment,
     original_bytes: Vec<u8>,
 ) -> Result<Vec<u8>, String> {
-    let cache_path = aris_preview_cache_path(&attachment);
+    let cache_path =
+        aris_preview_cache_path(&attachment);
 
     if cache_path.is_file() {
         return fs::read(&cache_path).map_err(|error| {
@@ -788,23 +869,44 @@ fn generate_office_pdf_preview(
         });
     }
 
-    let extension = attachment_extension(&attachment.file_name)
-        .ok_or_else(|| "attachment has no supported Office extension".to_string())?;
+    let extension =
+        attachment_extension(&attachment.file_name)
+            .ok_or_else(|| {
+                "attachment has no supported Office extension"
+                    .to_string()
+            })?;
 
-    let work_dir = env::temp_dir().join(format!("aris-preview-work-{}", Uuid::new_v4()));
+    let work_dir = env::temp_dir().join(format!(
+        "aris-preview-work-{}",
+        Uuid::new_v4()
+    ));
 
     let profile_dir = work_dir.join("lo-profile");
-    let source_path = work_dir.join(format!("source.{extension}"));
+    let source_path =
+        work_dir.join(format!("source.{extension}"));
     let generated_pdf = work_dir.join("source.pdf");
 
     let result = (|| -> Result<Vec<u8>, String> {
-        fs::create_dir_all(&profile_dir)
-            .map_err(|error| format!("failed to create ARIS preview work directory: {error}"))?;
+        fs::create_dir_all(&profile_dir).map_err(
+            |error| {
+                format!(
+                    "failed to create ARIS preview work directory: {error}"
+                )
+            },
+        )?;
 
-        fs::write(&source_path, original_bytes)
-            .map_err(|error| format!("failed to stage Office attachment for preview: {error}"))?;
+        fs::write(&source_path, original_bytes).map_err(
+            |error| {
+                format!(
+                    "failed to stage Office attachment for preview: {error}"
+                )
+            },
+        )?;
 
-        let profile_uri = format!("file://{}", profile_dir.to_string_lossy());
+        let profile_uri = format!(
+            "file://{}",
+            profile_dir.to_string_lossy()
+        );
 
         let output = Command::new("libreoffice")
             .arg("--headless")
@@ -812,7 +914,9 @@ fn generate_office_pdf_preview(
             .arg("--nodefault")
             .arg("--nolockcheck")
             .arg("--nofirststartwizard")
-            .arg(format!("-env:UserInstallation={profile_uri}"))
+            .arg(format!(
+                "-env:UserInstallation={profile_uri}"
+            ))
             .arg("--convert-to")
             .arg("pdf")
             .arg("--outdir")
@@ -820,16 +924,25 @@ fn generate_office_pdf_preview(
             .arg(&source_path)
             .output()
             .map_err(|error| {
-                if error.kind() == std::io::ErrorKind::NotFound {
-                    "LibreOffice is not installed or is not available in PATH".to_string()
+                if error.kind()
+                    == std::io::ErrorKind::NotFound
+                {
+                    "LibreOffice is not installed or is not available in PATH"
+                        .to_string()
                 } else {
-                    format!("failed to start LibreOffice: {error}")
+                    format!(
+                        "failed to start LibreOffice: {error}"
+                    )
                 }
             })?;
 
         if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(
+                &output.stderr
+            );
+            let stdout = String::from_utf8_lossy(
+                &output.stdout
+            );
 
             return Err(format!(
                 "LibreOffice preview conversion failed. stdout='{}' stderr='{}'",
@@ -839,19 +952,36 @@ fn generate_office_pdf_preview(
         }
 
         if !generated_pdf.is_file() {
-            return Err("LibreOffice completed without producing a PDF preview".to_string());
+            return Err(
+                "LibreOffice completed without producing a PDF preview"
+                    .to_string(),
+            );
         }
 
         let pdf_bytes = fs::read(&generated_pdf)
-            .map_err(|error| format!("failed to read generated PDF preview: {error}"))?;
+            .map_err(|error| {
+                format!(
+                    "failed to read generated PDF preview: {error}"
+                )
+            })?;
 
         if let Some(parent) = cache_path.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|error| format!("failed to create ARIS preview cache: {error}"))?;
+            fs::create_dir_all(parent).map_err(
+                |error| {
+                    format!(
+                        "failed to create ARIS preview cache: {error}"
+                    )
+                },
+            )?;
         }
 
-        fs::write(&cache_path, &pdf_bytes)
-            .map_err(|error| format!("failed to cache generated ARIS preview: {error}"))?;
+        fs::write(&cache_path, &pdf_bytes).map_err(
+            |error| {
+                format!(
+                    "failed to cache generated ARIS preview: {error}"
+                )
+            },
+        )?;
 
         Ok(pdf_bytes)
     })();
@@ -861,31 +991,48 @@ fn generate_office_pdf_preview(
     result
 }
 
-fn inline_attachment_response(bytes: Vec<u8>, content_type: &str, file_name: &str) -> Response {
+fn inline_attachment_response(
+    bytes: Vec<u8>,
+    content_type: &str,
+    file_name: &str,
+) -> Response {
     let safe_name = file_name.replace('"', "_");
 
-    let mut response = Response::new(Body::from(bytes));
+    let mut response =
+        Response::new(Body::from(bytes));
 
     *response.status_mut() = StatusCode::OK;
 
     response.headers_mut().insert(
         CONTENT_TYPE,
         HeaderValue::from_str(content_type)
-            .unwrap_or_else(|_| HeaderValue::from_static("application/octet-stream")),
+            .unwrap_or_else(|_| {
+                HeaderValue::from_static(
+                    "application/octet-stream"
+                )
+            }),
     );
 
-    if let Ok(value) = HeaderValue::from_str(&format!("inline; filename=\"{safe_name}\"")) {
-        response.headers_mut().insert(CONTENT_DISPOSITION, value);
+    if let Ok(value) = HeaderValue::from_str(
+        &format!("inline; filename=\"{safe_name}\"")
+    ) {
+        response.headers_mut().insert(
+            CONTENT_DISPOSITION,
+            value,
+        );
     }
 
     response
 }
 
+
 /* -------------------------------------------------------------------------- */
 /* SQLite: ARIS record schema                                                 */
 /* -------------------------------------------------------------------------- */
 
-fn ensure_aris_record_schema(connection: &rusqlite::Connection) -> Result<(), rusqlite::Error> {
+pub(crate) fn ensure_aris_record_schema(
+    connection: &rusqlite::Connection,
+) -> Result<(), rusqlite::Error> {
     connection.execute_batch(
         r#"
         CREATE TABLE IF NOT EXISTS aris_control_sequence (
@@ -934,6 +1081,76 @@ fn ensure_aris_record_schema(connection: &rusqlite::Connection) -> Result<(), ru
 
         CREATE INDEX IF NOT EXISTS idx_aris_attachments_file_name
             ON aris_attachments(file_name COLLATE NOCASE);
+
+        CREATE INDEX IF NOT EXISTS idx_aris_records_office_date
+            ON aris_records(office COLLATE NOCASE, date DESC, control_no DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_aris_records_route_date
+            ON aris_records(routed_to_div COLLATE NOCASE, date DESC, control_no DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_aris_records_requestor_date
+            ON aris_records(requestor COLLATE NOCASE, date DESC, control_no DESC);
+
+        CREATE TABLE IF NOT EXISTS aris_revision (
+            id               INTEGER PRIMARY KEY NOT NULL CHECK(id = 1),
+            records_revision INTEGER NOT NULL DEFAULT 0 CHECK(records_revision >= 0)
+        );
+
+        INSERT OR IGNORE INTO aris_revision (
+            id,
+            records_revision
+        ) VALUES (
+            1,
+            0
+        );
+
+        CREATE TRIGGER IF NOT EXISTS trg_aris_records_revision_insert
+        AFTER INSERT ON aris_records
+        BEGIN
+            UPDATE aris_revision
+            SET records_revision = records_revision + 1
+            WHERE id = 1;
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS trg_aris_records_revision_update
+        AFTER UPDATE ON aris_records
+        BEGIN
+            UPDATE aris_revision
+            SET records_revision = records_revision + 1
+            WHERE id = 1;
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS trg_aris_records_revision_delete
+        AFTER DELETE ON aris_records
+        BEGIN
+            UPDATE aris_revision
+            SET records_revision = records_revision + 1
+            WHERE id = 1;
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS trg_aris_attachments_revision_insert
+        AFTER INSERT ON aris_attachments
+        BEGIN
+            UPDATE aris_revision
+            SET records_revision = records_revision + 1
+            WHERE id = 1;
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS trg_aris_attachments_revision_update
+        AFTER UPDATE ON aris_attachments
+        BEGIN
+            UPDATE aris_revision
+            SET records_revision = records_revision + 1
+            WHERE id = 1;
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS trg_aris_attachments_revision_delete
+        AFTER DELETE ON aris_attachments
+        BEGIN
+            UPDATE aris_revision
+            SET records_revision = records_revision + 1
+            WHERE id = 1;
+        END;
         "#,
     )
 }
@@ -972,19 +1189,31 @@ fn build_text_condition(
         "exact" => {
             sql_params.push(SqlValue::Text(value.to_string()));
 
-            format!("LOWER({column}) = LOWER(?)")
+            format!(
+                "LOWER({column}) = LOWER(?)"
+            )
         }
 
         "prefix" => {
-            sql_params.push(SqlValue::Text(format!("{}%", escape_like(value))));
+            sql_params.push(SqlValue::Text(format!(
+                "{}%",
+                escape_like(value)
+            )));
 
-            format!("LOWER({column}) LIKE LOWER(?) ESCAPE '\\'")
+            format!(
+                "LOWER({column}) LIKE LOWER(?) ESCAPE '\\'"
+            )
         }
 
         _ => {
-            sql_params.push(SqlValue::Text(format!("%{}%", escape_like(value))));
+            sql_params.push(SqlValue::Text(format!(
+                "%{}%",
+                escape_like(value)
+            )));
 
-            format!("LOWER({column}) LIKE LOWER(?) ESCAPE '\\'")
+            format!(
+                "LOWER({column}) LIKE LOWER(?) ESCAPE '\\'"
+            )
         }
     }
 }
@@ -994,7 +1223,12 @@ fn build_attachment_name_condition(
     match_mode: &str,
     sql_params: &mut Vec<SqlValue>,
 ) -> String {
-    let inner = build_text_condition("af.file_name", value, match_mode, sql_params);
+    let inner = build_text_condition(
+        "af.file_name",
+        value,
+        match_mode,
+        sql_params,
+    );
 
     format!(
         "EXISTS (
@@ -1006,11 +1240,14 @@ fn build_attachment_name_condition(
     )
 }
 
-fn build_aris_where_clause(query: &ArisListQuery) -> (String, Vec<SqlValue>) {
+fn build_aris_where_clause(
+    query: &ArisListQuery,
+) -> (String, Vec<SqlValue>) {
     let mut conditions: Vec<String> = Vec::new();
     let mut sql_params: Vec<SqlValue> = Vec::new();
 
-    let match_mode = normalize_match_mode(query.match_mode.as_deref());
+    let match_mode =
+        normalize_match_mode(query.match_mode.as_deref());
 
     if let Some(value) = query
         .q
@@ -1044,7 +1281,10 @@ fn build_aris_where_clause(query: &ArisListQuery) -> (String, Vec<SqlValue>) {
             &mut sql_params,
         ));
 
-        conditions.push(format!("({})", universal.join(" OR ")));
+        conditions.push(format!(
+            "({})",
+            universal.join(" OR ")
+        ));
     }
 
     if let Some(value) = query
@@ -1200,7 +1440,10 @@ fn build_aris_where_clause(query: &ArisListQuery) -> (String, Vec<SqlValue>) {
     if conditions.is_empty() {
         ("".to_string(), sql_params)
     } else {
-        (format!("WHERE {}", conditions.join(" AND ")), sql_params)
+        (
+            format!("WHERE {}", conditions.join(" AND ")),
+            sql_params,
+        )
     }
 }
 
@@ -1225,19 +1468,29 @@ fn build_order_clause(query: &ArisListQuery) -> String {
         .to_ascii_lowercase()
         .as_str()
     {
-        "control_no" => format!("ORDER BY e.control_year {direction}, e.control_no {direction}"),
+        "control_no" => format!(
+            "ORDER BY e.control_year {direction}, e.control_no {direction}"
+        ),
 
-        "office" => format!("ORDER BY e.office {direction}, e.date DESC, e.control_no DESC"),
+        "office" => format!(
+            "ORDER BY e.office {direction}, e.date DESC, e.control_no DESC"
+        ),
 
-        "requestor" => format!("ORDER BY e.requestor {direction}, e.date DESC, e.control_no DESC"),
+        "requestor" => format!(
+            "ORDER BY e.requestor {direction}, e.date DESC, e.control_no DESC"
+        ),
 
-        "subject" => format!("ORDER BY e.subject {direction}, e.date DESC, e.control_no DESC"),
+        "subject" => format!(
+            "ORDER BY e.subject {direction}, e.date DESC, e.control_no DESC"
+        ),
 
-        "routed_to_div" => {
-            format!("ORDER BY e.routed_to_div {direction}, e.date DESC, e.control_no DESC")
-        }
+        "routed_to_div" => format!(
+            "ORDER BY e.routed_to_div {direction}, e.date DESC, e.control_no DESC"
+        ),
 
-        _ => format!("ORDER BY e.date {direction}, e.control_no {direction}"),
+        _ => format!(
+            "ORDER BY e.date {direction}, e.control_no {direction}"
+        ),
     }
 }
 
@@ -1257,53 +1510,55 @@ pub async fn execute_create_aris_record(
     let function_name = function_name.to_string();
 
     let database_result =
-        tokio::task::spawn_blocking(move || -> Result<Entry, SqliteDatabaseError> {
-            with_sql_connection(|connection| {
-                ensure_aris_record_schema(connection)?;
-                /*
-                The sequence increment and the new ARIS row live in the same
-                SQLite transaction.
+        tokio::task::spawn_blocking(
+            move || -> Result<Entry, SqliteDatabaseError> {
+                with_sql_connection(|connection| {
+                    ensure_aris_record_schema(connection)?;
+                    /*
+                    The sequence increment and the new ARIS row live in the same
+                    SQLite transaction.
 
-                SQLite serializes writers. With WAL + busy_timeout this is a
-                very short write section, so concurrent creates cannot receive
-                the same number.
+                    SQLite serializes writers. With WAL + busy_timeout this is a
+                    very short write section, so concurrent creates cannot receive
+                    the same number.
 
-                If the entry insert fails, the transaction rolls back the
-                sequence increment too.
-                */
-                let transaction = connection.unchecked_transaction()?;
+                    If the entry insert fails, the transaction rolls back the
+                    sequence increment too.
+                    */
+                    let transaction =
+                        connection.unchecked_transaction()?;
 
-                transaction.execute(
-                    r#"
+                    transaction.execute(
+                        r#"
                         INSERT OR IGNORE INTO aris_control_sequence (
                             year,
                             last_value
                         ) VALUES (?1, 0)
                         "#,
-                    params![year],
-                )?;
+                        params![year],
+                    )?;
 
-                transaction.execute(
-                    r#"
+                    transaction.execute(
+                        r#"
                         UPDATE aris_control_sequence
                         SET last_value = last_value + 1
                         WHERE year = ?1
                         "#,
-                    params![year],
-                )?;
+                        params![year],
+                    )?;
 
-                let control_no: i64 = transaction.query_row(
-                    r#"
+                    let control_no: i64 = transaction.query_row(
+                        r#"
                         SELECT last_value
                         FROM aris_control_sequence
                         WHERE year = ?1
                         "#,
-                    params![year],
-                    |row| row.get(0),
-                )?;
+                        params![year],
+                        |row| row.get(0),
+                    )?;
 
-                transaction.execute(
-                    r#"
+                    transaction.execute(
+                        r#"
                         INSERT INTO aris_records (
                             uid,
                             control_year,
@@ -1318,53 +1573,64 @@ pub async fn execute_create_aris_record(
                             ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9
                         )
                         "#,
-                    params![
-                        &uid,
-                        year,
-                        control_no,
-                        &request.date,
-                        &request.office,
-                        &request.requestor,
-                        &request.subject,
-                        &request.routed_to_div,
-                        &request.remarks,
-                    ],
-                )?;
+                        params![
+                            &uid,
+                            year,
+                            control_no,
+                            &request.date,
+                            &request.office,
+                            &request.requestor,
+                            &request.subject,
+                            &request.routed_to_div,
+                            &request.remarks,
+                        ],
+                    )?;
 
-                transaction.commit()?;
+                    transaction.commit()?;
 
-                Ok(Entry {
-                    uid,
-                    control_no: control_no.max(0) as u64,
-                    date: request.date,
-                    office: request.office,
-                    requestor: request.requestor,
-                    subject: request.subject,
-                    routed_to_div: request.routed_to_div,
-                    attached_files: Vec::new(),
-                    remarks: request.remarks,
+                    Ok(Entry {
+                        uid,
+                        control_no: control_no.max(0) as u64,
+                        date: request.date,
+                        office: request.office,
+                        requestor: request.requestor,
+                        subject: request.subject,
+                        routed_to_div: request.routed_to_div,
+                        attached_files: Vec::new(),
+                        remarks: request.remarks,
+                    })
                 })
-            })
-        })
+            },
+        )
         .await;
 
     match database_result {
         Ok(Ok(entry)) => Ok(entry),
 
-        Ok(Err(SqliteDatabaseError::Sqlite(rusqlite::Error::SqliteFailure(error, _))))
-            if error.code == rusqlite::ErrorCode::ConstraintViolation =>
+        Ok(Err(SqliteDatabaseError::Sqlite(
+            rusqlite::Error::SqliteFailure(error, _),
+        ))) if error.code
+            == rusqlite::ErrorCode::ConstraintViolation =>
         {
             Err(SqliteError::Conflict)
         }
 
         Ok(Err(error)) => {
-            crate::report_error!(format!("{error}"), &content_type, &function_name);
+            crate::report_error!(
+                format!("{error}"),
+                &content_type,
+                &function_name
+            );
 
             Err(SqliteError::SqliteDatabaseError)
         }
 
         Err(error) => {
-            crate::report_error!(format!("{error}"), &content_type, &function_name);
+            crate::report_error!(
+                format!("{error}"),
+                &content_type,
+                &function_name
+            );
 
             Err(SqliteError::JoinError)
         }
@@ -1377,13 +1643,15 @@ async fn execute_update_aris_record_db(
     attachment_moves: Vec<AttachmentMove>,
 ) -> Result<(), SqliteError> {
     let database_result =
-        tokio::task::spawn_blocking(move || -> Result<(), SqliteDatabaseError> {
-            with_sql_connection(|connection| {
-                ensure_aris_record_schema(connection)?;
-                let transaction = connection.unchecked_transaction()?;
+        tokio::task::spawn_blocking(
+            move || -> Result<(), SqliteDatabaseError> {
+                with_sql_connection(|connection| {
+                    ensure_aris_record_schema(connection)?;
+                    let transaction =
+                        connection.unchecked_transaction()?;
 
-                let affected = transaction.execute(
-                    r#"
+                    let affected = transaction.execute(
+                        r#"
                         UPDATE aris_records
                         SET
                             date = ?2,
@@ -1394,48 +1662,56 @@ async fn execute_update_aris_record_db(
                             remarks = ?7
                         WHERE uid = ?1
                         "#,
-                    params![
-                        &uid,
-                        &request.date,
-                        &request.office,
-                        &request.requestor,
-                        &request.subject,
-                        &request.routed_to_div,
-                        &request.remarks,
-                    ],
-                )?;
+                        params![
+                            &uid,
+                            &request.date,
+                            &request.office,
+                            &request.requestor,
+                            &request.subject,
+                            &request.routed_to_div,
+                            &request.remarks,
+                        ],
+                    )?;
 
-                if affected == 0 {
-                    return Err(rusqlite::Error::QueryReturnedNoRows);
-                }
+                    if affected == 0 {
+                        return Err(
+                            rusqlite::Error::QueryReturnedNoRows
+                        );
+                    }
 
-                for moved in attachment_moves {
-                    transaction.execute(
-                        r#"
+                    for moved in attachment_moves {
+                        transaction.execute(
+                            r#"
                             UPDATE aris_attachments
                             SET object_key = ?2
                             WHERE uid = ?1
                             "#,
-                        params![moved.attachment_uid, moved.new_key,],
-                    )?;
-                }
+                            params![
+                                moved.attachment_uid,
+                                moved.new_key,
+                            ],
+                        )?;
+                    }
 
-                transaction.commit()?;
+                    transaction.commit()?;
 
-                Ok(())
-            })
-        })
+                    Ok(())
+                })
+            },
+        )
         .await;
 
     match database_result {
         Ok(Ok(())) => Ok(()),
 
-        Ok(Err(SqliteDatabaseError::Sqlite(rusqlite::Error::QueryReturnedNoRows))) => {
-            Err(SqliteError::NotFound)
-        }
+        Ok(Err(SqliteDatabaseError::Sqlite(
+            rusqlite::Error::QueryReturnedNoRows,
+        ))) => Err(SqliteError::NotFound),
 
-        Ok(Err(SqliteDatabaseError::Sqlite(rusqlite::Error::SqliteFailure(error, _))))
-            if error.code == rusqlite::ErrorCode::ConstraintViolation =>
+        Ok(Err(SqliteDatabaseError::Sqlite(
+            rusqlite::Error::SqliteFailure(error, _),
+        ))) if error.code
+            == rusqlite::ErrorCode::ConstraintViolation =>
         {
             Err(SqliteError::Conflict)
         }
@@ -1456,35 +1732,40 @@ pub async fn execute_list_aris_records(
         .unwrap_or(DEFAULT_PAGE_LIMIT)
         .clamp(1, MAX_PAGE_LIMIT);
 
-    let offset = page.saturating_sub(1).saturating_mul(limit);
+    let offset = page
+        .saturating_sub(1)
+        .saturating_mul(limit);
 
     let content_type = content_type.to_string();
     let function_name = function_name.to_string();
 
     let database_result =
-        tokio::task::spawn_blocking(move || -> Result<ArisPage, SqliteDatabaseError> {
-            with_sql_connection(|connection| {
-                ensure_aris_record_schema(connection)?;
-                let (where_clause, base_params) = build_aris_where_clause(&query);
+        tokio::task::spawn_blocking(
+            move || -> Result<ArisPage, SqliteDatabaseError> {
+                with_sql_connection(|connection| {
+                    ensure_aris_record_schema(connection)?;
+                    let (where_clause, base_params) =
+                        build_aris_where_clause(&query);
 
-                let count_sql = format!(
-                    r#"
+                    let count_sql = format!(
+                        r#"
                         SELECT COUNT(*)
                         FROM aris_records e
                         {where_clause}
                         "#
-                );
+                    );
 
-                let total: i64 = connection.query_row(
-                    &count_sql,
-                    params_from_iter(base_params.iter()),
-                    |row| row.get(0),
-                )?;
+                    let total: i64 = connection.query_row(
+                        &count_sql,
+                        params_from_iter(base_params.iter()),
+                        |row| row.get(0),
+                    )?;
 
-                let order_clause = build_order_clause(&query);
+                    let order_clause =
+                        build_order_clause(&query);
 
-                let data_sql = format!(
-                    r#"
+                    let data_sql = format!(
+                        r#"
                         SELECT
                             e.uid,
                             e.control_no,
@@ -1499,44 +1780,57 @@ pub async fn execute_list_aris_records(
                         {order_clause}
                         LIMIT ? OFFSET ?
                         "#
-                );
+                    );
 
-                let mut data_params = base_params.clone();
-                data_params.push(SqlValue::Integer(limit as i64));
-                data_params.push(SqlValue::Integer(offset as i64));
+                    let mut data_params = base_params.clone();
+                    data_params.push(
+                        SqlValue::Integer(limit as i64)
+                    );
+                    data_params.push(
+                        SqlValue::Integer(offset as i64)
+                    );
 
-                let mut statement = connection.prepare(&data_sql)?;
+                    let mut statement =
+                        connection.prepare(&data_sql)?;
 
-                let mut entries = statement
-                    .query_map(params_from_iter(data_params.iter()), |row| {
-                        let control_no: i64 = row.get(1)?;
+                    let mut entries = statement
+                        .query_map(
+                            params_from_iter(data_params.iter()),
+                            |row| {
+                                let control_no: i64 =
+                                    row.get(1)?;
 
-                        Ok(Entry {
-                            uid: row.get(0)?,
-                            control_no: control_no.max(0) as u64,
-                            date: row.get(2)?,
-                            office: row.get(3)?,
-                            requestor: row.get(4)?,
-                            subject: row.get(5)?,
-                            routed_to_div: row.get(6)?,
-                            attached_files: Vec::new(),
-                            remarks: row.get(7)?,
-                        })
-                    })?
-                    .collect::<Result<Vec<_>, rusqlite::Error>>()?;
+                                Ok(Entry {
+                                    uid: row.get(0)?,
+                                    control_no:
+                                        control_no.max(0) as u64,
+                                    date: row.get(2)?,
+                                    office: row.get(3)?,
+                                    requestor: row.get(4)?,
+                                    subject: row.get(5)?,
+                                    routed_to_div: row.get(6)?,
+                                    attached_files: Vec::new(),
+                                    remarks: row.get(7)?,
+                                })
+                            },
+                        )?
+                        .collect::<
+                            Result<Vec<_>, rusqlite::Error>
+                        >()?;
 
-                /*
-                Fetch all attachments for the current 256-row page in one
-                SQL query instead of one query per ARIS entry.
-                */
-                if !entries.is_empty() {
-                    let placeholders = std::iter::repeat("?")
-                        .take(entries.len())
-                        .collect::<Vec<_>>()
-                        .join(",");
+                    /*
+                    Fetch all attachments for the current 256-row page in one
+                    SQL query instead of one query per ARIS entry.
+                    */
+                    if !entries.is_empty() {
+                        let placeholders =
+                            std::iter::repeat("?")
+                                .take(entries.len())
+                                .collect::<Vec<_>>()
+                                .join(",");
 
-                    let attachment_sql = format!(
-                        r#"
+                        let attachment_sql = format!(
+                            r#"
                             SELECT
                                 entry_uid,
                                 uid,
@@ -1549,84 +1843,121 @@ pub async fn execute_list_aris_records(
                             WHERE entry_uid IN ({placeholders})
                             ORDER BY entry_uid, rowid ASC
                             "#
-                    );
+                        );
 
-                    let attachment_params = entries
-                        .iter()
-                        .map(|entry| SqlValue::Text(entry.uid.clone()))
-                        .collect::<Vec<_>>();
+                        let attachment_params =
+                            entries
+                                .iter()
+                                .map(|entry| {
+                                    SqlValue::Text(
+                                        entry.uid.clone()
+                                    )
+                                })
+                                .collect::<Vec<_>>();
 
-                    let mut attachment_statement = connection.prepare(&attachment_sql)?;
+                        let mut attachment_statement =
+                            connection.prepare(
+                                &attachment_sql
+                            )?;
 
-                    let attachment_rows = attachment_statement.query_map(
-                        params_from_iter(attachment_params.iter()),
-                        |row| {
-                            let size: i64 = row.get(4)?;
+                        let attachment_rows =
+                            attachment_statement.query_map(
+                                params_from_iter(
+                                    attachment_params.iter()
+                                ),
+                                |row| {
+                                    let size: i64 =
+                                        row.get(4)?;
 
-                            Ok((
-                                row.get::<_, String>(0)?,
-                                FileAttachment {
-                                    uid: row.get(1)?,
-                                    file_name: row.get(2)?,
-                                    mime_type: row.get(3)?,
-                                    size: size.max(0) as u64,
-                                    object_key: row.get(5)?,
-                                    version_id: row.get(6)?,
+                                    Ok((
+                                        row.get::<_, String>(0)?,
+                                        FileAttachment {
+                                            uid: row.get(1)?,
+                                            file_name:
+                                                row.get(2)?,
+                                            mime_type:
+                                                row.get(3)?,
+                                            size:
+                                                size.max(0)
+                                                    as u64,
+                                            object_key:
+                                                row.get(5)?,
+                                            version_id:
+                                                row.get(6)?,
+                                        },
+                                    ))
                                 },
-                            ))
-                        },
-                    )?;
+                            )?;
 
-                    let mut attachment_map: HashMap<String, Vec<FileAttachment>> = HashMap::new();
+                        let mut attachment_map:
+                            HashMap<
+                                String,
+                                Vec<FileAttachment>,
+                            > = HashMap::new();
 
-                    for row in attachment_rows {
-                        let (entry_uid, attachment) = row?;
+                        for row in attachment_rows {
+                            let (
+                                entry_uid,
+                                attachment,
+                            ) = row?;
 
-                        attachment_map
-                            .entry(entry_uid)
-                            .or_default()
-                            .push(attachment);
+                            attachment_map
+                                .entry(entry_uid)
+                                .or_default()
+                                .push(attachment);
+                        }
+
+                        for entry in &mut entries {
+                            entry.attached_files =
+                                attachment_map
+                                    .remove(&entry.uid)
+                                    .unwrap_or_default();
+                        }
                     }
 
-                    for entry in &mut entries {
-                        entry.attached_files =
-                            attachment_map.remove(&entry.uid).unwrap_or_default();
-                    }
-                }
+                    let total = total.max(0) as usize;
 
-                let total = total.max(0) as usize;
+                    let total_pages = if total == 0 {
+                        1
+                    } else {
+                        (total + limit - 1) / limit
+                    };
 
-                let total_pages = if total == 0 {
-                    1
-                } else {
-                    (total + limit - 1) / limit
-                };
+                    let has_next =
+                        page < total_pages;
 
-                let has_next = page < total_pages;
-
-                Ok(ArisPage {
-                    data: entries,
-                    page,
-                    limit,
-                    has_next,
-                    total,
-                    total_pages,
+                    Ok(ArisPage {
+                        data: entries,
+                        page,
+                        limit,
+                        has_next,
+                        total,
+                        total_pages,
+                    })
                 })
-            })
-        })
+            },
+        )
         .await;
 
     match database_result {
         Ok(Ok(result)) => Ok(result),
 
         Ok(Err(error)) => {
-            crate::report_error!(format!("{error}"), &content_type, &function_name);
+            crate::report_error!(
+                format!("{error}"),
+                &content_type,
+                &function_name
+            );
 
             Err(SqliteError::SqliteDatabaseError)
         }
 
         Err(error) => {
-            crate::report_error!(format!("{error}"), &content_type, &function_name);
+            crate::report_error!(
+                format!("{error}"),
+                &content_type,
+                &function_name
+            );
 
             Err(SqliteError::JoinError)
         }
@@ -1637,33 +1968,36 @@ pub async fn execute_list_aris_records(
 /* SQLite: entry/attachment lookups                                           */
 /* -------------------------------------------------------------------------- */
 
-async fn execute_get_stored_entry(entry_uid: String) -> Result<StoredEntry, SqliteError> {
+async fn execute_get_stored_entry(
+    entry_uid: String,
+) -> Result<StoredEntry, SqliteError> {
     let database_result =
-        tokio::task::spawn_blocking(move || -> Result<StoredEntry, SqliteDatabaseError> {
-            with_sql_connection(|connection| {
-                ensure_aris_record_schema(connection)?;
-                let (
-                    uid,
-                    control_year,
-                    control_no,
-                    date,
-                    office,
-                    requestor,
-                    subject,
-                    routed_to_div,
-                    remarks,
-                ): (
-                    String,
-                    i32,
-                    i64,
-                    String,
-                    String,
-                    String,
-                    String,
-                    String,
-                    String,
-                ) = connection.query_row(
-                    r#"
+        tokio::task::spawn_blocking(
+            move || -> Result<StoredEntry, SqliteDatabaseError> {
+                with_sql_connection(|connection| {
+                    ensure_aris_record_schema(connection)?;
+                    let (
+                        uid,
+                        control_year,
+                        control_no,
+                        date,
+                        office,
+                        requestor,
+                        subject,
+                        routed_to_div,
+                        remarks,
+                    ): (
+                        String,
+                        i32,
+                        i64,
+                        String,
+                        String,
+                        String,
+                        String,
+                        String,
+                        String,
+                    ) = connection.query_row(
+                        r#"
                         SELECT
                             uid,
                             control_year,
@@ -1677,24 +2011,25 @@ async fn execute_get_stored_entry(entry_uid: String) -> Result<StoredEntry, Sqli
                         FROM aris_records
                         WHERE uid = ?1
                         "#,
-                    params![entry_uid],
-                    |row| {
-                        Ok((
-                            row.get(0)?,
-                            row.get(1)?,
-                            row.get(2)?,
-                            row.get(3)?,
-                            row.get(4)?,
-                            row.get(5)?,
-                            row.get(6)?,
-                            row.get(7)?,
-                            row.get(8)?,
-                        ))
-                    },
-                )?;
+                        params![entry_uid],
+                        |row| {
+                            Ok((
+                                row.get(0)?,
+                                row.get(1)?,
+                                row.get(2)?,
+                                row.get(3)?,
+                                row.get(4)?,
+                                row.get(5)?,
+                                row.get(6)?,
+                                row.get(7)?,
+                                row.get(8)?,
+                            ))
+                        },
+                    )?;
 
-                let mut statement = connection.prepare(
-                    r#"
+                    let mut statement =
+                        connection.prepare(
+                            r#"
                             SELECT
                                 uid,
                                 file_name,
@@ -1706,60 +2041,80 @@ async fn execute_get_stored_entry(entry_uid: String) -> Result<StoredEntry, Sqli
                             WHERE entry_uid = ?1
                             ORDER BY rowid ASC
                             "#,
-                )?;
+                        )?;
 
-                let attached_files = statement
-                    .query_map(params![uid], |row| {
-                        let size: i64 = row.get(3)?;
+                    let attached_files = statement
+                        .query_map(
+                            params![uid],
+                            |row| {
+                                let size: i64 =
+                                    row.get(3)?;
 
-                        Ok(FileAttachment {
-                            uid: row.get(0)?,
-                            file_name: row.get(1)?,
-                            mime_type: row.get(2)?,
-                            size: size.max(0) as u64,
-                            object_key: row.get(4)?,
-                            version_id: row.get(5)?,
-                        })
-                    })?
-                    .collect::<Result<Vec<_>, rusqlite::Error>>()?;
+                                Ok(FileAttachment {
+                                    uid: row.get(0)?,
+                                    file_name:
+                                        row.get(1)?,
+                                    mime_type:
+                                        row.get(2)?,
+                                    size:
+                                        size.max(0) as u64,
+                                    object_key:
+                                        row.get(4)?,
+                                    version_id:
+                                        row.get(5)?,
+                                })
+                            },
+                        )?
+                        .collect::<
+                            Result<Vec<_>, rusqlite::Error>
+                        >()?;
 
-                Ok(StoredEntry {
-                    control_year,
-                    entry: Entry {
-                        uid,
-                        control_no: control_no.max(0) as u64,
-                        date,
-                        office,
-                        requestor,
-                        subject,
-                        routed_to_div,
-                        attached_files,
-                        remarks,
-                    },
+                    Ok(StoredEntry {
+                        control_year,
+                        entry: Entry {
+                            uid,
+                            control_no:
+                                control_no.max(0) as u64,
+                            date,
+                            office,
+                            requestor,
+                            subject,
+                            routed_to_div,
+                            attached_files,
+                            remarks,
+                        },
+                    })
                 })
-            })
-        })
+            },
+        )
         .await;
 
     match database_result {
         Ok(Ok(entry)) => Ok(entry),
 
-        Ok(Err(SqliteDatabaseError::Sqlite(rusqlite::Error::QueryReturnedNoRows))) => {
-            Err(SqliteError::NotFound)
-        }
+        Ok(Err(SqliteDatabaseError::Sqlite(
+            rusqlite::Error::QueryReturnedNoRows,
+        ))) => Err(SqliteError::NotFound),
 
         Ok(Err(_)) => Err(SqliteError::SqliteDatabaseError),
         Err(_) => Err(SqliteError::JoinError),
     }
 }
 
-async fn execute_get_storage_identity(entry_uid: String) -> Result<StorageIdentity, SqliteError> {
+async fn execute_get_storage_identity(
+    entry_uid: String,
+) -> Result<StorageIdentity, SqliteError> {
     let database_result =
-        tokio::task::spawn_blocking(move || -> Result<StorageIdentity, SqliteDatabaseError> {
-            with_sql_connection(|connection| {
-                ensure_aris_record_schema(connection)?;
-                connection.query_row(
-                    r#"
+        tokio::task::spawn_blocking(
+            move || -> Result<
+                StorageIdentity,
+                SqliteDatabaseError,
+            > {
+                with_sql_connection(|connection| {
+                    ensure_aris_record_schema(connection)?;
+                    connection
+                        .query_row(
+                            r#"
                             SELECT
                                 control_year,
                                 control_no,
@@ -1768,29 +2123,33 @@ async fn execute_get_storage_identity(entry_uid: String) -> Result<StorageIdenti
                             FROM aris_records
                             WHERE uid = ?1
                             "#,
-                    params![entry_uid],
-                    |row| {
-                        let control_no: i64 = row.get(1)?;
+                            params![entry_uid],
+                            |row| {
+                                let control_no: i64 =
+                                    row.get(1)?;
 
-                        let _control_year: i32 = row.get(0)?;
+                                let _control_year: i32 = row.get(0)?;
 
-                        Ok(StorageIdentity {
-                            control_no: control_no.max(0) as u64,
-                            date: row.get(2)?,
-                            office: row.get(3)?,
-                        })
-                    },
-                )
-            })
-        })
+                                Ok(StorageIdentity {
+                                    control_no:
+                                        control_no.max(0)
+                                            as u64,
+                                    date: row.get(2)?,
+                                    office: row.get(3)?,
+                                })
+                            },
+                        )
+                })
+            },
+        )
         .await;
 
     match database_result {
         Ok(Ok(identity)) => Ok(identity),
 
-        Ok(Err(SqliteDatabaseError::Sqlite(rusqlite::Error::QueryReturnedNoRows))) => {
-            Err(SqliteError::NotFound)
-        }
+        Ok(Err(SqliteDatabaseError::Sqlite(
+            rusqlite::Error::QueryReturnedNoRows,
+        ))) => Err(SqliteError::NotFound),
 
         Ok(Err(_)) => Err(SqliteError::SqliteDatabaseError),
         Err(_) => Err(SqliteError::JoinError),
@@ -1802,27 +2161,32 @@ async fn execute_attachment_name_exists(
     file_name: String,
 ) -> Result<bool, SqliteError> {
     let database_result =
-        tokio::task::spawn_blocking(move || -> Result<bool, SqliteDatabaseError> {
-            with_sql_connection(|connection| {
-                ensure_aris_record_schema(connection)?;
-                let exists = connection
-                    .query_row(
-                        r#"
+        tokio::task::spawn_blocking(
+            move || -> Result<bool, SqliteDatabaseError> {
+                with_sql_connection(|connection| {
+                    ensure_aris_record_schema(connection)?;
+                    let exists = connection
+                        .query_row(
+                            r#"
                             SELECT 1
                             FROM aris_attachments
                             WHERE entry_uid = ?1
                               AND file_name = ?2 COLLATE NOCASE
                             LIMIT 1
                             "#,
-                        params![entry_uid, file_name,],
-                        |_row| Ok(true),
-                    )
-                    .optional()?
-                    .unwrap_or(false);
+                            params![
+                                entry_uid,
+                                file_name,
+                            ],
+                            |_row| Ok(true),
+                        )
+                        .optional()?
+                        .unwrap_or(false);
 
-                Ok(exists)
-            })
-        })
+                    Ok(exists)
+                })
+            },
+        )
         .await;
 
     match database_result {
@@ -1837,11 +2201,12 @@ async fn execute_insert_attachment(
     attachment: FileAttachment,
 ) -> Result<(), SqliteError> {
     let database_result =
-        tokio::task::spawn_blocking(move || -> Result<(), SqliteDatabaseError> {
-            with_sql_connection(|connection| {
-                ensure_aris_record_schema(connection)?;
-                connection.execute(
-                    r#"
+        tokio::task::spawn_blocking(
+            move || -> Result<(), SqliteDatabaseError> {
+                with_sql_connection(|connection| {
+                    ensure_aris_record_schema(connection)?;
+                    connection.execute(
+                        r#"
                         INSERT INTO aris_attachments (
                             uid,
                             entry_uid,
@@ -1854,27 +2219,30 @@ async fn execute_insert_attachment(
                             ?1, ?2, ?3, ?4, ?5, ?6, ?7
                         )
                         "#,
-                    params![
-                        attachment.uid,
-                        entry_uid,
-                        attachment.file_name,
-                        attachment.mime_type,
-                        attachment.size as i64,
-                        attachment.object_key,
-                        attachment.version_id,
-                    ],
-                )?;
+                        params![
+                            attachment.uid,
+                            entry_uid,
+                            attachment.file_name,
+                            attachment.mime_type,
+                            attachment.size as i64,
+                            attachment.object_key,
+                            attachment.version_id,
+                        ],
+                    )?;
 
-                Ok(())
-            })
-        })
+                    Ok(())
+                })
+            },
+        )
         .await;
 
     match database_result {
         Ok(Ok(())) => Ok(()),
 
-        Ok(Err(SqliteDatabaseError::Sqlite(rusqlite::Error::SqliteFailure(error, _))))
-            if error.code == rusqlite::ErrorCode::ConstraintViolation =>
+        Ok(Err(SqliteDatabaseError::Sqlite(
+            rusqlite::Error::SqliteFailure(error, _),
+        ))) if error.code
+            == rusqlite::ErrorCode::ConstraintViolation =>
         {
             Err(SqliteError::Conflict)
         }
@@ -1889,11 +2257,16 @@ async fn execute_get_attachment(
     attachment_uid: String,
 ) -> Result<FileAttachment, SqliteError> {
     let database_result =
-        tokio::task::spawn_blocking(move || -> Result<FileAttachment, SqliteDatabaseError> {
-            with_sql_connection(|connection| {
-                ensure_aris_record_schema(connection)?;
-                let attachment = connection.query_row(
-                    r#"
+        tokio::task::spawn_blocking(
+            move || -> Result<
+                FileAttachment,
+                SqliteDatabaseError,
+            > {
+                with_sql_connection(|connection| {
+                    ensure_aris_record_schema(connection)?;
+                    let attachment =
+                        connection.query_row(
+                            r#"
                             SELECT
                                 uid,
                                 file_name,
@@ -1905,32 +2278,42 @@ async fn execute_get_attachment(
                             WHERE uid = ?1
                               AND entry_uid = ?2
                             "#,
-                    params![attachment_uid, entry_uid,],
-                    |row| {
-                        let size: i64 = row.get(3)?;
+                            params![
+                                attachment_uid,
+                                entry_uid,
+                            ],
+                            |row| {
+                                let size: i64 =
+                                    row.get(3)?;
 
-                        Ok(FileAttachment {
-                            uid: row.get(0)?,
-                            file_name: row.get(1)?,
-                            mime_type: row.get(2)?,
-                            size: size.max(0) as u64,
-                            object_key: row.get(4)?,
-                            version_id: row.get(5)?,
-                        })
-                    },
-                )?;
+                                Ok(FileAttachment {
+                                    uid: row.get(0)?,
+                                    file_name:
+                                        row.get(1)?,
+                                    mime_type:
+                                        row.get(2)?,
+                                    size:
+                                        size.max(0) as u64,
+                                    object_key:
+                                        row.get(4)?,
+                                    version_id:
+                                        row.get(5)?,
+                                })
+                            },
+                        )?;
 
-                Ok(attachment)
-            })
-        })
+                    Ok(attachment)
+                })
+            },
+        )
         .await;
 
     match database_result {
         Ok(Ok(attachment)) => Ok(attachment),
 
-        Ok(Err(SqliteDatabaseError::Sqlite(rusqlite::Error::QueryReturnedNoRows))) => {
-            Err(SqliteError::NotFound)
-        }
+        Ok(Err(SqliteDatabaseError::Sqlite(
+            rusqlite::Error::QueryReturnedNoRows,
+        ))) => Err(SqliteError::NotFound),
 
         Ok(Err(_)) => Err(SqliteError::SqliteDatabaseError),
         Err(_) => Err(SqliteError::JoinError),
@@ -1940,12 +2323,17 @@ async fn execute_get_attachment(
 async fn execute_list_attachments_for_entry(
     entry_uid: String,
 ) -> Result<Vec<FileAttachment>, SqliteError> {
-    let database_result = tokio::task::spawn_blocking(
-        move || -> Result<Vec<FileAttachment>, SqliteDatabaseError> {
-            with_sql_connection(|connection| {
-                ensure_aris_record_schema(connection)?;
-                let mut statement = connection.prepare(
-                    r#"
+    let database_result =
+        tokio::task::spawn_blocking(
+            move || -> Result<
+                Vec<FileAttachment>,
+                SqliteDatabaseError,
+            > {
+                with_sql_connection(|connection| {
+                    ensure_aris_record_schema(connection)?;
+                    let mut statement =
+                        connection.prepare(
+                            r#"
                             SELECT
                                 uid,
                                 file_name,
@@ -1957,28 +2345,39 @@ async fn execute_list_attachments_for_entry(
                             WHERE entry_uid = ?1
                             ORDER BY rowid ASC
                             "#,
-                )?;
+                        )?;
 
-                let attachments = statement
-                    .query_map(params![entry_uid], |row| {
-                        let size: i64 = row.get(3)?;
+                    let attachments = statement
+                        .query_map(
+                            params![entry_uid],
+                            |row| {
+                                let size: i64 =
+                                    row.get(3)?;
 
-                        Ok(FileAttachment {
-                            uid: row.get(0)?,
-                            file_name: row.get(1)?,
-                            mime_type: row.get(2)?,
-                            size: size.max(0) as u64,
-                            object_key: row.get(4)?,
-                            version_id: row.get(5)?,
-                        })
-                    })?
-                    .collect::<Result<Vec<_>, rusqlite::Error>>()?;
+                                Ok(FileAttachment {
+                                    uid: row.get(0)?,
+                                    file_name:
+                                        row.get(1)?,
+                                    mime_type:
+                                        row.get(2)?,
+                                    size:
+                                        size.max(0) as u64,
+                                    object_key:
+                                        row.get(4)?,
+                                    version_id:
+                                        row.get(5)?,
+                                })
+                            },
+                        )?
+                        .collect::<
+                            Result<Vec<_>, rusqlite::Error>
+                        >()?;
 
-                Ok(attachments)
-            })
-        },
-    )
-    .await;
+                    Ok(attachments)
+                })
+            },
+        )
+        .await;
 
     match database_result {
         Ok(Ok(attachments)) => Ok(attachments),
@@ -1992,79 +2391,93 @@ async fn execute_delete_attachment_metadata(
     attachment_uid: String,
 ) -> Result<(), SqliteError> {
     let database_result =
-        tokio::task::spawn_blocking(move || -> Result<(), SqliteDatabaseError> {
-            with_sql_connection(|connection| {
-                ensure_aris_record_schema(connection)?;
-                let affected = connection.execute(
-                    r#"
+        tokio::task::spawn_blocking(
+            move || -> Result<(), SqliteDatabaseError> {
+                with_sql_connection(|connection| {
+                    ensure_aris_record_schema(connection)?;
+                    let affected = connection.execute(
+                        r#"
                         DELETE FROM aris_attachments
                         WHERE uid = ?1
                           AND entry_uid = ?2
                         "#,
-                    params![attachment_uid, entry_uid,],
-                )?;
+                        params![
+                            attachment_uid,
+                            entry_uid,
+                        ],
+                    )?;
 
-                if affected == 0 {
-                    return Err(rusqlite::Error::QueryReturnedNoRows);
-                }
+                    if affected == 0 {
+                        return Err(
+                            rusqlite::Error::QueryReturnedNoRows
+                        );
+                    }
 
-                Ok(())
-            })
-        })
+                    Ok(())
+                })
+            },
+        )
         .await;
 
     match database_result {
         Ok(Ok(())) => Ok(()),
 
-        Ok(Err(SqliteDatabaseError::Sqlite(rusqlite::Error::QueryReturnedNoRows))) => {
-            Err(SqliteError::NotFound)
-        }
+        Ok(Err(SqliteDatabaseError::Sqlite(
+            rusqlite::Error::QueryReturnedNoRows,
+        ))) => Err(SqliteError::NotFound),
 
         Ok(Err(_)) => Err(SqliteError::SqliteDatabaseError),
         Err(_) => Err(SqliteError::JoinError),
     }
 }
 
-async fn execute_delete_entry_metadata(entry_uid: String) -> Result<(), SqliteError> {
+async fn execute_delete_entry_metadata(
+    entry_uid: String,
+) -> Result<(), SqliteError> {
     let database_result =
-        tokio::task::spawn_blocking(move || -> Result<(), SqliteDatabaseError> {
-            with_sql_connection(|connection| {
-                ensure_aris_record_schema(connection)?;
-                let transaction = connection.unchecked_transaction()?;
+        tokio::task::spawn_blocking(
+            move || -> Result<(), SqliteDatabaseError> {
+                with_sql_connection(|connection| {
+                    ensure_aris_record_schema(connection)?;
+                    let transaction =
+                        connection.unchecked_transaction()?;
 
-                transaction.execute(
-                    r#"
+                    transaction.execute(
+                        r#"
                         DELETE FROM aris_attachments
                         WHERE entry_uid = ?1
                         "#,
-                    params![&entry_uid],
-                )?;
+                        params![&entry_uid],
+                    )?;
 
-                let affected = transaction.execute(
-                    r#"
+                    let affected = transaction.execute(
+                        r#"
                         DELETE FROM aris_records
                         WHERE uid = ?1
                         "#,
-                    params![&entry_uid],
-                )?;
+                        params![&entry_uid],
+                    )?;
 
-                if affected == 0 {
-                    return Err(rusqlite::Error::QueryReturnedNoRows);
-                }
+                    if affected == 0 {
+                        return Err(
+                            rusqlite::Error::QueryReturnedNoRows
+                        );
+                    }
 
-                transaction.commit()?;
+                    transaction.commit()?;
 
-                Ok(())
-            })
-        })
+                    Ok(())
+                })
+            },
+        )
         .await;
 
     match database_result {
         Ok(Ok(())) => Ok(()),
 
-        Ok(Err(SqliteDatabaseError::Sqlite(rusqlite::Error::QueryReturnedNoRows))) => {
-            Err(SqliteError::NotFound)
-        }
+        Ok(Err(SqliteDatabaseError::Sqlite(
+            rusqlite::Error::QueryReturnedNoRows,
+        ))) => Err(SqliteError::NotFound),
 
         Ok(Err(_)) => Err(SqliteError::SqliteDatabaseError),
         Err(_) => Err(SqliteError::JoinError),
@@ -2096,24 +2509,44 @@ pub async fn execute_upload_aris_attachment(
         )));
     }
 
-    if execute_attachment_name_exists(entry_uid.clone(), file_name.clone()).await? {
+    if execute_attachment_name_exists(
+        entry_uid.clone(),
+        file_name.clone(),
+    )
+    .await?
+    {
         return Err(ArisOperationError::InvalidRequest(format!(
             "The entry already has an attachment named '{file_name}'. Remove the old attachment first if you want to replace it."
         )));
     }
 
-    let identity = execute_get_storage_identity(entry_uid.clone()).await?;
+    let identity =
+        execute_get_storage_identity(entry_uid.clone())
+            .await?;
 
-    let attachment_uid = Uuid::new_v4().to_string();
+    let attachment_uid =
+        Uuid::new_v4().to_string();
 
-    let object_key = attachment_object_key(&identity, &file_name);
+    let object_key =
+        attachment_object_key(&identity, &file_name);
 
     let size = bytes.len() as u64;
     let token = n1_access_token().await?;
 
-    n1_prepare_attachment_directory(&identity.office, &identity.date, &token).await?;
+    n1_prepare_attachment_directory(
+        &identity.office,
+        &identity.date,
+        &token,
+    )
+    .await?;
 
-    n1_upload_one_shot(&object_key, &mime_type, bytes, &token).await?;
+    n1_upload_one_shot(
+        &object_key,
+        &mime_type,
+        bytes,
+        &token,
+    )
+    .await?;
 
     let attachment = FileAttachment {
         uid: attachment_uid,
@@ -2124,7 +2557,13 @@ pub async fn execute_upload_aris_attachment(
         version_id: None,
     };
 
-    if let Err(error) = execute_insert_attachment(entry_uid, attachment.clone()).await {
+    if let Err(error) =
+        execute_insert_attachment(
+            entry_uid,
+            attachment.clone(),
+        )
+        .await
+    {
         /*
         SQLite failed after N1 committed the object. Move the object into N1
         trash so ARIS does not intentionally leave a live unreferenced ARIS file.
@@ -2141,12 +2580,27 @@ pub async fn execute_delete_aris_attachment(
     entry_uid: String,
     attachment_uid: String,
 ) -> Result<(), ArisOperationError> {
-    let attachment = execute_get_attachment(entry_uid.clone(), attachment_uid.clone()).await?;
+    let attachment =
+        execute_get_attachment(
+            entry_uid.clone(),
+            attachment_uid.clone(),
+        )
+        .await?;
 
-    n1_soft_delete(&attachment.object_key).await?;
+    n1_soft_delete(
+        &attachment.object_key
+    )
+    .await?;
 
-    if let Err(error) = execute_delete_attachment_metadata(entry_uid, attachment_uid).await {
-        let _ = n1_recover(&attachment.object_key).await;
+    if let Err(error) =
+        execute_delete_attachment_metadata(
+            entry_uid,
+            attachment_uid,
+        )
+        .await
+    {
+        let _ =
+            n1_recover(&attachment.object_key).await;
 
         return Err(ArisOperationError::Sqlite(error));
     }
@@ -2158,21 +2612,38 @@ pub async fn execute_delete_aris_record_with_attachments(
     entry_uid: String,
 ) -> Result<(), ArisOperationError> {
     // Ensure the entry exists before touching N1.
-    execute_get_storage_identity(entry_uid.clone()).await?;
+    execute_get_storage_identity(
+        entry_uid.clone()
+    )
+    .await?;
 
-    let attachments = execute_list_attachments_for_entry(entry_uid.clone()).await?;
+    let attachments =
+        execute_list_attachments_for_entry(
+            entry_uid.clone()
+        )
+        .await?;
 
-    let mut deleted_object_keys: Vec<String> = Vec::new();
+    let mut deleted_object_keys: Vec<String> =
+        Vec::new();
 
     for attachment in &attachments {
-        match n1_soft_delete(&attachment.object_key).await {
+        match n1_soft_delete(
+            &attachment.object_key
+        )
+        .await
+        {
             Ok(()) => {
-                deleted_object_keys.push(attachment.object_key.clone());
+                deleted_object_keys.push(
+                    attachment.object_key.clone()
+                );
             }
 
             Err(error) => {
-                for object_key in deleted_object_keys.iter().rev() {
-                    let _ = n1_recover(object_key).await;
+                for object_key in
+                    deleted_object_keys.iter().rev()
+                {
+                    let _ =
+                        n1_recover(object_key).await;
                 }
 
                 return Err(error);
@@ -2180,12 +2651,19 @@ pub async fn execute_delete_aris_record_with_attachments(
         }
     }
 
-    if let Err(error) = execute_delete_entry_metadata(entry_uid).await {
-        for object_key in deleted_object_keys.iter().rev() {
-            let _ = n1_recover(object_key).await;
+    if let Err(error) =
+        execute_delete_entry_metadata(entry_uid).await
+    {
+        for object_key in
+            deleted_object_keys.iter().rev()
+        {
+            let _ =
+                n1_recover(object_key).await;
         }
 
-        return Err(ArisOperationError::Sqlite(error));
+        return Err(
+            ArisOperationError::Sqlite(error)
+        );
     }
 
     // The yearly sequence is intentionally NOT decremented.
@@ -2209,9 +2687,14 @@ async fn execute_update_entry_with_n1_moves(
         &request.routed_to_div,
     )?;
 
-    let new_year = parse_entry_year(&request.date)?;
+    let new_year =
+        parse_entry_year(&request.date)?;
 
-    let existing = execute_get_stored_entry(entry_uid.clone()).await?;
+    let existing =
+        execute_get_stored_entry(
+            entry_uid.clone()
+        )
+        .await?;
 
     /*
     The control number belongs to the year in which it was assigned.
@@ -2221,42 +2704,72 @@ async fn execute_update_entry_with_n1_moves(
     operation instead of silently renumbering an existing ARIS record.
     */
     if new_year != existing.control_year {
-        return Err(ArisOperationError::InvalidRequest(format!(
-            "The entry year cannot be changed from {} to {} after control number {} has been assigned. Create a new ARIS entry instead.",
-            existing.control_year, new_year, existing.entry.control_no
-        )));
+        return Err(ArisOperationError::InvalidRequest(
+            format!(
+                "The entry year cannot be changed from {} to {} after control number {} has been assigned. Create a new ARIS entry instead.",
+                existing.control_year,
+                new_year,
+                existing.entry.control_no
+            ),
+        ));
     }
 
     let storage_changed =
-        request.date != existing.entry.date || request.office != existing.entry.office;
+        request.date != existing.entry.date
+            || request.office
+                != existing.entry.office;
 
-    let mut moves: Vec<AttachmentMove> = Vec::new();
+    let mut moves: Vec<AttachmentMove> =
+        Vec::new();
 
-    if storage_changed && !existing.entry.attached_files.is_empty() {
+    if storage_changed
+        && !existing.entry.attached_files.is_empty()
+    {
         let token = n1_access_token().await?;
 
-        n1_prepare_attachment_directory(&request.office, &request.date, &token).await?;
+        n1_prepare_attachment_directory(
+            &request.office,
+            &request.date,
+            &token,
+        )
+        .await?;
 
         let new_identity = StorageIdentity {
-            control_no: existing.entry.control_no,
-            date: request.date.clone(),
-            office: request.office.clone(),
+            control_no:
+                existing.entry.control_no,
+            date:
+                request.date.clone(),
+            office:
+                request.office.clone(),
         };
 
-        let mut unique_destinations: HashSet<String> = HashSet::new();
+        let mut unique_destinations:
+            HashSet<String> = HashSet::new();
 
-        for attachment in &existing.entry.attached_files {
-            let new_key = attachment_object_key(&new_identity, &attachment.file_name);
+        for attachment in
+            &existing.entry.attached_files
+        {
+            let new_key = attachment_object_key(
+                &new_identity,
+                &attachment.file_name,
+            );
 
-            if !unique_destinations.insert(new_key.clone()) {
-                return Err(ArisOperationError::InvalidRequest(
-                    "Two attachment names resolve to the same N1 destination path.".to_string(),
-                ));
+            if !unique_destinations.insert(
+                new_key.clone()
+            ) {
+                return Err(
+                    ArisOperationError::InvalidRequest(
+                        "Two attachment names resolve to the same N1 destination path."
+                            .to_string(),
+                    ),
+                );
             }
 
             moves.push(AttachmentMove {
-                attachment_uid: attachment.uid.clone(),
-                old_key: attachment.object_key.clone(),
+                attachment_uid:
+                    attachment.uid.clone(),
+                old_key:
+                    attachment.object_key.clone(),
                 new_key,
             });
         }
@@ -2269,10 +2782,29 @@ async fn execute_update_entry_with_n1_moves(
                 continue;
             }
 
-            if let Err(error) = n1_rename(&moved.old_key, &moved.new_key, &token).await {
-                for rollback in moves[..moved_count].iter().rev() {
-                    if rollback.old_key != rollback.new_key {
-                        let _ = n1_rename(&rollback.new_key, &rollback.old_key, &token).await;
+            if let Err(error) =
+                n1_rename(
+                    &moved.old_key,
+                    &moved.new_key,
+                    &token,
+                )
+                .await
+            {
+                for rollback in
+                    moves[..moved_count]
+                        .iter()
+                        .rev()
+                {
+                    if rollback.old_key
+                        != rollback.new_key
+                    {
+                        let _ =
+                            n1_rename(
+                                &rollback.new_key,
+                                &rollback.old_key,
+                                &token,
+                            )
+                            .await;
                     }
                 }
 
@@ -2284,19 +2816,34 @@ async fn execute_update_entry_with_n1_moves(
     }
 
     if let Err(error) =
-        execute_update_aris_record_db(entry_uid.clone(), request.clone(), moves.clone()).await
+        execute_update_aris_record_db(
+            entry_uid.clone(),
+            request.clone(),
+            moves.clone(),
+        )
+        .await
     {
         if !moves.is_empty() {
-            if let Ok(token) = n1_access_token().await {
+            if let Ok(token) =
+                n1_access_token().await
+            {
                 for moved in moves.iter().rev() {
                     if moved.old_key != moved.new_key {
-                        let _ = n1_rename(&moved.new_key, &moved.old_key, &token).await;
+                        let _ =
+                            n1_rename(
+                                &moved.new_key,
+                                &moved.old_key,
+                                &token,
+                            )
+                            .await;
                     }
                 }
             }
         }
 
-        return Err(ArisOperationError::Sqlite(error));
+        return Err(
+            ArisOperationError::Sqlite(error)
+        );
     }
 
     let mut result = existing.entry;
@@ -2305,18 +2852,29 @@ async fn execute_update_entry_with_n1_moves(
     result.office = request.office;
     result.requestor = request.requestor;
     result.subject = request.subject;
-    result.routed_to_div = request.routed_to_div;
+    result.routed_to_div =
+        request.routed_to_div;
     result.remarks = request.remarks;
 
     if !moves.is_empty() {
         let move_map = moves
             .into_iter()
-            .map(|moved| (moved.attachment_uid, moved.new_key))
+            .map(|moved| {
+                (
+                    moved.attachment_uid,
+                    moved.new_key,
+                )
+            })
             .collect::<HashMap<_, _>>();
 
-        for attachment in &mut result.attached_files {
-            if let Some(new_key) = move_map.get(&attachment.uid) {
-                attachment.object_key = new_key.clone();
+        for attachment in
+            &mut result.attached_files
+        {
+            if let Some(new_key) =
+                move_map.get(&attachment.uid)
+            {
+                attachment.object_key =
+                    new_key.clone();
             }
         }
     }
@@ -2336,27 +2894,47 @@ pub async fn create_aris_record(
         return aris_access_denied();
     }
 
-    if let Err(error) = validate_required_fields(
-        &request.date,
-        &request.office,
-        &request.requestor,
-        &request.subject,
-        &request.routed_to_div,
-    ) {
+    if let Err(error) =
+        validate_required_fields(
+            &request.date,
+            &request.office,
+            &request.requestor,
+            &request.subject,
+            &request.routed_to_div,
+        )
+    {
         return map_aris_error(error);
     }
 
-    let year = match parse_entry_year(&request.date) {
+    let year = match parse_entry_year(
+        &request.date
+    ) {
         Ok(year) => year,
         Err(error) => {
             return map_aris_error(error);
         }
     };
 
-    match execute_create_aris_record(request, year, "api", "create_aris_record()").await {
-        Ok(entry) => api_json(StatusCode::CREATED, json!(entry)),
+    match execute_create_aris_record(
+        request,
+        year,
+        "api",
+        "create_aris_record()",
+    )
+    .await
+    {
+        Ok(entry) => {
+            api_json(
+                StatusCode::CREATED,
+                json!(entry),
+            )
+        }
 
-        Err(error) => map_aris_error(ArisOperationError::Sqlite(error)),
+        Err(error) => {
+            map_aris_error(
+                ArisOperationError::Sqlite(error)
+            )
+        }
     }
 }
 
@@ -2369,32 +2947,69 @@ pub async fn update_aris_record(
         return aris_access_denied();
     }
 
-    match execute_update_entry_with_n1_moves(uid, request).await {
-        Ok(entry) => api_json(StatusCode::OK, json!(entry)),
+    match execute_update_entry_with_n1_moves(
+        uid,
+        request,
+    )
+    .await
+    {
+        Ok(entry) => {
+            api_json(
+                StatusCode::OK,
+                json!(entry),
+            )
+        }
 
         Err(error) => map_aris_error(error),
     }
 }
 
-pub async fn list_aris_records(claims: Claims, Query(query): Query<ArisListQuery>) -> Response {
+pub async fn list_aris_records(
+    claims: Claims,
+    Query(query): Query<ArisListQuery>,
+) -> Response {
     if !claims.can_read_records() {
         return aris_access_denied();
     }
 
-    match execute_list_aris_records(query, "api", "list_aris_records()").await {
-        Ok(result) => api_json(StatusCode::OK, json!(result)),
+    match execute_list_aris_records(
+        query,
+        "api",
+        "list_aris_records()",
+    )
+    .await
+    {
+        Ok(result) => {
+            api_json(
+                StatusCode::OK,
+                json!(result),
+            )
+        }
 
-        Err(error) => map_aris_error(ArisOperationError::Sqlite(error)),
+        Err(error) => {
+            map_aris_error(
+                ArisOperationError::Sqlite(error)
+            )
+        }
     }
 }
 
-pub async fn delete_aris_record(claims: Claims, Path(uid): Path<String>) -> Response {
+pub async fn delete_aris_record(
+    claims: Claims,
+    Path(uid): Path<String>,
+) -> Response {
     if !claims.can_delete_records() {
         return aris_access_denied();
     }
 
-    match execute_delete_aris_record_with_attachments(uid).await {
-        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+    match execute_delete_aris_record_with_attachments(
+        uid
+    )
+    .await
+    {
+        Ok(()) => {
+            StatusCode::NO_CONTENT.into_response()
+        }
 
         Err(error) => map_aris_error(error),
     }
@@ -2409,25 +3024,27 @@ pub async fn upload_aris_attachments(
         return aris_access_denied();
     }
 
-    let mut uploaded: Vec<FileAttachment> = Vec::new();
+    let mut uploaded:
+        Vec<FileAttachment> = Vec::new();
 
     loop {
-        let field = match multipart.next_field().await {
-            Ok(Some(field)) => field,
-            Ok(None) => break,
+        let field =
+            match multipart.next_field().await {
+                Ok(Some(field)) => field,
+                Ok(None) => break,
 
-            Err(error) => {
-                return api_json(
-                    StatusCode::BAD_REQUEST,
-                    json!({
-                        "response":
-                            format!(
-                                "Invalid multipart upload: {error}"
-                            )
-                    }),
-                );
-            }
-        };
+                Err(error) => {
+                    return api_json(
+                        StatusCode::BAD_REQUEST,
+                        json!({
+                            "response":
+                                format!(
+                                    "Invalid multipart upload: {error}"
+                                )
+                        }),
+                    );
+                }
+            };
 
         if field.name() != Some("files") {
             continue;
@@ -2436,30 +3053,43 @@ pub async fn upload_aris_attachments(
         let file_name = field
             .file_name()
             .map(str::to_string)
-            .unwrap_or_else(|| "attachment.bin".to_string());
+            .unwrap_or_else(|| {
+                "attachment.bin".to_string()
+            });
 
         let mime_type = field
             .content_type()
             .map(str::to_string)
-            .unwrap_or_else(|| "application/octet-stream".to_string());
+            .unwrap_or_else(|| {
+                "application/octet-stream"
+                    .to_string()
+            });
 
-        let bytes = match field.bytes().await {
-            Ok(bytes) => bytes.to_vec(),
+        let bytes =
+            match field.bytes().await {
+                Ok(bytes) => bytes.to_vec(),
 
-            Err(error) => {
-                return api_json(
-                    StatusCode::BAD_REQUEST,
-                    json!({
-                        "response":
-                            format!(
-                                "Failed to read attachment '{file_name}': {error}"
-                            )
-                    }),
-                );
-            }
-        };
+                Err(error) => {
+                    return api_json(
+                        StatusCode::BAD_REQUEST,
+                        json!({
+                            "response":
+                                format!(
+                                    "Failed to read attachment '{file_name}': {error}"
+                                )
+                        }),
+                    );
+                }
+            };
 
-        match execute_upload_aris_attachment(entry_uid.clone(), file_name, mime_type, bytes).await {
+        match execute_upload_aris_attachment(
+            entry_uid.clone(),
+            file_name,
+            mime_type,
+            bytes,
+        )
+        .await
+        {
             Ok(attachment) => {
                 uploaded.push(attachment);
             }
@@ -2490,14 +3120,22 @@ pub async fn upload_aris_attachments(
 
 pub async fn delete_aris_attachment(
     claims: Claims,
-    Path((entry_uid, attachment_uid)): Path<(String, String)>,
+    Path((entry_uid, attachment_uid)):
+        Path<(String, String)>,
 ) -> Response {
     if !claims.can_delete_records() {
         return aris_access_denied();
     }
 
-    match execute_delete_aris_attachment(entry_uid, attachment_uid).await {
-        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+    match execute_delete_aris_attachment(
+        entry_uid,
+        attachment_uid,
+    )
+    .await
+    {
+        Ok(()) => {
+            StatusCode::NO_CONTENT.into_response()
+        }
 
         Err(error) => map_aris_error(error),
     }
@@ -2505,40 +3143,66 @@ pub async fn delete_aris_attachment(
 
 pub async fn preview_aris_attachment(
     claims: Claims,
-    Path((entry_uid, attachment_uid)): Path<(String, String)>,
+    Path((entry_uid, attachment_uid)):
+        Path<(String, String)>,
 ) -> Response {
     if !claims.can_read_records() {
         return aris_access_denied();
     }
 
-    let attachment = match execute_get_attachment(entry_uid, attachment_uid).await {
-        Ok(attachment) => attachment,
+    let attachment =
+        match execute_get_attachment(
+            entry_uid,
+            attachment_uid,
+        )
+        .await
+        {
+            Ok(attachment) => attachment,
 
-        Err(error) => {
-            return map_aris_error(ArisOperationError::Sqlite(error));
-        }
-    };
+            Err(error) => {
+                return map_aris_error(
+                    ArisOperationError::Sqlite(error)
+                );
+            }
+        };
 
-    let original_bytes = match n1_download(&attachment.object_key, &attachment.file_name).await {
-        Ok(bytes) => bytes,
-        Err(error) => {
-            return map_aris_error(error);
-        }
-    };
+    let original_bytes =
+        match n1_download(
+            &attachment.object_key,
+            &attachment.file_name,
+        )
+        .await
+        {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                return map_aris_error(error);
+            }
+        };
 
-    if office_preview_supported(&attachment.file_name) {
-        let attachment_for_preview = attachment.clone();
+    if office_preview_supported(
+        &attachment.file_name
+    ) {
+        let attachment_for_preview =
+            attachment.clone();
 
-        let preview_result = tokio::task::spawn_blocking(move || {
-            generate_office_pdf_preview(attachment_for_preview, original_bytes)
-        })
-        .await;
+        let preview_result =
+            tokio::task::spawn_blocking(move || {
+                generate_office_pdf_preview(
+                    attachment_for_preview,
+                    original_bytes,
+                )
+            })
+            .await;
 
         let pdf_bytes = match preview_result {
             Ok(Ok(bytes)) => bytes,
 
             Ok(Err(error)) => {
-                crate::report_error!(error, "preview", "preview_aris_attachment()");
+                crate::report_error!(
+                    error,
+                    "preview",
+                    "preview_aris_attachment()"
+                );
 
                 return api_json(
                     StatusCode::SERVICE_UNAVAILABLE,
@@ -2550,7 +3214,9 @@ pub async fn preview_aris_attachment(
 
             Err(error) => {
                 crate::report_error!(
-                    format!("Office preview blocking task failed: {error}"),
+                    format!(
+                        "Office preview blocking task failed: {error}"
+                    ),
                     "preview",
                     "preview_aris_attachment()"
                 );
@@ -2567,54 +3233,100 @@ pub async fn preview_aris_attachment(
         let preview_name = attachment
             .file_name
             .rsplit_once('.')
-            .map(|(stem, _)| format!("{stem}.pdf"))
-            .unwrap_or_else(|| format!("{}.pdf", attachment.file_name));
+            .map(|(stem, _)| {
+                format!("{stem}.pdf")
+            })
+            .unwrap_or_else(|| {
+                format!(
+                    "{}.pdf",
+                    attachment.file_name
+                )
+            });
 
-        return inline_attachment_response(pdf_bytes, "application/pdf", &preview_name);
+        return inline_attachment_response(
+            pdf_bytes,
+            "application/pdf",
+            &preview_name,
+        );
     }
 
-    inline_attachment_response(original_bytes, &attachment.mime_type, &attachment.file_name)
+    inline_attachment_response(
+        original_bytes,
+        &attachment.mime_type,
+        &attachment.file_name,
+    )
 }
 
 pub async fn download_aris_attachment(
     claims: Claims,
-    Path((entry_uid, attachment_uid)): Path<(String, String)>,
+    Path((entry_uid, attachment_uid)):
+        Path<(String, String)>,
 ) -> Response {
     if !claims.can_read_records() {
         return aris_access_denied();
     }
 
-    let attachment = match execute_get_attachment(entry_uid, attachment_uid).await {
-        Ok(attachment) => attachment,
+    let attachment =
+        match execute_get_attachment(
+            entry_uid,
+            attachment_uid,
+        )
+        .await
+        {
+            Ok(attachment) => attachment,
 
-        Err(error) => {
-            return map_aris_error(ArisOperationError::Sqlite(error));
-        }
-    };
+            Err(error) => {
+                return map_aris_error(
+                    ArisOperationError::Sqlite(error)
+                );
+            }
+        };
 
-    let bytes = match n1_download(&attachment.object_key, &attachment.file_name).await {
-        Ok(bytes) => bytes,
-        Err(error) => {
-            return map_aris_error(error);
-        }
-    };
+    let bytes =
+        match n1_download(
+            &attachment.object_key,
+            &attachment.file_name,
+        )
+        .await
+        {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                return map_aris_error(error);
+            }
+        };
 
-    let safe_download_name = attachment.file_name.replace('"', "_");
+    let safe_download_name =
+        attachment.file_name.replace('"', "_");
 
-    let mut response = Response::new(Body::from(bytes));
+    let mut response =
+        Response::new(Body::from(bytes));
 
-    *response.status_mut() = StatusCode::OK;
+    *response.status_mut() =
+        StatusCode::OK;
 
     response.headers_mut().insert(
         CONTENT_TYPE,
-        HeaderValue::from_str(&attachment.mime_type)
-            .unwrap_or_else(|_| HeaderValue::from_static("application/octet-stream")),
+        HeaderValue::from_str(
+            &attachment.mime_type
+        )
+        .unwrap_or_else(|_| {
+            HeaderValue::from_static(
+                "application/octet-stream"
+            )
+        }),
     );
 
     if let Ok(value) =
-        HeaderValue::from_str(&format!("attachment; filename=\"{safe_download_name}\""))
+        HeaderValue::from_str(
+            &format!(
+                "attachment; filename=\"{safe_download_name}\""
+            )
+        )
     {
-        response.headers_mut().insert(CONTENT_DISPOSITION, value);
+        response.headers_mut().insert(
+            CONTENT_DISPOSITION,
+            value,
+        );
     }
 
     response

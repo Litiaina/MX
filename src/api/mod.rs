@@ -7,3 +7,4 @@ pub mod query_handler;
 pub mod aris;
 pub mod audit;
 pub mod backup;
+pub mod dashboard;
