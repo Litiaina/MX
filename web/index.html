@@ -1,0 +1,4526 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ARIS — Atomic Record Information System</title>
+
+  <style>
+    :root {
+      --bg: #edf3fa;
+      --panel: #ffffff;
+      --panel-soft: #f8fafc;
+      --header: #0f172a;
+      --header-2: #172554;
+      --text: #0f172a;
+      --muted: #52657d;
+      --line: #cbd8e6;
+      --line-soft: #e4ebf3;
+      --primary: #1d4ed8;
+      --primary-dark: #1e40af;
+      --primary-soft: #dbeafe;
+      --success: #067647;
+      --success-soft: #dcfae6;
+      --danger: #b42318;
+      --danger-soft: #fee4e2;
+      --warn: #b54708;
+      --warn-soft: #fef0c7;
+      --shadow: 0 12px 34px rgba(15, 23, 42, .11);
+      --radius: 16px;
+      --topbar-height: 64px;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      font-family: Calibri, Arial, Helvetica, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      font-size: 16px;
+    }
+
+    button, input, select, textarea { font: inherit; }
+    button { user-select: none; }
+
+    .hidden { display: none !important; }
+    .muted { color: var(--muted); }
+
+    .app-shell {
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .topbar {
+      height: var(--topbar-height);
+      flex: 0 0 var(--topbar-height);
+      padding: 0 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      background: linear-gradient(90deg, var(--header), #111827 56%, var(--header-2));
+      color: #fff;
+      border-bottom: 4px solid var(--primary);
+    }
+
+    .brand {
+      min-width: 0;
+    }
+
+    .brand h1 {
+      margin: 0;
+      font-size: 22px;
+      line-height: 1.05;
+      font-weight: 900;
+      letter-spacing: .2px;
+    }
+
+    .brand p {
+      margin: 4px 0 0;
+      color: #cbd5e1;
+      font-size: 13px;
+    }
+
+    .topbar-actions {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      justify-content: flex-end;
+      min-width: 0;
+    }
+
+    .server-pill {
+      max-width: 380px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      padding: 8px 12px;
+      border: 1px solid rgba(255,255,255,.18);
+      border-radius: 999px;
+      background: rgba(255,255,255,.10);
+      color: #e5e7eb;
+      font-size: 13px;
+    }
+
+    .btn {
+      min-height: 40px;
+      border: 1px solid transparent;
+      border-radius: 10px;
+      padding: 8px 14px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+      font-weight: 900;
+      cursor: pointer;
+      transition: background .15s ease, border .15s ease, transform .08s ease;
+    }
+
+    .btn:active { transform: translateY(1px); }
+    .btn:disabled { opacity: .55; cursor: wait; transform: none; }
+
+    .btn-primary {
+      background: var(--primary);
+      color: white;
+      box-shadow: 0 7px 16px rgba(29,78,216,.18);
+    }
+
+    .btn-primary:hover:not(:disabled) { background: var(--primary-dark); }
+
+    .btn-light {
+      background: white;
+      color: #1e293b;
+      border-color: #cbd5e1;
+    }
+
+    .btn-soft {
+      background: #eef4ff;
+      color: var(--primary);
+      border-color: #b8d2ff;
+    }
+
+    .btn-danger {
+      background: var(--danger-soft);
+      color: var(--danger);
+      border-color: #fecdca;
+    }
+
+    .btn-small {
+      min-height: 34px;
+      padding: 6px 10px;
+      border-radius: 8px;
+      font-size: 13px;
+    }
+
+    .app-main {
+      flex: 1 1 auto;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding: 10px 14px 14px;
+      overflow: hidden;
+    }
+
+    /* ------------------------------ SEARCH -------------------------------- */
+
+    .search-panel {
+      flex: 0 0 auto;
+      display: grid;
+      gap: 8px;
+      padding: 9px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      box-shadow: 0 8px 22px rgba(15,23,42,.08);
+    }
+
+    .universal-row {
+      display: grid;
+      grid-template-columns: minmax(340px, 1fr) 165px auto auto;
+      gap: 8px;
+      align-items: end;
+    }
+
+    label {
+      display: grid;
+      gap: 4px;
+      color: #26364a;
+      font-size: 13px;
+      font-weight: 900;
+    }
+
+    input, select, textarea {
+      width: 100%;
+      border: 1px solid #b9c8da;
+      background: white;
+      color: var(--text);
+      border-radius: 10px;
+      padding: 8px 10px;
+      outline: none;
+      font-size: 15px;
+      transition: border .15s ease, box-shadow .15s ease;
+    }
+
+    input:focus, select:focus, textarea:focus {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px rgba(29,78,216,.13);
+    }
+
+    textarea {
+      min-height: 92px;
+      resize: vertical;
+      line-height: 1.35;
+    }
+
+    .advanced-panel {
+      display: grid;
+      gap: 10px;
+      padding-top: 9px;
+      border-top: 1px solid var(--line-soft);
+    }
+
+    .advanced-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(180px, 1fr));
+      gap: 8px;
+    }
+
+    .advanced-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .search-help {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    /* ------------------------------- STATUS ------------------------------- */
+
+    .status-strip {
+      flex: 0 0 auto;
+      min-height: 38px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 7px 11px;
+      background: white;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      box-shadow: 0 6px 16px rgba(15,23,42,.05);
+    }
+
+    .status-left,
+    .status-right {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+      color: var(--muted);
+      font-size: 14px;
+      font-weight: 800;
+    }
+
+    .loading-dot {
+      width: 9px;
+      height: 9px;
+      flex: 0 0 auto;
+      border-radius: 50%;
+      background: #94a3b8;
+    }
+
+    .loading-dot.active {
+      background: var(--primary);
+      animation: pulse 1s infinite ease-in-out;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: .35; transform: scale(.9); }
+      50% { opacity: 1; transform: scale(1.18); }
+    }
+
+    /* -------------------------------- TABLE ------------------------------- */
+
+    .table-card {
+      flex: 1 1 auto;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      background: white;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+    }
+
+    .table-loading-bar {
+      height: 4px;
+      flex: 0 0 4px;
+      position: relative;
+      overflow: hidden;
+      background: #e6edf5;
+    }
+
+    .table-loading-bar::before {
+      content: "";
+      position: absolute;
+      inset: 0 auto 0 0;
+      width: 0;
+      opacity: 0;
+      background: linear-gradient(90deg, var(--primary), #60a5fa);
+    }
+
+    .table-loading-bar.active::before {
+      width: 42%;
+      opacity: 1;
+      animation: loading-slide .9s infinite ease-in-out;
+    }
+
+    @keyframes loading-slide {
+      from { transform: translateX(-120%); }
+      to { transform: translateX(270%); }
+    }
+
+    .table-wrap {
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow: auto;
+      background: white;
+    }
+
+    table {
+      width: 100%;
+      min-width: 1600px;
+      border-collapse: separate;
+      border-spacing: 0;
+      font-size: 15px;
+    }
+
+    thead th {
+      position: sticky;
+      top: 0;
+      z-index: 3;
+      padding: 11px 10px;
+      background: #eaf1f8;
+      color: #0f172a;
+      border-bottom: 1px solid #b9c8da;
+      border-right: 1px solid #d6e0eb;
+      text-align: left;
+      white-space: nowrap;
+      font-size: 14px;
+      font-weight: 900;
+      letter-spacing: .02em;
+    }
+
+    tbody td {
+      padding: 10px 10px;
+      vertical-align: top;
+      background: white;
+      border-bottom: 1px solid #e4ebf3;
+      border-right: 1px solid #edf2f7;
+      line-height: 1.3;
+    }
+
+    tbody tr:hover td { background: #f7fbff; }
+
+    .row-num {
+      width: 64px;
+      text-align: right;
+      color: var(--muted);
+      background: #f8fafc !important;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .control-cell {
+      min-width: 175px;
+      font-weight: 900;
+      color: #1e3a8a;
+    }
+
+    .date-cell { min-width: 125px; white-space: nowrap; }
+    .office-cell { min-width: 180px; }
+    .requestor-cell { min-width: 210px; }
+    .subject-cell { min-width: 320px; max-width: 440px; }
+    .route-cell { min-width: 190px; }
+    .attachment-cell { min-width: 160px; }
+    .remarks-cell { min-width: 220px; max-width: 320px; }
+
+    .sticky-actions {
+      position: sticky;
+      right: 0;
+      z-index: 2;
+      min-width: 145px;
+      text-align: center;
+      background: inherit;
+      box-shadow: -10px 0 16px rgba(15,23,42,.06);
+    }
+
+    thead .sticky-actions {
+      z-index: 4;
+      background: #eaf1f8;
+    }
+
+    .row-actions {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .attachment-count {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 9px;
+      border-radius: 999px;
+      background: #e0e7ff;
+      color: #1e3a8a;
+      font-size: 13px;
+      font-weight: 900;
+      white-space: nowrap;
+    }
+
+    .empty-state {
+      padding: 42px;
+      text-align: center;
+      color: var(--muted);
+      font-size: 16px;
+    }
+
+    /* ----------------------------- PAGINATION ----------------------------- */
+
+    .pagination {
+      flex: 0 0 auto;
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      align-items: center;
+      gap: 10px;
+      padding: 9px 11px;
+      border-top: 1px solid var(--line);
+      background: #f8fafc;
+    }
+
+    .pagination-info {
+      color: var(--muted);
+      font-size: 14px;
+      font-weight: 800;
+    }
+
+    .pagination-center {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+    }
+
+    .pagination-jump {
+      justify-self: end;
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+    }
+
+    .page-input {
+      width: 78px;
+      min-height: 34px;
+      padding: 6px 8px;
+    }
+
+    /* -------------------------------- MODAL ------------------------------- */
+
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: 30;
+      display: flex;
+      align-items: flex-start;
+      justify-content: center;
+      padding: 24px 16px;
+      overflow: auto;
+      background: rgba(15,23,42,.58);
+    }
+
+    .modal-card {
+      width: min(1040px, 100%);
+      overflow: hidden;
+      background: white;
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      box-shadow: 0 24px 70px rgba(15,23,42,.34);
+    }
+
+    .modal-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 17px 19px;
+      background: var(--panel-soft);
+      border-bottom: 1px solid var(--line);
+    }
+
+    .modal-header h2 {
+      margin: 0;
+      font-size: 22px;
+    }
+
+    .modal-header p {
+      margin: 5px 0 0;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .icon-btn {
+      width: 40px;
+      height: 40px;
+      flex: 0 0 auto;
+      border: 1px solid #b9c8da;
+      border-radius: 10px;
+      background: white;
+      color: #1e293b;
+      cursor: pointer;
+      font-size: 22px;
+    }
+
+    .modal-body {
+      max-height: calc(100vh - 135px);
+      overflow: auto;
+      padding: 18px;
+    }
+
+    .form-grid {
+      display: grid;
+      gap: 13px;
+    }
+
+    .form-section {
+      padding: 14px;
+      background: white;
+      border: 1px solid var(--line);
+      border-radius: 15px;
+    }
+
+    .form-section h3 {
+      margin: 0 0 12px;
+      font-size: 17px;
+    }
+
+    .two-col {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    .file-drop {
+      padding: 13px;
+      border: 1px dashed #94a3b8;
+      border-radius: 12px;
+      background: #f8fafc;
+    }
+
+    .attachment-list {
+      display: grid;
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .attachment-row {
+      display: grid;
+      grid-template-columns: minmax(0,1fr) auto;
+      gap: 8px;
+      align-items: center;
+      padding: 9px 10px;
+      background: #f8fafc;
+      border: 1px solid var(--line-soft);
+      border-radius: 10px;
+    }
+
+    .attachment-name {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-weight: 900;
+    }
+
+    .attachment-meta {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+
+    .entry-form-drop-target {
+      position: relative;
+    }
+
+    .entry-form-drop-target.drag-active {
+      outline: 3px solid rgba(29, 78, 216, 0.42);
+      outline-offset: 4px;
+      border-radius: 16px;
+    }
+
+    .drop-anywhere-overlay {
+      position: absolute;
+      inset: 0;
+      z-index: 20;
+      display: none;
+      place-items: center;
+      pointer-events: none;
+      border: 3px dashed #1d4ed8;
+      border-radius: 16px;
+      background: rgba(239, 246, 255, 0.94);
+      color: #1e3a8a;
+      font-size: 20px;
+      font-weight: 900;
+      text-align: center;
+      padding: 24px;
+    }
+
+    .entry-form-drop-target.drag-active .drop-anywhere-overlay {
+      display: grid;
+    }
+
+    .upload-progress-panel {
+      margin-top: 10px;
+      padding: 11px 12px;
+      border: 1px solid #bfdbfe;
+      border-radius: 10px;
+      background: #eff6ff;
+    }
+
+    .upload-progress-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 7px;
+      color: #1e3a8a;
+      font-size: 12px;
+      font-weight: 900;
+    }
+
+    .upload-progress-track {
+      width: 100%;
+      height: 10px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: #dbeafe;
+    }
+
+    .upload-progress-bar {
+      width: 0%;
+      height: 100%;
+      border-radius: inherit;
+      background: #1d4ed8;
+      transition: width 80ms linear;
+    }
+
+    .file-progress {
+      margin-top: 7px;
+    }
+
+    .file-progress .upload-progress-track {
+      height: 7px;
+      background: #e2e8f0;
+    }
+
+    .file-progress-label {
+      margin-top: 4px;
+      color: #64748b;
+      font-size: 11px;
+      font-weight: 800;
+    }
+
+    .attachment-actions {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 6px;
+    }
+
+    .preview-card {
+      width: min(1100px, 96vw);
+      height: min(860px, 94vh);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      background: white;
+      border-radius: 15px;
+      box-shadow: 0 26px 80px rgba(15,23,42,.32);
+    }
+
+    .preview-body {
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow: auto;
+      display: grid;
+      place-items: center;
+      padding: 12px;
+      background: #e5e7eb;
+    }
+
+    .preview-body iframe,
+    .preview-body object {
+      width: 100%;
+      height: 100%;
+      min-height: 620px;
+      border: 0;
+      background: white;
+    }
+
+    .preview-body img {
+      display: block;
+      max-width: 100%;
+      max-height: 100%;
+      object-fit: contain;
+      background: white;
+      box-shadow: 0 4px 24px rgba(15,23,42,.16);
+    }
+
+    .preview-body video {
+      max-width: 100%;
+      max-height: 100%;
+      background: black;
+    }
+
+    .preview-body audio {
+      width: min(760px, 100%);
+    }
+
+    .preview-text {
+      width: 100%;
+      min-height: 100%;
+      margin: 0;
+      padding: 18px;
+      overflow: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+      background: white;
+      color: #111827;
+      font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+
+    .preview-fallback {
+      max-width: 700px;
+      padding: 24px;
+      border: 1px solid #cbd5e1;
+      border-radius: 12px;
+      background: white;
+      text-align: center;
+    }
+
+    @media (max-width: 760px) {
+      .preview-card {
+        width: 100vw;
+        height: 100vh;
+        border-radius: 0;
+      }
+
+      .preview-body iframe,
+      .preview-body object {
+        min-height: calc(100vh - 150px);
+      }
+    }
+
+    .modal-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    /* -------------------------------- TOAST ------------------------------- */
+
+    .toast {
+      position: fixed;
+      right: 20px;
+      bottom: 20px;
+      z-index: 50;
+      display: none;
+      max-width: 480px;
+      padding: 13px 15px;
+      border-radius: 12px;
+      color: white;
+      background: #111827;
+      box-shadow: var(--shadow);
+      line-height: 1.35;
+    }
+
+    .toast.show { display: block; }
+    .toast.error { background: #7f1d1d; }
+    .toast.success { background: #064e3b; }
+
+    @media (max-width: 1100px) {
+      .advanced-grid { grid-template-columns: repeat(2, minmax(180px,1fr)); }
+      .universal-row { grid-template-columns: 1fr 150px auto; }
+      .universal-row .clear-top { grid-column: 3; }
+    }
+
+    @media (max-width: 760px) {
+      html, body { overflow: auto; }
+      .app-shell { height: auto; min-height: 100vh; overflow: visible; }
+      .topbar { height: auto; flex-basis: auto; min-height: var(--topbar-height); padding: 12px; align-items: flex-start; flex-direction: column; }
+      .server-pill { display: none; }
+      .app-main { overflow: visible; }
+      .universal-row, .advanced-grid, .two-col, .pagination { grid-template-columns: 1fr; }
+      .pagination-center, .pagination-jump { justify-self: stretch; justify-content: flex-start; }
+      .table-card { min-height: 70vh; }
+      .attachment-row { grid-template-columns: 1fr; }
+    }
+
+    /* -------------------------- LOGIN / ACCOUNTS -------------------------- */
+
+    .user-pill {
+      max-width: 300px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      padding: 8px 12px;
+      border: 1px solid rgba(255,255,255,.18);
+      border-radius: 999px;
+      background: rgba(255,255,255,.10);
+      color: #e5e7eb;
+      font-size: 13px;
+      font-weight: 800;
+    }
+
+    .login-card {
+      width: min(460px, 100%);
+      margin-top: 8vh;
+    }
+
+    .login-logo {
+      display: grid;
+      place-items: center;
+      width: 52px;
+      height: 52px;
+      margin-bottom: 12px;
+      border-radius: 14px;
+      background: var(--primary);
+      color: white;
+      font-size: 22px;
+      font-weight: 900;
+    }
+
+    .auth-note {
+      margin-top: 8px;
+      padding: 10px 12px;
+      border: 1px solid var(--line-soft);
+      border-radius: 10px;
+      background: #f8fafc;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.4;
+    }
+
+    .account-toolbar {
+      display: grid;
+      grid-template-columns: 1.2fr 1.3fr 1fr 180px auto;
+      gap: 8px;
+      align-items: end;
+      margin-bottom: 14px;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: #f8fafc;
+    }
+
+    .account-list {
+      display: grid;
+      gap: 8px;
+    }
+
+    .account-row {
+      display: grid;
+      grid-template-columns: minmax(180px, 1.2fr) minmax(220px, 1.4fr) 190px auto auto;
+      gap: 8px;
+      align-items: center;
+      padding: 10px;
+      border: 1px solid var(--line-soft);
+      border-radius: 11px;
+      background: white;
+    }
+
+    .account-name {
+      min-width: 0;
+      font-weight: 900;
+    }
+
+    .account-email {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .role-legend {
+      display: grid;
+      gap: 5px;
+      margin: 12px 0;
+      padding: 10px 12px;
+      border: 1px solid var(--line-soft);
+      border-radius: 10px;
+      background: #f8fafc;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .readonly-field {
+      background: #f1f5f9 !important;
+      color: #64748b !important;
+    }
+
+    @media (max-width: 980px) {
+      .account-toolbar,
+      .account-row {
+        grid-template-columns: 1fr;
+      }
+
+      .user-pill {
+        max-width: 100%;
+      }
+    }
+
+  </style>
+</head>
+
+<body>
+<div class="app-shell">
+
+  <header class="topbar">
+    <div class="brand">
+      <h1>ARIS — Atomic Record Information System</h1>
+      <p>Automatic yearly control numbers · 256 records per page · N1 attachment storage</p>
+    </div>
+
+    <div class="topbar-actions">
+      <div class="server-pill" id="serverPill">ARIS API</div>
+      <div class="user-pill hidden" id="userPill"></div>
+      <button class="btn btn-light hidden" id="accountsBtn" type="button">Accounts</button>
+      <button class="btn btn-light" id="refreshBtn" type="button">Refresh</button>
+      <button class="btn btn-primary" id="newEntryBtn" type="button">New Record</button>
+      <button class="btn btn-light hidden" id="logoutBtn" type="button">Logout</button>
+    </div>
+  </header>
+
+  <main class="app-main">
+
+    <section class="search-panel">
+
+      <div class="universal-row">
+        <label>
+          UNIVERSAL SEARCH
+          <input
+            id="universalSearch"
+            type="search"
+            autocomplete="off"
+            placeholder="Control no., office, requestor, subject, division, remarks, filename..."
+          >
+        </label>
+
+        <label>
+          MATCH MODE
+          <select id="matchMode">
+            <option value="contains">Contains</option>
+            <option value="prefix">Starts with</option>
+            <option value="exact">Exact</option>
+          </select>
+        </label>
+
+        <button class="btn btn-soft" id="advancedToggleBtn" type="button">
+          Advanced Search
+        </button>
+
+        <button class="btn btn-light clear-top" id="clearSearchBtn" type="button">
+          Clear
+        </button>
+      </div>
+
+      <div class="search-help">
+        Universal search includes control no., year/date, office, requestor, subject, division, remarks, and attachment filenames. Search is server-side; the browser holds only one 256-row page.
+      </div>
+
+      <div class="advanced-panel hidden" id="advancedPanel">
+        <div class="advanced-grid">
+
+          <label>
+            CONTROL NUMBER
+            <input id="filterControlNo" autocomplete="off" placeholder="1, 125, 1000...">
+          </label>
+
+          <label>
+            OFFICE
+            <input id="filterOffice" autocomplete="off" placeholder="Office / department">
+          </label>
+
+          <label>
+            REQUESTOR
+            <input id="filterRequestor" autocomplete="off" placeholder="Requestor">
+          </label>
+
+          <label>
+            ROUTED TO DIVISION
+            <input id="filterRoutedToDiv" autocomplete="off" placeholder="Division / unit">
+          </label>
+
+          <label>
+            SUBJECT
+            <input id="filterSubject" autocomplete="off" placeholder="Subject contains...">
+          </label>
+
+          <label>
+            REMARKS
+            <input id="filterRemarks" autocomplete="off" placeholder="Remarks contains...">
+          </label>
+
+          <label>
+            ATTACHMENT FILE NAME
+            <input id="filterFileName" autocomplete="off" placeholder="example.pdf">
+          </label>
+
+          <label>
+            SORT BY
+            <select id="sortBy">
+              <option value="date">Date</option>
+              <option value="control_no">Control number</option>
+              <option value="office">Office</option>
+              <option value="requestor">Requestor</option>
+              <option value="subject">Subject</option>
+              <option value="routed_to_div">Routed division</option>
+            </select>
+          </label>
+
+          <label>
+            DATE FROM
+            <input id="filterDateFrom" type="date">
+          </label>
+
+          <label>
+            DATE TO
+            <input id="filterDateTo" type="date">
+          </label>
+
+          <label>
+            SORT DIRECTION
+            <select id="sortDir">
+              <option value="desc">Descending</option>
+              <option value="asc">Ascending</option>
+            </select>
+          </label>
+
+          <label>
+            ATTACHMENTS
+            <select id="attachmentMode">
+              <option value="">Any</option>
+              <option value="with">With attachments</option>
+              <option value="without">Without attachments</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="advanced-actions">
+          <button class="btn btn-light" id="clearAdvancedBtn" type="button">
+            Clear Advanced
+          </button>
+          <button class="btn btn-primary" id="applyAdvancedBtn" type="button">
+            Apply Search
+          </button>
+        </div>
+      </div>
+
+    </section>
+
+    <section class="status-strip">
+      <div class="status-left">
+        <span class="loading-dot" id="loadingDot"></span>
+        <span id="statusText">Loading records...</span>
+      </div>
+
+      <div class="status-right">
+        <span id="requestStatus">Ready</span>
+      </div>
+    </section>
+
+    <section class="table-card">
+      <div class="table-loading-bar" id="tableLoadingBar"></div>
+
+      <div class="table-wrap" id="tableWrap">
+        <table>
+          <thead>
+            <tr>
+              <th class="row-num">#</th>
+              <th>CONTROL NO.</th>
+              <th>DATE</th>
+              <th>OFFICE</th>
+              <th>REQUESTOR</th>
+              <th>SUBJECT</th>
+              <th>ROUTED TO DIV.</th>
+              <th>ATTACHMENTS</th>
+              <th>REMARKS</th>
+              <th class="sticky-actions">ACTIONS</th>
+            </tr>
+          </thead>
+
+          <tbody id="tableBody">
+            <tr>
+              <td colspan="10" class="empty-state">Loading ARIS records...</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="pagination">
+        <div class="pagination-info" id="paginationInfo">
+          256 records per page
+        </div>
+
+        <div class="pagination-center">
+          <button class="btn btn-light btn-small" id="firstPageBtn" type="button">First</button>
+          <button class="btn btn-light btn-small" id="prevPageBtn" type="button">Previous</button>
+          <strong id="currentPageText">Page 1</strong>
+          <button class="btn btn-light btn-small" id="nextPageBtn" type="button">Next</button>
+        </div>
+
+        <div class="pagination-jump">
+          <span class="muted">Go to page</span>
+          <input class="page-input" id="pageInput" type="number" min="1" step="1" value="1">
+          <button class="btn btn-soft btn-small" id="goPageBtn" type="button">Go</button>
+        </div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+
+<!-- LOGIN MODAL -->
+<div class="modal-backdrop" id="loginModal" aria-hidden="false">
+  <div class="modal-card login-card" role="dialog" aria-modal="true" aria-labelledby="loginTitle">
+    <div class="modal-header">
+      <div>
+        <div class="login-logo">ARIS</div>
+        <h2 id="loginTitle">Sign in to ARIS</h2>
+        <p>Use your ARIS account. OTP is only required when 2FA is enabled for your account.</p>
+      </div>
+    </div>
+
+    <div class="modal-body">
+      <div id="bootstrapPanel" class="hidden">
+        <div class="auth-note" style="margin-bottom:12px;">
+          <b>First-time ARIS setup is handled in admin.html.</b><br>
+          No user account exists yet. Enter one value from <code>AUTH_KEYS</code> and create the first Administrator account.
+          The account will be signed in automatically after creation.
+        </div>
+
+        <form class="form-grid" id="bootstrapForm">
+          <label>
+            AUTH KEY
+            <input
+              id="bootstrapAuthKey"
+              type="password"
+              autocomplete="off"
+              required
+              placeholder="One value from AUTH_KEYS"
+            >
+          </label>
+
+          <label>
+            ADMINISTRATOR NAME
+            <input
+              id="bootstrapName"
+              autocomplete="name"
+              required
+            >
+          </label>
+
+          <label>
+            ADMINISTRATOR EMAIL
+            <input
+              id="bootstrapEmail"
+              type="email"
+              autocomplete="username"
+              required
+            >
+          </label>
+
+          <label>
+            PASSWORD
+            <input
+              id="bootstrapPassword"
+              type="password"
+              autocomplete="new-password"
+              required
+            >
+          </label>
+
+          <label>
+            CONFIRM PASSWORD
+            <input
+              id="bootstrapPasswordConfirm"
+              type="password"
+              autocomplete="new-password"
+              required
+            >
+          </label>
+
+          <button
+            class="btn btn-primary"
+            id="bootstrapBtn"
+            type="submit"
+          >
+            Create Administrator
+          </button>
+
+          <div class="auth-note" id="bootstrapStatus">
+            This only works while ARIS has no users. The first account is always access level 0 — Administrator.
+          </div>
+        </form>
+      </div>
+
+      <div id="loginPanel">
+        <form class="form-grid" id="loginForm">
+          <label>
+            EMAIL
+            <input id="loginEmail" type="email" autocomplete="username" required>
+          </label>
+
+          <label>
+            PASSWORD
+            <input id="loginPassword" type="password" autocomplete="current-password" required>
+          </label>
+
+          <label>
+            TOTP / OTP
+            <input
+              id="loginOtp"
+              inputmode="numeric"
+              autocomplete="one-time-code"
+              maxlength="6"
+              pattern="[0-9]{6}"
+              placeholder="Optional unless 2FA is enabled"
+            >
+          </label>
+
+          <button class="btn btn-primary" id="loginBtn" type="submit">Sign In</button>
+
+          <div class="auth-note" id="loginStatus">
+            Use a ARIS account provisioned by an Administrator. Access tokens are refreshed automatically.
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ACCOUNT MANAGEMENT MODAL -->
+<div class="modal-backdrop hidden" id="accountsModal" aria-hidden="true">
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="accountsTitle">
+    <div class="modal-header">
+      <div>
+        <h2 id="accountsTitle">Account Management</h2>
+        <p>Administrator only. Access changes take effect on the user's next refreshed access token.</p>
+      </div>
+      <button class="icon-btn" id="accountsCloseBtn" type="button" aria-label="Close">×</button>
+    </div>
+
+    <div class="modal-body">
+      <div class="role-legend">
+        <div><b>0 · Administrator</b> — accounts + all ARIS operations + database administration</div>
+        <div><b>1 · Manager</b> — all ARIS operations including delete</div>
+        <div><b>2 · Editor</b> — create/edit/upload/download; cannot delete</div>
+        <div><b>3 · Viewer</b> — search/read/download only</div>
+      </div>
+
+      <form class="account-toolbar" id="createAccountForm">
+        <label>
+          NAME
+          <input id="accountName" required autocomplete="off">
+        </label>
+
+        <label>
+          EMAIL
+          <input id="accountEmail" type="email" required autocomplete="off">
+        </label>
+
+        <label>
+          PASSWORD
+          <input id="accountPassword" type="password" required autocomplete="new-password">
+        </label>
+
+        <label>
+          ACCESS
+          <select id="accountAccess">
+            <option value="2" selected>2 · Editor</option>
+            <option value="1">1 · Manager</option>
+            <option value="3">3 · Viewer</option>
+            <option value="0">0 · Administrator</option>
+          </select>
+        </label>
+
+        <button class="btn btn-primary" type="submit" id="createAccountBtn">
+          Create Account
+        </button>
+      </form>
+
+      <div class="account-list" id="accountList">
+        <div class="muted">Loading accounts...</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ENTRY MODAL -->
+<div class="modal-backdrop hidden" id="entryModal" aria-hidden="true">
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="entryModalTitle">
+
+    <div class="modal-header">
+      <div>
+        <h2 id="entryModalTitle">New ARIS Record</h2>
+        <p id="entryModalHint">Create a new atomic record.</p>
+      </div>
+
+      <button class="icon-btn" id="closeModalBtn" type="button" aria-label="Close">×</button>
+    </div>
+
+    <div class="modal-body">
+      <form class="form-grid entry-form-drop-target" id="entryForm">
+        <div class="drop-anywhere-overlay" id="dropAnywhereOverlay">
+          <div>
+            Drop file(s) anywhere in this form<br>
+            <span style="font-size:13px;font-weight:800;color:#475569;">
+              They will be added as ARIS attachments.
+            </span>
+          </div>
+        </div>
+        <input id="uid" type="hidden">
+
+        <div class="form-section">
+          <h3>Record Information</h3>
+
+          <div class="two-col">
+            <label>
+              CONTROL NUMBER
+              <input
+                id="controlNoDisplay"
+                value="Assigned automatically when saved"
+                readonly
+                tabindex="-1"
+              >
+            </label>
+
+            <label>
+              DATE
+              <input id="date" type="date" required>
+            </label>
+          </div>
+
+          <div class="muted" style="margin-top:7px;font-size:12px;font-weight:700;">
+            ARIS assigns the next number for the selected year. The sequence resets to 1 for a new year.
+          </div>
+
+          <div class="two-col" style="margin-top:12px;">
+            <label>
+              OFFICE
+              <input id="office" required autocomplete="off" placeholder="Office / Department">
+            </label>
+
+            <label>
+              REQUESTOR
+              <input id="requestor" required autocomplete="off" placeholder="Requestor name">
+            </label>
+          </div>
+
+          <label style="margin-top:12px;">
+            SUBJECT
+            <textarea id="subject" required placeholder="Document subject"></textarea>
+          </label>
+
+          <label style="margin-top:12px;">
+            ROUTED TO DIVISION
+            <input id="routed_to_div" required autocomplete="off" placeholder="Division / Unit">
+          </label>
+
+          <label style="margin-top:12px;">
+            REMARKS
+            <textarea id="remarks" placeholder="None"></textarea>
+          </label>
+        </div>
+
+        <div class="form-section">
+          <h3>Attached Files</h3>
+
+          <div class="file-drop" id="fileUploadSection">
+            <label>
+              ADD FILES
+              <input id="fileInput" type="file" multiple>
+            </label>
+
+            <div class="muted" style="margin-top:8px;font-size:13px;">
+              Choose files here, or drag and drop files onto any field in this form. Files are stored in N1 under OFFICE / DATE / CONTROL-NO__FILENAME. Default limit: 50 MiB per attachment.
+            </div>
+          </div>
+
+          <div class="upload-progress-panel hidden" id="uploadProgressPanel">
+            <div class="upload-progress-head">
+              <span id="uploadProgressLabel">Uploading attachments…</span>
+              <span id="uploadProgressPercent">0%</span>
+            </div>
+
+            <div class="upload-progress-track">
+              <div class="upload-progress-bar" id="uploadProgressBar"></div>
+            </div>
+
+            <div class="file-progress-label" id="uploadProgressBytes"></div>
+          </div>
+
+          <div class="attachment-list" id="existingAttachments"></div>
+          <div class="attachment-list" id="pendingAttachments"></div>
+        </div>
+
+        <div class="modal-actions">
+          <button class="btn btn-primary" id="saveBtn" type="submit">Save Record</button>
+          <button class="btn btn-light" id="resetFormBtn" type="button">Clear Form</button>
+          <button class="btn btn-light" id="cancelBtn" type="button">Cancel</button>
+        </div>
+      </form>
+    </div>
+
+  </div>
+</div>
+
+
+<!-- ATTACHMENT PREVIEW -->
+<div class="modal-backdrop hidden" id="previewModal" aria-hidden="true">
+  <div class="preview-card" role="dialog" aria-modal="true" aria-labelledby="previewTitle">
+
+    <div class="modal-header">
+      <div style="min-width:0;">
+        <h2 id="previewTitle">Attachment Preview</h2>
+        <p id="previewMeta">Loading file…</p>
+      </div>
+
+      <div class="attachment-actions">
+        <button class="btn btn-light btn-small" id="previewOpenBtn" type="button">
+          Open in New Tab
+        </button>
+
+        <button class="btn btn-soft btn-small" id="previewDownloadBtn" type="button">
+          Download
+        </button>
+
+        <button class="icon-btn" id="previewCloseBtn" type="button" aria-label="Close preview">
+          ×
+        </button>
+      </div>
+    </div>
+
+    <div class="preview-body" id="previewBody">
+      <div class="muted">Loading file…</div>
+    </div>
+
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+
+/* -------------------------------------------------------------------------- */
+/* Configuration                                                              */
+/* -------------------------------------------------------------------------- */
+
+const API_BASE =
+  (window.location.protocol === "http:" || window.location.protocol === "https:")
+    ? window.location.origin
+    : "https://localhost:21001";
+const PAGE_LIMIT = 256;
+const SEARCH_DEBOUNCE_MS = 350;
+const MAX_FILE_SIZE = 50 * 1024 * 1024;
+
+/*
+  The UI expects ARIS to accept these GET query parameters on:
+
+  GET /aris/v1/records
+
+  page
+  limit
+  q
+  match
+  control_no
+  date_from
+  date_to
+  office
+  requestor
+  subject
+  routed_to_div
+  remarks
+  file_name
+  attachments = with | without
+  sort_by
+  sort_dir
+
+  Response supported by this UI:
+
+  {
+    "data": [ Entry, ... ],
+    "page": 1,
+    "limit": 256,
+    "has_next": true,
+
+    // optional but recommended:
+    "total": 12345,
+    "total_pages": 49
+  }
+
+  Without total / total_pages, First / Previous / Next still work.
+*/
+
+const ENDPOINTS = {
+  bootstrapStatus: "/aris/v1/auth/bootstrap/status",
+  bootstrapCreate: "/aris/v1/auth/create",
+  login: "/aris/v1/auth/authenticate",
+  refresh: "/aris/v1/auth/refresh",
+  session: "/aris/v1/auth/session",
+
+  accounts: {
+    list: "/aris/v1/auth/get",
+    create: "/aris/v1/user/create",
+    modify: "/aris/v1/auth/modify",
+    delete: "/aris/v1/auth/delete"
+  },
+
+  entries: "/aris/v1/records",
+
+  entry: uid =>
+    `/aris/v1/records/${encodeURIComponent(uid)}`,
+
+  upload: uid =>
+    `/aris/v1/records/${encodeURIComponent(uid)}/attachments`,
+
+  attachment: (entryUid, attachmentUid) =>
+    `/aris/v1/records/${encodeURIComponent(entryUid)}/attachments/${encodeURIComponent(attachmentUid)}`,
+
+  download: (entryUid, attachmentUid) =>
+    `/aris/v1/records/${encodeURIComponent(entryUid)}/attachments/${encodeURIComponent(attachmentUid)}/download`
+};
+
+/* -------------------------------------------------------------------------- */
+/* State                                                                      */
+/* -------------------------------------------------------------------------- */
+
+const state = {
+  rows: [],
+  page: 1,
+  limit: PAGE_LIMIT,
+  hasNext: false,
+  total: null,
+  totalPages: null,
+
+  loading: false,
+  currentRequestId: 0,
+  currentAbortController: null,
+
+  editing: null,
+  pendingFiles: [],
+  uploadState: new Map(),
+  uploadInProgress: false,
+
+  previewObjectUrl: null,
+  previewFileName: "",
+  previewBlob: null,
+
+  session: null,
+  refreshTimer: null,
+  refreshPromise: null,
+
+  searchTimer: null
+};
+
+/* -------------------------------------------------------------------------- */
+/* Elements                                                                   */
+/* -------------------------------------------------------------------------- */
+
+const els = {
+  serverPill: document.getElementById("serverPill"),
+  userPill: document.getElementById("userPill"),
+  accountsBtn: document.getElementById("accountsBtn"),
+  logoutBtn: document.getElementById("logoutBtn"),
+
+  loginModal: document.getElementById("loginModal"),
+  bootstrapPanel: document.getElementById("bootstrapPanel"),
+  bootstrapForm: document.getElementById("bootstrapForm"),
+  bootstrapAuthKey: document.getElementById("bootstrapAuthKey"),
+  bootstrapName: document.getElementById("bootstrapName"),
+  bootstrapEmail: document.getElementById("bootstrapEmail"),
+  bootstrapPassword: document.getElementById("bootstrapPassword"),
+  bootstrapPasswordConfirm: document.getElementById("bootstrapPasswordConfirm"),
+  bootstrapBtn: document.getElementById("bootstrapBtn"),
+  bootstrapStatus: document.getElementById("bootstrapStatus"),
+
+  loginPanel: document.getElementById("loginPanel"),
+  loginForm: document.getElementById("loginForm"),
+  loginEmail: document.getElementById("loginEmail"),
+  loginPassword: document.getElementById("loginPassword"),
+  loginOtp: document.getElementById("loginOtp"),
+  loginBtn: document.getElementById("loginBtn"),
+  loginStatus: document.getElementById("loginStatus"),
+
+  accountsModal: document.getElementById("accountsModal"),
+  accountsCloseBtn: document.getElementById("accountsCloseBtn"),
+  createAccountForm: document.getElementById("createAccountForm"),
+  accountName: document.getElementById("accountName"),
+  accountEmail: document.getElementById("accountEmail"),
+  accountPassword: document.getElementById("accountPassword"),
+  accountAccess: document.getElementById("accountAccess"),
+  createAccountBtn: document.getElementById("createAccountBtn"),
+  accountList: document.getElementById("accountList"),
+
+  universalSearch: document.getElementById("universalSearch"),
+  matchMode: document.getElementById("matchMode"),
+  advancedToggleBtn: document.getElementById("advancedToggleBtn"),
+  clearSearchBtn: document.getElementById("clearSearchBtn"),
+  advancedPanel: document.getElementById("advancedPanel"),
+
+  filterControlNo: document.getElementById("filterControlNo"),
+  filterOffice: document.getElementById("filterOffice"),
+  filterRequestor: document.getElementById("filterRequestor"),
+  filterRoutedToDiv: document.getElementById("filterRoutedToDiv"),
+  filterSubject: document.getElementById("filterSubject"),
+  filterRemarks: document.getElementById("filterRemarks"),
+  filterFileName: document.getElementById("filterFileName"),
+  filterDateFrom: document.getElementById("filterDateFrom"),
+  filterDateTo: document.getElementById("filterDateTo"),
+  sortBy: document.getElementById("sortBy"),
+  sortDir: document.getElementById("sortDir"),
+  attachmentMode: document.getElementById("attachmentMode"),
+
+  applyAdvancedBtn: document.getElementById("applyAdvancedBtn"),
+  clearAdvancedBtn: document.getElementById("clearAdvancedBtn"),
+
+  loadingDot: document.getElementById("loadingDot"),
+  statusText: document.getElementById("statusText"),
+  requestStatus: document.getElementById("requestStatus"),
+  tableLoadingBar: document.getElementById("tableLoadingBar"),
+  tableBody: document.getElementById("tableBody"),
+  tableWrap: document.getElementById("tableWrap"),
+
+  paginationInfo: document.getElementById("paginationInfo"),
+  currentPageText: document.getElementById("currentPageText"),
+  firstPageBtn: document.getElementById("firstPageBtn"),
+  prevPageBtn: document.getElementById("prevPageBtn"),
+  nextPageBtn: document.getElementById("nextPageBtn"),
+  pageInput: document.getElementById("pageInput"),
+  goPageBtn: document.getElementById("goPageBtn"),
+
+  refreshBtn: document.getElementById("refreshBtn"),
+  newEntryBtn: document.getElementById("newEntryBtn"),
+
+  entryModal: document.getElementById("entryModal"),
+  entryModalTitle: document.getElementById("entryModalTitle"),
+  entryModalHint: document.getElementById("entryModalHint"),
+  closeModalBtn: document.getElementById("closeModalBtn"),
+  cancelBtn: document.getElementById("cancelBtn"),
+  resetFormBtn: document.getElementById("resetFormBtn"),
+
+  entryForm: document.getElementById("entryForm"),
+  uid: document.getElementById("uid"),
+  controlNoDisplay: document.getElementById("controlNoDisplay"),
+  date: document.getElementById("date"),
+  office: document.getElementById("office"),
+  requestor: document.getElementById("requestor"),
+  subject: document.getElementById("subject"),
+  routed_to_div: document.getElementById("routed_to_div"),
+  remarks: document.getElementById("remarks"),
+
+  fileInput: document.getElementById("fileInput"),
+  fileUploadSection: document.getElementById("fileUploadSection"),
+  dropAnywhereOverlay: document.getElementById("dropAnywhereOverlay"),
+
+  uploadProgressPanel: document.getElementById("uploadProgressPanel"),
+  uploadProgressLabel: document.getElementById("uploadProgressLabel"),
+  uploadProgressPercent: document.getElementById("uploadProgressPercent"),
+  uploadProgressBar: document.getElementById("uploadProgressBar"),
+  uploadProgressBytes: document.getElementById("uploadProgressBytes"),
+
+  existingAttachments: document.getElementById("existingAttachments"),
+  pendingAttachments: document.getElementById("pendingAttachments"),
+  saveBtn: document.getElementById("saveBtn"),
+
+  previewModal: document.getElementById("previewModal"),
+  previewTitle: document.getElementById("previewTitle"),
+  previewMeta: document.getElementById("previewMeta"),
+  previewBody: document.getElementById("previewBody"),
+  previewOpenBtn: document.getElementById("previewOpenBtn"),
+  previewDownloadBtn: document.getElementById("previewDownloadBtn"),
+  previewCloseBtn: document.getElementById("previewCloseBtn"),
+
+  toast: document.getElementById("toast")
+};
+
+els.serverPill.textContent = `${API_BASE} · page size ${PAGE_LIMIT}`;
+
+/* -------------------------------------------------------------------------- */
+/* Authentication                                                             */
+/* -------------------------------------------------------------------------- */
+
+const TOKEN_KEYS = {
+  access: "aris_access_token",
+  refresh: "aris_refresh_token"
+};
+
+function getAccessToken() {
+  return sessionStorage.getItem(TOKEN_KEYS.access) || "";
+}
+
+function getRefreshToken() {
+  return sessionStorage.getItem(TOKEN_KEYS.refresh) || "";
+}
+
+function storeTokens(data) {
+  if (!data?.access_token || !data?.refresh_token) {
+    throw new Error("ARIS did not return access and refresh tokens.");
+  }
+
+  sessionStorage.setItem(TOKEN_KEYS.access, data.access_token);
+  sessionStorage.setItem(TOKEN_KEYS.refresh, data.refresh_token);
+
+  scheduleTokenRefresh(data.access_token);
+}
+
+function clearTokens() {
+  sessionStorage.removeItem(TOKEN_KEYS.access);
+  sessionStorage.removeItem(TOKEN_KEYS.refresh);
+
+  clearTimeout(state.refreshTimer);
+  state.refreshTimer = null;
+}
+
+function authHeaders(extra = {}) {
+  const token = getAccessToken();
+
+  return {
+    ...extra,
+    ...(token ? { "Authorization": `Bearer ${token}` } : {})
+  };
+}
+
+function decodeJwtPayload(token) {
+  try {
+    const payload = token.split(".")[1];
+    if (!payload) return null;
+
+    const normalized = payload
+      .replaceAll("-", "+")
+      .replaceAll("_", "/");
+
+    const padded =
+      normalized + "=".repeat((4 - normalized.length % 4) % 4);
+
+    return JSON.parse(atob(padded));
+  } catch (_) {
+    return null;
+  }
+}
+
+function scheduleTokenRefresh(accessToken) {
+  clearTimeout(state.refreshTimer);
+
+  const claims = decodeJwtPayload(accessToken);
+  if (!claims?.exp) return;
+
+  const refreshIn =
+    Math.max(5000, (claims.exp * 1000) - Date.now() - 30000);
+
+  state.refreshTimer = setTimeout(async () => {
+    try {
+      await refreshAccessToken();
+    } catch (_) {
+      logout(false);
+    }
+  }, refreshIn);
+}
+
+async function refreshAccessToken() {
+  if (state.refreshPromise) {
+    return state.refreshPromise;
+  }
+
+  const refreshToken = getRefreshToken();
+
+  if (!refreshToken) {
+    throw new Error("No refresh token is available.");
+  }
+
+  state.refreshPromise = (async () => {
+    const response = await fetch(`${API_BASE}${ENDPOINTS.refresh}`, {
+      method: "POST",
+      headers: {
+        "Accept": "application/json",
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        refresh_token: refreshToken
+      })
+    });
+
+    const text = await response.text().catch(() => "");
+
+    if (!response.ok) {
+      throw new Error(readableError(text, response.status));
+    }
+
+    const data = JSON.parse(text);
+    storeTokens(data);
+
+    return data;
+  })();
+
+  try {
+    return await state.refreshPromise;
+  } finally {
+    state.refreshPromise = null;
+  }
+}
+
+async function authenticatedFetch(path, options = {}, retry = true) {
+  const headers = authHeaders(options.headers || {});
+
+  const response = await fetch(`${API_BASE}${path}`, {
+    ...options,
+    headers
+  });
+
+  if (response.status === 401 && retry && getRefreshToken()) {
+    try {
+      await refreshAccessToken();
+      return authenticatedFetch(path, options, false);
+    } catch (error) {
+      logout(false);
+      throw error;
+    }
+  }
+
+  if (response.status === 401) {
+    logout(false);
+  }
+
+  return response;
+}
+
+function canManageAccounts() {
+  return state.session?.access_level === 0;
+}
+
+function canDeleteAris() {
+  return state.session?.access_level === 0 ||
+         state.session?.access_level === 1;
+}
+
+function canWriteAris() {
+  return state.session?.access_level === 0 ||
+         state.session?.access_level === 1 ||
+         state.session?.access_level === 2;
+}
+
+function canReadAris() {
+  return [0, 1, 2, 3].includes(state.session?.access_level);
+}
+
+async function getBootstrapStatus() {
+  const response = await fetch(`${API_BASE}${ENDPOINTS.bootstrapStatus}`, {
+    method: "GET",
+    headers: {
+      "Accept": "application/json"
+    }
+  });
+
+  const text = await response.text().catch(() => "");
+
+  if (!response.ok) {
+    throw new Error(readableError(text, response.status));
+  }
+
+  return JSON.parse(text);
+}
+
+function showBootstrap() {
+  els.bootstrapPanel.classList.remove("hidden");
+  els.loginPanel.classList.add("hidden");
+
+  els.loginStatus.textContent = "";
+  els.bootstrapStatus.textContent =
+    "No ARIS account exists yet. Enter one AUTH_KEYS value and create the first Administrator.";
+
+  setTimeout(() => {
+    els.bootstrapAuthKey.focus();
+  }, 0);
+}
+
+function showNormalLogin(message = "") {
+  els.bootstrapPanel.classList.add("hidden");
+  els.loginPanel.classList.remove("hidden");
+
+  els.loginStatus.textContent =
+    message ||
+    "Use a ARIS account provisioned by an Administrator. ARIS refreshes access tokens automatically while this tab remains signed in.";
+
+  setTimeout(() => {
+    els.loginEmail.focus();
+  }, 0);
+}
+
+async function bootstrapAdministrator(event) {
+  event.preventDefault();
+
+  const authKey = els.bootstrapAuthKey.value.trim();
+  const name = els.bootstrapName.value.trim();
+  const email = els.bootstrapEmail.value.trim();
+  const password = els.bootstrapPassword.value;
+  const confirmPassword = els.bootstrapPasswordConfirm.value;
+
+  if (!authKey || !name || !email || !password) {
+    els.bootstrapStatus.textContent =
+      "AUTH key, name, email, and password are required.";
+    return;
+  }
+
+  if (password !== confirmPassword) {
+    els.bootstrapStatus.textContent =
+      "Passwords do not match.";
+    return;
+  }
+
+  els.bootstrapBtn.disabled = true;
+  els.bootstrapBtn.textContent = "Creating Administrator...";
+  els.bootstrapStatus.textContent = "Initializing ARIS...";
+
+  try {
+    const response = await fetch(
+      `${API_BASE}${ENDPOINTS.bootstrapCreate}`,
+      {
+        method: "POST",
+        headers: {
+          "Accept": "application/json",
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${authKey}`
+        },
+        body: JSON.stringify({
+          name,
+          email,
+          password,
+          access_level: 0
+        })
+      }
+    );
+
+    const text = await response.text().catch(() => "");
+
+    if (!response.ok) {
+      throw new Error(readableError(text, response.status));
+    }
+
+    // Bootstrap key is no longer needed in the browser.
+    els.bootstrapAuthKey.value = "";
+    els.bootstrapPassword.value = "";
+    els.bootstrapPasswordConfirm.value = "";
+
+    els.bootstrapStatus.textContent =
+      "Administrator created. Signing in...";
+
+    // Immediately authenticate the newly-created Administrator
+    // and establish the normal access/refresh JWT session.
+    const loginResponse = await fetch(`${API_BASE}${ENDPOINTS.login}`, {
+      method: "POST",
+      headers: {
+        "Accept": "application/json",
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        email,
+        password,
+        otp: null
+      })
+    });
+
+    const loginText = await loginResponse.text().catch(() => "");
+
+    if (!loginResponse.ok) {
+      throw new Error(readableError(loginText, loginResponse.status));
+    }
+
+    const authData = JSON.parse(loginText);
+
+    storeTokens(authData);
+    await loadSession();
+
+    hideLogin();
+    showToast("Administrator account created.");
+    await loadPage(1);
+  } catch (error) {
+    els.bootstrapStatus.textContent = error.message;
+
+    // Re-check because another browser/process may have initialized ARIS.
+    try {
+      const status = await getBootstrapStatus();
+
+      if (!status.setup_required) {
+        showNormalLogin(
+          "ARIS is already initialized. Sign in with an existing account."
+        );
+      }
+    } catch (_) {
+      // Keep the original bootstrap error visible.
+    }
+  } finally {
+    els.bootstrapBtn.disabled = false;
+    els.bootstrapBtn.textContent = "Create Administrator";
+  }
+}
+
+function showLogin(message = "") {
+  els.loginModal.classList.remove("hidden");
+  els.loginModal.setAttribute("aria-hidden", "false");
+  showNormalLogin(message);
+}
+
+function hideLogin() {
+  els.loginModal.classList.add("hidden");
+  els.loginModal.setAttribute("aria-hidden", "true");
+}
+
+function applySessionUi() {
+  const session = state.session;
+
+  if (!session) {
+    els.userPill.classList.add("hidden");
+    els.accountsBtn.classList.add("hidden");
+    els.logoutBtn.classList.add("hidden");
+    els.newEntryBtn.classList.add("hidden");
+    return;
+  }
+
+  els.userPill.textContent =
+    `${session.name || session.email} · ${session.access_name}`;
+
+  els.userPill.classList.remove("hidden");
+  els.logoutBtn.classList.remove("hidden");
+
+  els.accountsBtn.classList.add("hidden");
+
+  els.newEntryBtn.classList.toggle(
+    "hidden",
+    !canWriteAris()
+  );
+}
+
+async function loadSession() {
+  const session = await requestJson(
+    ENDPOINTS.session,
+    { method: "GET" }
+  );
+
+  state.session = session;
+  applySessionUi();
+
+  return session;
+}
+
+async function bootstrapSession() {
+  try {
+    if (!getAccessToken() && getRefreshToken()) {
+      await refreshAccessToken();
+    }
+
+    if (!getAccessToken()) {
+      state.session = null;
+      applySessionUi();
+      showLogin();
+      return;
+    }
+
+    await loadSession();
+
+    if (!canReadAris()) {
+      throw new Error("This account does not have ARIS access.");
+    }
+
+    hideLogin();
+    await loadPage(1);
+  } catch (error) {
+    clearTokens();
+    state.session = null;
+    applySessionUi();
+    showLogin(error.message);
+  }
+}
+
+async function login(event) {
+  event.preventDefault();
+
+  els.loginBtn.disabled = true;
+  els.loginBtn.textContent = "Signing In...";
+  els.loginStatus.textContent = "Authenticating with ARIS...";
+
+  try {
+    const payload = {
+      email: els.loginEmail.value.trim(),
+      password: els.loginPassword.value,
+      otp: els.loginOtp.value.trim() || null
+    };
+
+    const response = await fetch(`${API_BASE}${ENDPOINTS.login}`, {
+      method: "POST",
+      headers: {
+        "Accept": "application/json",
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(payload)
+    });
+
+    const text = await response.text().catch(() => "");
+
+    if (!response.ok) {
+      const message = readableError(text, response.status);
+
+      if (
+        response.status === 400 &&
+        !payload.otp
+      ) {
+        throw new Error(
+          `${message}. If this account has 2FA enabled, enter the current 6-digit OTP.`
+        );
+      }
+
+      throw new Error(message);
+    }
+
+    const data = JSON.parse(text);
+    storeTokens(data);
+
+    els.loginPassword.value = "";
+    els.loginOtp.value = "";
+
+    await loadSession();
+
+    if (!canReadAris()) {
+      throw new Error("This account does not have ARIS access.");
+    }
+
+    hideLogin();
+    await loadPage(1);
+  } catch (error) {
+    clearTokens();
+    state.session = null;
+    applySessionUi();
+    els.loginStatus.textContent = error.message;
+  } finally {
+    els.loginBtn.disabled = false;
+    els.loginBtn.textContent = "Sign In";
+  }
+}
+
+function logout(showMessage = true) {
+  clearTokens();
+
+  state.session = null;
+  state.rows = [];
+  state.editing = null;
+  state.pendingFiles = [];
+
+  applySessionUi();
+
+  els.tableBody.innerHTML = `
+    <tr>
+      <td colspan="10" class="empty-state">
+        Sign in to load ARIS records.
+      </td>
+    </tr>
+  `;
+
+  if (showMessage) {
+    showToast("Signed out.");
+  }
+
+  showLogin();
+}
+
+/* -------------------------------------------------------------------------- */
+/* Generic helpers                                                            */
+/* -------------------------------------------------------------------------- */
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+function readableError(text, status) {
+  if (!text) return `Request failed: ${status}`;
+
+  try {
+    const parsed = JSON.parse(text);
+
+    return (
+      parsed.response ||
+      parsed.error ||
+      parsed.message ||
+      parsed.detail ||
+      text
+    );
+  } catch (_) {
+    return text;
+  }
+}
+
+function showToast(message, type = "success") {
+  els.toast.textContent = message;
+  els.toast.className = `toast show ${type}`;
+
+  clearTimeout(showToast.timer);
+
+  showToast.timer = setTimeout(() => {
+    els.toast.className = "toast";
+  }, 3400);
+}
+
+function formatBytes(bytes) {
+  const value = Number(bytes || 0);
+
+  if (value < 1024) {
+    return `${value} B`;
+  }
+
+  if (value < 1024 * 1024) {
+    return `${(value / 1024).toFixed(1)} KiB`;
+  }
+
+  return `${(value / 1024 / 1024).toFixed(1)} MiB`;
+}
+
+function attachmentList(row) {
+  return Array.isArray(row?.attached_files)
+    ? row.attached_files
+    : [];
+}
+
+function normalizePageResponse(data, fallbackPage) {
+  const rows =
+    Array.isArray(data?.data) ? data.data :
+    Array.isArray(data?.results) ? data.results :
+    Array.isArray(data?.items) ? data.items :
+    Array.isArray(data) ? data :
+    [];
+
+  const page = Math.max(1, Number(data?.page || fallbackPage || 1));
+  const limit = Math.max(1, Number(data?.limit || PAGE_LIMIT));
+
+  let total = null;
+  let totalPages = null;
+
+  if (Number.isFinite(Number(data?.total))) {
+    total = Math.max(0, Number(data.total));
+  }
+
+  if (Number.isFinite(Number(data?.total_pages))) {
+    totalPages = Math.max(1, Number(data.total_pages));
+  } else if (total !== null) {
+    totalPages = Math.max(1, Math.ceil(total / limit));
+  }
+
+  let hasNext;
+
+  if (typeof data?.has_next === "boolean") {
+    hasNext = data.has_next;
+  } else if (totalPages !== null) {
+    hasNext = page < totalPages;
+  } else {
+    /*
+      Conservative fallback:
+      if the backend returned a full page, another page may exist.
+    */
+    hasNext = rows.length >= limit;
+  }
+
+  return {
+    rows,
+    page,
+    limit,
+    hasNext,
+    total,
+    totalPages
+  };
+}
+
+function setLoading(loading, message = "") {
+  state.loading = loading;
+
+  els.loadingDot.classList.toggle("active", loading);
+  els.tableLoadingBar.classList.toggle("active", loading);
+
+  els.refreshBtn.disabled = loading;
+  els.firstPageBtn.disabled = loading || state.page <= 1;
+  els.prevPageBtn.disabled = loading || state.page <= 1;
+  els.nextPageBtn.disabled = loading || !state.hasNext;
+  els.goPageBtn.disabled = loading;
+
+  els.requestStatus.textContent =
+    loading
+      ? (message || "Loading...")
+      : "Ready";
+}
+
+async function requestJson(path, options = {}) {
+  const method = (options.method || "GET").toUpperCase();
+
+  const headers = authHeaders({
+    "Accept": "application/json",
+    ...(options.headers || {})
+  });
+
+  const init = {
+    method,
+    headers,
+    signal: options.signal
+  };
+
+  if (options.body !== undefined) {
+    init.headers["Content-Type"] = "application/json";
+    init.body = JSON.stringify(options.body);
+  }
+
+  const response = await authenticatedFetch(path, init);
+  const text = await response.text().catch(() => "");
+
+  if (!response.ok) {
+    throw new Error(readableError(text, response.status));
+  }
+
+  if (response.status === 204 || !text) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(text);
+  } catch (_) {
+    throw new Error("Server returned invalid JSON.");
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Search                                                                     */
+/* -------------------------------------------------------------------------- */
+
+function collectSearchParams(page = state.page) {
+  const params = new URLSearchParams();
+
+  params.set("page", String(Math.max(1, page)));
+  params.set("limit", String(PAGE_LIMIT));
+
+  const fields = {
+    q: els.universalSearch.value.trim(),
+    match: els.matchMode.value,
+
+    control_no: els.filterControlNo.value.trim(),
+    office: els.filterOffice.value.trim(),
+    requestor: els.filterRequestor.value.trim(),
+    routed_to_div: els.filterRoutedToDiv.value.trim(),
+    subject: els.filterSubject.value.trim(),
+    remarks: els.filterRemarks.value.trim(),
+    file_name: els.filterFileName.value.trim(),
+
+    date_from: els.filterDateFrom.value,
+    date_to: els.filterDateTo.value,
+
+    attachments: els.attachmentMode.value,
+
+    sort_by: els.sortBy.value,
+    sort_dir: els.sortDir.value
+  };
+
+  for (const [key, value] of Object.entries(fields)) {
+    if (value !== "") {
+      params.set(key, value);
+    }
+  }
+
+  return params;
+}
+
+function hasActiveSearch() {
+  return (
+    els.universalSearch.value.trim() !== "" ||
+    els.filterControlNo.value.trim() !== "" ||
+    els.filterOffice.value.trim() !== "" ||
+    els.filterRequestor.value.trim() !== "" ||
+    els.filterRoutedToDiv.value.trim() !== "" ||
+    els.filterSubject.value.trim() !== "" ||
+    els.filterRemarks.value.trim() !== "" ||
+    els.filterFileName.value.trim() !== "" ||
+    els.filterDateFrom.value !== "" ||
+    els.filterDateTo.value !== "" ||
+    els.attachmentMode.value !== ""
+  );
+}
+
+function searchDescription() {
+  if (!hasActiveSearch()) {
+    return "All ARIS records";
+  }
+
+  const parts = [];
+
+  const q = els.universalSearch.value.trim();
+
+  if (q) {
+    parts.push(`Search: "${q}"`);
+  }
+
+  if (els.filterControlNo.value.trim()) {
+    parts.push(`Control: ${els.filterControlNo.value.trim()}`);
+  }
+
+  if (els.filterOffice.value.trim()) {
+    parts.push(`Office: ${els.filterOffice.value.trim()}`);
+  }
+
+  if (els.filterRequestor.value.trim()) {
+    parts.push(`Requestor: ${els.filterRequestor.value.trim()}`);
+  }
+
+  if (els.filterRoutedToDiv.value.trim()) {
+    parts.push(`Division: ${els.filterRoutedToDiv.value.trim()}`);
+  }
+
+  if (els.filterDateFrom.value || els.filterDateTo.value) {
+    parts.push(
+      `Date: ${els.filterDateFrom.value || "…"} → ${els.filterDateTo.value || "…"}`
+    );
+  }
+
+  return parts.join(" · ");
+}
+
+function scheduleUniversalSearch() {
+  clearTimeout(state.searchTimer);
+
+  state.searchTimer = setTimeout(() => {
+    loadPage(1);
+  }, SEARCH_DEBOUNCE_MS);
+}
+
+function clearAdvancedSearch() {
+  els.filterControlNo.value = "";
+  els.filterOffice.value = "";
+  els.filterRequestor.value = "";
+  els.filterRoutedToDiv.value = "";
+  els.filterSubject.value = "";
+  els.filterRemarks.value = "";
+  els.filterFileName.value = "";
+  els.filterDateFrom.value = "";
+  els.filterDateTo.value = "";
+  els.attachmentMode.value = "";
+  els.sortBy.value = "date";
+  els.sortDir.value = "desc";
+}
+
+function clearAllSearch() {
+  clearTimeout(state.searchTimer);
+
+  els.universalSearch.value = "";
+  els.matchMode.value = "contains";
+
+  clearAdvancedSearch();
+
+  loadPage(1);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Page loading                                                               */
+/* -------------------------------------------------------------------------- */
+
+async function loadPage(page = 1) {
+  page = Math.max(1, Number(page) || 1);
+
+  /*
+    If a search request is still running, cancel it. This prevents rapidly
+    typed universal-search text from creating a pile of overlapping requests.
+  */
+  if (state.currentAbortController) {
+    state.currentAbortController.abort();
+  }
+
+  const controller = new AbortController();
+  const requestId = ++state.currentRequestId;
+
+  state.currentAbortController = controller;
+
+  setLoading(true, `Loading page ${page}...`);
+
+  const params = collectSearchParams(page);
+  const path = `${ENDPOINTS.entries}?${params.toString()}`;
+
+  try {
+    const data = await requestJson(path, {
+      method: "GET",
+      signal: controller.signal
+    });
+
+    /*
+      Ignore stale responses even if cancellation raced with completion.
+    */
+    if (requestId !== state.currentRequestId) {
+      return;
+    }
+
+    const result = normalizePageResponse(data, page);
+
+    state.rows = result.rows;
+    state.page = result.page;
+    state.limit = result.limit;
+    state.hasNext = result.hasNext;
+    state.total = result.total;
+    state.totalPages = result.totalPages;
+
+    renderTable();
+    updatePagination();
+    updateStatus();
+
+    /*
+      Every page starts at the top. We never append pages, keeping memory
+      bounded regardless of database size.
+    */
+    els.tableWrap.scrollTop = 0;
+    els.tableWrap.scrollLeft = 0;
+  } catch (error) {
+    if (error.name === "AbortError") {
+      return;
+    }
+
+    if (requestId !== state.currentRequestId) {
+      return;
+    }
+
+    state.rows = [];
+    state.hasNext = false;
+
+    els.tableBody.innerHTML = `
+      <tr>
+        <td colspan="10" class="empty-state">
+          ${escapeHtml(error.message)}
+        </td>
+      </tr>
+    `;
+
+    updatePagination();
+    els.statusText.textContent = "Unable to load ARIS records.";
+
+    showToast(error.message, "error");
+  } finally {
+    if (requestId === state.currentRequestId) {
+      state.currentAbortController = null;
+      setLoading(false);
+      updatePagination();
+    }
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Table                                                                      */
+/* -------------------------------------------------------------------------- */
+
+function renderTable() {
+  const rows = state.rows;
+
+  if (!rows.length) {
+    els.tableBody.innerHTML = `
+      <tr>
+        <td colspan="10" class="empty-state">
+          No ARIS records found for this page/search.
+        </td>
+      </tr>
+    `;
+
+    return;
+  }
+
+  const startingRow = ((state.page - 1) * PAGE_LIMIT) + 1;
+
+  els.tableBody.innerHTML = rows.map((row, index) => {
+    const attachments = attachmentList(row);
+
+    return `
+      <tr>
+        <td class="row-num">${startingRow + index}</td>
+
+        <td class="control-cell">
+          #${escapeHtml(row.control_no ?? "-")}
+        </td>
+
+        <td class="date-cell">
+          ${escapeHtml(row.date || "-")}
+        </td>
+
+        <td class="office-cell">
+          ${escapeHtml(row.office || "-")}
+        </td>
+
+        <td class="requestor-cell">
+          ${escapeHtml(row.requestor || "-")}
+        </td>
+
+        <td class="subject-cell">
+          ${escapeHtml(row.subject || "-")}
+        </td>
+
+        <td class="route-cell">
+          ${escapeHtml(row.routed_to_div || "-")}
+        </td>
+
+        <td class="attachment-cell">
+          ${
+            attachments.length
+              ? `
+                <button
+                  class="btn btn-soft btn-small"
+                  type="button"
+                  data-open-entry="${escapeHtml(row.uid)}"
+                  title="Open entry attachments"
+                >
+                  📎 ${attachments.length} file${attachments.length === 1 ? "" : "s"}
+                </button>
+              `
+              : `<span class="muted">No files</span>`
+          }
+        </td>
+
+        <td class="remarks-cell">
+          ${escapeHtml(row.remarks || "None")}
+        </td>
+
+        <td class="sticky-actions">
+          <div class="row-actions">
+            <button
+              class="btn btn-soft btn-small"
+              type="button"
+              data-edit-entry="${escapeHtml(row.uid)}"
+            >
+              ${canWriteAris() ? "Edit" : "View"}
+            </button>
+
+            ${
+              canDeleteAris()
+                ? `
+                  <button
+                    class="btn btn-danger btn-small"
+                    type="button"
+                    data-delete-entry="${escapeHtml(row.uid)}"
+                  >
+                    Delete
+                  </button>
+                `
+                : ""
+            }
+          </div>
+        </td>
+      </tr>
+    `;
+  }).join("");
+}
+
+function updateStatus() {
+  const description = searchDescription();
+
+  let countText;
+
+  if (state.total !== null) {
+    countText = `${state.total.toLocaleString()} matching entr${state.total === 1 ? "y" : "ies"}`;
+  } else {
+    countText = `${state.rows.length} loaded on this page`;
+  }
+
+  els.statusText.textContent =
+    `${description} · ${countText} · ${PAGE_LIMIT} per page`;
+}
+
+function updatePagination() {
+  els.currentPageText.textContent =
+    state.totalPages !== null
+      ? `Page ${state.page} of ${state.totalPages}`
+      : `Page ${state.page}`;
+
+  els.pageInput.value = String(state.page);
+
+  els.firstPageBtn.disabled = state.loading || state.page <= 1;
+  els.prevPageBtn.disabled = state.loading || state.page <= 1;
+  els.nextPageBtn.disabled = state.loading || !state.hasNext;
+  els.goPageBtn.disabled = state.loading;
+
+  const start =
+    state.rows.length
+      ? ((state.page - 1) * PAGE_LIMIT) + 1
+      : 0;
+
+  const end =
+    state.rows.length
+      ? start + state.rows.length - 1
+      : 0;
+
+  if (state.total !== null) {
+    els.paginationInfo.textContent =
+      `Showing ${start.toLocaleString()}–${end.toLocaleString()} of ${state.total.toLocaleString()}`;
+  } else {
+    els.paginationInfo.textContent =
+      state.rows.length
+        ? `Showing rows ${start.toLocaleString()}–${end.toLocaleString()}`
+        : "No rows on this page";
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Attachment queue / upload progress                                         */
+/* -------------------------------------------------------------------------- */
+
+function pendingFileKey(file) {
+  return `${file.name}\u0000${file.size}\u0000${file.lastModified}`;
+}
+
+function pendingFileStatus(file) {
+  return state.uploadState.get(pendingFileKey(file)) || {
+    percent: 0,
+    label: "Ready — uploads when you save the entry",
+    stage: "pending"
+  };
+}
+
+function setPendingFileStatus(file, values) {
+  const key = pendingFileKey(file);
+  const current = pendingFileStatus(file);
+
+  state.uploadState.set(key, {
+    ...current,
+    ...values
+  });
+
+  renderPendingAttachments();
+}
+
+function clearUploadProgress() {
+  state.uploadInProgress = false;
+  state.uploadState.clear();
+
+  els.uploadProgressPanel.classList.add("hidden");
+  els.uploadProgressLabel.textContent = "Uploading attachments…";
+  els.uploadProgressPercent.textContent = "0%";
+  els.uploadProgressBar.style.width = "0%";
+  els.uploadProgressBytes.textContent = "";
+}
+
+function setOverallUploadProgress(loaded, total, label) {
+  const safeTotal = Math.max(1, Number(total) || 1);
+  const safeLoaded = Math.max(0, Math.min(Number(loaded) || 0, safeTotal));
+
+  const percent = Math.max(
+    0,
+    Math.min(100, Math.round((safeLoaded / safeTotal) * 100))
+  );
+
+  els.uploadProgressPanel.classList.remove("hidden");
+  els.uploadProgressLabel.textContent = label || "Uploading attachments…";
+  els.uploadProgressPercent.textContent = `${percent}%`;
+  els.uploadProgressBar.style.width = `${percent}%`;
+  els.uploadProgressBytes.textContent =
+    `${formatBytes(safeLoaded)} of ${formatBytes(safeTotal)} sent to ARIS`;
+}
+
+function queueFiles(files) {
+  const incoming = Array.from(files || []);
+  let added = 0;
+
+  for (const file of incoming) {
+    if (!(file instanceof File)) {
+      continue;
+    }
+
+    if (file.size > MAX_FILE_SIZE) {
+      showToast(
+        `${file.name} exceeds the 50 MiB attachment limit.`,
+        "error"
+      );
+      continue;
+    }
+
+    const duplicate = state.pendingFiles.some(existing =>
+      existing.name === file.name &&
+      existing.size === file.size &&
+      existing.lastModified === file.lastModified
+    );
+
+    if (duplicate) {
+      continue;
+    }
+
+    state.pendingFiles.push(file);
+
+    state.uploadState.set(
+      pendingFileKey(file),
+      {
+        percent: 0,
+        label: "Ready — uploads when you save the entry",
+        stage: "pending"
+      }
+    );
+
+    added++;
+  }
+
+  els.fileInput.value = "";
+  renderPendingAttachments();
+  updateSaveButtonLabel();
+
+  if (added > 0) {
+    showToast(
+      `${added} file${added === 1 ? "" : "s"} added as attachment${added === 1 ? "" : "s"}.`
+    );
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Attachment preview                                                         */
+/* -------------------------------------------------------------------------- */
+
+function closeAttachmentPreview() {
+  els.previewModal.classList.add("hidden");
+  els.previewModal.setAttribute("aria-hidden", "true");
+  els.previewBody.innerHTML = "";
+
+  if (state.previewObjectUrl) {
+    URL.revokeObjectURL(state.previewObjectUrl);
+  }
+
+  state.previewObjectUrl = null;
+  state.previewFileName = "";
+  state.previewBlob = null;
+}
+
+function previewLooksTextual(mimeType, fileName) {
+  const mime = String(mimeType || "").toLowerCase();
+  const name = String(fileName || "").toLowerCase();
+
+  return (
+    mime.startsWith("text/") ||
+    mime.includes("json") ||
+    mime.includes("xml") ||
+    mime.includes("javascript") ||
+    /\.(txt|csv|json|xml|md|log|ini|conf|yaml|yml|toml|rs|js|ts|css|html)$/i.test(name)
+  );
+}
+
+async function showAttachmentPreview(blob, fileName, mimeType) {
+  closeAttachmentPreview();
+
+  const type =
+    mimeType ||
+    blob.type ||
+    "application/octet-stream";
+
+  const objectUrl =
+    URL.createObjectURL(blob);
+
+  state.previewObjectUrl = objectUrl;
+  state.previewFileName = fileName || "attachment";
+  state.previewBlob = blob;
+
+  els.previewTitle.textContent =
+    fileName || "Attachment Preview";
+
+  els.previewMeta.textContent =
+    `${type} · ${formatBytes(blob.size)}`;
+
+  els.previewBody.innerHTML = "";
+
+  els.previewModal.classList.remove("hidden");
+  els.previewModal.setAttribute("aria-hidden", "false");
+
+  if (type.startsWith("image/")) {
+    const image = document.createElement("img");
+    image.src = objectUrl;
+    image.alt = fileName || "Attachment";
+
+    els.previewBody.appendChild(image);
+    return;
+  }
+
+  if (
+    type === "application/pdf" ||
+    String(fileName || "").toLowerCase().endsWith(".pdf")
+  ) {
+    const iframe = document.createElement("iframe");
+    iframe.src = objectUrl;
+    iframe.title = fileName || "PDF attachment";
+
+    els.previewBody.appendChild(iframe);
+    return;
+  }
+
+  if (type.startsWith("video/")) {
+    const video = document.createElement("video");
+    video.src = objectUrl;
+    video.controls = true;
+
+    els.previewBody.appendChild(video);
+    return;
+  }
+
+  if (type.startsWith("audio/")) {
+    const audio = document.createElement("audio");
+    audio.src = objectUrl;
+    audio.controls = true;
+
+    els.previewBody.appendChild(audio);
+    return;
+  }
+
+  if (previewLooksTextual(type, fileName)) {
+    const pre = document.createElement("pre");
+    pre.className = "preview-text";
+
+    try {
+      pre.textContent = await blob.text();
+    } catch (_) {
+      pre.textContent = "Unable to decode this file as text.";
+    }
+
+    els.previewBody.appendChild(pre);
+    return;
+  }
+
+  const object = document.createElement("object");
+  object.data = objectUrl;
+  object.type = type;
+
+  const fallback = document.createElement("div");
+  fallback.className = "preview-fallback";
+  fallback.innerHTML = `
+    <h3 style="margin-top:0;">Browser preview unavailable</h3>
+
+    <p class="muted">
+      ${escapeHtml(fileName || "This attachment")} has been loaded from N1.
+      Use <b>Open in New Tab</b> or <b>Download</b>.
+    </p>
+  `;
+
+  object.appendChild(fallback);
+  els.previewBody.appendChild(object);
+}
+
+async function previewStoredAttachment(
+  entryUid,
+  attachmentUid,
+  fileName,
+  mimeType
+) {
+  try {
+    els.previewModal.classList.remove("hidden");
+    els.previewModal.setAttribute("aria-hidden", "false");
+
+    els.previewTitle.textContent =
+      fileName || "Attachment Preview";
+
+    els.previewMeta.textContent =
+      "Loading attachment from N1…";
+
+    els.previewBody.innerHTML =
+      `<div class="muted">Loading actual file…</div>`;
+
+    const response =
+      await authenticatedFetch(
+        ENDPOINTS.download(entryUid, attachmentUid),
+        {
+          method: "GET"
+        }
+      );
+
+    const textError =
+      response.ok
+        ? ""
+        : await response.text().catch(() => "");
+
+    if (!response.ok) {
+      throw new Error(
+        readableError(textError, response.status)
+      );
+    }
+
+    const blob =
+      await response.blob();
+
+    await showAttachmentPreview(
+      blob,
+      fileName,
+      mimeType || blob.type
+    );
+  } catch (error) {
+    closeAttachmentPreview();
+    showToast(error.message, "error");
+  }
+}
+
+function previewPendingAttachment(index) {
+  const file = state.pendingFiles[index];
+
+  if (!file) {
+    return;
+  }
+
+  showAttachmentPreview(
+    file,
+    file.name,
+    file.type
+  ).catch(error => {
+    showToast(error.message, "error");
+  });
+}
+
+/* -------------------------------------------------------------------------- */
+/* Entry modal                                                                */
+/* -------------------------------------------------------------------------- */
+
+function openEntryModal() {
+  els.entryModal.classList.remove("hidden");
+  els.entryModal.setAttribute("aria-hidden", "false");
+}
+
+function closeEntryModal() {
+  if (state.uploadInProgress) {
+    showToast("Wait for the attachment upload to finish.", "error");
+    return;
+  }
+
+  els.entryModal.classList.add("hidden");
+  els.entryModal.setAttribute("aria-hidden", "true");
+}
+
+function resetEntryForm() {
+  state.editing = null;
+  state.pendingFiles = [];
+  clearUploadProgress();
+
+  els.entryForm.reset();
+  els.uid.value = "";
+  els.controlNoDisplay.value = "Assigned automatically when saved";
+  els.remarks.value = "None";
+
+  const today = new Date();
+  const yyyy = today.getFullYear();
+  const mm = String(today.getMonth() + 1).padStart(2, "0");
+  const dd = String(today.getDate()).padStart(2, "0");
+
+  els.date.value = `${yyyy}-${mm}-${dd}`;
+
+  renderExistingAttachments([]);
+  renderPendingAttachments();
+  updateSaveButtonLabel();
+}
+
+function newEntry() {
+  if (!canWriteAris()) {
+    showToast("Your account cannot create ARIS records.", "error");
+    return;
+  }
+
+  resetEntryForm();
+
+  els.entryModalTitle.textContent = "New ARIS Record";
+  els.entryModalHint.textContent = "Create a new atomic record.";
+  applyEntryPermissions();
+  updateSaveButtonLabel();
+
+  openEntryModal();
+}
+
+function applyEntryPermissions() {
+  const writable = canWriteAris();
+
+  for (const field of [
+    els.date,
+    els.office,
+    els.requestor,
+    els.subject,
+    els.routed_to_div,
+    els.remarks
+  ]) {
+    field.disabled = !writable;
+    field.classList.toggle("readonly-field", !writable);
+  }
+
+  els.fileUploadSection.classList.toggle("hidden", !writable);
+  els.saveBtn.classList.toggle("hidden", !writable);
+  els.resetFormBtn.classList.toggle("hidden", !writable);
+}
+
+function editEntry(uid) {
+  const row = state.rows.find(item => item.uid === uid);
+
+  if (!row) {
+    showToast("Entry is not present in the current page.", "error");
+    return;
+  }
+
+  state.editing = row;
+  state.pendingFiles = [];
+
+  els.uid.value = row.uid || "";
+  els.controlNoDisplay.value = String(row.control_no ?? "");
+  els.date.value = row.date || "";
+  els.office.value = row.office || "";
+  els.requestor.value = row.requestor || "";
+  els.subject.value = row.subject || "";
+  els.routed_to_div.value = row.routed_to_div || "";
+  els.remarks.value = row.remarks || "None";
+  els.fileInput.value = "";
+
+  renderExistingAttachments(attachmentList(row));
+  renderPendingAttachments();
+  applyEntryPermissions();
+
+  els.entryModalTitle.textContent =
+    canWriteAris() ? "Edit ARIS Record" : "View ARIS Record";
+
+  els.entryModalHint.textContent =
+    `${canWriteAris() ? "Editing" : "Viewing"} ${row.date?.slice(0, 4) || ""} control no. ${row.control_no ?? ""}`;
+
+  updateSaveButtonLabel();
+
+  openEntryModal();
+}
+
+function renderExistingAttachments(files) {
+  if (!files.length) {
+    els.existingAttachments.innerHTML =
+      `<div class="muted">No stored attachments.</div>`;
+
+    return;
+  }
+
+  const entryUid =
+    els.uid.value ||
+    state.editing?.uid ||
+    "";
+
+  els.existingAttachments.innerHTML =
+    files.map(file => `
+      <div class="attachment-row">
+        <div>
+          <div class="attachment-name">
+            📄 ${escapeHtml(file.file_name)}
+          </div>
+
+          <div class="attachment-meta">
+            ${escapeHtml(file.mime_type || "application/octet-stream")}
+            ·
+            ${escapeHtml(formatBytes(file.size))}
+          </div>
+        </div>
+
+        <div class="attachment-actions">
+          <button
+            class="btn btn-primary btn-small"
+            type="button"
+            data-view-attachment="${escapeHtml(file.uid)}"
+            data-entry-uid="${escapeHtml(entryUid)}"
+            data-file-name="${escapeHtml(file.file_name)}"
+            data-mime-type="${escapeHtml(file.mime_type || "application/octet-stream")}"
+          >
+            View
+          </button>
+
+          <button
+            class="btn btn-soft btn-small"
+            type="button"
+            data-download-attachment="${escapeHtml(file.uid)}"
+            data-entry-uid="${escapeHtml(entryUid)}"
+            data-file-name="${escapeHtml(file.file_name)}"
+          >
+            Download
+          </button>
+
+          ${
+            canDeleteAris()
+              ? `
+                <button
+                  class="btn btn-danger btn-small"
+                  type="button"
+                  data-remove-attachment="${escapeHtml(file.uid)}"
+                  data-entry-uid="${escapeHtml(entryUid)}"
+                >
+                  Remove
+                </button>
+              `
+              : ""
+          }
+        </div>
+      </div>
+    `)
+    .join("");
+}
+
+function renderPendingAttachments() {
+  if (!state.pendingFiles.length) {
+    els.pendingAttachments.innerHTML =
+      `<div class="muted">No new files selected.</div>`;
+
+    return;
+  }
+
+  els.pendingAttachments.innerHTML =
+    state.pendingFiles
+      .map((file, index) => {
+        const status =
+          pendingFileStatus(file);
+
+        const percent =
+          Math.max(
+            0,
+            Math.min(
+              100,
+              Number(status.percent) || 0
+            )
+          );
+
+        const busy =
+          status.stage === "uploading" ||
+          status.stage === "processing";
+
+        return `
+          <div class="attachment-row">
+            <div>
+              <div class="attachment-name">
+                ＋ ${escapeHtml(file.name)}
+              </div>
+
+              <div class="attachment-meta">
+                ${escapeHtml(file.type || "application/octet-stream")}
+                ·
+                ${escapeHtml(formatBytes(file.size))}
+              </div>
+
+              <div class="file-progress">
+                <div class="upload-progress-track">
+                  <div
+                    class="upload-progress-bar"
+                    style="width:${percent}%"
+                  ></div>
+                </div>
+
+                <div class="file-progress-label">
+                  ${escapeHtml(status.label || "Ready — uploads when you save the entry")}
+                </div>
+              </div>
+            </div>
+
+            <div class="attachment-actions">
+              <button
+                class="btn btn-primary btn-small"
+                type="button"
+                data-view-pending="${index}"
+              >
+                View
+              </button>
+
+              <button
+                class="btn btn-danger btn-small"
+                type="button"
+                data-remove-pending="${index}"
+                ${busy ? "disabled" : ""}
+              >
+                Remove
+              </button>
+            </div>
+          </div>
+        `;
+      })
+      .join("");
+}
+
+function updateSaveButtonLabel() {
+  if (!canWriteAris()) {
+    return;
+  }
+
+  const fileCount = state.pendingFiles.length;
+  const baseLabel = state.editing ? "Update Record" : "Save Record";
+
+  els.saveBtn.textContent =
+    fileCount > 0
+      ? `${baseLabel} & Upload (${fileCount})`
+      : baseLabel;
+}
+
+function buildEntryPayload() {
+  return {
+    date: els.date.value,
+    office: els.office.value.trim(),
+    requestor: els.requestor.value.trim(),
+    subject: els.subject.value.trim(),
+    routed_to_div: els.routed_to_div.value.trim(),
+    remarks: els.remarks.value.trim() || "None"
+  };
+}
+
+function validateEntryPayload(payload) {
+  if (!payload.date) return "Date is required.";
+  if (!payload.office) return "Office is required.";
+  if (!payload.requestor) return "Requestor is required.";
+  if (!payload.subject) return "Subject is required.";
+  if (!payload.routed_to_div) return "Routed-to division is required.";
+
+  const oversized = state.pendingFiles.find(file => file.size > MAX_FILE_SIZE);
+
+  if (oversized) {
+    return `${oversized.name} exceeds the 50 MiB attachment limit.`;
+  }
+
+  return null;
+}
+
+function uploadOneFileWithProgress(
+  entryUid,
+  file,
+  completedBytes,
+  totalBytes,
+  retry = true
+) {
+  return new Promise((resolve, reject) => {
+    const xhr =
+      new XMLHttpRequest();
+
+    const form =
+      new FormData();
+
+    form.append(
+      "files",
+      file,
+      file.name
+    );
+
+    xhr.open(
+      "POST",
+      `${API_BASE}${ENDPOINTS.upload(entryUid)}`,
+      true
+    );
+
+    const token =
+      getAccessToken();
+
+    if (token) {
+      xhr.setRequestHeader(
+        "Authorization",
+        `Bearer ${token}`
+      );
+    }
+
+    setPendingFileStatus(
+      file,
+      {
+        percent: 0,
+        label: "Uploading 0%",
+        stage: "uploading"
+      }
+    );
+
+    xhr.upload.onprogress =
+      event => {
+        if (!event.lengthComputable) {
+          return;
+        }
+
+        const filePercent =
+          Math.max(
+            0,
+            Math.min(
+              100,
+              Math.round(
+                (event.loaded / event.total) * 100
+              )
+            )
+          );
+
+        setPendingFileStatus(
+          file,
+          {
+            percent: filePercent,
+            label: `Uploading ${filePercent}%`,
+            stage: "uploading"
+          }
+        );
+
+        setOverallUploadProgress(
+          completedBytes + event.loaded,
+          totalBytes,
+          `Uploading ${file.name}`
+        );
+      };
+
+    xhr.upload.onload =
+      () => {
+        setPendingFileStatus(
+          file,
+          {
+            percent: 100,
+            label: "Uploaded to ARIS · storing in N1…",
+            stage: "processing"
+          }
+        );
+
+        setOverallUploadProgress(
+          completedBytes + file.size,
+          totalBytes,
+          `Processing ${file.name} in N1…`
+        );
+      };
+
+    xhr.onerror =
+      () => {
+        setPendingFileStatus(
+          file,
+          {
+            label: "Upload failed",
+            stage: "error"
+          }
+        );
+
+        reject(
+          new Error(
+            `Network upload failed for ${file.name}.`
+          )
+        );
+      };
+
+    xhr.onabort =
+      () => {
+        setPendingFileStatus(
+          file,
+          {
+            label: "Upload cancelled",
+            stage: "error"
+          }
+        );
+
+        reject(
+          new Error(
+            `Upload cancelled for ${file.name}.`
+          )
+        );
+      };
+
+    xhr.onload =
+      async () => {
+        const text =
+          xhr.responseText || "";
+
+        if (
+          xhr.status === 401 &&
+          retry &&
+          getRefreshToken()
+        ) {
+          try {
+            await refreshAccessToken();
+
+            const result =
+              await uploadOneFileWithProgress(
+                entryUid,
+                file,
+                completedBytes,
+                totalBytes,
+                false
+              );
+
+            resolve(result);
+          } catch (error) {
+            reject(error);
+          }
+
+          return;
+        }
+
+        if (
+          xhr.status < 200 ||
+          xhr.status >= 300
+        ) {
+          setPendingFileStatus(
+            file,
+            {
+              label: "Upload failed",
+              stage: "error"
+            }
+          );
+
+          reject(
+            new Error(
+              readableError(
+                text,
+                xhr.status
+              )
+            )
+          );
+
+          return;
+        }
+
+        setPendingFileStatus(
+          file,
+          {
+            percent: 100,
+            label: "Stored in N1",
+            stage: "done"
+          }
+        );
+
+        if (!text) {
+          resolve([]);
+          return;
+        }
+
+        try {
+          const data =
+            JSON.parse(text);
+
+          resolve(
+            Array.isArray(
+              data?.attachments
+            )
+              ? data.attachments
+              : []
+          );
+        } catch (_) {
+          reject(
+            new Error(
+              `ARIS returned invalid JSON after uploading ${file.name}.`
+            )
+          );
+        }
+      };
+
+    xhr.send(form);
+  });
+}
+
+async function uploadPendingFiles(entryUid) {
+  if (!state.pendingFiles.length) {
+    return [];
+  }
+
+  state.uploadInProgress = true;
+
+  const files =
+    [...state.pendingFiles];
+
+  const totalBytes =
+    files.reduce(
+      (sum, file) =>
+        sum + file.size,
+      0
+    );
+
+  let completedBytes = 0;
+
+  const uploadedAttachments = [];
+
+  setOverallUploadProgress(
+    0,
+    totalBytes,
+    `Uploading ${files.length} attachment${files.length === 1 ? "" : "s"}…`
+  );
+
+  try {
+    for (const file of files) {
+      const attachments =
+        await uploadOneFileWithProgress(
+          entryUid,
+          file,
+          completedBytes,
+          totalBytes
+        );
+
+      uploadedAttachments.push(
+        ...attachments
+      );
+
+      completedBytes +=
+        file.size;
+
+      setOverallUploadProgress(
+        completedBytes,
+        totalBytes,
+        completedBytes >= totalBytes
+          ? "All attachment bytes uploaded · finalizing…"
+          : "Preparing next attachment…"
+      );
+    }
+
+    els.uploadProgressLabel.textContent =
+      "Attachments stored in N1";
+
+    els.uploadProgressPercent.textContent =
+      "100%";
+
+    els.uploadProgressBar.style.width =
+      "100%";
+
+    els.uploadProgressBytes.textContent =
+      `${formatBytes(totalBytes)} uploaded successfully`;
+
+    return uploadedAttachments;
+  } finally {
+    state.uploadInProgress = false;
+  }
+}
+
+async function saveEntry(event) {
+  event.preventDefault();
+
+  if (!canWriteAris()) {
+    showToast("Your account cannot modify ARIS records.", "error");
+    return;
+  }
+
+  const payload = buildEntryPayload();
+  const validationError = validateEntryPayload(payload);
+
+  if (validationError) {
+    showToast(validationError, "error");
+    return;
+  }
+
+  const entryUidBeingEdited = els.uid.value.trim();
+  const isUpdate = Boolean(entryUidBeingEdited);
+
+  try {
+    els.saveBtn.disabled = true;
+    els.saveBtn.textContent = isUpdate ? "Updating..." : "Saving...";
+
+    let savedEntry;
+
+    if (isUpdate) {
+      savedEntry = await requestJson(
+        ENDPOINTS.entry(entryUidBeingEdited),
+        {
+          method: "PUT",
+          body: payload
+        }
+      );
+    } else {
+      savedEntry = await requestJson(
+        ENDPOINTS.entries,
+        {
+          method: "POST",
+          body: payload
+        }
+      );
+    }
+
+    const entryUid = savedEntry?.uid || entryUidBeingEdited;
+
+    if (!entryUid) {
+      throw new Error("Server did not return the ARIS record UID.");
+    }
+
+    if (state.pendingFiles.length) {
+      els.saveBtn.textContent = "Uploading attachments...";
+      await uploadPendingFiles(entryUid);
+    }
+
+    showToast(
+      isUpdate
+        ? "ARIS record updated."
+        : "ARIS record created."
+    );
+
+    closeEntryModal();
+    resetEntryForm();
+
+    /*
+      Refresh only the current 256-row page.
+    */
+    await loadPage(state.page);
+  } catch (error) {
+    showToast(error.message, "error");
+  } finally {
+    els.saveBtn.disabled = false;
+    updateSaveButtonLabel();
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Delete entry                                                               */
+/* -------------------------------------------------------------------------- */
+
+async function deleteEntry(uid) {
+  if (!canDeleteAris()) {
+    showToast("Your account cannot delete ARIS records.", "error");
+    return;
+  }
+
+  const row = state.rows.find(item => item.uid === uid);
+  const label = row?.control_no || uid;
+
+  if (!confirm(
+    `Delete ${label}?\n\nIts N1 attachments will be moved to N1 trash.`
+  )) {
+    return;
+  }
+
+  try {
+    const response = await authenticatedFetch(
+      ENDPOINTS.entry(uid),
+      {
+        method: "DELETE",
+        headers: {
+          "Accept": "application/json"
+        }
+      }
+    );
+
+    const text = await response.text().catch(() => "");
+
+    if (!response.ok) {
+      throw new Error(readableError(text, response.status));
+    }
+
+    showToast("ARIS record deleted.");
+
+    /*
+      If this was the only row on a page > 1, move back one page.
+    */
+    const targetPage =
+      state.rows.length === 1 && state.page > 1
+        ? state.page - 1
+        : state.page;
+
+    await loadPage(targetPage);
+  } catch (error) {
+    showToast(error.message, "error");
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Attachment delete/download                                                 */
+/* -------------------------------------------------------------------------- */
+
+async function removeAttachment(entryUid, attachmentUid) {
+  if (!canDeleteAris()) {
+    showToast("Your account cannot remove attachments.", "error");
+    return;
+  }
+
+  if (!confirm(
+    "Remove this attachment?\n\nN1 will move the object to trash."
+  )) {
+    return;
+  }
+
+  try {
+    const response = await authenticatedFetch(
+      ENDPOINTS.attachment(entryUid, attachmentUid),
+      {
+        method: "DELETE",
+        headers: {
+          "Accept": "application/json"
+        }
+      }
+    );
+
+    const text = await response.text().catch(() => "");
+
+    if (!response.ok) {
+      throw new Error(readableError(text, response.status));
+    }
+
+    showToast("Attachment removed.");
+
+    await loadPage(state.page);
+
+    const refreshed = state.rows.find(item => item.uid === entryUid);
+
+    if (refreshed) {
+      state.editing = refreshed;
+      renderExistingAttachments(attachmentList(refreshed));
+    }
+  } catch (error) {
+    showToast(error.message, "error");
+  }
+}
+
+async function downloadAttachment(entryUid, attachmentUid, fileName) {
+  /*
+    We fetch the file instead of window.open() because ARIS protects this route
+    with bearer authentication and browser navigation cannot attach our
+    Authorization header.
+  */
+  try {
+    const response = await authenticatedFetch(
+      ENDPOINTS.download(entryUid, attachmentUid),
+      {
+        method: "GET"
+      }
+    );
+
+    if (!response.ok) {
+      const text = await response.text().catch(() => "");
+      throw new Error(readableError(text, response.status));
+    }
+
+    const blob = await response.blob();
+    const objectUrl = URL.createObjectURL(blob);
+
+    const anchor = document.createElement("a");
+    anchor.href = objectUrl;
+    anchor.download = fileName || "attachment";
+    anchor.style.display = "none";
+
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+
+    setTimeout(() => {
+      URL.revokeObjectURL(objectUrl);
+    }, 1000);
+  } catch (error) {
+    showToast(error.message, "error");
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Account management                                                         */
+/* -------------------------------------------------------------------------- */
+
+function accessName(level) {
+  switch (Number(level)) {
+    case 0: return "Administrator";
+    case 1: return "Manager";
+    case 2: return "Editor";
+    case 3: return "Viewer";
+    default: return "Unknown";
+  }
+}
+
+function accessOptions(selected) {
+  return [0, 1, 2, 3]
+    .map(level => `
+      <option
+        value="${level}"
+        ${Number(selected) === level ? "selected" : ""}
+      >
+        ${level} · ${accessName(level)}
+      </option>
+    `)
+    .join("");
+}
+
+function openAccountsModal() {
+  if (!canManageAccounts()) {
+    showToast("Administrator access is required.", "error");
+    return;
+  }
+
+  els.accountsModal.classList.remove("hidden");
+  els.accountsModal.setAttribute("aria-hidden", "false");
+
+  loadAccounts();
+}
+
+function closeAccountsModal() {
+  els.accountsModal.classList.add("hidden");
+  els.accountsModal.setAttribute("aria-hidden", "true");
+}
+
+async function loadAccounts() {
+  if (!canManageAccounts()) return;
+
+  els.accountList.innerHTML =
+    `<div class="muted">Loading accounts...</div>`;
+
+  try {
+    const data = await requestJson(
+      ENDPOINTS.accounts.list,
+      {
+        method: "POST",
+        body: {
+          filter: "all",
+          value: ""
+        }
+      }
+    );
+
+    const users = Array.isArray(data?.users)
+      ? data.users
+      : [];
+
+    if (!users.length) {
+      els.accountList.innerHTML =
+        `<div class="muted">No accounts found.</div>`;
+      return;
+    }
+
+    els.accountList.innerHTML = users.map(user => {
+      const isSelf = user.uid === state.session?.uid;
+
+      return `
+        <div class="account-row" data-account-uid="${escapeHtml(user.uid)}">
+          <div>
+            <div class="account-name">${escapeHtml(user.name)}</div>
+            <div class="account-email">${escapeHtml(user.email)}</div>
+          </div>
+
+          <div class="muted">
+            ${user.totp_enabled ? "2FA enabled" : "2FA disabled"}
+          </div>
+
+          <select
+            data-account-access="${escapeHtml(user.uid)}"
+            ${isSelf ? "disabled" : ""}
+            title="${isSelf ? "You cannot change your own administrator access from this panel." : "Access level"}"
+          >
+            ${accessOptions(user.access_level)}
+          </select>
+
+          <button
+            class="btn btn-soft btn-small"
+            type="button"
+            data-save-account="${escapeHtml(user.uid)}"
+            ${isSelf ? "disabled" : ""}
+          >
+            Save Access
+          </button>
+
+          <button
+            class="btn btn-danger btn-small"
+            type="button"
+            data-delete-account="${escapeHtml(user.uid)}"
+            ${isSelf ? "disabled" : ""}
+          >
+            Delete
+          </button>
+        </div>
+      `;
+    }).join("");
+  } catch (error) {
+    els.accountList.innerHTML =
+      `<div class="muted">${escapeHtml(error.message)}</div>`;
+
+    showToast(error.message, "error");
+  }
+}
+
+async function createAccount(event) {
+  event.preventDefault();
+
+  if (!canManageAccounts()) {
+    showToast("Administrator access is required.", "error");
+    return;
+  }
+
+  const payload = {
+    name: els.accountName.value.trim(),
+    email: els.accountEmail.value.trim(),
+    password: els.accountPassword.value,
+    access_level: Number(els.accountAccess.value)
+  };
+
+  els.createAccountBtn.disabled = true;
+
+  try {
+    await requestJson(
+      ENDPOINTS.accounts.create,
+      {
+        method: "POST",
+        body: payload
+      }
+    );
+
+    els.createAccountForm.reset();
+    els.accountAccess.value = "2";
+
+    showToast("Account created.");
+    await loadAccounts();
+  } catch (error) {
+    showToast(error.message, "error");
+  } finally {
+    els.createAccountBtn.disabled = false;
+  }
+}
+
+async function saveAccountAccess(uid) {
+  if (!canManageAccounts()) return;
+
+  const select =
+    els.accountList.querySelector(
+      `[data-account-access="${CSS.escape(uid)}"]`
+    );
+
+  if (!select) return;
+
+  const accessLevel = Number(select.value);
+
+  try {
+    await requestJson(
+      ENDPOINTS.accounts.modify,
+      {
+        method: "PATCH",
+        body: {
+          filter: "uid",
+          value: uid,
+          new_email: null,
+          new_password: null,
+          new_name: null,
+          access_level: accessLevel
+        }
+      }
+    );
+
+    showToast(
+      `Access changed to ${accessName(accessLevel)}.`
+    );
+
+    await loadAccounts();
+  } catch (error) {
+    showToast(error.message, "error");
+  }
+}
+
+async function deleteAccount(uid) {
+  if (!canManageAccounts()) return;
+
+  if (!confirm(
+    "Delete this ARIS account?\n\nThe user will be unable to refresh their session."
+  )) {
+    return;
+  }
+
+  try {
+    await requestJson(
+      ENDPOINTS.accounts.delete,
+      {
+        method: "DELETE",
+        body: {
+          filter: "uid",
+          value: uid
+        }
+      }
+    );
+
+    showToast("Account deleted.");
+    await loadAccounts();
+  } catch (error) {
+    showToast(error.message, "error");
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/* -------------------------------------------------------------------------- */
+/* Event listeners                                                            */
+/* -------------------------------------------------------------------------- */
+
+els.bootstrapForm.addEventListener("submit", bootstrapAdministrator);
+els.loginForm.addEventListener("submit", login);
+
+els.logoutBtn.addEventListener("click", () => {
+  logout(true);
+});
+
+els.accountsBtn.addEventListener("click", openAccountsModal);
+els.accountsCloseBtn.addEventListener("click", closeAccountsModal);
+
+els.accountsModal.addEventListener("click", event => {
+  if (event.target === els.accountsModal) {
+    closeAccountsModal();
+  }
+});
+
+els.createAccountForm.addEventListener("submit", createAccount);
+
+els.accountList.addEventListener("click", event => {
+  const saveButton = event.target.closest("[data-save-account]");
+
+  if (saveButton) {
+    saveAccountAccess(saveButton.dataset.saveAccount);
+    return;
+  }
+
+  const deleteButton = event.target.closest("[data-delete-account]");
+
+  if (deleteButton) {
+    deleteAccount(deleteButton.dataset.deleteAccount);
+  }
+});
+
+els.universalSearch.addEventListener("input", scheduleUniversalSearch);
+
+els.matchMode.addEventListener("change", () => {
+  if (els.universalSearch.value.trim()) {
+    loadPage(1);
+  }
+});
+
+els.advancedToggleBtn.addEventListener("click", () => {
+  const hidden = els.advancedPanel.classList.toggle("hidden");
+
+  els.advancedToggleBtn.textContent =
+    hidden
+      ? "Advanced Search"
+      : "Hide Advanced";
+});
+
+els.applyAdvancedBtn.addEventListener("click", () => {
+  loadPage(1);
+});
+
+els.clearAdvancedBtn.addEventListener("click", () => {
+  clearAdvancedSearch();
+  loadPage(1);
+});
+
+els.clearSearchBtn.addEventListener("click", clearAllSearch);
+
+els.refreshBtn.addEventListener("click", () => {
+  loadPage(state.page);
+});
+
+els.newEntryBtn.addEventListener("click", newEntry);
+
+els.firstPageBtn.addEventListener("click", () => {
+  if (state.page > 1) {
+    loadPage(1);
+  }
+});
+
+els.prevPageBtn.addEventListener("click", () => {
+  if (state.page > 1) {
+    loadPage(state.page - 1);
+  }
+});
+
+els.nextPageBtn.addEventListener("click", () => {
+  if (state.hasNext) {
+    loadPage(state.page + 1);
+  }
+});
+
+function goToTypedPage() {
+  let page = Number(els.pageInput.value);
+
+  if (!Number.isInteger(page) || page < 1) {
+    page = 1;
+  }
+
+  if (state.totalPages !== null) {
+    page = Math.min(page, state.totalPages);
+  }
+
+  loadPage(page);
+}
+
+els.goPageBtn.addEventListener("click", goToTypedPage);
+
+els.pageInput.addEventListener("keydown", event => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    goToTypedPage();
+  }
+});
+
+els.tableBody.addEventListener("click", event => {
+  const editButton = event.target.closest("[data-edit-entry]");
+
+  if (editButton) {
+    editEntry(editButton.dataset.editEntry);
+    return;
+  }
+
+  const openButton = event.target.closest("[data-open-entry]");
+
+  if (openButton) {
+    editEntry(openButton.dataset.openEntry);
+    return;
+  }
+
+  const deleteButton = event.target.closest("[data-delete-entry]");
+
+  if (deleteButton) {
+    deleteEntry(deleteButton.dataset.deleteEntry);
+  }
+});
+
+els.closeModalBtn.addEventListener("click", closeEntryModal);
+els.cancelBtn.addEventListener("click", closeEntryModal);
+
+els.resetFormBtn.addEventListener("click", () => {
+  const wasEditing = Boolean(state.editing);
+
+  if (wasEditing) {
+    editEntry(state.editing.uid);
+  } else {
+    resetEntryForm();
+  }
+});
+
+els.entryModal.addEventListener("click", event => {
+  if (event.target === els.entryModal) {
+    closeEntryModal();
+  }
+});
+
+els.entryForm.addEventListener("submit", saveEntry);
+
+els.fileInput.addEventListener("change", () => {
+  queueFiles(
+    els.fileInput.files
+  );
+});
+
+let entryDragDepth = 0;
+
+function isFileDrag(event) {
+  return Array
+    .from(
+      event.dataTransfer?.types || []
+    )
+    .includes("Files");
+}
+
+/*
+  Capture phase means dropping over input/textarea/select still becomes
+  an attachment instead of the browser trying to place the file into the
+  field itself.
+*/
+els.entryForm.addEventListener(
+  "dragenter",
+  event => {
+    if (!isFileDrag(event)) {
+      return;
+    }
+
+    event.preventDefault();
+
+    entryDragDepth++;
+
+    els.entryForm
+      .classList
+      .add("drag-active");
+  },
+  true
+);
+
+els.entryForm.addEventListener(
+  "dragover",
+  event => {
+    if (!isFileDrag(event)) {
+      return;
+    }
+
+    event.preventDefault();
+
+    event.dataTransfer.dropEffect =
+      "copy";
+
+    els.entryForm
+      .classList
+      .add("drag-active");
+  },
+  true
+);
+
+els.entryForm.addEventListener(
+  "dragleave",
+  event => {
+    if (!isFileDrag(event)) {
+      return;
+    }
+
+    event.preventDefault();
+
+    entryDragDepth =
+      Math.max(
+        0,
+        entryDragDepth - 1
+      );
+
+    if (entryDragDepth === 0) {
+      els.entryForm
+        .classList
+        .remove("drag-active");
+    }
+  },
+  true
+);
+
+els.entryForm.addEventListener(
+  "drop",
+  event => {
+    if (!isFileDrag(event)) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    entryDragDepth = 0;
+
+    els.entryForm
+      .classList
+      .remove("drag-active");
+
+    queueFiles(
+      event.dataTransfer.files
+    );
+  },
+  true
+);
+
+els.pendingAttachments.addEventListener("click", event => {
+  const viewButton =
+    event.target.closest(
+      "[data-view-pending]"
+    );
+
+  if (viewButton) {
+    previewPendingAttachment(
+      Number(
+        viewButton.dataset.viewPending
+      )
+    );
+
+    return;
+  }
+
+  const button =
+    event.target.closest(
+      "[data-remove-pending]"
+    );
+
+  if (
+    !button ||
+    state.uploadInProgress
+  ) {
+    return;
+  }
+
+  const index =
+    Number(
+      button.dataset.removePending
+    );
+
+  if (
+    Number.isInteger(index) &&
+    index >= 0 &&
+    index < state.pendingFiles.length
+  ) {
+    const [removed] =
+      state.pendingFiles.splice(
+        index,
+        1
+      );
+
+    if (removed) {
+      state.uploadState.delete(
+        pendingFileKey(
+          removed
+        )
+      );
+    }
+
+    renderPendingAttachments();
+    updateSaveButtonLabel();
+  }
+});
+
+els.existingAttachments.addEventListener("click", event => {
+  const viewButton =
+    event.target.closest(
+      "[data-view-attachment]"
+    );
+
+  if (viewButton) {
+    previewStoredAttachment(
+      viewButton.dataset.entryUid,
+      viewButton.dataset.viewAttachment,
+      viewButton.dataset.fileName,
+      viewButton.dataset.mimeType
+    );
+
+    return;
+  }
+
+  const downloadButton =
+    event.target.closest(
+      "[data-download-attachment]"
+    );
+
+  if (downloadButton) {
+    downloadAttachment(
+      downloadButton.dataset.entryUid,
+      downloadButton.dataset.downloadAttachment,
+      downloadButton.dataset.fileName
+    );
+
+    return;
+  }
+
+  const removeButton =
+    event.target.closest(
+      "[data-remove-attachment]"
+    );
+
+  if (removeButton) {
+    removeAttachment(
+      removeButton.dataset.entryUid,
+      removeButton.dataset.removeAttachment
+    );
+  }
+});
+
+els.previewCloseBtn.addEventListener(
+  "click",
+  closeAttachmentPreview
+);
+
+els.previewModal.addEventListener(
+  "click",
+  event => {
+    if (
+      event.target ===
+      els.previewModal
+    ) {
+      closeAttachmentPreview();
+    }
+  }
+);
+
+els.previewOpenBtn.addEventListener(
+  "click",
+  () => {
+    if (!state.previewObjectUrl) {
+      return;
+    }
+
+    window.open(
+      state.previewObjectUrl,
+      "_blank",
+      "noopener,noreferrer"
+    );
+  }
+);
+
+els.previewDownloadBtn.addEventListener(
+  "click",
+  () => {
+    if (!state.previewObjectUrl) {
+      return;
+    }
+
+    const anchor =
+      document.createElement(
+        "a"
+      );
+
+    anchor.href =
+      state.previewObjectUrl;
+
+    anchor.download =
+      state.previewFileName ||
+      "attachment";
+
+    anchor.style.display =
+      "none";
+
+    document.body.appendChild(
+      anchor
+    );
+
+    anchor.click();
+    anchor.remove();
+  }
+);
+
+document.addEventListener(
+  "keydown",
+  event => {
+    if (
+      event.key === "Escape" &&
+      !els.previewModal
+        .classList
+        .contains("hidden")
+    ) {
+      closeAttachmentPreview();
+    }
+  }
+);
+
+/* -------------------------------------------------------------------------- */
+/* Initial load                                                               */
+/* -------------------------------------------------------------------------- */
+
+resetEntryForm();
+updatePagination();
+applySessionUi();
+bootstrapSession();
+
+</script>
+</body>
+</html>
