@@ -12,7 +12,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::{
-    api::aris::handler::ensure_aris_record_schema,
+    api::aris::{
+        handler::ensure_aris_record_schema,
+        schema::{ensure_dynamic_schema, schema_revision_db},
+    },
     db::connector::{SqliteDatabaseError, with_sql_connection},
     middleware::auth::Claims,
 };
@@ -29,6 +32,7 @@ pub struct DashboardQuery {
 #[derive(Debug, Serialize)]
 pub struct RevisionResponse {
     pub records_revision: u64,
+    pub schema_revision: u64,
 }
 
 #[derive(Debug, Serialize)]
@@ -691,20 +695,25 @@ pub async fn get_records_revision(claims: Claims) -> Response {
         return access_denied();
     }
 
-    let result = tokio::task::spawn_blocking(move || -> Result<u64, SqliteDatabaseError> {
+    let result = tokio::task::spawn_blocking(move || -> Result<(u64, u64), SqliteDatabaseError> {
         with_sql_connection(|connection| {
             ensure_aris_record_schema(connection)?;
+            ensure_dynamic_schema(connection)?;
 
-            current_revision(connection)
+            Ok((
+                current_revision(connection)?,
+                schema_revision_db(connection)?,
+            ))
         })
     })
     .await;
 
     match result {
-        Ok(Ok(revision)) => (
+        Ok(Ok((records_revision, schema_revision))) => (
             StatusCode::OK,
             Json(RevisionResponse {
-                records_revision: revision,
+                records_revision,
+                schema_revision,
             }),
         )
             .into_response(),

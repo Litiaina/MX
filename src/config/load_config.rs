@@ -51,93 +51,80 @@ pub struct Config {
 }
 
 pub static CONFIG: LazyLock<Config> = LazyLock::new(|| {
-    let configuration =
-        Ini::load_from_file(CONFIG_FILE).unwrap_or_else(|error| {
+    let configuration = Ini::load_from_file(CONFIG_FILE).unwrap_or_else(|error| {
+        crate::fatal_error!(
+            format!(
+                "failed to load configuration file '{}': {}",
+                CONFIG_FILE, error
+            ),
+            "static",
+            "CONFIG"
+        )
+    });
+
+    /*
+     * Server
+     */
+
+    let server_section = configuration.section(Some("server")).unwrap_or_else(|| {
+        crate::fatal_error!(
+            "missing required configuration section '[server]'",
+            "static",
+            "CONFIG"
+        )
+    });
+
+    /*
+     * Database
+     */
+
+    let database_section = configuration.section(Some("database")).unwrap_or_else(|| {
+        crate::fatal_error!(
+            "missing required configuration section '[database]'",
+            "static",
+            "CONFIG"
+        )
+    });
+
+    /*
+     * JWT
+     */
+
+    let jwt_token_section = configuration
+        .section(Some("jwt_token_config"))
+        .unwrap_or_else(|| {
             crate::fatal_error!(
-                format!(
-                    "failed to load configuration file '{}': {}",
-                    CONFIG_FILE,
-                    error
-                ),
+                "missing required configuration section '[jwt_token_config]'",
                 "static",
                 "CONFIG"
             )
         });
 
     /*
-     * Server
-     */
-
-    let server_section =
-        configuration
-            .section(Some("server"))
-            .unwrap_or_else(|| {
-                crate::fatal_error!(
-                    "missing required configuration section '[server]'",
-                    "static",
-                    "CONFIG"
-                )
-            });
-
-    /*
-     * Database
-     */
-
-    let database_section =
-        configuration
-            .section(Some("database"))
-            .unwrap_or_else(|| {
-                crate::fatal_error!(
-                    "missing required configuration section '[database]'",
-                    "static",
-                    "CONFIG"
-                )
-            });
-
-    /*
-     * JWT
-     */
-
-    let jwt_token_section =
-        configuration
-            .section(Some("jwt_token_config"))
-            .unwrap_or_else(|| {
-                crate::fatal_error!(
-                    "missing required configuration section '[jwt_token_config]'",
-                    "static",
-                    "CONFIG"
-                )
-            });
-
-    /*
      * Static site hosting
      */
 
-    let static_site_hosting =
-        configuration
-            .section(Some("static_site_hosting"))
-            .unwrap_or_else(|| {
-                crate::fatal_error!(
-                    "missing required configuration section '[static_site_hosting]'",
-                    "static",
-                    "CONFIG"
-                )
-            });
+    let static_site_hosting = configuration
+        .section(Some("static_site_hosting"))
+        .unwrap_or_else(|| {
+            crate::fatal_error!(
+                "missing required configuration section '[static_site_hosting]'",
+                "static",
+                "CONFIG"
+            )
+        });
 
     /*
      * N1
      */
 
-    let n1_section =
-        configuration
-            .section(Some("n1"))
-            .unwrap_or_else(|| {
-                crate::fatal_error!(
-                    "missing required configuration section '[n1]'",
-                    "static",
-                    "CONFIG"
-                )
-            });
+    let n1_section = configuration.section(Some("n1")).unwrap_or_else(|| {
+        crate::fatal_error!(
+            "missing required configuration section '[n1]'",
+            "static",
+            "CONFIG"
+        )
+    });
 
     /*
      * Server values
@@ -148,45 +135,31 @@ pub static CONFIG: LazyLock<Config> = LazyLock::new(|| {
         .map(ToString::to_string)
         .unwrap_or_else(|| "127.0.0.1".to_string());
 
-    let http_port_value =
-        server_section
-            .get("http_port")
-            .unwrap_or("20001");
+    let http_port_value = server_section.get("http_port").unwrap_or("20001");
 
-    let http_port =
-        http_port_value
-            .parse::<u16>()
-            .unwrap_or_else(|error| {
-                crate::fatal_error!(
-                    format!(
-                        "invalid value '{}' for 'http_port': {}",
-                        http_port_value,
-                        error
-                    ),
-                    "static",
-                    "CONFIG"
-                )
-            });
+    let http_port = http_port_value.parse::<u16>().unwrap_or_else(|error| {
+        crate::fatal_error!(
+            format!(
+                "invalid value '{}' for 'http_port': {}",
+                http_port_value, error
+            ),
+            "static",
+            "CONFIG"
+        )
+    });
 
-    let https_port_value =
-        server_section
-            .get("https_port")
-            .unwrap_or("21001");
+    let https_port_value = server_section.get("https_port").unwrap_or("21001");
 
-    let https_port =
-        https_port_value
-            .parse::<u16>()
-            .unwrap_or_else(|error| {
-                crate::fatal_error!(
-                    format!(
-                        "invalid value '{}' for 'https_port': {}",
-                        https_port_value,
-                        error
-                    ),
-                    "static",
-                    "CONFIG"
-                )
-            });
+    let https_port = https_port_value.parse::<u16>().unwrap_or_else(|error| {
+        crate::fatal_error!(
+            format!(
+                "invalid value '{}' for 'https_port': {}",
+                https_port_value, error
+            ),
+            "static",
+            "CONFIG"
+        )
+    });
 
     let cert_path = server_section
         .get("cert_path")
@@ -207,112 +180,90 @@ pub static CONFIG: LazyLock<Config> = LazyLock::new(|| {
         .map(ToString::to_string)
         .unwrap_or_else(|| "lux.db".to_string());
 
-    let pool_max_size_value =
-        database_section
-            .get("pool_max_size")
-            .unwrap_or("16");
+    let pool_max_size_value = database_section.get("pool_max_size").unwrap_or("16");
 
-    let pool_max_size =
-        pool_max_size_value
-            .parse::<u32>()
-            .unwrap_or_else(|error| {
-                crate::fatal_error!(
-                    format!(
-                        "invalid value '{}' for 'pool_max_size': {}",
-                        pool_max_size_value,
-                        error
-                    ),
-                    "static",
-                    "CONFIG"
-                )
-            });
+    let pool_max_size = pool_max_size_value.parse::<u32>().unwrap_or_else(|error| {
+        crate::fatal_error!(
+            format!(
+                "invalid value '{}' for 'pool_max_size': {}",
+                pool_max_size_value, error
+            ),
+            "static",
+            "CONFIG"
+        )
+    });
 
-    let pool_min_idle_value =
-        database_section
-            .get("pool_min_idle")
-            .unwrap_or("4");
+    let pool_min_idle_value = database_section.get("pool_min_idle").unwrap_or("4");
 
-    let pool_min_idle =
-        pool_min_idle_value
-            .parse::<u32>()
-            .unwrap_or_else(|error| {
-                crate::fatal_error!(
-                    format!(
-                        "invalid value '{}' for 'pool_min_idle': {}",
-                        pool_min_idle_value,
-                        error
-                    ),
-                    "static",
-                    "CONFIG"
-                )
-            });
+    let pool_min_idle = pool_min_idle_value.parse::<u32>().unwrap_or_else(|error| {
+        crate::fatal_error!(
+            format!(
+                "invalid value '{}' for 'pool_min_idle': {}",
+                pool_min_idle_value, error
+            ),
+            "static",
+            "CONFIG"
+        )
+    });
 
     if pool_min_idle > pool_max_size {
         crate::fatal_error!(
             format!(
                 "'pool_min_idle' ({}) cannot be greater than 'pool_max_size' ({})",
-                pool_min_idle,
-                pool_max_size
+                pool_min_idle, pool_max_size
             ),
             "static",
             "CONFIG"
         );
     }
 
-    let pool_connection_timeout_seconds_value =
-        database_section
-            .get("pool_connection_timeout_seconds")
-            .unwrap_or("10");
+    let pool_connection_timeout_seconds_value = database_section
+        .get("pool_connection_timeout_seconds")
+        .unwrap_or("10");
 
-    let pool_connection_timeout_seconds =
-        pool_connection_timeout_seconds_value
-            .parse::<u64>()
-            .unwrap_or_else(|error| {
-                crate::fatal_error!(
-                    format!(
-                        "invalid value '{}' for 'pool_connection_timeout_seconds': {}",
-                        pool_connection_timeout_seconds_value,
-                        error
-                    ),
-                    "static",
-                    "CONFIG"
-                )
-            });
+    let pool_connection_timeout_seconds = pool_connection_timeout_seconds_value
+        .parse::<u64>()
+        .unwrap_or_else(|error| {
+            crate::fatal_error!(
+                format!(
+                    "invalid value '{}' for 'pool_connection_timeout_seconds': {}",
+                    pool_connection_timeout_seconds_value, error
+                ),
+                "static",
+                "CONFIG"
+            )
+        });
 
-    let busy_timeout_milliseconds_value =
-        database_section
-            .get("busy_timeout_milliseconds")
-            .unwrap_or("10000");
+    let busy_timeout_milliseconds_value = database_section
+        .get("busy_timeout_milliseconds")
+        .unwrap_or("10000");
 
-    let busy_timeout_milliseconds =
-        busy_timeout_milliseconds_value
-            .parse::<u64>()
-            .unwrap_or_else(|error| {
-                crate::fatal_error!(
-                    format!(
-                        "invalid value '{}' for 'busy_timeout_milliseconds': {}",
-                        busy_timeout_milliseconds_value,
-                        error
-                    ),
-                    "static",
-                    "CONFIG"
-                )
-            });
+    let busy_timeout_milliseconds = busy_timeout_milliseconds_value
+        .parse::<u64>()
+        .unwrap_or_else(|error| {
+            crate::fatal_error!(
+                format!(
+                    "invalid value '{}' for 'busy_timeout_milliseconds': {}",
+                    busy_timeout_milliseconds_value, error
+                ),
+                "static",
+                "CONFIG"
+            )
+        });
 
     /*
      * JWT values
      */
 
-    let login_token_expiration_value =
-        jwt_token_section
-            .get("login_token_expiration")
-            .unwrap_or_else(|| {
-                crate::fatal_error!(
-                    "missing required value 'login_token_expiration' in section '[jwt_token_config]'",
-                    "static",
-                    "CONFIG"
-                )
-            });
+    let login_token_expiration_value = jwt_token_section
+        .get("login_token_expiration")
+        .unwrap_or_else(|| {
+            crate::fatal_error!(
+                "missing required value 'login_token_expiration' in section '[jwt_token_config]'",
+                "static",
+                "CONFIG"
+            )
+        });
 
     let login_token_expiration =
         login_token_expiration_value
@@ -321,55 +272,50 @@ pub static CONFIG: LazyLock<Config> = LazyLock::new(|| {
                 crate::fatal_error!(
                     format!(
                         "invalid value '{}' for 'login_token_expiration': {}",
-                        login_token_expiration_value,
-                        error
+                        login_token_expiration_value, error
                     ),
                     "static",
                     "CONFIG"
                 )
             });
 
-    let refresh_token_expiration_value =
-        jwt_token_section
-            .get("refresh_token_expiration")
-            .unwrap_or_else(|| {
-                crate::fatal_error!(
-                    "missing required value 'refresh_token_expiration' in section '[jwt_token_config]'",
-                    "static",
-                    "CONFIG"
-                )
-            });
+    let refresh_token_expiration_value = jwt_token_section
+        .get("refresh_token_expiration")
+        .unwrap_or_else(|| {
+            crate::fatal_error!(
+                "missing required value 'refresh_token_expiration' in section '[jwt_token_config]'",
+                "static",
+                "CONFIG"
+            )
+        });
 
-    let refresh_token_expiration =
-        refresh_token_expiration_value
-            .parse::<u64>()
-            .unwrap_or_else(|error| {
-                crate::fatal_error!(
-                    format!(
-                        "invalid value '{}' for 'refresh_token_expiration': {}",
-                        refresh_token_expiration_value,
-                        error
-                    ),
-                    "static",
-                    "CONFIG"
-                )
-            });
+    let refresh_token_expiration = refresh_token_expiration_value
+        .parse::<u64>()
+        .unwrap_or_else(|error| {
+            crate::fatal_error!(
+                format!(
+                    "invalid value '{}' for 'refresh_token_expiration': {}",
+                    refresh_token_expiration_value, error
+                ),
+                "static",
+                "CONFIG"
+            )
+        });
 
     /*
      * Static site hosting
      */
 
-    let static_site_path_value =
-        static_site_hosting
-            .get("static_site_path")
-            .map(ToString::to_string)
-            .unwrap_or_else(|| {
-                crate::fatal_error!(
-                    "missing required value 'static_site_path' in section '[static_site_hosting]'",
-                    "static",
-                    "CONFIG"
-                )
-            });
+    let static_site_path_value = static_site_hosting
+        .get("static_site_path")
+        .map(ToString::to_string)
+        .unwrap_or_else(|| {
+            crate::fatal_error!(
+                "missing required value 'static_site_path' in section '[static_site_hosting]'",
+                "static",
+                "CONFIG"
+            )
+        });
 
     /*
      * N1 values
@@ -413,45 +359,35 @@ pub static CONFIG: LazyLock<Config> = LazyLock::new(|| {
      * when an attachment operation is attempted.
      */
 
-    let n1_insecure_tls_value =
-        n1_section
-            .get("insecure_tls")
-            .unwrap_or("false");
+    let n1_insecure_tls_value = n1_section.get("insecure_tls").unwrap_or("false");
 
-    let n1_insecure_tls =
-        n1_insecure_tls_value
-            .parse::<bool>()
-            .unwrap_or_else(|error| {
-                crate::fatal_error!(
-                    format!(
-                        "invalid value '{}' for 'insecure_tls' in section '[n1]': {}",
-                        n1_insecure_tls_value,
-                        error
-                    ),
-                    "static",
-                    "CONFIG"
-                )
-            });
+    let n1_insecure_tls = n1_insecure_tls_value
+        .parse::<bool>()
+        .unwrap_or_else(|error| {
+            crate::fatal_error!(
+                format!(
+                    "invalid value '{}' for 'insecure_tls' in section '[n1]': {}",
+                    n1_insecure_tls_value, error
+                ),
+                "static",
+                "CONFIG"
+            )
+        });
 
-    let attachment_max_size_mb_value =
-        n1_section
-            .get("attachment_max_size_mb")
-            .unwrap_or("50");
+    let attachment_max_size_mb_value = n1_section.get("attachment_max_size_mb").unwrap_or("50");
 
-    let attachment_max_size_mb =
-        attachment_max_size_mb_value
-            .parse::<usize>()
-            .unwrap_or_else(|error| {
-                crate::fatal_error!(
-                    format!(
-                        "invalid value '{}' for 'attachment_max_size_mb' in section '[n1]': {}",
-                        attachment_max_size_mb_value,
-                        error
-                    ),
-                    "static",
-                    "CONFIG"
-                )
-            });
+    let attachment_max_size_mb = attachment_max_size_mb_value
+        .parse::<usize>()
+        .unwrap_or_else(|error| {
+            crate::fatal_error!(
+                format!(
+                    "invalid value '{}' for 'attachment_max_size_mb' in section '[n1]': {}",
+                    attachment_max_size_mb_value, error
+                ),
+                "static",
+                "CONFIG"
+            )
+        });
 
     if attachment_max_size_mb == 0 {
         crate::fatal_error!(

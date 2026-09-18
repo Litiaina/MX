@@ -148,9 +148,9 @@ async fn server() {
 
     let current_time = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
-    tracing::info!("╔════════════════════════════════════╗");
-    tracing::info!("║        A R I S  S E R V E R        ║");
-    tracing::info!("╚════════════════════════════════════╝");
+    tracing::info!("╔════════════════════════════════════════╗");
+    tracing::info!("║        L I T I A I N A  A R I S        ║");
+    tracing::info!("╚════════════════════════════════════════╝");
     tracing::info!("{} - Status: ONLINE", current_time);
     tracing::info!("Press CTRL+C to terminate");
     tracing::info!("══════════════ ACTIVE CONNECTIONS ══════════════");
@@ -178,10 +178,7 @@ async fn server() {
 
     let application = Router::new()
         .merge(api_route())
-        .fallback_service(
-            serve_static_files()
-                .not_found_service(handler_404.into_service()),
-        );
+        .fallback_service(serve_static_files().not_found_service(handler_404.into_service()));
 
     let api_task = tokio::spawn(serve(
         ip,

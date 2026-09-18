@@ -1213,6 +1213,38 @@
       white-space: nowrap;
     }
 
+    .attachment-system-cell {
+      text-align: center;
+    }
+
+    .attachment-count-button {
+      border: 0;
+      cursor: pointer;
+      font-family: inherit;
+    }
+
+    .attachment-count-button:hover {
+      filter: brightness(.97);
+    }
+
+    .system-column-tag {
+      display: inline-flex;
+      margin-left: 5px;
+      padding: 1px 5px;
+      border-radius: 999px;
+      background: #e0e7ff;
+      color: #1e3a8a;
+      font-size: .625rem;
+      font-weight: 900;
+      vertical-align: middle;
+    }
+
+    .column-menu-reset {
+      width: 100%;
+      margin-top: 8px;
+      justify-content: center;
+    }
+
     .attachment-count {
       display: inline-flex;
       align-items: center;
@@ -1998,7 +2030,7 @@
   </style>
 
 
-  <!-- ARIS modern visual layer: presentation-only; existing IDs/scripts/API bindings are untouched. -->
+  <!-- Modern visual layer: presentation-only; existing IDs/scripts/API bindings are untouched. -->
   <style id="aris-modern-shell">
     :root {
       --bg: #f5f7fb;
@@ -2691,14 +2723,14 @@
           Dashboard connected
         </div>
         <div class="system-copy">
-          Statistics are calculated from ARIS record metadata. Attachment bytes remain in N1 and are never downloaded for dashboard analytics.
+          Statistics are calculated from record metadata. Attachment bytes remain in N1 and are never downloaded for dashboard analytics.
         </div>
       </div>
 
       <div class="sidebar-user">
         <div class="user-avatar" id="sidebarAvatar">AR</div>
         <div class="sidebar-user-copy">
-          <strong id="sidebarUserName">ARIS User</strong>
+          <strong id="sidebarUserName">User</strong>
           <span id="sidebarUserRole">Authenticated session</span>
         </div>
 
@@ -2736,7 +2768,7 @@
             class="btn"
             id="settingsBtn"
             type="button"
-            aria-label="Open ARIS settings"
+            aria-label="Open settings"
             title="Display and refresh settings"
           >
             <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true">
@@ -2770,7 +2802,7 @@
         </div>
       </header>
 
-      <nav class="workspace-tabs" aria-label="ARIS workspace tabs">
+      <nav class="workspace-tabs" aria-label="Workspace tabs">
         <button class="workspace-tab active" type="button" data-workspace-tab="dashboard">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
             <rect x="3" y="3" width="7" height="7" rx="1.5"/>
@@ -2810,14 +2842,14 @@
             </div>
             <h1>See the flow of records, offices, routing, and attachments at a glance.</h1>
             <p>
-              This dashboard turns ARIS record metadata into operational statistics without touching the original files stored in N1. Use it to understand workload, record volume, attachment coverage, routing patterns, and data quality.
+              This dashboard turns record metadata into operational statistics without touching the original files stored in N1. Use it to understand workload, record volume, attachment coverage, routing patterns, and data quality.
             </p>
           </div>
 
           <div class="hero-summary">
             <div class="hero-summary-label">Current data scope</div>
             <div class="hero-summary-value" id="heroScopeValue">—</div>
-            <div class="hero-summary-meta" id="heroScopeMeta">Waiting for ARIS data</div>
+            <div class="hero-summary-meta" id="heroScopeMeta">Waiting for data</div>
           </div>
         </section>
 
@@ -2866,7 +2898,7 @@
 
         <div class="load-status" id="loadStatus">
           <div class="spinner"></div>
-          <span id="loadStatusText">Loading ARIS records…</span>
+          <span id="loadStatusText">Loading records…</span>
         </div>
 
         <section class="kpi-grid">
@@ -2881,7 +2913,7 @@
               </div>
             </div>
             <div class="kpi-value" id="kpiTotal">—</div>
-            <div class="kpi-meta" id="kpiTotalMeta">of all ARIS records</div>
+            <div class="kpi-meta" id="kpiTotalMeta">of all records</div>
           </article>
 
           <article class="kpi">
@@ -2985,7 +3017,7 @@
             <div class="card-head">
               <div>
                 <h3>Record volume over time</h3>
-                <p>Counts are based on the business record date stored in ARIS.</p>
+                <p>Counts are based on the stored business record date.</p>
               </div>
               <div class="card-head-stat">
                 <strong id="trendPeakValue">—</strong>
@@ -3205,7 +3237,7 @@
           <div class="section-head">
             <div>
               <h2>Administrator accountability</h2>
-              <p>Recent audit activity from the ARIS append-only application audit log.</p>
+              <p>Recent activity from the append-only application audit log.</p>
             </div>
             <button class="btn" type="button" data-workspace-tab="admin">Open Administration</button>
           </div>
@@ -3275,11 +3307,56 @@
         <div class="login-brand-mark" style="border-radius:50%;overflow:hidden;padding:0;"><img src="images/system-icon.png" alt="ARIS" style="width:100%;height:100%;display:block;object-fit:cover;border-radius:50%;"></div>
         <h1>ARIS · Dashboard</h1>
         <p>
-          Sign in with your ARIS account to view operational records statistics. Your permissions remain enforced by the ARIS backend.
+          Sign in to view operational record statistics. Your permissions remain enforced by the backend.
         </p>
       </div>
 
-      <form class="login-body" id="loginForm">
+      <form class="login-body hidden" id="shellBootstrapForm">
+        <div class="login-status" id="shellBootstrapIntro">
+          First-time setup. Create the initial Administrator account using one configured AUTH_KEYS value.
+        </div>
+
+        <div class="field">
+          <label for="shellBootstrapAuthKey">AUTH key</label>
+          <input
+            id="shellBootstrapAuthKey"
+            type="password"
+            autocomplete="off"
+            placeholder="One configured AUTH_KEYS value"
+            required
+          >
+        </div>
+
+        <div class="field">
+          <label for="shellBootstrapName">Administrator name</label>
+          <input id="shellBootstrapName" autocomplete="name" required>
+        </div>
+
+        <div class="field">
+          <label for="shellBootstrapEmail">Administrator email</label>
+          <input id="shellBootstrapEmail" type="email" autocomplete="username" required>
+        </div>
+
+        <div class="field">
+          <label for="shellBootstrapPassword">Password</label>
+          <input id="shellBootstrapPassword" type="password" autocomplete="new-password" required>
+        </div>
+
+        <div class="field">
+          <label for="shellBootstrapPasswordConfirm">Confirm password</label>
+          <input id="shellBootstrapPasswordConfirm" type="password" autocomplete="new-password" required>
+        </div>
+
+        <button class="btn btn-primary" id="shellBootstrapBtn" type="submit">
+          Create Administrator
+        </button>
+
+        <div class="login-status" id="shellBootstrapStatus">
+          The first account is always access level 0 — Administrator.
+        </div>
+      </form>
+
+      <form class="login-body hidden" id="loginForm">
         <div class="field">
           <label for="loginEmail">Email</label>
           <input id="loginEmail" type="email" autocomplete="username" required>
@@ -3295,7 +3372,7 @@
           <input id="loginOtp" inputmode="numeric" autocomplete="one-time-code" maxlength="8" placeholder="Optional">
         </div>
 
-        <button class="btn btn-primary" id="loginBtn" type="submit">Sign in to dashboard</button>
+        <button class="btn btn-primary" id="loginBtn" type="submit">Sign in to ARIS</button>
         <div class="login-status" id="loginStatus"></div>
       </form>
     </div>
@@ -3314,7 +3391,7 @@
     >
       <div class="settings-head">
         <div>
-          <h2 id="settingsTitle">ARIS Settings</h2>
+          <h2 id="settingsTitle">Settings</h2>
           <p>Adjust interface readability and how often the active workspace pulls fresh information.</p>
         </div>
         <button
@@ -3329,7 +3406,7 @@
         <section class="settings-section">
           <div class="settings-section-title">Text Scale</div>
           <div class="settings-section-copy">
-            Automatic mode increases ARIS typography for larger viewports without magnifying the entire page. A 2560×1440 viewport targets 125% text.
+            Automatic mode increases typography for larger viewports without magnifying the entire page. A 2560×1440 viewport targets 125% text.
           </div>
 
           <div class="settings-row">
@@ -3348,20 +3425,20 @@
               max="160"
               step="5"
               value="100"
-              aria-label="Manual ARIS text scale"
+              aria-label="Manual text scale"
             >
             <div class="settings-value" id="uiScaleValue">100%</div>
           </div>
 
           <div class="settings-hint" id="scaleHint">
-            ARIS will calculate a comfortable scale for this display.
+            A comfortable scale will be calculated for this display.
           </div>
         </section>
 
         <section class="settings-section">
           <div class="settings-section-title">Data Freshness</div>
           <div class="settings-section-copy">
-            ARIS refreshes the active workspace while this browser tab is visible, and refreshes again when you return to the tab.
+            The active workspace refreshes while this browser tab is visible, and refreshes again when you return to the tab.
           </div>
 
           <div class="settings-row">
@@ -3569,10 +3646,64 @@
     }
 
     .records-command-row {
+      position: relative;
       display: flex;
       align-items: center;
       justify-content: flex-end;
+      gap: 8px;
       min-height: 38px;
+    }
+
+    .column-menu {
+      position: absolute;
+      top: calc(100% + 6px);
+      right: 140px;
+      z-index: 20;
+      width: min(340px, calc(100vw - 40px));
+      max-height: 380px;
+      overflow: auto;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--panel);
+      box-shadow: 0 18px 45px rgba(15,23,42,.18);
+    }
+
+    .column-menu-title {
+      margin-bottom: 8px;
+      font-size: 0.8125rem;
+      font-weight: 900;
+    }
+
+    .column-menu-list {
+      display: grid;
+      gap: 7px;
+    }
+
+    .column-option {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 8px;
+      border: 1px solid var(--line-soft);
+      border-radius: 9px;
+      background: var(--panel-soft);
+      color: var(--text);
+      font-size: 0.8125rem;
+      font-weight: 800;
+    }
+
+    .column-option input {
+      width: 17px;
+      height: 17px;
+      flex: 0 0 auto;
+    }
+
+    .column-menu-note {
+      margin-top: 9px;
+      color: var(--muted);
+      font-size: 0.6875rem;
+      line-height: 1.4;
     }
 
     .records-command-row #newEntryBtn {
@@ -3734,16 +3865,65 @@
     .table-wrap {
       flex: 1 1 auto;
       min-height: 0;
-      overflow: auto;
+      overflow-y: auto;
+      overflow-x: auto;
       background: white;
+      scrollbar-gutter: stable;
+      overscroll-behavior-x: contain;
     }
 
-    table {
-      width: 100%;
-      min-width: 1600px;
+    /*
+     * Records use horizontal scrolling instead of squeezing every configured
+     * field into the viewport. This keeps text readable and leaves all
+     * record/search/upload/actions behavior unchanged.
+     */
+    .table-wrap table {
+      width: max-content;
+      min-width: 100%;
+      table-layout: auto;
       border-collapse: separate;
       border-spacing: 0;
       font-size: 0.9375rem;
+    }
+
+    /* renderTableHead() writes percentage widths inline; scrolling owns width now. */
+    .table-wrap thead th[data-field-type] {
+      width: auto !important;
+    }
+
+    .table-wrap thead th[data-field-type],
+    .table-wrap tbody td.dynamic-cell {
+      min-width: 170px;
+    }
+
+    .table-wrap thead th[data-field-type="date"],
+    .table-wrap tbody td[data-field-type="date"] {
+      min-width: 140px;
+    }
+
+    .table-wrap thead th[data-field-type="auto_number"],
+    .table-wrap tbody td[data-field-type="auto_number"] {
+      min-width: 145px;
+    }
+
+    .table-wrap thead th[data-field-type="integer"],
+    .table-wrap tbody td[data-field-type="integer"],
+    .table-wrap thead th[data-field-type="decimal"],
+    .table-wrap tbody td[data-field-type="decimal"],
+    .table-wrap thead th[data-field-type="boolean"],
+    .table-wrap tbody td[data-field-type="boolean"] {
+      min-width: 130px;
+    }
+
+    .table-wrap thead th[data-field-type="attachments"],
+    .table-wrap tbody td[data-field-type="attachments"] {
+      min-width: 155px;
+    }
+
+    .table-wrap thead th[data-field-type="long_text"],
+    .table-wrap tbody td[data-field-type="long_text"] {
+      min-width: 360px;
+      max-width: 520px;
     }
 
     thead th {
@@ -3774,32 +3954,66 @@
     tbody tr:hover td { background: #f7fbff; }
 
     .row-num {
+      position: sticky;
+      left: 0;
+      z-index: 2;
       width: 64px;
+      min-width: 64px;
+      max-width: 64px;
       text-align: right;
       color: var(--muted);
       background: #f8fafc !important;
       font-variant-numeric: tabular-nums;
+      box-shadow: 8px 0 14px rgba(15,23,42,.035);
     }
 
-    .control-cell {
-      min-width: 175px;
+    thead .row-num {
+      z-index: 5;
+      background: #eaf1f8 !important;
+    }
+
+    .dynamic-cell {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    /*
+     * Long-text fields stay real table cells.
+     *
+     * The previous rule changed <td> to display:-webkit-box, which broke the
+     * table row geometry and made SUBJECT look clipped/misaligned.
+     */
+    .dynamic-cell[data-field-type="long_text"] {
+      white-space: normal;
+      overflow: hidden;
+      text-overflow: clip;
+    }
+
+    .long-text-preview {
+      display: -webkit-box;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 3;
+      overflow: hidden;
+      white-space: normal;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+      line-height: 1.38;
+      max-height: calc(1.38em * 3);
+    }
+
+    .dynamic-cell[data-field-key="control_no"] {
       font-weight: 900;
       color: #1e3a8a;
     }
-
-    .date-cell { min-width: 125px; white-space: nowrap; }
-    .office-cell { min-width: 180px; }
-    .requestor-cell { min-width: 210px; }
-    .subject-cell { min-width: 320px; max-width: 440px; }
-    .route-cell { min-width: 190px; }
-    .attachment-cell { min-width: 160px; }
-    .remarks-cell { min-width: 220px; max-width: 320px; }
 
     .sticky-actions {
       position: sticky;
       right: 0;
       z-index: 2;
-      min-width: 145px;
+      width: 138px;
+      min-width: 138px;
+      max-width: 138px;
       text-align: center;
       background: inherit;
       box-shadow: -10px 0 16px rgba(15,23,42,.06);
@@ -3813,7 +4027,13 @@
     .row-actions {
       display: inline-flex;
       align-items: center;
+      justify-content: center;
       gap: 6px;
+      white-space: nowrap;
+    }
+
+    .row-actions .btn {
+      white-space: nowrap;
     }
 
     .attachment-count {
@@ -3958,6 +4178,83 @@
       display: grid;
       grid-template-columns: 1fr 1fr;
       gap: 12px;
+    }
+
+
+    .dynamic-field {
+      display: grid;
+      gap: 6px;
+      min-width: 0;
+    }
+
+    .dynamic-field > span {
+      font-size: .6875rem;
+      font-weight: 900;
+      letter-spacing: .04em;
+      color: var(--muted);
+      text-transform: uppercase;
+    }
+
+    .dynamic-field-wide {
+      grid-column: 1 / -1;
+    }
+
+    .dynamic-field textarea {
+      min-height: 90px;
+      resize: vertical;
+    }
+
+    .dynamic-checkbox {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 38px;
+      padding: 0 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+    }
+
+    .dynamic-checkbox input {
+      width: 17px;
+      height: 17px;
+      accent-color: var(--primary);
+    }
+
+    .required-mark {
+      color: var(--danger);
+    }
+    .dynamic-fields-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .dynamic-field.full-width {
+      grid-column: 1 / -1;
+    }
+
+    .dynamic-field .field-meta {
+      color: var(--muted);
+      font-size: 0.6875rem;
+      font-weight: 700;
+      letter-spacing: 0;
+    }
+
+    .dynamic-field textarea {
+      min-height: 92px;
+      resize: vertical;
+    }
+
+    .dynamic-field input[type="checkbox"] {
+      width: 20px;
+      height: 20px;
+      margin: 8px 0 0;
+    }
+
+    .auto-number-display {
+      background: #f1f5f9 !important;
+      color: #64748b !important;
     }
 
     .file-drop {
@@ -4215,7 +4512,7 @@
       .topbar { height: auto; flex-basis: auto; min-height: var(--topbar-height); padding: 12px; align-items: flex-start; flex-direction: column; }
       .server-pill { display: none; }
       .app-main { overflow: visible; }
-      .universal-row, .advanced-grid, .two-col, .pagination { grid-template-columns: 1fr; }
+      .universal-row, .advanced-grid, .two-col, .dynamic-fields-grid, .pagination { grid-template-columns: 1fr; }
       .pagination-center, .pagination-jump { justify-self: stretch; justify-content: flex-start; }
       .table-card { min-height: 70vh; }
       .attachment-row { grid-template-columns: 1fr; }
@@ -4561,11 +4858,11 @@
 <div class="app-shell">
 <header class="topbar">
 <div class="brand">
-<h1>ARIS — Atomic Record Information System</h1>
+<h1>Records</h1>
 <p>Automatic yearly control numbers · 256 records per page · N1 attachment storage</p>
 </div>
 <div class="topbar-actions">
-<div class="server-pill" id="serverPill">ARIS API</div>
+<div class="server-pill" id="serverPill">API</div>
 <div class="user-pill hidden" id="userPill"></div>
 <button class="btn btn-light hidden" id="accountsBtn" type="button">Accounts</button>
 <button class="btn btn-light" id="refreshBtn" type="button">Refresh</button>
@@ -4576,6 +4873,17 @@
 <main class="app-main">
 <section class="search-panel">
 <div class="records-command-row">
+<button class="btn btn-light" id="columnsBtn" type="button" aria-expanded="false">
+  Columns
+</button>
+<div class="column-menu hidden" id="columnsMenu">
+  <div class="column-menu-title">Visible columns</div>
+  <div class="column-menu-list" id="columnsMenuList"></div>
+  <button class="btn btn-light column-menu-reset" id="columnsResetBtn" type="button">
+    Use Administrator Defaults
+  </button>
+  <div class="column-menu-note">Only your explicit overrides are saved. New fields and Attached Files follow the Administrator default automatically.</div>
+</div>
 <button class="btn btn-primary" id="newEntryBtn" type="button">
   <span aria-hidden="true">＋</span>
   Add Record
@@ -4584,7 +4892,7 @@
 <div class="universal-row">
 <label>
           UNIVERSAL SEARCH
-          <input autocomplete="off" id="universalSearch" placeholder="Control no., office, requestor, subject, division, remarks, filename..." type="search"/>
+          <input autocomplete="off" id="universalSearch" placeholder="Search configured fields and attachment filenames..." type="search"/>
 </label>
 <label>
           MATCH MODE
@@ -4602,56 +4910,14 @@
         </button>
 </div>
 <div class="search-help">
-        Universal search includes control no., year/date, office, requestor, subject, division, remarks, and attachment filenames. Search is server-side; the browser holds only one 256-row page.
+        Universal search uses fields marked Searchable in Record Structure plus attachment filenames. Search is server-side; the browser holds only one 256-row page.
       </div>
 <div class="advanced-panel hidden" id="advancedPanel">
-<div class="advanced-grid">
-<label>
-            CONTROL NUMBER
-            <input autocomplete="off" id="filterControlNo" placeholder="1, 125, 1000..."/>
-</label>
-<label>
-            OFFICE
-            <input autocomplete="off" id="filterOffice" placeholder="Office / department"/>
-</label>
-<label>
-            REQUESTOR
-            <input autocomplete="off" id="filterRequestor" placeholder="Requestor"/>
-</label>
-<label>
-            ROUTED TO DIVISION
-            <input autocomplete="off" id="filterRoutedToDiv" placeholder="Division / unit"/>
-</label>
-<label>
-            SUBJECT
-            <input autocomplete="off" id="filterSubject" placeholder="Subject contains..."/>
-</label>
-<label>
-            REMARKS
-            <input autocomplete="off" id="filterRemarks" placeholder="Remarks contains..."/>
-</label>
-<label>
-            ATTACHMENT FILE NAME
-            <input autocomplete="off" id="filterFileName" placeholder="example.pdf"/>
-</label>
+<div class="advanced-grid" id="dynamicAdvancedFilters"></div>
+<div class="advanced-grid advanced-system-grid">
 <label>
             SORT BY
-            <select id="sortBy">
-<option value="date">Date</option>
-<option value="control_no">Control number</option>
-<option value="office">Office</option>
-<option value="requestor">Requestor</option>
-<option value="subject">Subject</option>
-<option value="routed_to_div">Routed division</option>
-</select>
-</label>
-<label>
-            DATE FROM
-            <input id="filterDateFrom" type="date"/>
-</label>
-<label>
-            DATE TO
-            <input id="filterDateTo" type="date"/>
+            <select id="sortBy"></select>
 </label>
 <label>
             SORT DIRECTION
@@ -4693,22 +4959,15 @@
 <div class="table-wrap" id="tableWrap">
 <table>
 <thead>
-<tr>
+<tr id="tableHeadRow">
 <th class="row-num">#</th>
-<th>CONTROL NO.</th>
-<th>DATE</th>
-<th>OFFICE</th>
-<th>REQUESTOR</th>
-<th>SUBJECT</th>
-<th>ROUTED TO DIV.</th>
-<th>ATTACHMENTS</th>
-<th>REMARKS</th>
+<th>Loading structure…</th>
 <th class="sticky-actions">ACTIONS</th>
 </tr>
 </thead>
 <tbody id="tableBody">
 <tr>
-<td class="empty-state" colspan="10">Loading ARIS records...</td>
+<td class="empty-state" colspan="3">Loading records...</td>
 </tr>
 </tbody>
 </table>
@@ -4739,13 +4998,13 @@
 <div>
 <div class="login-logo" style="border-radius:50%;overflow:hidden;padding:0;"><img src="images/system-icon.png" alt="ARIS" style="width:100%;height:100%;display:block;object-fit:cover;border-radius:50%;"></div>
 <h2 id="loginTitle">Sign in to ARIS</h2>
-<p>Use your ARIS account. OTP is only required when 2FA is enabled for your account.</p>
+<p>Use your account. OTP is only required when 2FA is enabled.</p>
 </div>
 </div>
 <div class="modal-body">
 <div class="hidden" id="bootstrapPanel">
 <div class="auth-note" style="margin-bottom:12px;">
-<b>First-time ARIS setup is handled in admin.html.</b><br/>
+<b>First-time setup is handled in Administration.</b><br/>
           No user account exists yet. Enter one value from <code>AUTH_KEYS</code> and create the first Administrator account.
           The account will be signed in automatically after creation.
         </div>
@@ -4774,7 +5033,7 @@
             Create Administrator
           </button>
 <div class="auth-note" id="bootstrapStatus">
-            This only works while ARIS has no users. The first account is always access level 0 — Administrator.
+            This only works while no users exist. The first account is always access level 0 — Administrator.
           </div>
 </form>
 </div>
@@ -4794,7 +5053,7 @@
 </label>
 <button class="btn btn-primary" id="loginBtn" type="submit">Sign In</button>
 <div class="auth-note" id="loginStatus">
-            Use a ARIS account provisioned by an Administrator. Access tokens are refreshed automatically.
+            Use an account provisioned by an Administrator. Access tokens are refreshed automatically.
           </div>
 </form>
 </div>
@@ -4813,8 +5072,8 @@
 </div>
 <div class="modal-body">
 <div class="role-legend">
-<div><b>0 · Administrator</b> — accounts + all ARIS operations + database administration</div>
-<div><b>1 · Manager</b> — all ARIS operations including delete</div>
+<div><b>0 · Administrator</b> — accounts + all record operations + database administration</div>
+<div><b>1 · Manager</b> — all record operations including delete</div>
 <div><b>2 · Editor</b> — create/edit/upload/download; cannot delete</div>
 <div><b>3 · Viewer</b> — search/read/download only</div>
 </div>
@@ -4855,7 +5114,7 @@
 <div aria-labelledby="entryModalTitle" aria-modal="true" class="modal-card" role="dialog">
 <div class="modal-header">
 <div>
-<h2 id="entryModalTitle">New ARIS Record</h2>
+<h2 id="entryModalTitle">New Record</h2>
 <p id="entryModalHint">Create a new atomic record.</p>
 </div>
 <button aria-label="Close" class="icon-btn" id="closeModalBtn" type="button">×</button>
@@ -4866,48 +5125,16 @@
 <div>
             Drop file(s) anywhere in this form<br/>
 <span style="font-size: 0.8125rem;font-weight:800;color:#475569;">
-              They will be added as ARIS attachments.
+              They will be added as attachments.
             </span>
 </div>
 </div>
 <input id="uid" type="hidden"/>
 <div class="form-section">
 <h3>Record Information</h3>
-<div class="two-col">
-<label>
-              CONTROL NUMBER
-              <input id="controlNoDisplay" readonly="" tabindex="-1" value="Assigned automatically when saved"/>
-</label>
-<label>
-              DATE
-              <input id="date" required="" type="date"/>
-</label>
+<div class="dynamic-fields-grid" id="dynamicFields">
+  <div class="muted">Loading configured fields…</div>
 </div>
-<div class="muted" style="margin-top:7px;font-size: 0.75rem;font-weight:700;">
-            ARIS assigns the next number for the selected year. The sequence resets to 1 for a new year.
-          </div>
-<div class="two-col" style="margin-top:12px;">
-<label>
-              OFFICE
-              <input autocomplete="off" id="office" placeholder="Office / Department" required=""/>
-</label>
-<label>
-              REQUESTOR
-              <input autocomplete="off" id="requestor" placeholder="Requestor name" required=""/>
-</label>
-</div>
-<label style="margin-top:12px;">
-            SUBJECT
-            <textarea id="subject" placeholder="Document subject" required=""></textarea>
-</label>
-<label style="margin-top:12px;">
-            ROUTED TO DIVISION
-            <input autocomplete="off" id="routed_to_div" placeholder="Division / Unit" required=""/>
-</label>
-<label style="margin-top:12px;">
-            REMARKS
-            <textarea id="remarks" placeholder="None"></textarea>
-</label>
 </div>
 <div class="form-section">
 <h3>Attached Files</h3>
@@ -4917,7 +5144,7 @@
               <input id="fileInput" multiple="" type="file"/>
 </label>
 <div class="muted" style="margin-top:8px;font-size: 0.8125rem;">
-              Choose files here, or drag and drop files onto any field in this form. Files are stored in N1 under OFFICE / DATE / CONTROL-NO__FILENAME. Default limit: 50 MiB per attachment.
+              Choose files here, or drag and drop files anywhere in this form. Attached Files is a built-in system capability and does not need to be created as a custom field. New uploads keep the original human-readable filename in N1. Default limit: 50 MiB per attachment.
             </div>
 </div>
 <div class="upload-progress-panel hidden" id="uploadProgressPanel">
@@ -5327,7 +5554,7 @@ const SEARCH_DEBOUNCE_MS = 350;
 const MAX_FILE_SIZE = 50 * 1024 * 1024;
 
 /*
-  The UI expects ARIS to accept these GET query parameters on:
+  The UI expects the backend to accept these GET query parameters on:
 
   GET /aris/v1/records
 
@@ -5378,6 +5605,7 @@ const ENDPOINTS = {
     delete: "/aris/v1/auth/delete"
   },
 
+  schema: "/aris/v1/schema",
   entries: "/aris/v1/records",
 
   entry: uid =>
@@ -5402,6 +5630,11 @@ const ENDPOINTS = {
 
 const state = {
   rows: [],
+  fields: [],
+  systemFields: [],
+  schemaRevision: 0,
+  userColumns: null,
+  columnOverrides: null,
   page: 1,
   limit: PAGE_LIMIT,
   hasNext: false,
@@ -5474,15 +5707,7 @@ const els = {
   clearSearchBtn: document.getElementById("clearSearchBtn"),
   advancedPanel: document.getElementById("advancedPanel"),
 
-  filterControlNo: document.getElementById("filterControlNo"),
-  filterOffice: document.getElementById("filterOffice"),
-  filterRequestor: document.getElementById("filterRequestor"),
-  filterRoutedToDiv: document.getElementById("filterRoutedToDiv"),
-  filterSubject: document.getElementById("filterSubject"),
-  filterRemarks: document.getElementById("filterRemarks"),
-  filterFileName: document.getElementById("filterFileName"),
-  filterDateFrom: document.getElementById("filterDateFrom"),
-  filterDateTo: document.getElementById("filterDateTo"),
+  dynamicAdvancedFilters: document.getElementById("dynamicAdvancedFilters"),
   sortBy: document.getElementById("sortBy"),
   sortDir: document.getElementById("sortDir"),
   attachmentMode: document.getElementById("attachmentMode"),
@@ -5507,6 +5732,11 @@ const els = {
 
   refreshBtn: document.getElementById("refreshBtn"),
   newEntryBtn: document.getElementById("newEntryBtn"),
+  columnsBtn: document.getElementById("columnsBtn"),
+  columnsMenu: document.getElementById("columnsMenu"),
+  columnsMenuList: document.getElementById("columnsMenuList"),
+  columnsResetBtn: document.getElementById("columnsResetBtn"),
+  tableHeadRow: document.getElementById("tableHeadRow"),
 
   entryModal: document.getElementById("entryModal"),
   entryModalTitle: document.getElementById("entryModalTitle"),
@@ -5517,13 +5747,7 @@ const els = {
 
   entryForm: document.getElementById("entryForm"),
   uid: document.getElementById("uid"),
-  controlNoDisplay: document.getElementById("controlNoDisplay"),
-  date: document.getElementById("date"),
-  office: document.getElementById("office"),
-  requestor: document.getElementById("requestor"),
-  subject: document.getElementById("subject"),
-  routed_to_div: document.getElementById("routed_to_div"),
-  remarks: document.getElementById("remarks"),
+  dynamicFields: document.getElementById("dynamicFields"),
 
   fileInput: document.getElementById("fileInput"),
   fileUploadSection: document.getElementById("fileUploadSection"),
@@ -5575,7 +5799,7 @@ function getRefreshToken() {
 
 function storeTokens(data) {
   if (!data?.access_token || !data?.refresh_token) {
-    throw new Error("ARIS did not return access and refresh tokens.");
+    throw new Error("The server did not return access and refresh tokens.");
   }
 
   if (window.ARIS_AUTH) {
@@ -5758,7 +5982,7 @@ function showBootstrap() {
 
   els.loginStatus.textContent = "";
   els.bootstrapStatus.textContent =
-    "No ARIS account exists yet. Enter one AUTH_KEYS value and create the first Administrator.";
+    "No account exists yet. Enter one AUTH_KEYS value and create the first Administrator.";
 
   setTimeout(() => {
     els.bootstrapAuthKey.focus();
@@ -5771,7 +5995,7 @@ function showNormalLogin(message = "") {
 
   els.loginStatus.textContent =
     message ||
-    "Use a ARIS account provisioned by an Administrator. ARIS refreshes access tokens automatically while this tab remains signed in.";
+    "Use an account provisioned by an Administrator. Access tokens refresh automatically while this tab remains signed in.";
 
   setTimeout(() => {
     els.loginEmail.focus();
@@ -5801,7 +6025,7 @@ async function bootstrapAdministrator(event) {
 
   els.bootstrapBtn.disabled = true;
   els.bootstrapBtn.textContent = "Creating Administrator...";
-  els.bootstrapStatus.textContent = "Initializing ARIS...";
+  els.bootstrapStatus.textContent = "Initializing…";
 
   try {
     const response = await fetch(
@@ -5868,13 +6092,13 @@ async function bootstrapAdministrator(event) {
   } catch (error) {
     els.bootstrapStatus.textContent = error.message;
 
-    // Re-check because another browser/process may have initialized ARIS.
+    // Re-check because another browser/process may have completed setup.
     try {
       const status = await getBootstrapStatus();
 
       if (!status.setup_required) {
         showNormalLogin(
-          "ARIS is already initialized. Sign in with an existing account."
+          "Setup is already complete. Sign in with an existing account."
         );
       }
     } catch (_) {
@@ -5942,10 +6166,11 @@ async function bootstrapSession() {
       await loadSession();
 
       if (!canReadAris()) {
-        throw new Error("This account does not have ARIS access.");
+        throw new Error("This account does not have access.");
       }
 
       hideLogin();
+      await loadRecordSchema();
       await loadPage(1);
     } catch (error) {
       state.session = null;
@@ -5972,10 +6197,11 @@ async function bootstrapSession() {
     await loadSession();
 
     if (!canReadAris()) {
-      throw new Error("This account does not have ARIS access.");
+      throw new Error("This account does not have access.");
     }
 
     hideLogin();
+    await loadRecordSchema();
     await loadPage(1);
   } catch (error) {
     clearTokens();
@@ -5990,7 +6216,7 @@ async function login(event) {
 
   els.loginBtn.disabled = true;
   els.loginBtn.textContent = "Signing In...";
-  els.loginStatus.textContent = "Authenticating with ARIS...";
+  els.loginStatus.textContent = "Authenticating…";
 
   try {
     const payload = {
@@ -6034,10 +6260,11 @@ async function login(event) {
     await loadSession();
 
     if (!canReadAris()) {
-      throw new Error("This account does not have ARIS access.");
+      throw new Error("This account does not have access.");
     }
 
     hideLogin();
+    await loadRecordSchema();
     await loadPage(1);
   } catch (error) {
     clearTokens();
@@ -6063,7 +6290,7 @@ function logout(showMessage = true) {
   els.tableBody.innerHTML = `
     <tr>
       <td colspan="10" class="empty-state">
-        Sign in to load ARIS records.
+        Sign in to load records.
       </td>
     </tr>
   `;
@@ -6241,95 +6468,509 @@ async function requestJson(path, options = {}) {
 }
 
 /* -------------------------------------------------------------------------- */
+/* Dynamic record structure                                                   */
+/* -------------------------------------------------------------------------- */
+
+const RECORD_COLUMNS_STORAGE_KEY = "aris_record_columns";
+const RECORD_COLUMNS_STORAGE_VERSION = 3;
+
+function orderedFields() {
+  return [...state.fields].sort((a, b) =>
+    Number(a.position || 0) - Number(b.position || 0) ||
+    String(a.label || "").localeCompare(String(b.label || ""))
+  );
+}
+
+function orderedColumnFields() {
+  return [
+    ...state.fields.filter(field => field.active),
+    ...state.systemFields
+  ].sort((a, b) =>
+    Number(a.position || 0) - Number(b.position || 0) ||
+    String(a.label || "").localeCompare(String(b.label || ""))
+  );
+}
+
+function fieldByKey(key) {
+  return state.fields.find(field => field.key === key) || null;
+}
+
+function columnFieldByKey(key) {
+  return orderedColumnFields().find(field => field.key === key) || null;
+}
+
+function recordValue(row, key) {
+  return row?.values && Object.prototype.hasOwnProperty.call(row.values, key)
+    ? row.values[key]
+    : null;
+}
+
+function formatAutoNumber(field, value) {
+  if (value === null || value === undefined || value === "") return "—";
+  const prefix = String(field?.config?.prefix || "");
+  const padding = Math.max(0, Number(field?.config?.padding || 0));
+  const raw = String(value);
+  return `${prefix}${padding ? raw.padStart(padding, "0") : raw}`;
+}
+
+function formatFieldValue(field, value) {
+  if (field?.field_type === "attachments") {
+    return String(value ?? 0);
+  }
+
+  if (value === null || value === undefined || value === "") return "—";
+  if (field.field_type === "boolean") return value ? "Yes" : "No";
+  if (field.field_type === "auto_number") return formatAutoNumber(field, value);
+  return String(value);
+}
+
+function defaultColumnKeys() {
+  return orderedColumnFields()
+    .filter(field => field.table_visible)
+    .map(field => field.key);
+}
+
+function normalizeColumnOverrides(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+
+  const valid = new Set(orderedColumnFields().map(field => field.key));
+  const normalized = {};
+
+  for (const [key, enabled] of Object.entries(value)) {
+    if (valid.has(key) && typeof enabled === "boolean") {
+      normalized[key] = enabled;
+    }
+  }
+
+  return normalized;
+}
+
+function effectiveColumnKeys(overrides = {}) {
+  const selected = new Set();
+
+  for (const field of orderedColumnFields()) {
+    const hasOverride =
+      Object.prototype.hasOwnProperty.call(overrides, field.key);
+
+    const enabled = hasOverride
+      ? overrides[field.key]
+      : Boolean(field.table_visible);
+
+    if (enabled) {
+      selected.add(field.key);
+    }
+  }
+
+  return selected;
+}
+
+function loadStoredColumnKeys() {
+  let parsed = null;
+
+  try {
+    parsed = JSON.parse(
+      localStorage.getItem(RECORD_COLUMNS_STORAGE_KEY) || "null"
+    );
+  } catch (_) {
+    parsed = null;
+  }
+
+  /*
+   * Migrate all earlier array-based formats.
+   * Missing keys are not interpreted as "hidden", otherwise adding a field
+   * in Administration would never appear for a browser that saved columns
+   * before that field existed.
+   */
+  if (Array.isArray(parsed)) {
+    const valid = new Set(orderedColumnFields().map(field => field.key));
+    const overrides = {};
+
+    for (const key of parsed.map(String)) {
+      if (valid.has(key)) {
+        overrides[key] = true;
+      }
+    }
+
+    state.columnOverrides = overrides;
+
+    try {
+      localStorage.setItem(
+        RECORD_COLUMNS_STORAGE_KEY,
+        JSON.stringify({
+          version: RECORD_COLUMNS_STORAGE_VERSION,
+          overrides
+        })
+      );
+    } catch (_) {}
+
+    return effectiveColumnKeys(overrides);
+  }
+
+  const overrides = normalizeColumnOverrides(
+    parsed?.version === RECORD_COLUMNS_STORAGE_VERSION
+      ? parsed.overrides
+      : parsed?.overrides
+  );
+
+  state.columnOverrides = overrides;
+  return effectiveColumnKeys(overrides);
+}
+
+function saveStoredColumnKeys() {
+  const overrides = normalizeColumnOverrides(
+    state.columnOverrides || {}
+  );
+
+  state.columnOverrides = overrides;
+
+  try {
+    localStorage.setItem(
+      RECORD_COLUMNS_STORAGE_KEY,
+      JSON.stringify({
+        version: RECORD_COLUMNS_STORAGE_VERSION,
+        overrides
+      })
+    );
+  } catch (_) {}
+}
+
+function selectedColumnFields() {
+  if (!(state.userColumns instanceof Set)) {
+    state.userColumns = loadStoredColumnKeys();
+  }
+
+  const active = orderedColumnFields();
+  const selected = active.filter(field => state.userColumns.has(field.key));
+
+  if (selected.length) return selected;
+
+  const fallback = [...active]
+    .sort((a, b) =>
+      Number(b.table_priority || 0) - Number(a.table_priority || 0) ||
+      Number(a.position || 0) - Number(b.position || 0)
+    );
+
+  return fallback.slice(0, 1);
+}
+
+function visibleTableFields() {
+  /*
+   * Do not hide configured columns on smaller screens.
+   * The Records table is horizontally scrollable, so every selected field
+   * remains available exactly as configured by Administrator/User Columns.
+   */
+  return selectedColumnFields().sort((a, b) =>
+    Number(a.position || 0) - Number(b.position || 0)
+  );
+}
+
+function renderColumnsMenu() {
+  if (!(state.userColumns instanceof Set)) {
+    state.userColumns = loadStoredColumnKeys();
+  }
+
+  const fields = orderedColumnFields();
+
+  els.columnsMenuList.innerHTML = fields.length
+    ? fields.map(field => `
+        <label class="column-option">
+          <input
+            type="checkbox"
+            data-column-key="${escapeHtml(field.key)}"
+            ${state.userColumns.has(field.key) ? "checked" : ""}
+          >
+          <span>
+            ${escapeHtml(field.label)}
+            ${field.field_type === "attachments" ? `<small class="system-column-tag">SYSTEM</small>` : ""}
+          </span>
+        </label>
+      `).join("")
+    : `<div class="muted">No active fields.</div>`;
+}
+
+function tableColumnWeight(field) {
+  switch (field.field_type) {
+    case "long_text":
+      return 2.8;
+    case "text":
+      return 1.25;
+    case "select":
+      return 1.15;
+    case "date":
+      return 1.0;
+    case "auto_number":
+      return 0.9;
+    case "integer":
+    case "decimal":
+      return 0.9;
+    case "boolean":
+      return 0.8;
+    case "attachments":
+      return 1.0;
+    default:
+      return 1.0;
+  }
+}
+
+function tableColumnWidths(fields) {
+  const weights = fields.map(tableColumnWeight);
+  const totalWeight = weights.reduce((sum, value) => sum + value, 0) || 1;
+
+  /*
+   * Reserve space for row number + sticky Actions.
+   * The remaining width is distributed by field type.
+   */
+  const dynamicBudget = 86;
+
+  return weights.map(weight =>
+    Math.max(4.5, (weight / totalWeight) * dynamicBudget)
+  );
+}
+
+function renderTableHead() {
+  const fields = visibleTableFields();
+  const widths = tableColumnWidths(fields);
+
+  els.tableHeadRow.innerHTML = `
+    <th class="row-num">#</th>
+    ${fields.map((field, index) => `
+      <th
+        title="${escapeHtml(field.label)}"
+        data-field-type="${escapeHtml(field.field_type)}"
+        style="width:${widths[index].toFixed(2)}%;"
+      >
+        ${escapeHtml(field.label.toUpperCase())}
+      </th>
+    `).join("")}
+    <th class="sticky-actions">ACTIONS</th>
+  `;
+}
+
+function filterInputMarkup(field, current = "") {
+  const id = `schema-filter-${field.key}`;
+  const value = current ?? "";
+
+  if (field.field_type === "boolean") {
+    return `<select id="${id}" data-schema-filter="${escapeHtml(field.key)}">
+      <option value="">Any</option>
+      <option value="true" ${String(value) === "true" ? "selected" : ""}>Yes</option>
+      <option value="false" ${String(value) === "false" ? "selected" : ""}>No</option>
+    </select>`;
+  }
+
+  if (field.field_type === "select") {
+    const options = Array.isArray(field.config?.options) ? field.config.options : [];
+    return `<select id="${id}" data-schema-filter="${escapeHtml(field.key)}">
+      <option value="">Any</option>
+      ${options.map(option => `<option value="${escapeHtml(option)}" ${String(value) === String(option) ? "selected" : ""}>${escapeHtml(option)}</option>`).join("")}
+    </select>`;
+  }
+
+  const type = field.field_type === "date" ? "date" : "search";
+  return `<input id="${id}" type="${type}" autocomplete="off" data-schema-filter="${escapeHtml(field.key)}" value="${escapeHtml(value)}" placeholder="${escapeHtml(field.label)}">`;
+}
+
+function renderAdvancedFilters() {
+  const previous = {};
+  els.dynamicAdvancedFilters.querySelectorAll("[data-schema-filter]").forEach(input => {
+    previous[input.dataset.schemaFilter] = input.value;
+  });
+
+  const fields = orderedFields().filter(field => field.active && field.searchable);
+  els.dynamicAdvancedFilters.innerHTML = fields.map(field => `
+    <label>
+      ${escapeHtml(field.label.toUpperCase())}
+      ${filterInputMarkup(field, previous[field.key] || "")}
+    </label>
+  `).join("");
+
+  const previousSort = els.sortBy.value;
+  const sortable = orderedFields().filter(field => field.active && field.sortable);
+  els.sortBy.innerHTML = `
+    <option value="">Newest created</option>
+    ${sortable.map(field => `<option value="${escapeHtml(field.key)}">${escapeHtml(field.label)}</option>`).join("")}
+  `;
+
+  if ([...els.sortBy.options].some(option => option.value === previousSort)) {
+    els.sortBy.value = previousSort;
+  } else if (sortable.some(field => field.key === "date")) {
+    els.sortBy.value = "date";
+  }
+}
+
+function fieldInputMarkup(field, value, writable) {
+  const key = escapeHtml(field.key);
+  const label = escapeHtml(field.label);
+  const required = field.required && field.field_type !== "auto_number" ? "required" : "";
+  const disabled = !writable || field.field_type === "auto_number" ? "disabled" : "";
+  const requiredMark = field.required ? ` <span class="required-mark">*</span>` : "";
+  const current = value === null || value === undefined ? "" : value;
+  const wide = field.field_type === "long_text" ? " dynamic-field-wide" : "";
+
+  let control;
+
+  if (field.field_type === "auto_number") {
+    control = `<input data-record-field="${key}" data-field-type="auto_number" value="${escapeHtml(current === "" ? "Assigned automatically when saved" : formatAutoNumber(field, current))}" disabled>`;
+  } else if (field.field_type === "long_text") {
+    control = `<textarea data-record-field="${key}" data-field-type="long_text" ${required} ${disabled}>${escapeHtml(current)}</textarea>`;
+  } else if (field.field_type === "boolean") {
+    control = `<label class="dynamic-checkbox"><input type="checkbox" data-record-field="${key}" data-field-type="boolean" ${current === true ? "checked" : ""} ${disabled}><span>Yes</span></label>`;
+  } else if (field.field_type === "select") {
+    const options = Array.isArray(field.config?.options) ? field.config.options : [];
+    control = `<select data-record-field="${key}" data-field-type="select" ${required} ${disabled}>
+      <option value="">Select…</option>
+      ${options.map(option => `<option value="${escapeHtml(option)}" ${String(current) === String(option) ? "selected" : ""}>${escapeHtml(option)}</option>`).join("")}
+    </select>`;
+  } else {
+    const type = field.field_type === "date" ? "date" : (field.field_type === "integer" || field.field_type === "decimal") ? "number" : "text";
+    const step = field.field_type === "decimal" ? `step="any"` : field.field_type === "integer" ? `step="1"` : "";
+    control = `<input type="${type}" ${step} data-record-field="${key}" data-field-type="${escapeHtml(field.field_type)}" value="${escapeHtml(current)}" ${required} ${disabled}>`;
+  }
+
+  return `<label class="dynamic-field${wide}"><span>${label}${requiredMark}</span>${control}</label>`;
+}
+
+function renderDynamicFields(record = null, writable = canWriteAris()) {
+  const today = new Date().toISOString().slice(0, 10);
+  const values = record?.values || {};
+  const fields = orderedFields().filter(field => field.active);
+
+  els.dynamicFields.innerHTML = fields.length
+    ? fields.map(field => {
+        let value = Object.prototype.hasOwnProperty.call(values, field.key)
+          ? values[field.key]
+          : "";
+
+        if (!record && field.field_type === "date" && field.key === "date") {
+          value = today;
+        }
+
+        return fieldInputMarkup(field, value, writable);
+      }).join("")
+    : `<div class="schema-empty"><strong>This deployment has no record fields yet.</strong><span>Open Administration → Record Structure and add the first field.</span></div>`;
+}
+
+function dynamicInputValue(field) {
+  const input = els.dynamicFields.querySelector(`[data-record-field="${CSS.escape(field.key)}"]`);
+  if (!input || field.field_type === "auto_number") return undefined;
+
+  if (field.field_type === "boolean") return Boolean(input.checked);
+
+  const raw = String(input.value ?? "").trim();
+  if (raw === "") return "";
+
+  if (field.field_type === "integer") return Number.parseInt(raw, 10);
+  if (field.field_type === "decimal") return Number(raw);
+  return raw;
+}
+
+function recordDisplayLabel(row) {
+  const preferred = ["control_no", "subject"];
+  for (const key of preferred) {
+    const field = fieldByKey(key);
+    const value = recordValue(row, key);
+    if (field && value !== null && value !== undefined && value !== "") {
+      return formatFieldValue(field, value);
+    }
+  }
+
+  for (const field of visibleTableFields()) {
+    const value = recordValue(row, field.key);
+    if (value !== null && value !== undefined && value !== "") {
+      return formatFieldValue(field, value);
+    }
+  }
+
+  return row?.uid || "record";
+}
+
+async function loadRecordSchema() {
+  const data = await requestJson(ENDPOINTS.schema, { method: "GET" });
+  state.schemaRevision = Number(data?.revision || 0);
+  state.fields = Array.isArray(data?.fields)
+    ? data.fields.filter(field => field?.active !== false)
+    : [];
+  state.systemFields = Array.isArray(data?.system_fields)
+    ? data.system_fields
+    : [];
+
+  /*
+   * Recompute from the latest schema on every load. A field marked as a
+   * default table column in Administration must appear immediately unless
+   * this specific user explicitly overrode that field.
+   */
+  state.userColumns = loadStoredColumnKeys();
+
+  renderColumnsMenu();
+  renderAdvancedFilters();
+  renderTableHead();
+
+  if (state.editing && !els.entryModal.classList.contains("hidden")) {
+    renderDynamicFields(state.editing, canWriteAris());
+  }
+
+  return data;
+}
+
+/* -------------------------------------------------------------------------- */
 /* Search                                                                     */
 /* -------------------------------------------------------------------------- */
 
 function collectSearchParams(page = state.page) {
   const params = new URLSearchParams();
-
   params.set("page", String(Math.max(1, page)));
   params.set("limit", String(PAGE_LIMIT));
 
-  const fields = {
-    q: els.universalSearch.value.trim(),
-    match: els.matchMode.value,
+  const q = els.universalSearch.value.trim();
+  if (q) params.set("q", q);
+  if (els.matchMode.value) params.set("match", els.matchMode.value);
 
-    control_no: els.filterControlNo.value.trim(),
-    office: els.filterOffice.value.trim(),
-    requestor: els.filterRequestor.value.trim(),
-    routed_to_div: els.filterRoutedToDiv.value.trim(),
-    subject: els.filterSubject.value.trim(),
-    remarks: els.filterRemarks.value.trim(),
-    file_name: els.filterFileName.value.trim(),
+  const filters = {};
+  els.dynamicAdvancedFilters.querySelectorAll("[data-schema-filter]").forEach(input => {
+    const value = String(input.value ?? "").trim();
+    if (value !== "") filters[input.dataset.schemaFilter] = value;
+  });
 
-    date_from: els.filterDateFrom.value,
-    date_to: els.filterDateTo.value,
-
-    attachments: els.attachmentMode.value,
-
-    sort_by: els.sortBy.value,
-    sort_dir: els.sortDir.value
-  };
-
-  for (const [key, value] of Object.entries(fields)) {
-    if (value !== "") {
-      params.set(key, value);
-    }
+  if (Object.keys(filters).length) {
+    params.set("filters", JSON.stringify(filters));
   }
+
+  if (els.attachmentMode.value) params.set("attachments", els.attachmentMode.value);
+  if (els.sortBy.value) params.set("sort_by", els.sortBy.value);
+  if (els.sortDir.value) params.set("sort_dir", els.sortDir.value);
 
   return params;
 }
 
 function hasActiveSearch() {
+  const dynamicFilterActive = [...els.dynamicAdvancedFilters.querySelectorAll("[data-schema-filter]")]
+    .some(input => String(input.value ?? "").trim() !== "");
+
   return (
     els.universalSearch.value.trim() !== "" ||
-    els.filterControlNo.value.trim() !== "" ||
-    els.filterOffice.value.trim() !== "" ||
-    els.filterRequestor.value.trim() !== "" ||
-    els.filterRoutedToDiv.value.trim() !== "" ||
-    els.filterSubject.value.trim() !== "" ||
-    els.filterRemarks.value.trim() !== "" ||
-    els.filterFileName.value.trim() !== "" ||
-    els.filterDateFrom.value !== "" ||
-    els.filterDateTo.value !== "" ||
+    dynamicFilterActive ||
     els.attachmentMode.value !== ""
   );
 }
 
 function searchDescription() {
-  if (!hasActiveSearch()) {
-    return "All ARIS records";
-  }
+  if (!hasActiveSearch()) return "All records";
 
   const parts = [];
-
   const q = els.universalSearch.value.trim();
+  if (q) parts.push(`Search: "${q}"`);
 
-  if (q) {
-    parts.push(`Search: "${q}"`);
-  }
+  els.dynamicAdvancedFilters.querySelectorAll("[data-schema-filter]").forEach(input => {
+    const value = String(input.value ?? "").trim();
+    if (!value) return;
+    const field = fieldByKey(input.dataset.schemaFilter);
+    parts.push(`${field?.label || input.dataset.schemaFilter}: ${value}`);
+  });
 
-  if (els.filterControlNo.value.trim()) {
-    parts.push(`Control: ${els.filterControlNo.value.trim()}`);
-  }
-
-  if (els.filterOffice.value.trim()) {
-    parts.push(`Office: ${els.filterOffice.value.trim()}`);
-  }
-
-  if (els.filterRequestor.value.trim()) {
-    parts.push(`Requestor: ${els.filterRequestor.value.trim()}`);
-  }
-
-  if (els.filterRoutedToDiv.value.trim()) {
-    parts.push(`Division: ${els.filterRoutedToDiv.value.trim()}`);
-  }
-
-  if (els.filterDateFrom.value || els.filterDateTo.value) {
-    parts.push(
-      `Date: ${els.filterDateFrom.value || "…"} → ${els.filterDateTo.value || "…"}`
-    );
-  }
+  if (els.attachmentMode.value === "with") parts.push("With attachments");
+  if (els.attachmentMode.value === "without") parts.push("Without attachments");
 
   return parts.join(" · ");
 }
@@ -6343,18 +6984,13 @@ function scheduleUniversalSearch() {
 }
 
 function clearAdvancedSearch() {
-  els.filterControlNo.value = "";
-  els.filterOffice.value = "";
-  els.filterRequestor.value = "";
-  els.filterRoutedToDiv.value = "";
-  els.filterSubject.value = "";
-  els.filterRemarks.value = "";
-  els.filterFileName.value = "";
-  els.filterDateFrom.value = "";
-  els.filterDateTo.value = "";
+  els.dynamicAdvancedFilters.querySelectorAll("[data-schema-filter]").forEach(input => {
+    input.value = "";
+  });
   els.attachmentMode.value = "";
-  els.sortBy.value = "date";
   els.sortDir.value = "desc";
+  const dateField = state.fields.find(field => field.key === "date" && field.sortable);
+  els.sortBy.value = dateField ? "date" : "";
 }
 
 function clearAllSearch() {
@@ -6441,14 +7077,14 @@ async function loadPage(page = 1) {
 
     els.tableBody.innerHTML = `
       <tr>
-        <td colspan="10" class="empty-state">
+        <td colspan="${visibleTableFields().length + 2}" class="empty-state">
           ${escapeHtml(error.message)}
         </td>
       </tr>
     `;
 
     updatePagination();
-    els.statusText.textContent = "Unable to load ARIS records.";
+    els.statusText.textContent = "Unable to load records.";
 
     showToast(error.message, "error");
   } finally {
@@ -6466,16 +7102,17 @@ async function loadPage(page = 1) {
 
 function renderTable() {
   const rows = state.rows;
+  const fields = visibleTableFields();
+  renderTableHead();
 
   if (!rows.length) {
     els.tableBody.innerHTML = `
       <tr>
-        <td colspan="10" class="empty-state">
-          No ARIS records found for this page/search.
+        <td colspan="${fields.length + 2}" class="empty-state">
+          No records found for this page/search.
         </td>
       </tr>
     `;
-
     return;
   }
 
@@ -6487,75 +7124,64 @@ function renderTable() {
     return `
       <tr>
         <td class="row-num">${startingRow + index}</td>
+        ${fields.map(field => {
+          if (field.field_type === "attachments") {
+            const count = attachments.length;
+            const label = count === 1 ? "1 file" : `${count} files`;
 
-        <td class="control-cell">
-          #${escapeHtml(row.control_no ?? "-")}
-        </td>
-
-        <td class="date-cell">
-          ${escapeHtml(row.date || "-")}
-        </td>
-
-        <td class="office-cell">
-          ${escapeHtml(row.office || "-")}
-        </td>
-
-        <td class="requestor-cell">
-          ${escapeHtml(row.requestor || "-")}
-        </td>
-
-        <td class="subject-cell">
-          ${escapeHtml(row.subject || "-")}
-        </td>
-
-        <td class="route-cell">
-          ${escapeHtml(row.routed_to_div || "-")}
-        </td>
-
-        <td class="attachment-cell">
-          ${
-            attachments.length
-              ? `
+            return `
+              <td
+                class="dynamic-cell attachment-system-cell"
+                data-field-key="${escapeHtml(field.key)}"
+                data-field-type="attachments"
+                title="${escapeHtml(label)}"
+              >
                 <button
-                  class="btn btn-soft btn-small"
+                  class="attachment-count attachment-count-button"
                   type="button"
-                  data-open-entry="${escapeHtml(row.uid)}"
-                  title="Open entry attachments"
+                  data-edit-entry="${escapeHtml(row.uid)}"
                 >
-                  📎 ${attachments.length} file${attachments.length === 1 ? "" : "s"}
+                  📎 ${escapeHtml(label)}
                 </button>
-              `
-              : `<span class="muted">No files</span>`
+              </td>
+            `;
           }
-        </td>
 
-        <td class="remarks-cell">
-          ${escapeHtml(row.remarks || "None")}
-        </td>
+          const display = formatFieldValue(
+            field,
+            recordValue(row, field.key)
+          );
 
+          if (field.field_type === "long_text") {
+            return `
+              <td
+                class="dynamic-cell"
+                data-field-key="${escapeHtml(field.key)}"
+                data-field-type="long_text"
+                title="${escapeHtml(display)}"
+              >
+                <div class="long-text-preview">
+                  ${escapeHtml(display)}
+                </div>
+              </td>
+            `;
+          }
+
+          return `<td class="dynamic-cell" data-field-key="${escapeHtml(field.key)}" data-field-type="${escapeHtml(field.field_type)}" title="${escapeHtml(display)}">${escapeHtml(display)}</td>`;
+        }).join("")}
         <td class="sticky-actions">
           <div class="row-actions">
             <button
               class="btn btn-soft btn-small"
               type="button"
               data-edit-entry="${escapeHtml(row.uid)}"
+              title="${attachments.length ? `${attachments.length} attachment${attachments.length === 1 ? "" : "s"}` : "No attachments"}"
             >
               ${canWriteAris() ? "Edit" : "View"}
             </button>
-
-            ${
-              canDeleteAris()
-                ? `
-                  <button
-                    class="btn btn-danger btn-small"
-                    type="button"
-                    data-delete-entry="${escapeHtml(row.uid)}"
-                  >
-                    Delete
-                  </button>
-                `
-                : ""
-            }
+            ${canDeleteAris() ? `
+              <button class="btn btn-danger btn-small" type="button" data-delete-entry="${escapeHtml(row.uid)}">Delete</button>
+            ` : ""}
           </div>
         </td>
       </tr>
@@ -6665,7 +7291,7 @@ function setOverallUploadProgress(loaded, total, label) {
   els.uploadProgressPercent.textContent = `${percent}%`;
   els.uploadProgressBar.style.width = `${percent}%`;
   els.uploadProgressBytes.textContent =
-    `${formatBytes(safeLoaded)} of ${formatBytes(safeTotal)} sent to ARIS`;
+    `${formatBytes(safeLoaded)} of ${formatBytes(safeTotal)} uploaded`;
 }
 
 function queueFiles(files) {
@@ -6996,30 +7622,24 @@ function resetEntryForm() {
 
   els.entryForm.reset();
   els.uid.value = "";
-  els.controlNoDisplay.value = "Assigned automatically when saved";
-  els.remarks.value = "None";
+  if (els.fileInput) els.fileInput.value = "";
 
-  const today = new Date();
-  const yyyy = today.getFullYear();
-  const mm = String(today.getMonth() + 1).padStart(2, "0");
-  const dd = String(today.getDate()).padStart(2, "0");
-
-  els.date.value = `${yyyy}-${mm}-${dd}`;
-
+  renderDynamicFields(null, canWriteAris());
   renderExistingAttachments([]);
   renderPendingAttachments();
+  applyEntryPermissions();
   updateSaveButtonLabel();
 }
 
 function newEntry() {
   if (!canWriteAris()) {
-    showToast("Your account cannot create ARIS records.", "error");
+    showToast("Your account cannot create records.", "error");
     return;
   }
 
   resetEntryForm();
 
-  els.entryModalTitle.textContent = "New ARIS Record";
+  els.entryModalTitle.textContent = "New Record";
   els.entryModalHint.textContent = "Create a new atomic record.";
   applyEntryPermissions();
   updateSaveButtonLabel();
@@ -7030,17 +7650,12 @@ function newEntry() {
 function applyEntryPermissions() {
   const writable = canWriteAris();
 
-  for (const field of [
-    els.date,
-    els.office,
-    els.requestor,
-    els.subject,
-    els.routed_to_div,
-    els.remarks
-  ]) {
-    field.disabled = !writable;
-    field.classList.toggle("readonly-field", !writable);
-  }
+  els.dynamicFields.querySelectorAll("[data-record-field]").forEach(input => {
+    const field = fieldByKey(input.dataset.recordField);
+    const locked = !writable || field?.field_type === "auto_number";
+    input.disabled = locked;
+    input.classList.toggle("readonly-field", locked);
+  });
 
   els.fileUploadSection.classList.toggle("hidden", !writable);
   els.saveBtn.classList.toggle("hidden", !writable);
@@ -7051,35 +7666,24 @@ function editEntry(uid) {
   const row = state.rows.find(item => item.uid === uid);
 
   if (!row) {
-    showToast("Entry is not present in the current page.", "error");
+    showToast("Record is not present in the current page.", "error");
     return;
   }
 
   state.editing = row;
   state.pendingFiles = [];
-
   els.uid.value = row.uid || "";
-  els.controlNoDisplay.value = String(row.control_no ?? "");
-  els.date.value = row.date || "";
-  els.office.value = row.office || "";
-  els.requestor.value = row.requestor || "";
-  els.subject.value = row.subject || "";
-  els.routed_to_div.value = row.routed_to_div || "";
-  els.remarks.value = row.remarks || "None";
-  els.fileInput.value = "";
+  if (els.fileInput) els.fileInput.value = "";
 
+  renderDynamicFields(row, canWriteAris());
   renderExistingAttachments(attachmentList(row));
   renderPendingAttachments();
   applyEntryPermissions();
 
-  els.entryModalTitle.textContent =
-    canWriteAris() ? "Edit ARIS Record" : "View ARIS Record";
-
-  els.entryModalHint.textContent =
-    `${canWriteAris() ? "Editing" : "Viewing"} ${row.date?.slice(0, 4) || ""} control no. ${row.control_no ?? ""}`;
+  els.entryModalTitle.textContent = canWriteAris() ? "Edit Record" : "View Record";
+  els.entryModalHint.textContent = `${canWriteAris() ? "Editing" : "Viewing"} ${recordDisplayLabel(row)}`;
 
   updateSaveButtonLabel();
-
   openEntryModal();
 }
 
@@ -7246,28 +7850,32 @@ function updateSaveButtonLabel() {
 }
 
 function buildEntryPayload() {
-  return {
-    date: els.date.value,
-    office: els.office.value.trim(),
-    requestor: els.requestor.value.trim(),
-    subject: els.subject.value.trim(),
-    routed_to_div: els.routed_to_div.value.trim(),
-    remarks: els.remarks.value.trim() || "None"
-  };
+  const values = {};
+
+  for (const field of orderedFields().filter(field => field.active)) {
+    const value = dynamicInputValue(field);
+    if (value !== undefined) values[field.key] = value;
+  }
+
+  return { values };
 }
 
 function validateEntryPayload(payload) {
-  if (!payload.date) return "Date is required.";
-  if (!payload.office) return "Office is required.";
-  if (!payload.requestor) return "Requestor is required.";
-  if (!payload.subject) return "Subject is required.";
-  if (!payload.routed_to_div) return "Routed-to division is required.";
+  for (const field of orderedFields().filter(field => field.active && field.required && field.field_type !== "auto_number")) {
+    const value = payload.values?.[field.key];
+    const missing = value === null || value === undefined || (typeof value === "string" && value.trim() === "");
+    if (missing) return `${field.label} is required.`;
+  }
+
+  const invalidNumber = orderedFields().find(field => {
+    if (!["integer", "decimal"].includes(field.field_type)) return false;
+    const value = payload.values?.[field.key];
+    return value !== "" && value !== null && value !== undefined && !Number.isFinite(value);
+  });
+  if (invalidNumber) return `${invalidNumber.label} must be a valid number.`;
 
   const oversized = state.pendingFiles.find(file => file.size > MAX_FILE_SIZE);
-
-  if (oversized) {
-    return `${oversized.name} exceeds the 50 MiB attachment limit.`;
-  }
+  if (oversized) return `${oversized.name} exceeds the 50 MiB attachment limit.`;
 
   return null;
 }
@@ -7356,7 +7964,7 @@ function uploadOneFileWithProgress(
           file,
           {
             percent: 100,
-            label: "Uploaded to ARIS · storing in N1…",
+            label: "Uploaded · storing in N1…",
             stage: "processing"
           }
         );
@@ -7484,7 +8092,7 @@ function uploadOneFileWithProgress(
         } catch (_) {
           reject(
             new Error(
-              `ARIS returned invalid JSON after uploading ${file.name}.`
+              `The server returned invalid JSON after uploading ${file.name}.`
             )
           );
         }
@@ -7569,7 +8177,7 @@ async function saveEntry(event) {
   event.preventDefault();
 
   if (!canWriteAris()) {
-    showToast("Your account cannot modify ARIS records.", "error");
+    showToast("Your account cannot modify records.", "error");
     return;
   }
 
@@ -7611,7 +8219,7 @@ async function saveEntry(event) {
     const entryUid = savedEntry?.uid || entryUidBeingEdited;
 
     if (!entryUid) {
-      throw new Error("Server did not return the ARIS record UID.");
+      throw new Error("The server did not return the record UID.");
     }
 
     if (state.pendingFiles.length) {
@@ -7621,8 +8229,8 @@ async function saveEntry(event) {
 
     showToast(
       isUpdate
-        ? "ARIS record updated."
-        : "ARIS record created."
+        ? "Record updated."
+        : "Record created."
     );
 
     window.ARIS_DATA?.recordsChanged();
@@ -7648,12 +8256,12 @@ async function saveEntry(event) {
 
 async function deleteEntry(uid) {
   if (!canDeleteAris()) {
-    showToast("Your account cannot delete ARIS records.", "error");
+    showToast("Your account cannot delete records.", "error");
     return;
   }
 
   const row = state.rows.find(item => item.uid === uid);
-  const label = row?.control_no || uid;
+  const label = row ? recordDisplayLabel(row) : uid;
 
   if (!confirm(
     `Delete ${label}?\n\nIts N1 attachments will be moved to N1 trash.`
@@ -7678,7 +8286,7 @@ async function deleteEntry(uid) {
       throw new Error(readableError(text, response.status));
     }
 
-    showToast("ARIS record deleted.");
+    showToast("Record deleted.");
 
     window.ARIS_DATA?.recordsChanged();
 
@@ -7748,7 +8356,7 @@ async function removeAttachment(entryUid, attachmentUid) {
 
 async function downloadAttachment(entryUid, attachmentUid, fileName) {
   /*
-    We fetch the file instead of window.open() because ARIS protects this route
+    We fetch the file instead of window.open() because the backend protects this route
     with bearer authentication and browser navigation cannot attach our
     Authorization header.
   */
@@ -7987,7 +8595,7 @@ async function deleteAccount(uid) {
   if (!canManageAccounts()) return;
 
   if (!confirm(
-    "Delete this ARIS account?\n\nThe user will be unable to refresh their session."
+    "Delete this account?\n\nThe user will be unable to refresh their session."
   )) {
     return;
   }
@@ -8046,6 +8654,58 @@ els.accountList.addEventListener("click", event => {
 
   if (deleteButton) {
     deleteAccount(deleteButton.dataset.deleteAccount);
+  }
+});
+
+els.columnsBtn.addEventListener("click", event => {
+  event.stopPropagation();
+  const hidden = els.columnsMenu.classList.toggle("hidden");
+  els.columnsBtn.setAttribute("aria-expanded", String(!hidden));
+});
+
+els.columnsMenu.addEventListener("click", event => {
+  event.stopPropagation();
+  const checkbox = event.target.closest("[data-column-key]");
+  if (!checkbox) return;
+
+  const key = checkbox.dataset.columnKey;
+  const field = columnFieldByKey(key);
+
+  if (!field) return;
+
+  if (!(state.columnOverrides && typeof state.columnOverrides === "object")) {
+    state.columnOverrides = {};
+  }
+
+  const administratorDefault = Boolean(field.table_visible);
+
+  if (checkbox.checked === administratorDefault) {
+    delete state.columnOverrides[key];
+  } else {
+    state.columnOverrides[key] = checkbox.checked;
+  }
+
+  state.userColumns = effectiveColumnKeys(state.columnOverrides);
+
+  saveStoredColumnKeys();
+  renderTable();
+});
+
+els.columnsResetBtn.addEventListener("click", event => {
+  event.stopPropagation();
+
+  state.columnOverrides = {};
+  state.userColumns = new Set(defaultColumnKeys());
+
+  saveStoredColumnKeys();
+  renderColumnsMenu();
+  renderTable();
+});
+
+document.addEventListener("click", event => {
+  if (!els.columnsMenu.contains(event.target) && event.target !== els.columnsBtn) {
+    els.columnsMenu.classList.add("hidden");
+    els.columnsBtn.setAttribute("aria-expanded", "false");
   }
 });
 
@@ -8460,16 +9120,28 @@ document.addEventListener(
   }
 );
 
+let recordResizeTimer = null;
+window.addEventListener("resize", () => {
+  clearTimeout(recordResizeTimer);
+  recordResizeTimer = setTimeout(() => {
+    if (state.fields.length) renderTable();
+  }, 120);
+});
+
 /* -------------------------------------------------------------------------- */
 /* Initial load                                                               */
 /* -------------------------------------------------------------------------- */
 
 window.ARIS_RECORDS = Object.freeze({
   refresh: () => loadPage(state.page),
+  reloadSchema: async () => {
+    await loadRecordSchema();
+    await loadPage(state.page);
+  },
+  schemaRevision: () => state.schemaRevision,
   currentPage: () => state.page
 });
 
-resetEntryForm();
 updatePagination();
 applySessionUi();
 bootstrapSession();
@@ -8507,7 +9179,8 @@ bootstrapSession();
 
     button,
     input,
-    select {
+    select,
+    textarea {
       font: inherit;
     }
 
@@ -8758,6 +9431,559 @@ bootstrapSession();
       color: var(--muted);
       font-size: 0.75rem;
       font-weight: 750;
+    }
+
+    .schema-note {
+      margin-bottom: 14px;
+      padding: 12px 14px;
+      border: 1px solid #bfdbfe;
+      border-radius: 10px;
+      background: #eff6ff;
+      color: #1e3a8a;
+      font-size: .8125rem;
+      line-height: 1.5;
+    }
+
+    .schema-create-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+      align-items: end;
+      margin-bottom: 14px;
+    }
+
+    .schema-create-grid label,
+    .schema-field-editor label {
+      display: grid;
+      gap: 6px;
+      color: var(--muted);
+      font-size: .6875rem;
+      font-weight: 900;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+    }
+
+    .schema-create-grid input,
+    .schema-create-grid select,
+    .schema-field-editor input,
+    .schema-field-editor select,
+    .schema-field-editor textarea {
+      width: 100%;
+      min-width: 0;
+      padding: 9px 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      color: var(--text);
+      background: var(--panel);
+      outline: none;
+    }
+
+    .schema-checks {
+      grid-column: 1 / -1;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 14px;
+      padding: 10px 12px;
+      border: 1px solid var(--line-soft);
+      border-radius: 9px;
+      background: #f8fafc;
+    }
+
+    .schema-checks label,
+    .schema-inline-check {
+      display: inline-flex !important;
+      align-items: center;
+      gap: 6px;
+      color: var(--text) !important;
+      font-size: .75rem !important;
+      font-weight: 800 !important;
+      letter-spacing: 0 !important;
+      text-transform: none !important;
+    }
+
+    .schema-checks input,
+    .schema-inline-check input {
+      width: 16px;
+      height: 16px;
+      accent-color: var(--primary);
+    }
+
+    .schema-config-row {
+      grid-column: 1 / -1;
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .schema-create-simple {
+      grid-template-columns: minmax(240px, 2fr) minmax(190px, 1fr);
+    }
+
+    .schema-create-simple > .btn {
+      justify-self: start;
+      min-width: 130px;
+    }
+
+    .schema-checks-primary {
+      grid-column: 1 / -1;
+    }
+
+    .schema-advanced {
+      grid-column: 1 / -1;
+      border: 1px solid var(--line-soft);
+      border-radius: 9px;
+      background: var(--panel);
+      overflow: hidden;
+    }
+
+    .schema-advanced summary {
+      cursor: pointer;
+      padding: 10px 12px;
+      color: var(--muted);
+      font-size: .75rem;
+      font-weight: 850;
+      user-select: none;
+    }
+
+    .schema-advanced-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      padding: 0 12px 12px;
+    }
+
+    .schema-advanced-grid .schema-checks {
+      grid-column: 1 / -1;
+      margin: 0;
+    }
+
+    .schema-empty {
+      display: grid;
+      gap: 4px;
+      padding: 18px;
+      border: 1px dashed var(--line);
+      border-radius: 10px;
+      color: var(--muted);
+      background: var(--panel);
+    }
+
+    .schema-empty strong {
+      color: var(--text);
+      font-size: .875rem;
+    }
+
+    .storage-layout-note {
+      margin-bottom: 14px;
+      padding: 12px 14px;
+      border: 1px solid #bfdbfe;
+      border-radius: 10px;
+      background: #eff6ff;
+      color: #1e3a8a;
+      font-size: .8125rem;
+      line-height: 1.5;
+    }
+
+    .storage-layout-grid {
+      display: grid;
+      gap: 12px;
+    }
+
+    .storage-layout-builder {
+      display: grid;
+      grid-template-columns: minmax(240px, 1fr) auto;
+      gap: 10px;
+      align-items: end;
+    }
+
+    .storage-layout-builder label,
+    .storage-prefix-field {
+      display: grid;
+      gap: 6px;
+      color: var(--muted);
+      font-size: .6875rem;
+      font-weight: 900;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+    }
+
+    .storage-layout-builder select,
+    .storage-prefix-field select {
+      width: 100%;
+      min-width: 0;
+      padding: 9px 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      color: var(--text);
+      background: var(--panel);
+      outline: none;
+    }
+
+    .storage-prefix-field span {
+      color: var(--muted);
+      font-size: .6875rem;
+      font-weight: 700;
+      letter-spacing: 0;
+      line-height: 1.4;
+      text-transform: none;
+    }
+
+    .storage-folder-list {
+      display: grid;
+      gap: 8px;
+    }
+
+    .storage-folder-row {
+      display: grid;
+      grid-template-columns: 56px minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--panel);
+    }
+
+    .storage-folder-index {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 30px;
+      border-radius: 8px;
+      background: #eff6ff;
+      color: #1d4ed8;
+      font-size: .75rem;
+      font-weight: 900;
+    }
+
+    .storage-folder-name {
+      min-width: 0;
+    }
+
+    .storage-folder-name strong {
+      display: block;
+      color: var(--text);
+      font-size: .8125rem;
+    }
+
+    .storage-folder-name span {
+      display: block;
+      margin-top: 2px;
+      color: var(--muted);
+      font-size: .6875rem;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+
+    .storage-folder-actions {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .storage-layout-preview {
+      display: grid;
+      gap: 6px;
+      padding: 12px 14px;
+      border: 1px dashed var(--line);
+      border-radius: 10px;
+      background: #f8fafc;
+    }
+
+    .storage-layout-preview span {
+      color: var(--muted);
+      font-size: .6875rem;
+      font-weight: 900;
+      letter-spacing: .04em;
+    }
+
+    .storage-layout-preview code {
+      overflow-wrap: anywhere;
+      color: var(--text);
+      font-size: .8125rem;
+    }
+
+    .storage-layout-warning {
+      color: #92400e;
+      font-size: .75rem;
+      font-weight: 750;
+      line-height: 1.45;
+    }
+
+    .storage-layout-actions {
+      display: flex;
+      justify-content: flex-end;
+    }
+
+    @media (max-width: 720px) {
+      .storage-layout-builder,
+      .storage-folder-row {
+        grid-template-columns: 1fr;
+      }
+
+      .storage-folder-actions {
+        justify-content: flex-start;
+      }
+    }
+
+    .schema-system-section {
+      display: grid;
+      gap: 10px;
+      margin: 14px 0;
+    }
+
+    .schema-system-heading {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .schema-system-heading > div {
+      display: grid;
+      gap: 3px;
+    }
+
+    .schema-system-heading strong {
+      color: var(--text);
+      font-size: .875rem;
+    }
+
+    .schema-system-heading span,
+    .schema-system-description {
+      color: var(--muted);
+      font-size: .75rem;
+      line-height: 1.45;
+    }
+
+    .schema-system-card {
+      border-style: dashed;
+    }
+
+    .schema-system-editor-grid {
+      display: grid;
+      grid-template-columns: minmax(180px, 320px);
+      gap: 10px;
+    }
+
+    .schema-fixed-flag {
+      opacity: .78;
+    }
+
+    .schema-order-section {
+      display: grid;
+      gap: 10px;
+      margin: 16px 0 6px;
+      padding: 13px;
+      border: 1px solid var(--line);
+      border-radius: 11px;
+      background: var(--panel);
+    }
+
+    .schema-order-head > div {
+      display: grid;
+      gap: 3px;
+    }
+
+    .schema-order-head strong {
+      color: var(--text);
+      font-size: .875rem;
+    }
+
+    .schema-order-head span {
+      color: var(--muted);
+      font-size: .71875rem;
+      line-height: 1.45;
+    }
+
+    .schema-order-list {
+      display: grid;
+      gap: 6px;
+    }
+
+    .schema-order-item {
+      display: grid;
+      grid-template-columns: 40px minmax(0, 1fr) 78px;
+      column-gap: 10px;
+      align-items: center;
+      min-height: 52px;
+      padding: 6px 8px;
+      border: 1px solid var(--line-soft);
+      border-radius: 9px;
+      background: var(--surface-2);
+      transition:
+        border-color .12s ease,
+        background .12s ease,
+        opacity .12s ease;
+    }
+
+    .schema-order-item.dragging {
+      opacity: .48;
+    }
+
+    .schema-order-item.drop-before {
+      border-top: 3px solid var(--primary);
+    }
+
+    .schema-order-item.drop-after {
+      border-bottom: 3px solid var(--primary);
+    }
+
+    .schema-order-handle {
+      width: 34px;
+      height: 34px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      justify-self: center;
+      align-self: center;
+      padding: 0;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      color: var(--muted);
+      background: var(--panel);
+      cursor: grab;
+      user-select: none;
+      line-height: 1;
+    }
+
+    .schema-order-handle svg {
+      width: 14px;
+      height: 18px;
+      display: block;
+      flex: 0 0 auto;
+    }
+
+    .schema-order-handle:active {
+      cursor: grabbing;
+    }
+
+    .schema-order-copy {
+      min-width: 0;
+      align-self: center;
+    }
+
+    .schema-order-copy strong,
+    .schema-order-copy span {
+      display: block;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .schema-order-copy strong {
+      color: var(--text);
+      font-size: .8125rem;
+    }
+
+    .schema-order-copy span {
+      margin-top: 2px;
+      color: var(--muted);
+      font-size: .65625rem;
+    }
+
+    .schema-order-actions {
+      width: 78px;
+      display: grid;
+      grid-template-columns: 36px 36px;
+      gap: 6px;
+      align-items: center;
+      justify-content: end;
+      justify-self: end;
+    }
+
+    .schema-order-actions .btn {
+      width: 36px;
+      min-width: 36px;
+      height: 36px;
+      min-height: 36px;
+      padding: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .schema-fields {
+      display: grid;
+      gap: 10px;
+      margin-top: 12px;
+    }
+
+    .schema-field-card {
+      border: 1px solid var(--line);
+      border-radius: 11px;
+      background: var(--panel);
+      overflow: hidden;
+    }
+
+    .schema-field-card.archived {
+      opacity: .72;
+    }
+
+    .schema-field-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 11px 13px;
+      border-bottom: 1px solid var(--line-soft);
+      background: #f8fafc;
+    }
+
+    .schema-field-name {
+      min-width: 0;
+    }
+
+    .schema-field-name strong {
+      display: block;
+      font-size: .875rem;
+    }
+
+    .schema-field-meta {
+      margin-top: 2px;
+      color: var(--muted);
+      font-size: .6875rem;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+
+    .schema-field-editor {
+      display: grid;
+      grid-template-columns: 1.6fr minmax(110px, .65fr);
+      gap: 10px;
+      padding: 12px 13px;
+      align-items: end;
+    }
+
+    .schema-field-flags {
+      grid-column: 1 / -1;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 14px;
+    }
+
+    .schema-field-config {
+      grid-column: 1 / -1;
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .schema-field-actions {
+      grid-column: 1 / -1;
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+
+    :host([data-theme="dark"]) .schema-note {
+      color:#bfdbfe;
+      background:#0c1b36;
+      border-color:#1e3a8a;
+    }
+
+    :host([data-theme="dark"]) .schema-checks,
+    :host([data-theme="dark"]) .schema-field-head {
+      background: var(--panel);
+      border-color: var(--line-soft);
     }
 
     .backup-summary-grid {
@@ -9122,11 +10348,11 @@ bootstrapSession();
 <div class="shell">
 <header class="topbar">
 <div class="brand">
-<h1>ARIS Administration</h1>
-<p>Administrator control plane for accounts, access levels, and ARIS authorization.</p>
+<h1>Administration</h1>
+<p>Administrator control plane for accounts, access levels, and authorization.</p>
 </div>
 <div class="topbar-actions">
-<div class="pill" id="serverPill">ARIS API</div>
+<div class="pill" id="serverPill">API</div>
 <div class="pill hidden" id="userPill"></div>
 <button class="btn btn-light hidden" id="refreshBtn" type="button">Refresh</button>
 <button class="btn btn-light hidden" id="logoutBtn" type="button">Logout</button>
@@ -9136,12 +10362,12 @@ bootstrapSession();
 <section class="card">
 <div class="card-header">
 <h2>Account Management</h2>
-<p>Create ARIS accounts and control their access level. Changes take effect on the user's next refreshed access token.</p>
+<p>Create accounts and control their access level. Changes take effect on the user's next refreshed access token.</p>
 </div>
 <div class="card-body">
 <div class="role-legend">
-<div><b>0 · Administrator</b> — ARIS administration, account management, database administration, and all ARIS record operations</div>
-<div><b>1 · Manager</b> — full ARIS record operations including delete</div>
+<div><b>0 · Administrator</b> — administration, account management, database administration, and all record operations</div>
+<div><b>1 · Manager</b> — full record operations including delete</div>
 <div><b>2 · Editor</b> — create, edit, upload, and download; cannot delete records or attachments</div>
 <div><b>3 · Viewer</b> — search, read, and download only</div>
 </div>
@@ -9173,15 +10399,141 @@ bootstrapSession();
 <div class="account-list" id="accountList"></div>
 </div>
 </section>
+<section class="card" id="recordStructureCard">
+<div class="card-header">
+<h2>Record Structure</h2>
+<p>Define the fields that make up a record. The structure is stored in SQLite and records, forms, and tables adapt without recompiling the application.</p>
+</div>
+<div class="card-body">
+<div class="schema-note">
+<b>No predefined fields are required.</b> Add only the information this deployment actually needs. A deployment can be as small as <b>Control No.</b> and <b>Subject</b>.
+</div>
+<form class="schema-create-grid schema-create-simple" id="recordStructureForm">
+<label>FIELD NAME<input id="fieldLabel" autocomplete="off" placeholder="e.g. Subject" required></label>
+<label>DATA TYPE
+<select id="fieldType">
+<option value="text">Text</option>
+<option value="long_text">Long Text</option>
+<option value="integer">Integer</option>
+<option value="decimal">Decimal</option>
+<option value="date">Date</option>
+<option value="boolean">Checkbox</option>
+<option value="select">Select list</option>
+<option value="auto_number">Automatic number</option>
+</select>
+</label>
+
+<input id="fieldKey" type="hidden" pattern="[a-z_][a-z0-9_]*" required>
+
+<div class="schema-config-row hidden" id="fieldSelectConfig">
+<label style="grid-column:1/-1;">OPTIONS<input id="fieldSelectOptions" autocomplete="off" placeholder="Open, In Progress, Closed"></label>
+</div>
+
+<div class="schema-config-row hidden" id="fieldAutoConfig">
+<label>NUMBERING<select id="fieldAutoScope"><option value="global">Continuous</option><option value="yearly">Reset every year</option></select></label>
+<label>PREFIX<input id="fieldAutoPrefix" autocomplete="off" placeholder="Optional, e.g. REC-"></label>
+<label>DIGITS<input id="fieldAutoPadding" type="number" min="0" max="12" value="0"></label>
+</div>
+
+<div class="schema-checks schema-checks-primary">
+<label><input id="fieldRequired" type="checkbox"> Required</label>
+<label><input id="fieldUnique" type="checkbox"> Must be unique</label>
+<label><input id="fieldTableVisible" type="checkbox" checked> Show in records table</label>
+</div>
+
+<details class="schema-advanced">
+<summary>Advanced options</summary>
+<div class="schema-advanced-grid">
+<label>INTERNAL KEY<input id="fieldKeyDisplay" autocomplete="off" placeholder="Generated automatically"></label>
+<label>TABLE PRIORITY<input id="fieldTablePriority" type="number" value="50" min="-1000" max="1000"></label>
+<div class="schema-checks">
+<label><input id="fieldSearchable" type="checkbox" checked> Searchable</label>
+<label><input id="fieldSortable" type="checkbox" checked> Sortable</label>
+</div>
+</div>
+</details>
+
+<button class="btn btn-primary" id="createFieldBtn" type="submit">Add Field</button>
+</form>
+<div class="schema-system-section">
+  <div class="schema-system-heading">
+    <div>
+      <strong>Built-in System Fields</strong>
+      <span>System capabilities that exist on every record and are not ordinary user-defined values.</span>
+    </div>
+  </div>
+  <div class="schema-fields" id="schemaSystemFields"></div>
+</div>
+
+<div class="schema-order-section">
+  <div class="schema-order-head">
+    <div>
+      <strong>Field Order</strong>
+      <span>
+        Drag fields to change their order. Custom fields use this order in forms and tables;
+        Attached Files uses it for its table-column position. Changes are saved automatically.
+      </span>
+    </div>
+  </div>
+  <div class="schema-order-list" id="schemaOrderList"></div>
+  <div class="status" id="schemaOrderStatus">Drag a field or use the arrow buttons to reorder.</div>
+</div>
+
+<div class="status" id="schemaStatus">Loading record structure...</div>
+<div class="schema-fields" id="schemaFields"></div>
+</div>
+</section>
+<section class="card" id="n1StorageLayoutCard">
+<div class="card-header">
+<h2>N1 Storage Layout</h2>
+<p>Choose which dynamic fields become human-readable N1 folders, in order. You can also choose a field to prefix attachment filenames.</p>
+</div>
+<div class="card-body">
+<div class="storage-layout-note">
+<b>Example:</b> Folder 1 = <b>DIVISION/OFFICE</b>, Folder 2 = <b>DATE</b>, filename prefix = <b>CONTROL NO</b><br>
+The system will create: <code>records/CMO/2026-09-18/000006__memorandum.pdf</code>
+</div>
+
+<div class="storage-layout-grid">
+<div class="storage-layout-builder">
+<label>
+ADD FOLDER FROM FIELD
+<select id="storageFolderFieldSelect"></select>
+</label>
+<button class="btn btn-soft" id="storageAddFolderBtn" type="button">+ Add Folder</button>
+</div>
+
+<div class="storage-folder-list" id="storageFolderList"></div>
+
+<label class="storage-prefix-field">
+FILENAME PREFIX FIELD
+<select id="storagePrefixFieldSelect"></select>
+<span>Optional. A unique/auto-number field is recommended when multiple records can share the same folder path.</span>
+</label>
+
+<div class="storage-layout-preview">
+<span>N1 PREVIEW</span>
+<code id="storageLayoutPreview">records/&lt;record-uid&gt;/filename.ext</code>
+</div>
+
+<div class="storage-layout-warning" id="storageLayoutFreezeNote"></div>
+<div class="status" id="storageLayoutStatus">Loading N1 storage layout...</div>
+
+<div class="storage-layout-actions">
+<button class="btn btn-primary" id="saveStorageLayoutBtn" type="button">Save Storage Layout</button>
+</div>
+</div>
+</div>
+</section>
 <section class="card" id="backupCard">
 <div class="card-header">
 <h2>Database Backups</h2>
-<p>Create a consistent live SQLite snapshot, verify it with <code>PRAGMA integrity_check</code>, and store the verified database in the dedicated ARIS backup namespace in N1.</p>
+<p>Create a consistent live SQLite snapshot, verify it with <code>PRAGMA integrity_check</code>, and store the verified database in the dedicated backup namespace in N1.</p>
 </div>
 <div class="card-body">
 <div class="backup-note">
 <b>Restore is intentionally not exposed as a one-click browser action.</b>
-Database restoration should place ARIS into maintenance mode and be performed as a deliberate recovery operation. This panel handles safe creation, verification, history, and download of backup snapshots.
+Database restoration should place the application into maintenance mode and be performed as a deliberate recovery operation. This panel handles safe creation, verification, history, and download of backup snapshots.
 </div>
 
 <div class="backup-summary-grid">
@@ -9240,8 +10592,8 @@ Database restoration should place ARIS into maintenance mode and be performed as
 <div class="card-header">
 <h2>Audit Log</h2>
 <p>
-          Read-only accountability history for important ARIS actions.
-          ARIS records the authenticated user, action, target, result, and time.
+          Read-only accountability history for important actions.
+          The audit log records the authenticated user, action, target, result, and time.
           Passwords, tokens, uploaded file contents, and request bodies are never stored here.
         </p>
 </div>
@@ -9321,7 +10673,7 @@ Database restoration should place ARIS into maintenance mode and be performed as
 <div class="hidden" id="bootstrapPanel">
 <div class="auth-note" style="margin-bottom:13px;">
 <b>First Administrator Setup</b><br/>
-            ARIS has no accounts yet. Enter one configured <code>AUTH_KEYS</code> value and create the first Administrator.
+            No accounts exist yet. Enter one configured <code>AUTH_KEYS</code> value and create the first Administrator.
           </div>
 <form class="form-grid" id="bootstrapForm">
 <label>
@@ -9363,7 +10715,7 @@ Database restoration should place ARIS into maintenance mode and be performed as
               <input autocomplete="one-time-code" id="loginOtp" inputmode="numeric" maxlength="6" pattern="[0-9]{6}" placeholder="Optional unless 2FA is enabled"/>
 </label>
 <button class="btn btn-primary" id="loginBtn" type="submit">Sign In</button>
-<div class="status" id="loginStatus">Checking ARIS bootstrap status...</div>
+<div class="status" id="loginStatus">Checking setup status...</div>
 </form>
 </div>
 </div>
@@ -9678,6 +11030,24 @@ Database restoration should place ARIS into maintenance mode and be performed as
     .main { width: min(100% - 24px, 1220px); margin-top: 14px; }
   }
 
+  @media (max-width: 900px) {
+    .schema-create-grid,
+    .schema-field-editor,
+    .schema-field-config,
+    .schema-config-row {
+      grid-template-columns: 1fr 1fr;
+    }
+  }
+
+  @media (max-width: 620px) {
+    .schema-create-grid,
+    .schema-field-editor,
+    .schema-field-config,
+    .schema-config-row {
+      grid-template-columns: 1fr;
+    }
+  }
+
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after {
       animation-duration: .01ms !important;
@@ -9710,6 +11080,17 @@ const ENDPOINTS = {
 
   audit: "/aris/v1/admin/audit",
 
+  schema: {
+    get: "/aris/v1/admin/schema",
+    create: "/aris/v1/admin/schema/fields",
+    update: uid => `/aris/v1/admin/schema/fields/${encodeURIComponent(uid)}`,
+    order: "/aris/v1/admin/schema/order",
+    systemField: key =>
+      `/aris/v1/admin/schema/system/${encodeURIComponent(key)}`
+  },
+
+  storageLayout: "/aris/v1/admin/storage-layout",
+
   backups: {
     list: "/aris/v1/admin/backups",
     create: "/aris/v1/admin/backups",
@@ -9732,7 +11113,15 @@ const state = {
   auditPage: 1,
   auditTotalPages: 0,
   backupBusy: false,
-  backups: []
+  backups: [],
+  schemaRevision: 0,
+  schemaFields: [],
+  schemaSystemFields: [],
+  schemaOrderSaving: false,
+  schemaOrderDragKey: null,
+  storageLayout: null,
+  storageFolderUids: [],
+  storagePrefixFieldUid: null
 };
 
 const els = {
@@ -9768,6 +11157,38 @@ const els = {
   createAccountBtn: document.getElementById("createAccountBtn"),
   accountStatus: document.getElementById("accountStatus"),
   accountList: document.getElementById("accountList"),
+
+  recordStructureForm: document.getElementById("recordStructureForm"),
+  fieldLabel: document.getElementById("fieldLabel"),
+  fieldKey: document.getElementById("fieldKey"),
+  fieldKeyDisplay: document.getElementById("fieldKeyDisplay"),
+  fieldType: document.getElementById("fieldType"),
+  fieldTablePriority: document.getElementById("fieldTablePriority"),
+  fieldRequired: document.getElementById("fieldRequired"),
+  fieldUnique: document.getElementById("fieldUnique"),
+  fieldSearchable: document.getElementById("fieldSearchable"),
+  fieldSortable: document.getElementById("fieldSortable"),
+  fieldTableVisible: document.getElementById("fieldTableVisible"),
+  fieldSelectConfig: document.getElementById("fieldSelectConfig"),
+  fieldSelectOptions: document.getElementById("fieldSelectOptions"),
+  fieldAutoConfig: document.getElementById("fieldAutoConfig"),
+  fieldAutoScope: document.getElementById("fieldAutoScope"),
+  fieldAutoPrefix: document.getElementById("fieldAutoPrefix"),
+  fieldAutoPadding: document.getElementById("fieldAutoPadding"),
+  createFieldBtn: document.getElementById("createFieldBtn"),
+  schemaStatus: document.getElementById("schemaStatus"),
+  schemaSystemFields: document.getElementById("schemaSystemFields"),
+  schemaOrderList: document.getElementById("schemaOrderList"),
+  schemaOrderStatus: document.getElementById("schemaOrderStatus"),
+  schemaFields: document.getElementById("schemaFields"),
+  storageFolderFieldSelect: document.getElementById("storageFolderFieldSelect"),
+  storageAddFolderBtn: document.getElementById("storageAddFolderBtn"),
+  storageFolderList: document.getElementById("storageFolderList"),
+  storagePrefixFieldSelect: document.getElementById("storagePrefixFieldSelect"),
+  storageLayoutPreview: document.getElementById("storageLayoutPreview"),
+  storageLayoutFreezeNote: document.getElementById("storageLayoutFreezeNote"),
+  storageLayoutStatus: document.getElementById("storageLayoutStatus"),
+  saveStorageLayoutBtn: document.getElementById("saveStorageLayoutBtn"),
   auditFilterForm: document.getElementById("auditFilterForm"),
   auditUserFilter: document.getElementById("auditUserFilter"),
   auditActionFilter: document.getElementById("auditActionFilter"),
@@ -9872,7 +11293,7 @@ function decodeJwtPayload(token) {
 
 function storeTokens(data) {
   if (!data?.access_token || !data?.refresh_token) {
-    throw new Error("ARIS did not return access and refresh tokens.");
+    throw new Error("The server did not return access and refresh tokens.");
   }
 
   if (window.ARIS_AUTH) {
@@ -10028,7 +11449,7 @@ function showBootstrap() {
   els.bootstrapPanel.classList.remove("hidden");
   els.loginPanel.classList.add("hidden");
   els.authTitle.textContent = "First Administrator Setup";
-  els.authSubtitle.textContent = "Initialize ARIS with the first Administrator account.";
+  els.authSubtitle.textContent = "Create the first Administrator account.";
   els.bootstrapStatus.textContent = "The first account is always access level 0 — Administrator.";
 }
 
@@ -10038,7 +11459,7 @@ function showLogin(message = "") {
   els.bootstrapPanel.classList.add("hidden");
   els.loginPanel.classList.remove("hidden");
   els.authTitle.textContent = "Administrator Login";
-  els.authSubtitle.textContent = "Authenticate with a ARIS Administrator account.";
+  els.authSubtitle.textContent = "Authenticate with an Administrator account.";
   els.loginStatus.textContent = message || "Access tokens are refreshed automatically.";
 }
 
@@ -10089,7 +11510,7 @@ async function bootstrapAdministrator(event) {
 
   els.bootstrapBtn.disabled = true;
   els.bootstrapBtn.textContent = "Creating Administrator...";
-  els.bootstrapStatus.textContent = "Initializing ARIS...";
+  els.bootstrapStatus.textContent = "Initializing…";
 
   try {
     const response = await fetch(`${API_BASE}${ENDPOINTS.bootstrapCreate}`, {
@@ -10142,6 +11563,7 @@ async function bootstrapAdministrator(event) {
     showAdminApp();
     await Promise.all([
       loadAccounts(),
+      loadRecordStructure(),
       loadBackups(),
       loadAudit(1)
     ]);
@@ -10158,7 +11580,7 @@ async function login(event) {
   event.preventDefault();
   els.loginBtn.disabled = true;
   els.loginBtn.textContent = "Signing In...";
-  els.loginStatus.textContent = "Authenticating with ARIS...";
+  els.loginStatus.textContent = "Authenticating…";
 
   try {
     const response = await fetch(`${API_BASE}${ENDPOINTS.login}`, {
@@ -10187,6 +11609,7 @@ async function login(event) {
     showAdminApp();
     await Promise.all([
       loadAccounts(),
+      loadRecordStructure(),
       loadBackups(),
       loadAudit(1)
     ]);
@@ -10348,7 +11771,7 @@ async function saveAccountAccess(uid) {
 }
 
 async function deleteAccount(uid) {
-  if (!confirm("Delete this ARIS account?\n\nThe user will be unable to refresh their session.")) {
+  if (!confirm("Delete this account?\n\nThe user will be unable to refresh their session.")) {
     return;
   }
 
@@ -10372,6 +11795,710 @@ async function deleteAccount(uid) {
 }
 
 
+function fieldTypeLabel(type) {
+  return ({
+    text: "Text",
+    long_text: "Long Text",
+    integer: "Integer",
+    decimal: "Decimal",
+    date: "Date",
+    boolean: "Checkbox",
+    select: "Select",
+    auto_number: "Auto Number"
+  })[type] || type;
+}
+
+function syncNewFieldConfig() {
+  const type = els.fieldType.value;
+  els.fieldSelectConfig.classList.toggle("hidden", type !== "select");
+  els.fieldAutoConfig.classList.toggle("hidden", type !== "auto_number");
+
+  if (type === "auto_number") {
+    els.fieldUnique.checked = true;
+    els.fieldUnique.disabled = true;
+    els.fieldRequired.checked = true;
+    els.fieldRequired.disabled = true;
+  } else {
+    els.fieldUnique.disabled = false;
+    els.fieldRequired.disabled = false;
+  }
+
+  if (type === "long_text") {
+    els.fieldSortable.checked = false;
+    els.fieldSortable.disabled = true;
+  } else {
+    els.fieldSortable.disabled = false;
+  }
+}
+
+function schemaConfigFromCreateForm() {
+  const type = els.fieldType.value;
+
+  if (type === "select") {
+    return {
+      options: els.fieldSelectOptions.value
+        .split(",")
+        .map(value => value.trim())
+        .filter(Boolean)
+    };
+  }
+
+  if (type === "auto_number") {
+    return {
+      scope: els.fieldAutoScope.value,
+      prefix: els.fieldAutoPrefix.value.trim(),
+      padding: Math.max(0, Math.min(12, Number(els.fieldAutoPadding.value || 0)))
+    };
+  }
+
+  return {};
+}
+
+function schemaFieldConfigEditor(field) {
+  if (field.field_type === "select") {
+    const options = Array.isArray(field.config?.options) ? field.config.options.join(", ") : "";
+    return `<div class="schema-field-config"><label style="grid-column:1/-1;">SELECT OPTIONS<input data-schema-config-options="${escapeHtml(field.uid)}" value="${escapeHtml(options)}"></label></div>`;
+  }
+
+  if (field.field_type === "auto_number") {
+    const scope = field.config?.scope === "yearly" ? "yearly" : "global";
+    return `<div class="schema-field-config">
+      <label>SCOPE<select data-schema-config-scope="${escapeHtml(field.uid)}"><option value="global" ${scope === "global" ? "selected" : ""}>Global</option><option value="yearly" ${scope === "yearly" ? "selected" : ""}>Reset every year</option></select></label>
+      <label>PREFIX<input data-schema-config-prefix="${escapeHtml(field.uid)}" value="${escapeHtml(field.config?.prefix || "")}"></label>
+      <label>PADDING<input type="number" min="0" max="12" data-schema-config-padding="${escapeHtml(field.uid)}" value="${Number(field.config?.padding || 0)}"></label>
+    </div>`;
+  }
+
+  return "";
+}
+
+function renderSystemSchemaFields() {
+  const fields = [...state.schemaSystemFields].sort((a, b) =>
+    Number(a.position || 0) - Number(b.position || 0) ||
+    String(a.label || "").localeCompare(String(b.label || ""))
+  );
+
+  if (!fields.length) {
+    els.schemaSystemFields.innerHTML =
+      `<div class="muted">No built-in system fields are available.</div>`;
+    return;
+  }
+
+  els.schemaSystemFields.innerHTML = fields.map(field => `
+    <article class="schema-field-card schema-system-card" data-system-schema-field="${escapeHtml(field.key)}">
+      <div class="schema-field-head">
+        <div class="schema-field-name">
+          <strong>${escapeHtml(field.label)}</strong>
+          <div class="schema-field-meta">
+            ${escapeHtml(field.key)} · Built-in system / N1 capability
+          </div>
+        </div>
+        <span class="pill">SYSTEM</span>
+      </div>
+
+      <div class="schema-field-editor">
+        <div class="schema-system-description">
+          📎 Every record can attach files. Files are stored in N1 and attachment filenames participate in Universal Search. This capability cannot be archived or removed.
+        </div>
+
+        <div class="schema-system-editor-grid">
+          <label>
+            PRIORITY
+            <input
+              type="number"
+              data-system-priority="${escapeHtml(field.key)}"
+              value="${Number(field.table_priority || 0)}"
+            >
+          </label>
+
+        </div>
+
+        <div class="schema-field-flags">
+          <label class="schema-inline-check">
+            <input
+              type="checkbox"
+              data-system-table-visible="${escapeHtml(field.key)}"
+              ${field.table_visible ? "checked" : ""}
+            >
+            Default table column
+          </label>
+
+          <label class="schema-inline-check schema-fixed-flag">
+            <input type="checkbox" checked disabled>
+            Searchable by filename
+          </label>
+
+          <label class="schema-inline-check schema-fixed-flag">
+            <input type="checkbox" checked disabled>
+            Always available on record forms
+          </label>
+        </div>
+
+        <div class="schema-field-actions">
+          <button
+            class="btn btn-soft btn-small"
+            type="button"
+            data-save-system-field="${escapeHtml(field.key)}"
+          >
+            Save Attached Files Settings
+          </button>
+        </div>
+      </div>
+    </article>
+  `).join("");
+}
+
+async function saveSystemSchemaField(key) {
+  const field = state.schemaSystemFields.find(item => item.key === key);
+
+  if (!field) {
+    return;
+  }
+
+  const query = name =>
+    els.schemaSystemFields.querySelector(
+      `[data-system-${name}="${CSS.escape(key)}"]`
+    );
+
+  const payload = {
+    table_visible: Boolean(query("table-visible")?.checked),
+    table_priority: Number(
+      query("priority")?.value || field.table_priority || 0
+    )
+  };
+
+  els.schemaStatus.textContent = `Saving ${field.label} settings...`;
+
+  try {
+    await requestJson(
+      ENDPOINTS.schema.systemField(key),
+      {
+        method: "PUT",
+        body: payload
+      }
+    );
+
+    await loadRecordStructure();
+    notifyEmbeddedDataChanged();
+    els.schemaStatus.textContent = `${field.label} settings saved.`;
+  } catch (error) {
+    els.schemaStatus.textContent = error.message;
+  }
+}
+
+function schemaOrderItems() {
+  return [
+    ...state.schemaFields
+      .filter(field => field.active)
+      .map(field => ({
+        kind: "field",
+        id: field.uid,
+        label: field.label,
+        meta: fieldTypeLabel(field.field_type),
+        position: Number(field.position || 0)
+      })),
+
+    ...state.schemaSystemFields.map(field => ({
+      kind: "system",
+      id: field.key,
+      label: field.label,
+      meta: "Built-in system field",
+      position: Number(field.position || 0)
+    }))
+  ].sort((a, b) =>
+    a.position - b.position ||
+    String(a.label || "").localeCompare(String(b.label || ""))
+  );
+}
+
+function schemaOrderKey(item) {
+  return `${item.kind}:${item.id}`;
+}
+
+function clearSchemaOrderDropMarkers() {
+  els.schemaOrderList
+    .querySelectorAll(".drop-before, .drop-after")
+    .forEach(element => {
+      element.classList.remove("drop-before", "drop-after");
+    });
+}
+
+function applySchemaOrderLocally(items) {
+  items.forEach((item, index) => {
+    const position = index * 10;
+
+    if (item.kind === "field") {
+      const field =
+        state.schemaFields.find(value => value.uid === item.id);
+
+      if (field) {
+        field.position = position;
+      }
+    } else if (item.kind === "system") {
+      const field =
+        state.schemaSystemFields.find(value => value.key === item.id);
+
+      if (field) {
+        field.position = position;
+      }
+    }
+  });
+}
+
+function renderSchemaOrder() {
+  const items = schemaOrderItems();
+
+  if (!items.length) {
+    els.schemaOrderList.innerHTML =
+      `<div class="schema-empty"><strong>No fields to order.</strong><span>Add a field first.</span></div>`;
+    return;
+  }
+
+  els.schemaOrderList.innerHTML = items.map((item, index) => {
+    const key = schemaOrderKey(item);
+
+    return `
+      <div
+        class="schema-order-item"
+        data-schema-order-key="${escapeHtml(key)}"
+      >
+        <button
+          class="schema-order-handle"
+          type="button"
+          draggable="${state.schemaOrderSaving ? "false" : "true"}"
+          data-schema-drag="${escapeHtml(key)}"
+          aria-label="Drag ${escapeHtml(item.label)}"
+          title="Drag to reorder"
+          ${state.schemaOrderSaving ? "disabled" : ""}
+        >
+          <svg viewBox="0 0 14 18" aria-hidden="true" focusable="false">
+            <circle cx="4" cy="3" r="1.4" fill="currentColor"></circle>
+            <circle cx="10" cy="3" r="1.4" fill="currentColor"></circle>
+            <circle cx="4" cy="9" r="1.4" fill="currentColor"></circle>
+            <circle cx="10" cy="9" r="1.4" fill="currentColor"></circle>
+            <circle cx="4" cy="15" r="1.4" fill="currentColor"></circle>
+            <circle cx="10" cy="15" r="1.4" fill="currentColor"></circle>
+          </svg>
+        </button>
+
+        <div class="schema-order-copy">
+          <strong>${escapeHtml(item.label)}</strong>
+          <span>${escapeHtml(item.meta)}${item.kind === "system" ? " · System" : ""}</span>
+        </div>
+
+        <div class="schema-order-actions">
+          <button
+            class="btn btn-light btn-small"
+            type="button"
+            data-schema-order-up="${escapeHtml(key)}"
+            aria-label="Move ${escapeHtml(item.label)} up"
+            ${index === 0 || state.schemaOrderSaving ? "disabled" : ""}
+          >
+            ↑
+          </button>
+
+          <button
+            class="btn btn-light btn-small"
+            type="button"
+            data-schema-order-down="${escapeHtml(key)}"
+            aria-label="Move ${escapeHtml(item.label)} down"
+            ${index === items.length - 1 || state.schemaOrderSaving ? "disabled" : ""}
+          >
+            ↓
+          </button>
+        </div>
+      </div>
+    `;
+  }).join("");
+}
+
+async function saveSchemaOrder(items) {
+  if (state.schemaOrderSaving) {
+    return;
+  }
+
+  state.schemaOrderSaving = true;
+  applySchemaOrderLocally(items);
+  renderSchemaOrder();
+  renderSchemaFields();
+  renderSystemSchemaFields();
+  els.schemaOrderStatus.textContent = "Saving field order...";
+
+  try {
+    const data = await requestJson(
+      ENDPOINTS.schema.order,
+      {
+        method: "PUT",
+        body: {
+          items: items.map(item => ({
+            kind: item.kind,
+            id: item.id
+          }))
+        }
+      }
+    );
+
+    await loadRecordStructure();
+    window.ARIS_DATA?.schemaChanged?.();
+
+    els.schemaOrderStatus.textContent =
+      `Field order saved · schema revision ${Number(data?.revision || state.schemaRevision || 0)}`;
+
+    showToast("Field order saved.");
+  } catch (error) {
+    els.schemaOrderStatus.textContent = error.message;
+    showToast(error.message, "error");
+
+    await loadRecordStructure();
+  } finally {
+    state.schemaOrderSaving = false;
+    renderSchemaOrder();
+  }
+}
+
+function moveSchemaOrderItem(key, direction) {
+  if (state.schemaOrderSaving) {
+    return;
+  }
+
+  const items = schemaOrderItems();
+  const index = items.findIndex(item => schemaOrderKey(item) === key);
+
+  if (index < 0) {
+    return;
+  }
+
+  const targetIndex = index + direction;
+
+  if (targetIndex < 0 || targetIndex >= items.length) {
+    return;
+  }
+
+  [items[index], items[targetIndex]] =
+    [items[targetIndex], items[index]];
+
+  saveSchemaOrder(items);
+}
+
+function renderSchemaFields() {
+  const fields = [...state.schemaFields].sort((a, b) =>
+    Number(a.position || 0) - Number(b.position || 0) ||
+    String(a.label || "").localeCompare(String(b.label || ""))
+  );
+
+  if (!fields.length) {
+    els.schemaFields.innerHTML = `<div class="schema-empty"><strong>No fields yet.</strong><span>Add the first field above. The record form and table will be generated from your structure.</span></div>`;
+    return;
+  }
+
+  els.schemaFields.innerHTML = fields.map(field => `
+    <article class="schema-field-card ${field.active ? "" : "archived"}" data-schema-field="${escapeHtml(field.uid)}">
+      <div class="schema-field-head">
+        <div class="schema-field-name">
+          <strong>${escapeHtml(field.label)}</strong>
+          <div class="schema-field-meta">${escapeHtml(field.key)} · ${escapeHtml(fieldTypeLabel(field.field_type))}${field.active ? "" : " · ARCHIVED"}</div>
+        </div>
+        <span class="pill">Priority ${Number(field.table_priority || 0)}</span>
+      </div>
+      <div class="schema-field-editor">
+        <label>LABEL<input data-schema-label="${escapeHtml(field.uid)}" value="${escapeHtml(field.label)}"></label>
+        <label>PRIORITY<input type="number" data-schema-priority="${escapeHtml(field.uid)}" value="${Number(field.table_priority || 0)}"></label>
+        <div class="schema-field-flags">
+          <label class="schema-inline-check"><input type="checkbox" data-schema-required="${escapeHtml(field.uid)}" ${field.required ? "checked" : ""}> Required</label>
+          <label class="schema-inline-check"><input type="checkbox" data-schema-unique="${escapeHtml(field.uid)}" ${field.unique_value ? "checked" : ""} ${field.field_type === "auto_number" ? "disabled" : ""}> Unique</label>
+          <label class="schema-inline-check"><input type="checkbox" data-schema-searchable="${escapeHtml(field.uid)}" ${field.searchable ? "checked" : ""}> Searchable</label>
+          <label class="schema-inline-check"><input type="checkbox" data-schema-sortable="${escapeHtml(field.uid)}" ${field.sortable ? "checked" : ""} ${field.field_type === "long_text" ? "disabled" : ""}> Sortable</label>
+          <label class="schema-inline-check"><input type="checkbox" data-schema-table-visible="${escapeHtml(field.uid)}" ${field.table_visible ? "checked" : ""}> Default table column</label>
+        </div>
+        ${schemaFieldConfigEditor(field)}
+        <div class="schema-field-actions">
+          <button class="btn btn-soft btn-small" type="button" data-save-schema-field="${escapeHtml(field.uid)}">Save Changes</button>
+          <button class="btn ${field.active ? "btn-danger" : "btn-light"} btn-small" type="button" data-toggle-schema-field="${escapeHtml(field.uid)}">${field.active ? "Archive" : "Restore"}</button>
+        </div>
+      </div>
+    </article>
+  `).join("");
+}
+
+function activeStorageFields() {
+  return [...state.schemaFields]
+    .filter(field => field.active)
+    .sort((a, b) =>
+      Number(a.position || 0) - Number(b.position || 0) ||
+      String(a.label || "").localeCompare(String(b.label || ""))
+    );
+}
+
+function storageFieldByUid(uid) {
+  return state.schemaFields.find(field => field.uid === uid) || null;
+}
+
+function renderStorageLayoutPreview() {
+  const parts = ["records"];
+
+  for (const uid of state.storageFolderUids) {
+    const field = storageFieldByUid(uid);
+    parts.push(`<${field?.label || "FIELD"}>`);
+  }
+
+  const prefixField = storageFieldByUid(state.storagePrefixFieldUid);
+  const fileName = prefixField
+    ? `<${prefixField.label}>__filename.ext`
+    : "filename.ext";
+
+  parts.push(fileName);
+  els.storageLayoutPreview.textContent = parts.join("/");
+}
+
+function renderStorageLayout() {
+  const fields = activeStorageFields();
+  const selected = new Set(state.storageFolderUids);
+
+  const available = fields.filter(field => !selected.has(field.uid));
+
+  els.storageFolderFieldSelect.innerHTML = available.length
+    ? available.map(field => `
+        <option value="${escapeHtml(field.uid)}">
+          ${escapeHtml(field.label)} · ${escapeHtml(fieldTypeLabel(field.field_type))}
+        </option>
+      `).join("")
+    : `<option value="">No more fields available</option>`;
+
+  els.storageAddFolderBtn.disabled = !available.length;
+
+  els.storageFolderList.innerHTML = state.storageFolderUids.length
+    ? state.storageFolderUids.map((uid, index) => {
+        const field = storageFieldByUid(uid);
+
+        return `
+          <div class="storage-folder-row" data-storage-folder="${escapeHtml(uid)}">
+            <span class="storage-folder-index">${index + 1}</span>
+            <div class="storage-folder-name">
+              <strong>${escapeHtml(field?.label || "Unknown field")}</strong>
+              <span>${escapeHtml(field?.key || uid)} · ${escapeHtml(fieldTypeLabel(field?.field_type || "text"))}</span>
+            </div>
+            <div class="storage-folder-actions">
+              <button class="btn btn-light btn-small" type="button" data-storage-up="${escapeHtml(uid)}" ${index === 0 ? "disabled" : ""}>↑</button>
+              <button class="btn btn-light btn-small" type="button" data-storage-down="${escapeHtml(uid)}" ${index === state.storageFolderUids.length - 1 ? "disabled" : ""}>↓</button>
+              <button class="btn btn-danger btn-small" type="button" data-storage-remove="${escapeHtml(uid)}">Remove</button>
+            </div>
+          </div>
+        `;
+      }).join("")
+    : `<div class="schema-empty"><strong>No custom N1 folders selected.</strong><span>Without a configured layout, storage falls back to records/&lt;record-uid&gt;/filename.ext.</span></div>`;
+
+  els.storagePrefixFieldSelect.innerHTML = [
+    `<option value="">No filename prefix</option>`,
+    ...fields.map(field => `
+      <option value="${escapeHtml(field.uid)}">
+        ${escapeHtml(field.label)} · ${escapeHtml(fieldTypeLabel(field.field_type))}
+      </option>
+    `)
+  ].join("");
+
+  els.storagePrefixFieldSelect.value = state.storagePrefixFieldUid || "";
+
+  const frozen = Number(state.storageLayout?.frozen_records || 0);
+  els.storageLayoutFreezeNote.textContent = frozen > 0
+    ? `${frozen} record${frozen === 1 ? " has" : "s have"} already frozen its N1 namespace. Layout changes apply only to records whose N1 namespace has not been created yet; existing attachment paths remain stable.`
+    : "The N1 namespace is frozen per record when its first attachment is stored, so later record edits do not scatter files across folders.";
+
+  renderStorageLayoutPreview();
+}
+
+async function loadStorageLayout() {
+  els.storageLayoutStatus.textContent = "Loading N1 storage layout...";
+
+  try {
+    const data = await requestJson(
+      ENDPOINTS.storageLayout,
+      { method: "GET" }
+    );
+
+    state.storageLayout = data || null;
+    state.storageFolderUids = Array.isArray(data?.folder_fields)
+      ? data.folder_fields.map(field => field.uid)
+      : [];
+    state.storagePrefixFieldUid = data?.file_prefix_field?.uid || null;
+
+    renderStorageLayout();
+    els.storageLayoutStatus.textContent =
+      `Layout revision ${Number(data?.revision || 0)} · root ${data?.root || "records"}`;
+  } catch (error) {
+    els.storageLayoutStatus.textContent = error.message;
+    showToast(error.message, "error");
+  }
+}
+
+async function saveStorageLayout() {
+  els.saveStorageLayoutBtn.disabled = true;
+  els.storageLayoutStatus.textContent = "Saving N1 storage layout...";
+
+  try {
+    const data = await requestJson(
+      ENDPOINTS.storageLayout,
+      {
+        method: "PUT",
+        body: {
+          folder_field_uids: state.storageFolderUids,
+          file_prefix_field_uid: state.storagePrefixFieldUid || null
+        }
+      }
+    );
+
+    const layout = data?.layout || data;
+    state.storageLayout = layout || null;
+    state.storageFolderUids = Array.isArray(layout?.folder_fields)
+      ? layout.folder_fields.map(field => field.uid)
+      : [];
+    state.storagePrefixFieldUid = layout?.file_prefix_field?.uid || null;
+
+    renderStorageLayout();
+    els.storageLayoutStatus.textContent =
+      `N1 storage layout saved · revision ${Number(layout?.revision || 0)}`;
+    showToast("N1 storage layout saved.");
+  } catch (error) {
+    els.storageLayoutStatus.textContent = error.message;
+    showToast(error.message, "error");
+  } finally {
+    els.saveStorageLayoutBtn.disabled = false;
+  }
+}
+
+async function loadRecordStructure() {
+  els.schemaStatus.textContent = "Loading record structure...";
+
+  try {
+    const data = await requestJson(ENDPOINTS.schema.get, { method: "GET" });
+    state.schemaRevision = Number(data?.revision || 0);
+    state.schemaFields = Array.isArray(data?.fields) ? data.fields : [];
+    state.schemaSystemFields = Array.isArray(data?.system_fields)
+      ? data.system_fields
+      : [];
+
+    renderSystemSchemaFields();
+    renderSchemaFields();
+    renderSchemaOrder();
+
+    const activeCount =
+      state.schemaFields.filter(field => field.active).length;
+
+    els.schemaStatus.textContent =
+      `${activeCount} custom field${activeCount === 1 ? "" : "s"} · ` +
+      `${state.schemaSystemFields.length} built-in system field${state.schemaSystemFields.length === 1 ? "" : "s"} · ` +
+      `schema revision ${state.schemaRevision}`;
+
+    await loadStorageLayout();
+  } catch (error) {
+    els.schemaStatus.textContent = error.message;
+    els.schemaFields.innerHTML = `<div class="muted">${escapeHtml(error.message)}</div>`;
+    showToast(error.message, "error");
+  }
+}
+
+async function createRecordField(event) {
+  event.preventDefault();
+  syncFieldKey();
+
+  const payload = {
+    label: els.fieldLabel.value.trim(),
+    key: els.fieldKey.value.trim().toLowerCase(),
+    field_type: els.fieldType.value,
+    required: els.fieldRequired.checked,
+    unique_value: els.fieldUnique.checked,
+    searchable: els.fieldSearchable.checked,
+    sortable: els.fieldSortable.checked,
+    table_visible: els.fieldTableVisible.checked,
+    table_priority: Number(els.fieldTablePriority.value || 50),
+    config: schemaConfigFromCreateForm()
+  };
+
+  els.createFieldBtn.disabled = true;
+
+  try {
+    await requestJson(ENDPOINTS.schema.create, { method: "POST", body: payload });
+    els.recordStructureForm.reset();
+    els.fieldKey.value = "";
+    els.fieldKeyDisplay.value = "";
+    els.fieldTablePriority.value = "50";
+    els.fieldSearchable.checked = true;
+    els.fieldSortable.checked = true;
+    els.fieldTableVisible.checked = true;
+    syncNewFieldConfig();
+    await loadRecordStructure();
+    window.ARIS_DATA?.schemaChanged?.();
+    showToast("Record field added.");
+  } catch (error) {
+    showToast(error.message, "error");
+  } finally {
+    els.createFieldBtn.disabled = false;
+  }
+}
+
+function fieldConfigFromEditor(field) {
+  if (field.field_type === "select") {
+    const input = els.schemaFields.querySelector(`[data-schema-config-options="${CSS.escape(field.uid)}"]`);
+    return { options: String(input?.value || "").split(",").map(value => value.trim()).filter(Boolean) };
+  }
+
+  if (field.field_type === "auto_number") {
+    const scope = els.schemaFields.querySelector(`[data-schema-config-scope="${CSS.escape(field.uid)}"]`);
+    const prefix = els.schemaFields.querySelector(`[data-schema-config-prefix="${CSS.escape(field.uid)}"]`);
+    const padding = els.schemaFields.querySelector(`[data-schema-config-padding="${CSS.escape(field.uid)}"]`);
+    return {
+      scope: scope?.value || "global",
+      prefix: String(prefix?.value || "").trim(),
+      padding: Math.max(0, Math.min(12, Number(padding?.value || 0)))
+    };
+  }
+
+  return {};
+}
+
+async function saveRecordField(uid) {
+  const field = state.schemaFields.find(item => item.uid === uid);
+  if (!field) return;
+
+  const query = name => els.schemaFields.querySelector(`[data-schema-${name}="${CSS.escape(uid)}"]`);
+  const payload = {
+    label: String(query("label")?.value || "").trim(),
+    required: Boolean(query("required")?.checked),
+    unique_value: field.field_type === "auto_number" ? true : Boolean(query("unique")?.checked),
+    searchable: Boolean(query("searchable")?.checked),
+    sortable: field.field_type === "long_text" ? false : Boolean(query("sortable")?.checked),
+    table_visible: Boolean(query("table-visible")?.checked),
+    table_priority: Number(query("priority")?.value || 0),
+    config: fieldConfigFromEditor(field)
+  };
+
+  try {
+    await requestJson(ENDPOINTS.schema.update(uid), { method: "PUT", body: payload });
+    await loadRecordStructure();
+    window.ARIS_DATA?.schemaChanged?.();
+    showToast("Record field updated.");
+  } catch (error) {
+    showToast(error.message, "error");
+  }
+}
+
+async function toggleRecordField(uid) {
+  const field = state.schemaFields.find(item => item.uid === uid);
+  if (!field) return;
+
+  const nextActive = !field.active;
+  const verb = nextActive ? "restore" : "archive";
+  if (!confirm(`${verb[0].toUpperCase() + verb.slice(1)} ${field.label}?\n\nHistorical values are preserved.`)) return;
+
+  try {
+    await requestJson(ENDPOINTS.schema.update(uid), { method: "PUT", body: { active: nextActive } });
+    await loadRecordStructure();
+    window.ARIS_DATA?.schemaChanged?.();
+    showToast(nextActive ? "Record field restored." : "Record field archived.");
+  } catch (error) {
+    showToast(error.message, "error");
+  }
+}
+
 const AUDIT_ACTION_LABELS = {
   "record.create": "Created record",
   "record.update": "Updated record",
@@ -10392,7 +12519,10 @@ const AUDIT_ACTION_LABELS = {
   "audit.view": "Viewed audit log",
   "backup.create": "Created database backup",
   "backup.verify": "Verified database backup",
-  "backup.download": "Downloaded database backup"
+  "backup.download": "Downloaded database backup",
+  "schema.field.create": "Created record field",
+  "schema.field.update": "Changed record field",
+  "schema.order.update": "Changed field order"
 };
 
 function auditActionLabel(action) {
@@ -10551,7 +12681,7 @@ function renderBackupRows(backups) {
     els.backupTableBody.innerHTML = `
       <tr>
         <td colspan="6" class="muted">
-          No ARIS database backups have been created yet.
+          No database backups have been created yet.
         </td>
       </tr>
     `;
@@ -10661,8 +12791,8 @@ async function createDatabaseBackup() {
   if (state.backupBusy) return;
 
   const confirmed = confirm(
-    "Create an ARIS database backup now?\n\n" +
-    "ARIS will create a consistent live SQLite snapshot, run integrity_check, " +
+    "Create a database backup now?\n\n" +
+    "A consistent live SQLite snapshot will be created, integrity_check will run, " +
     "and upload the verified snapshot to N1."
   );
 
@@ -10858,6 +12988,7 @@ async function loadAudit(page = 1) {
 async function refreshAdminData() {
   await Promise.all([
     loadAccounts(),
+    loadRecordStructure(),
     loadBackups(),
     loadAudit(state.auditPage)
   ]);
@@ -10873,6 +13004,7 @@ async function initialize() {
 
       await Promise.all([
         loadAccounts(),
+        loadRecordStructure(),
         loadBackups(),
         loadAudit(1)
       ]);
@@ -10909,6 +13041,7 @@ async function initialize() {
     showAdminApp();
     await Promise.all([
       loadAccounts(),
+      loadRecordStructure(),
       loadBackups(),
       loadAudit(1)
     ]);
@@ -10922,6 +13055,237 @@ async function initialize() {
 els.bootstrapForm.addEventListener("submit", bootstrapAdministrator);
 els.loginForm.addEventListener("submit", login);
 els.createAccountForm.addEventListener("submit", createAccount);
+els.recordStructureForm.addEventListener("submit", createRecordField);
+els.fieldType.addEventListener("change", syncNewFieldConfig);
+function generatedFieldKey() {
+  const generated = els.fieldLabel.value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .replace(/^[0-9]+/, "");
+
+  return generated || "field";
+}
+
+function syncFieldKey() {
+  const manual = String(els.fieldKeyDisplay?.value || "").trim();
+  els.fieldKey.value = manual || generatedFieldKey();
+
+  if (els.fieldKeyDisplay && !manual) {
+    els.fieldKeyDisplay.placeholder = `Generated: ${els.fieldKey.value}`;
+  }
+}
+
+els.fieldLabel.addEventListener("input", syncFieldKey);
+els.fieldKeyDisplay?.addEventListener("input", syncFieldKey);
+
+els.schemaSystemFields.addEventListener("click", event => {
+  const button = event.target.closest("[data-save-system-field]");
+
+  if (!button) {
+    return;
+  }
+
+  saveSystemSchemaField(button.dataset.saveSystemField);
+});
+
+els.schemaOrderList.addEventListener("click", event => {
+  const up = event.target.closest("[data-schema-order-up]");
+  const down = event.target.closest("[data-schema-order-down]");
+
+  if (up) {
+    moveSchemaOrderItem(up.dataset.schemaOrderUp, -1);
+    return;
+  }
+
+  if (down) {
+    moveSchemaOrderItem(down.dataset.schemaOrderDown, 1);
+  }
+});
+
+els.schemaOrderList.addEventListener("dragstart", event => {
+  const handle = event.target.closest("[data-schema-drag]");
+
+  if (!handle || state.schemaOrderSaving) {
+    event.preventDefault();
+    return;
+  }
+
+  const item = handle.closest(".schema-order-item");
+  const key = item?.dataset.schemaOrderKey;
+
+  if (!key) {
+    event.preventDefault();
+    return;
+  }
+
+  state.schemaOrderDragKey = key;
+  item.classList.add("dragging");
+
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", key);
+  }
+});
+
+els.schemaOrderList.addEventListener("dragover", event => {
+  if (!state.schemaOrderDragKey || state.schemaOrderSaving) {
+    return;
+  }
+
+  const target = event.target.closest(".schema-order-item");
+
+  if (
+    !target ||
+    target.dataset.schemaOrderKey === state.schemaOrderDragKey
+  ) {
+    return;
+  }
+
+  event.preventDefault();
+  clearSchemaOrderDropMarkers();
+
+  const rect = target.getBoundingClientRect();
+  const after = event.clientY >= rect.top + rect.height / 2;
+
+  target.classList.add(after ? "drop-after" : "drop-before");
+
+  if (event.dataTransfer) {
+    event.dataTransfer.dropEffect = "move";
+  }
+});
+
+els.schemaOrderList.addEventListener("drop", event => {
+  if (!state.schemaOrderDragKey || state.schemaOrderSaving) {
+    return;
+  }
+
+  const target = event.target.closest(".schema-order-item");
+
+  if (!target) {
+    return;
+  }
+
+  event.preventDefault();
+
+  const sourceKey = state.schemaOrderDragKey;
+  const targetKey = target.dataset.schemaOrderKey;
+
+  if (!targetKey || sourceKey === targetKey) {
+    clearSchemaOrderDropMarkers();
+    return;
+  }
+
+  const rect = target.getBoundingClientRect();
+  const after = event.clientY >= rect.top + rect.height / 2;
+
+  const items = schemaOrderItems();
+  const sourceIndex =
+    items.findIndex(item => schemaOrderKey(item) === sourceKey);
+
+  if (sourceIndex < 0) {
+    clearSchemaOrderDropMarkers();
+    return;
+  }
+
+  const [moved] = items.splice(sourceIndex, 1);
+
+  let targetIndex =
+    items.findIndex(item => schemaOrderKey(item) === targetKey);
+
+  if (targetIndex < 0) {
+    clearSchemaOrderDropMarkers();
+    return;
+  }
+
+  if (after) {
+    targetIndex += 1;
+  }
+
+  items.splice(targetIndex, 0, moved);
+
+  state.schemaOrderDragKey = null;
+  clearSchemaOrderDropMarkers();
+
+  saveSchemaOrder(items);
+});
+
+els.schemaOrderList.addEventListener("dragend", event => {
+  state.schemaOrderDragKey = null;
+  clearSchemaOrderDropMarkers();
+
+  event.target
+    .closest(".schema-order-item")
+    ?.classList.remove("dragging");
+});
+
+els.schemaFields.addEventListener("click", event => {
+  const save = event.target.closest("[data-save-schema-field]");
+  if (save) {
+    saveRecordField(save.dataset.saveSchemaField);
+    return;
+  }
+  const toggle = event.target.closest("[data-toggle-schema-field]");
+  if (toggle) toggleRecordField(toggle.dataset.toggleSchemaField);
+});
+syncNewFieldConfig();
+
+els.storageAddFolderBtn.addEventListener("click", () => {
+  const uid = els.storageFolderFieldSelect.value;
+
+  if (!uid || state.storageFolderUids.includes(uid)) {
+    return;
+  }
+
+  state.storageFolderUids.push(uid);
+  renderStorageLayout();
+});
+
+els.storagePrefixFieldSelect.addEventListener("change", () => {
+  state.storagePrefixFieldUid =
+    els.storagePrefixFieldSelect.value || null;
+  renderStorageLayoutPreview();
+});
+
+els.storageFolderList.addEventListener("click", event => {
+  const remove = event.target.closest("[data-storage-remove]");
+  const up = event.target.closest("[data-storage-up]");
+  const down = event.target.closest("[data-storage-down]");
+
+  const uid =
+    remove?.dataset.storageRemove ||
+    up?.dataset.storageUp ||
+    down?.dataset.storageDown;
+
+  if (!uid) {
+    return;
+  }
+
+  const index = state.storageFolderUids.indexOf(uid);
+
+  if (index < 0) {
+    return;
+  }
+
+  if (remove) {
+    state.storageFolderUids.splice(index, 1);
+  } else if (up && index > 0) {
+    [state.storageFolderUids[index - 1], state.storageFolderUids[index]] =
+      [state.storageFolderUids[index], state.storageFolderUids[index - 1]];
+  } else if (down && index < state.storageFolderUids.length - 1) {
+    [state.storageFolderUids[index + 1], state.storageFolderUids[index]] =
+      [state.storageFolderUids[index], state.storageFolderUids[index + 1]];
+  }
+
+  renderStorageLayout();
+});
+
+els.saveStorageLayoutBtn.addEventListener(
+  "click",
+  saveStorageLayout
+);
+
 els.auditFilterForm.addEventListener("submit", event => {
   event.preventDefault();
   loadAudit(1);
@@ -11008,6 +13372,8 @@ initialize();
     "use strict";
 
     const ENDPOINTS = {
+      bootstrapStatus: "/aris/v1/auth/bootstrap/status",
+      bootstrapCreate: "/aris/v1/auth/create",
       authenticate: "/aris/v1/auth/authenticate",
       refresh: "/aris/v1/auth/refresh",
       session: "/aris/v1/auth/session",
@@ -11038,6 +13404,7 @@ initialize();
       dashboardAbortController: null,
       dashboardRequestId: 0,
       recordsRevision: null,
+      schemaRevision: null,
       audit: [],
       refreshPromise: null,
       loadedAt: null,
@@ -11064,6 +13431,16 @@ initialize();
 
     const els = {
       loginOverlay: document.getElementById("loginOverlay"),
+
+      shellBootstrapForm: document.getElementById("shellBootstrapForm"),
+      shellBootstrapAuthKey: document.getElementById("shellBootstrapAuthKey"),
+      shellBootstrapName: document.getElementById("shellBootstrapName"),
+      shellBootstrapEmail: document.getElementById("shellBootstrapEmail"),
+      shellBootstrapPassword: document.getElementById("shellBootstrapPassword"),
+      shellBootstrapPasswordConfirm: document.getElementById("shellBootstrapPasswordConfirm"),
+      shellBootstrapBtn: document.getElementById("shellBootstrapBtn"),
+      shellBootstrapStatus: document.getElementById("shellBootstrapStatus"),
+
       loginForm: document.getElementById("loginForm"),
       loginEmail: document.getElementById("loginEmail"),
       loginPassword: document.getElementById("loginPassword"),
@@ -11184,7 +13561,7 @@ initialize();
     function recommendedScalePercent() {
       /*
        * CSS viewport size already reflects OS/browser scaling.
-       * Do not multiply by devicePixelRatio or ARIS would double-scale
+       * Do not multiply by devicePixelRatio or the interface would double-scale
        * on desktops already using fractional display scaling.
        */
       const width =
@@ -11354,7 +13731,7 @@ initialize();
       els.scaleHint.textContent =
         settings.autoScale
           ? `Automatic text scale for this screen/window: ${effective}%. Manual adjustment becomes available when Automatic text scaling is turned off.`
-          : `Manual ARIS text scale is active at ${effective}%.`;
+          : `Manual text scale is active at ${effective}%.`;
 
       const refreshValue =
         String(settings.autoRefreshSeconds);
@@ -11619,7 +13996,7 @@ initialize();
 
     function getAccessToken() {
       // Records, Administration, and Dashboard all share this exact
-      // sessionStorage token. There is only one ARIS sign-in.
+      // sessionStorage token. There is only one shared sign-in.
       return migrateLegacyToken(STORAGE_KEYS.access);
     }
 
@@ -11636,7 +14013,7 @@ initialize();
         sessionStorage.setItem(STORAGE_KEYS.refresh, data.refresh_token);
       }
 
-      // Remove tokens created by the older dashboard shell so every ARIS
+      // Remove tokens created by the older dashboard shell so every
       // workspace uses one session source.
       localStorage.removeItem(STORAGE_KEYS.access);
       localStorage.removeItem(STORAGE_KEYS.refresh);
@@ -11668,7 +14045,7 @@ initialize();
       if (state.refreshPromise) return state.refreshPromise;
 
       const refreshToken = getRefreshToken();
-      if (!refreshToken) throw new Error("Your ARIS session has expired.");
+      if (!refreshToken) throw new Error("Your session has expired.");
 
       state.refreshPromise = (async () => {
         const response = await fetch(ENDPOINTS.refresh, {
@@ -11681,7 +14058,7 @@ initialize();
 
         if (!response.ok) {
           clearTokens();
-          throw new Error(messageFromPayload(data, "Unable to refresh ARIS session."));
+          throw new Error(messageFromPayload(data, "Unable to refresh the session."));
         }
 
         setTokens(data);
@@ -11719,7 +14096,7 @@ initialize();
       const data = await readJsonSafe(response);
 
       if (!response.ok) {
-        throw new Error(messageFromPayload(data, `ARIS request failed (${response.status}).`));
+        throw new Error(messageFromPayload(data, `Request failed (${response.status}).`));
       }
 
       return data;
@@ -11784,10 +14161,18 @@ initialize();
       markWorkspaceDirty("admin");
     }
 
+    function schemaChanged() {
+      state.schemaRevision = null;
+      markWorkspaceDirty("dashboard");
+      markWorkspaceDirty("records");
+      markWorkspaceDirty("admin");
+    }
+
     window.ARIS_DATA = Object.freeze({
       markFresh: markWorkspaceFresh,
       invalidate: markWorkspaceDirty,
-      recordsChanged
+      recordsChanged,
+      schemaChanged
     });
 
     function getAutoRefreshSeconds() {
@@ -11820,16 +14205,14 @@ initialize();
         { method: "GET" }
       );
 
-      const revision =
-        Number(data?.records_revision);
+      const recordsRevision = Number(data?.records_revision);
+      const schemaRevision = Number(data?.schema_revision);
 
-      if (!Number.isFinite(revision)) {
-        throw new Error(
-          "ARIS returned an invalid records revision."
-        );
+      if (!Number.isFinite(recordsRevision) || !Number.isFinite(schemaRevision)) {
+        throw new Error("The server returned an invalid system revision.");
       }
 
-      return revision;
+      return { recordsRevision, schemaRevision };
     }
 
     async function refreshActiveWorkspace({
@@ -11884,10 +14267,11 @@ initialize();
 
               if (window.ARIS_RECORDS?.refresh) {
                 await window.ARIS_RECORDS.refresh();
-                const revision =
+                const revisions =
                   await fetchRecordsRevision();
 
-                state.recordsRevision = revision;
+                state.recordsRevision = revisions.recordsRevision;
+                state.schemaRevision = revisions.schemaRevision;
                 markWorkspaceFresh("records");
 
                 if (notify) {
@@ -11899,19 +14283,23 @@ initialize();
             return;
           }
 
-          const revision =
+          const revisions =
             await fetchRecordsRevision();
 
-          const changed =
+          const recordsChanged =
             state.recordsRevision === null ||
-            revision !== state.recordsRevision;
+            revisions.recordsRevision !== state.recordsRevision;
 
-          if (!changed && !workspaceStale(name)) {
+          const schemaChanged =
+            state.schemaRevision === null ||
+            revisions.schemaRevision !== state.schemaRevision;
+
+          if (!recordsChanged && !schemaChanged && !workspaceStale(name)) {
             return;
           }
 
           if (name === "dashboard") {
-            if (changed || state.workspaceDirty.dashboard) {
+            if (recordsChanged || schemaChanged || state.workspaceDirty.dashboard) {
               await fetchDashboardSummary({
                 force: true,
                 notify: false
@@ -11920,14 +14308,18 @@ initialize();
               markWorkspaceFresh("dashboard");
             }
 
+            state.recordsRevision = revisions.recordsRevision;
+            state.schemaRevision = revisions.schemaRevision;
             return;
           }
 
           if (name === "records") {
             ensureWorkspaceMounted("records");
 
-            if (
-              changed ||
+            if (schemaChanged && window.ARIS_RECORDS?.reloadSchema) {
+              await window.ARIS_RECORDS.reloadSchema();
+            } else if (
+              recordsChanged ||
               state.workspaceDirty.records
             ) {
               if (window.ARIS_RECORDS?.refresh) {
@@ -11935,7 +14327,8 @@ initialize();
               }
             }
 
-            state.recordsRevision = revision;
+            state.recordsRevision = revisions.recordsRevision;
+            state.schemaRevision = revisions.schemaRevision;
             markWorkspaceFresh("records");
           }
         })()
@@ -11970,7 +14363,7 @@ initialize();
               notify: false
             }).catch(error => {
               console.warn(
-                "ARIS automatic refresh failed:",
+                "Automatic refresh failed:",
                 error
               );
             });
@@ -12075,7 +14468,7 @@ initialize();
             notify: false
           }).catch(error => {
             console.warn(
-              `ARIS ${name} refresh failed:`,
+              `${name} refresh failed:`,
               error
             );
           });
@@ -12128,7 +14521,7 @@ initialize();
       const scriptNode = document.getElementById(scriptId);
 
       if (!template || !scriptNode) {
-        throw new Error(`Missing embedded ARIS module: ${templateId}`);
+        throw new Error(`Missing embedded module: ${templateId}`);
       }
 
       const root = host.attachShadow({ mode: "open" });
@@ -12166,7 +14559,7 @@ initialize();
             }
           </style>
           <div class="error">
-            <strong>ARIS workspace failed to initialize.</strong>
+            <strong>Workspace failed to initialize.</strong>
             <div style="margin-top:8px">
               ${escapeHtml(error.message)}
             </div>
@@ -12202,7 +14595,7 @@ initialize();
     function renderSession() {
       if (!state.session) return;
 
-      const name = state.session.name || state.session.email || "ARIS User";
+      const name = state.session.name || state.session.email || "User";
       const role = state.session.access_name || roleName(state.session.access_level);
       const initials = name
         .split(/\s+/)
@@ -12250,8 +14643,10 @@ initialize();
     function requireSharedLogin(message = "Sign in to continue.") {
       clearTokens();
       state.session = null;
-      els.loginOverlay.classList.remove("hidden");
-      els.loginStatus.textContent = message;
+
+      initializeAuthEntry(message).catch(error => {
+        showLoginMode(error.message);
+      });
     }
 
     window.ARIS_AUTH = Object.freeze({
@@ -12266,6 +14661,197 @@ initialize();
       requireLogin: requireSharedLogin,
       session: () => state.session
     });
+
+    async function getBootstrapStatus() {
+      const response = await fetch(
+        ENDPOINTS.bootstrapStatus,
+        {
+          method: "GET",
+          headers: {
+            "Accept": "application/json"
+          },
+          cache: "no-store"
+        }
+      );
+
+      const data = await readJsonSafe(response);
+
+      if (!response.ok) {
+        throw new Error(
+          messageFromPayload(
+            data,
+            "Unable to determine setup status."
+          )
+        );
+      }
+
+      return data;
+    }
+
+    function showBootstrapMode() {
+      els.loginOverlay.classList.remove("hidden");
+      els.loginForm.classList.add("hidden");
+      els.shellBootstrapForm.classList.remove("hidden");
+      els.shellBootstrapStatus.textContent =
+        "The first account is always access level 0 — Administrator.";
+
+      requestAnimationFrame(() => {
+        els.shellBootstrapAuthKey.focus();
+      });
+    }
+
+    function showLoginMode(message = "") {
+      els.loginOverlay.classList.remove("hidden");
+      els.shellBootstrapForm.classList.add("hidden");
+      els.loginForm.classList.remove("hidden");
+      els.loginStatus.textContent = message;
+
+      requestAnimationFrame(() => {
+        els.loginEmail.focus();
+      });
+    }
+
+    async function initializeAuthEntry(message = "") {
+      els.loginOverlay.classList.remove("hidden");
+      els.loginForm.classList.add("hidden");
+      els.shellBootstrapForm.classList.add("hidden");
+
+      try {
+        const status = await getBootstrapStatus();
+
+        if (status?.setup_required === true) {
+          showBootstrapMode();
+          return;
+        }
+
+        showLoginMode(message);
+      } catch (error) {
+        showLoginMode(
+          message || error.message
+        );
+      }
+    }
+
+    async function bootstrapAdministrator(event) {
+      event.preventDefault();
+
+      const authKey =
+        els.shellBootstrapAuthKey.value.trim();
+
+      const name =
+        els.shellBootstrapName.value.trim();
+
+      const email =
+        els.shellBootstrapEmail.value.trim();
+
+      const password =
+        els.shellBootstrapPassword.value;
+
+      const confirmPassword =
+        els.shellBootstrapPasswordConfirm.value;
+
+      if (
+        !authKey ||
+        !name ||
+        !email ||
+        !password
+      ) {
+        els.shellBootstrapStatus.textContent =
+          "AUTH key, name, email, and password are required.";
+        return;
+      }
+
+      if (password !== confirmPassword) {
+        els.shellBootstrapStatus.textContent =
+          "Passwords do not match.";
+        return;
+      }
+
+      els.shellBootstrapBtn.disabled = true;
+      els.shellBootstrapBtn.textContent =
+        "Creating Administrator…";
+      els.shellBootstrapStatus.textContent =
+        "Initializing…";
+
+      try {
+        const createResponse = await fetch(
+          ENDPOINTS.bootstrapCreate,
+          {
+            method: "POST",
+            headers: {
+              "Authorization": `Bearer ${authKey}`,
+              "Content-Type": "application/json",
+              "Accept": "application/json"
+            },
+            body: JSON.stringify({
+              name,
+              email,
+              password
+            })
+          }
+        );
+
+        const createData =
+          await readJsonSafe(createResponse);
+
+        if (!createResponse.ok) {
+          throw new Error(
+            messageFromPayload(
+              createData,
+              "Unable to create the first Administrator."
+            )
+          );
+        }
+
+        els.shellBootstrapStatus.textContent =
+          "Administrator created. Signing in…";
+
+        const authResponse = await fetch(
+          ENDPOINTS.authenticate,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Accept": "application/json"
+            },
+            body: JSON.stringify({
+              email,
+              password
+            })
+          }
+        );
+
+        const authData =
+          await readJsonSafe(authResponse);
+
+        if (!authResponse.ok) {
+          throw new Error(
+            messageFromPayload(
+              authData,
+              "Administrator created, but automatic sign-in failed."
+            )
+          );
+        }
+
+        setTokens(authData);
+
+        els.shellBootstrapAuthKey.value = "";
+        els.shellBootstrapPassword.value = "";
+        els.shellBootstrapPasswordConfirm.value = "";
+        els.shellBootstrapStatus.textContent = "";
+
+        els.loginOverlay.classList.add("hidden");
+
+        await initializeAuthenticated();
+      } catch (error) {
+        els.shellBootstrapStatus.textContent =
+          error.message;
+      } finally {
+        els.shellBootstrapBtn.disabled = false;
+        els.shellBootstrapBtn.textContent =
+          "Create Administrator";
+      }
+    }
 
     async function login(event) {
       event.preventDefault();
@@ -12312,6 +14898,7 @@ initialize();
       state.dashboard = null;
       state.dashboardQueryKey = "";
       state.recordsRevision = null;
+      state.schemaRevision = null;
       state.dashboardEtags.clear();
       location.reload();
     }
@@ -12496,7 +15083,7 @@ initialize();
       setLoading(
         true,
         notify
-          ? "Refreshing ARIS dashboard…"
+          ? "Refreshing dashboard…"
           : "Loading dashboard summary…"
       );
 
@@ -12538,7 +15125,7 @@ initialize();
           throw new Error(
             messageFromPayload(
               data,
-              `ARIS dashboard request failed (${response.status}).`
+              `Dashboard request failed (${response.status}).`
             )
           );
         }
@@ -13034,7 +15621,7 @@ initialize();
         formatNumber(total);
 
       els.kpiTotalMeta.innerHTML =
-        `<strong>${formatNumber(scope.total_records || 0)}</strong> total records in ARIS`;
+        `<strong>${formatNumber(scope.total_records || 0)}</strong> total records`;
 
       els.kpiToday.textContent =
         formatNumber(scope.today || 0);
@@ -13506,7 +16093,7 @@ initialize();
               );
             } else {
               console.warn(
-                "ARIS dashboard refresh failed:",
+                "Dashboard refresh failed:",
                 error
               );
             }
@@ -13532,7 +16119,7 @@ initialize();
 
     async function initializeAuthenticated() {
       try {
-        setLoading(true, "Checking ARIS session…");
+        setLoading(true, "Checking session…");
         await loadSession();
         els.loginOverlay.classList.add("hidden");
 
@@ -13540,6 +16127,10 @@ initialize();
           force: true,
           notify: false
         });
+
+        const revisions = await fetchRecordsRevision();
+        state.recordsRevision = revisions.recordsRevision;
+        state.schemaRevision = revisions.schemaRevision;
 
         if (Number(state.session?.access_level) === 0) {
           await loadAudit();
@@ -13564,8 +16155,11 @@ initialize();
           /expired|invalid|token|unauthorized|credentials/i.test(error.message)
         ) {
           clearTokens();
-          els.loginOverlay.classList.remove("hidden");
-          els.loginStatus.textContent = "Sign in to continue.";
+
+          await initializeAuthEntry(
+            "Sign in to continue."
+          );
+
           return;
         }
 
@@ -13590,6 +16184,11 @@ initialize();
     }
 
     function attachEvents() {
+      els.shellBootstrapForm.addEventListener(
+        "submit",
+        bootstrapAdministrator
+      );
+
       els.loginForm.addEventListener("submit", login);
 
       document.addEventListener("click", event => {
@@ -13753,7 +16352,7 @@ initialize();
               notify: false
             }).catch(error => {
               console.warn(
-                "ARIS visibility refresh failed:",
+                "Visibility refresh failed:",
                 error
               );
             });
@@ -13770,7 +16369,7 @@ initialize();
               notify: false
             }).catch(error => {
               console.warn(
-                "ARIS focus refresh failed:",
+                "Focus refresh failed:",
                 error
               );
             });
@@ -13831,7 +16430,7 @@ initialize();
     if (getAccessToken() || getRefreshToken()) {
       initializeAuthenticated();
     } else {
-      els.loginOverlay.classList.remove("hidden");
+      initializeAuthEntry();
     }
   </script>
 </body>

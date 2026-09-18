@@ -19,8 +19,8 @@ use crate::{
     db::connector::{SqliteDatabaseError, with_sql_connection},
     middleware::{
         auth::{
-            access_level_name, valid_access_level, AuthenticateRequest, Claims,
-            ACCESS_ADMINISTRATOR,
+            ACCESS_ADMINISTRATOR, AuthenticateRequest, Claims, access_level_name,
+            valid_access_level,
         },
         totp::verify_totp,
     },
@@ -71,25 +71,19 @@ pub async fn create_super_user(
     The first account is ALWAYS access level 0 (Administrator).
     */
     let database_result =
-        tokio::task::spawn_blocking(
-            move || -> Result<bool, SqliteDatabaseError> {
-                with_sql_connection(|connection| {
-                    let transaction =
-                        connection.unchecked_transaction()?;
+        tokio::task::spawn_blocking(move || -> Result<bool, SqliteDatabaseError> {
+            with_sql_connection(|connection| {
+                let transaction = connection.unchecked_transaction()?;
 
-                    let user_count: i64 =
-                        transaction.query_row(
-                            "SELECT COUNT(*) FROM users",
-                            [],
-                            |row| row.get(0),
-                        )?;
+                let user_count: i64 =
+                    transaction.query_row("SELECT COUNT(*) FROM users", [], |row| row.get(0))?;
 
-                    if user_count > 0 {
-                        return Ok(false);
-                    }
+                if user_count > 0 {
+                    return Ok(false);
+                }
 
-                    transaction.execute(
-                        r#"
+                transaction.execute(
+                    r#"
                         INSERT INTO users (
                             uid,
                             email,
@@ -102,22 +96,21 @@ pub async fn create_super_user(
                             ?1, ?2, ?3, ?4, ?5, ?6, NULL
                         )
                         "#,
-                        params![
-                            created_uid,
-                            email,
-                            password,
-                            name,
-                            created_at,
-                            ACCESS_ADMINISTRATOR,
-                        ],
-                    )?;
+                    params![
+                        created_uid,
+                        email,
+                        password,
+                        name,
+                        created_at,
+                        ACCESS_ADMINISTRATOR,
+                    ],
+                )?;
 
-                    transaction.commit()?;
+                transaction.commit()?;
 
-                    Ok(true)
-                })
-            },
-        )
+                Ok(true)
+            })
+        })
         .await;
 
     match database_result {
@@ -135,10 +128,8 @@ pub async fn create_super_user(
             })),
         )),
 
-        Ok(Err(SqliteDatabaseError::Sqlite(
-            rusqlite::Error::SqliteFailure(error, _),
-        ))) if error.code
-            == rusqlite::ErrorCode::ConstraintViolation =>
+        Ok(Err(SqliteDatabaseError::Sqlite(rusqlite::Error::SqliteFailure(error, _))))
+            if error.code == rusqlite::ErrorCode::ConstraintViolation =>
         {
             Err((
                 StatusCode::CONFLICT,
@@ -150,10 +141,7 @@ pub async fn create_super_user(
 
         Ok(Err(error)) => {
             crate::report_error!(
-                format!(
-                    "failed to create bootstrap administrator: {}",
-                    error
-                ),
+                format!("failed to create bootstrap administrator: {}", error),
                 "function",
                 "create_super_user()"
             );
@@ -168,10 +156,7 @@ pub async fn create_super_user(
 
         Err(error) => {
             crate::report_error!(
-                format!(
-                    "bootstrap administrator blocking task failed: {}",
-                    error
-                ),
+                format!("bootstrap administrator blocking task failed: {}", error),
                 "function",
                 "create_super_user()"
             );
@@ -937,7 +922,10 @@ pub async fn check_2fa_status(
     }
 }
 
-async fn update_totp_secret_by_uid(email: String, uid: String) -> Result<Vec<u8>, TotpSecretUpdateError> {
+async fn update_totp_secret_by_uid(
+    email: String,
+    uid: String,
+) -> Result<Vec<u8>, TotpSecretUpdateError> {
     let secret = generate_random_base32(20);
     let label = format!("ARIS:{}", email);
     let issuer = "ARIS";

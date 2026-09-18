@@ -7,7 +7,7 @@ pub enum SqliteError {
     JoinError,
     NotFound,
     InvalidFilter,
-    Conflict
+    Conflict,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -23,5 +23,5 @@ pub enum AuthError {
     Ok,
     Unauthorized,
     Error,
-    MissingTotp
+    MissingTotp,
 }

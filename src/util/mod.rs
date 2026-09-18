@@ -1,2 +1,2 @@
-pub mod randomizer;
 pub mod qr;
+pub mod randomizer;

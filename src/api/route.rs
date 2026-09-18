@@ -11,9 +11,16 @@ use crate::api::admin::handler::{
 };
 
 use crate::api::aris::handler::{
-    create_aris_record, delete_aris_attachment, delete_aris_record, download_aris_attachment,
-    list_aris_records, preview_aris_attachment, update_aris_record, upload_aris_attachments,
+    delete_aris_attachment, delete_aris_record, download_aris_attachment, preview_aris_attachment,
+    upload_aris_attachments,
 };
+use crate::api::aris::records::{create_aris_record, list_aris_records, update_aris_record};
+use crate::api::aris::schema::{
+    create_schema_field, get_admin_record_schema, get_record_schema, update_schema_field,
+    update_schema_order, update_system_schema_field,
+};
+
+use crate::api::aris::storage::{get_storage_layout, update_storage_layout};
 
 use crate::api::audit::{audit_request, get_audit_log};
 use crate::api::backup::{create_backup, download_backup, list_backups, verify_backup};
@@ -53,6 +60,21 @@ fn bootstrap_routes() -> Router {
 fn admin_routes() -> Router {
     Router::new()
         .route("/aris/v1/admin/audit", get(get_audit_log))
+        .route("/aris/v1/admin/schema", get(get_admin_record_schema))
+        .route("/aris/v1/admin/schema/fields", post(create_schema_field))
+        .route("/aris/v1/admin/schema/order", put(update_schema_order))
+        .route(
+            "/aris/v1/admin/schema/fields/{uid}",
+            put(update_schema_field),
+        )
+        .route(
+            "/aris/v1/admin/schema/system/{key}",
+            put(update_system_schema_field),
+        )
+        .route(
+            "/aris/v1/admin/storage-layout",
+            get(get_storage_layout).put(update_storage_layout),
+        )
         .route(
             "/aris/v1/admin/backups",
             get(list_backups).post(create_backup),
@@ -89,6 +111,7 @@ fn aris_routes() -> Router {
         .saturating_add(1024 * 1024);
 
     Router::new()
+        .route("/aris/v1/schema", get(get_record_schema))
         .route("/aris/v1/dashboard/summary", get(get_dashboard_summary))
         .route("/aris/v1/status/revision", get(get_records_revision))
         .route(

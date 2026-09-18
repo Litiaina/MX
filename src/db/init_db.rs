@@ -1,7 +1,4 @@
-use crate::{
-    config::load_config::CONFIG,
-    db::connector::with_sql_connection,
-};
+use crate::{config::load_config::CONFIG, db::connector::with_sql_connection};
 
 pub async fn initialize_sql_db() {
     let initialization_result = tokio::task::spawn_blocking(|| {
@@ -96,11 +93,8 @@ pub async fn initialize_sql_db() {
                 "#,
             )?;
 
-            let journal_mode: String = connection.query_row(
-                "PRAGMA journal_mode;",
-                [],
-                |row| row.get(0),
-            )?;
+            let journal_mode: String =
+                connection.query_row("PRAGMA journal_mode;", [], |row| row.get(0))?;
 
             Ok(journal_mode)
         })
@@ -120,8 +114,7 @@ pub async fn initialize_sql_db() {
             crate::fatal_error!(
                 format!(
                     "SQLite database '{}' initialized with unexpected journal mode '{}'; expected 'wal'",
-                    CONFIG.database.db_path,
-                    journal_mode
+                    CONFIG.database.db_path, journal_mode
                 ),
                 "function",
                 "initialize_sql_db()"
@@ -132,8 +125,7 @@ pub async fn initialize_sql_db() {
             crate::fatal_error!(
                 format!(
                     "failed to initialize SQLite database '{}': {}",
-                    CONFIG.database.db_path,
-                    error
+                    CONFIG.database.db_path, error
                 ),
                 "function",
                 "initialize_sql_db()"

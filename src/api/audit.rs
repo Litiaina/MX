@@ -510,6 +510,45 @@ fn classify_action(method: &Method, path: &str) -> Option<AuditClassification> {
         });
     }
 
+    if path == "/aris/v1/admin/schema/order" && method == Method::PUT {
+        return Some(AuditClassification {
+            action: "schema.order.update",
+            target_type: Some("record-structure"),
+            target_uid: None,
+        });
+    }
+
+    if path == "/aris/v1/admin/schema/fields" && method == Method::POST {
+        return Some(AuditClassification {
+            action: "schema.field.create",
+            target_type: Some("record-field"),
+            target_uid: None,
+        });
+    }
+
+    if segments.len() == 6
+        && segments[0] == "aris"
+        && segments[1] == "v1"
+        && segments[2] == "admin"
+        && segments[3] == "schema"
+        && segments[4] == "fields"
+        && method == Method::PUT
+    {
+        return Some(AuditClassification {
+            action: "schema.field.update",
+            target_type: Some("record-field"),
+            target_uid: segments.get(5).map(|value| value.to_string()),
+        });
+    }
+
+    if path == "/aris/v1/admin/storage-layout" && method == Method::PUT {
+        return Some(AuditClassification {
+            action: "storage.layout.update",
+            target_type: Some("n1-storage-layout"),
+            target_uid: None,
+        });
+    }
+
     if path == "/aris/v1/admin/backups" && method == Method::POST {
         return Some(AuditClassification {
             action: "backup.create",

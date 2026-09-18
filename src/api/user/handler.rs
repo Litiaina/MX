@@ -10,14 +10,11 @@ use crate::{
         admin::model::{CreateUserRequest, User},
         api_error::{AuthError, SqliteError},
         query_handler::{
-            execute_create_user, execute_delete_user, execute_modify_user,
-            verify_authentication,
+            execute_create_user, execute_delete_user, execute_modify_user, verify_authentication,
         },
-        user::model::{
-            AuthModifyUserRequest, DeleteUserRequest, NewUserData, QueryFilter,
-        },
+        user::model::{AuthModifyUserRequest, DeleteUserRequest, NewUserData, QueryFilter},
     },
-    middleware::auth::{Claims, ACCESS_EDITOR, valid_access_level},
+    middleware::auth::{ACCESS_EDITOR, Claims, valid_access_level},
 };
 
 pub async fn create_user(
@@ -31,9 +28,7 @@ pub async fn create_user(
         ));
     }
 
-    let access_level = request
-        .access_level
-        .unwrap_or(ACCESS_EDITOR);
+    let access_level = request.access_level.unwrap_or(ACCESS_EDITOR);
 
     if !valid_access_level(access_level) {
         return Err((
@@ -69,13 +64,7 @@ pub async fn create_user(
         totp_secret: None,
     };
 
-    match execute_create_user(
-        new_user,
-        "function",
-        "create_user()",
-    )
-    .await
-    {
+    match execute_create_user(new_user, "function", "create_user()").await {
         Ok(()) => Ok((
             StatusCode::CREATED,
             Json(json!({
@@ -140,13 +129,8 @@ pub async fn modify_user(
     .await
     {
         AuthError::Ok => {
-            match execute_modify_user(
-                query_filter,
-                modified_user,
-                "function",
-                "modify_user()",
-            )
-            .await
+            match execute_modify_user(query_filter, modified_user, "function", "modify_user()")
+                .await
             {
                 Ok(()) => Ok((
                     StatusCode::OK,

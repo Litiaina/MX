@@ -1,10 +1,10 @@
 pub mod admin;
 pub mod api_error;
-pub mod hosting;
-pub mod route;
-pub mod user;
-pub mod query_handler;
 pub mod aris;
 pub mod audit;
 pub mod backup;
 pub mod dashboard;
+pub mod hosting;
+pub mod query_handler;
+pub mod route;
+pub mod user;

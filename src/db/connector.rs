@@ -52,8 +52,7 @@ pub static SQL_DB: LazyLock<SqlitePool> = LazyLock::new(|| {
         crate::fatal_error!(
             format!(
                 "failed to open SQLite database '{}' while enabling WAL mode: {}",
-                database_path,
-                error
+                database_path, error
             ),
             "static",
             "SQL_DB"
@@ -66,8 +65,7 @@ pub static SQL_DB: LazyLock<SqlitePool> = LazyLock::new(|| {
             crate::fatal_error!(
                 format!(
                     "failed to configure SQLite busy timeout for database '{}': {}",
-                    database_path,
-                    error
+                    database_path, error
                 ),
                 "static",
                 "SQL_DB"
@@ -80,8 +78,7 @@ pub static SQL_DB: LazyLock<SqlitePool> = LazyLock::new(|| {
             crate::fatal_error!(
                 format!(
                     "failed to enable WAL mode for SQLite database '{}': {}",
-                    database_path,
-                    error
+                    database_path, error
                 ),
                 "static",
                 "SQL_DB"
@@ -110,8 +107,7 @@ pub static SQL_DB: LazyLock<SqlitePool> = LazyLock::new(|| {
             crate::fatal_error!(
                 format!(
                     "failed to create SQLite connection pool for database '{}': {}",
-                    database_path,
-                    error
+                    database_path, error
                 ),
                 "static",
                 "SQL_DB"

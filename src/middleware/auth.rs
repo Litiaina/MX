@@ -643,28 +643,13 @@ where
         let validation = Validation::new(Algorithm::HS256);
 
         let token_data = decode::<Claims>(bearer.token(), &JWT_KEYS.decoding, &validation)
-            .map_err(|error| {
+            .map_err(|_error| {
                 /*
-                 * Access-token expiration is expected during a normal
-                 * session. The client receives 401, exchanges the refresh
-                 * token, and retries the request.
-                 *
-                 * Do not report ExpiredSignature as an application ERROR.
-                 * Other JWT failures remain error-level because they can
-                 * indicate malformed, invalid, or incorrectly signed
-                 * tokens.
+                 * Invalid/expired client JWTs are authentication failures,
+                 * not application failures. A stale browser session after
+                 * logout, restore, JWT_SECRET rotation, or an older ARIS
+                 * build should receive 401 without ERROR-level log spam.
                  */
-                if !matches!(
-                    error.kind(),
-                    jsonwebtoken::errors::ErrorKind::ExpiredSignature
-                ) {
-                    crate::report_error!(
-                        format!("failed to extract JWT claims: {}", error),
-                        "function",
-                        "Claims::from_request_parts()"
-                    );
-                }
-
                 AuthError::InvalidToken
             })?;
 
