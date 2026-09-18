@@ -118,10 +118,22 @@ fn normalize_match_mode(value: Option<&str>) -> &'static str {
 }
 
 fn escape_like(value: &str) -> String {
+    /*
+     * Use one explicit SQLite LIKE escape character.
+     *
+     * SQLite does not interpret backslash escapes in ordinary SQL string
+     * literals, so using two backslashes inside ESCAPE produces a two-
+     * character string and fails with:
+     *
+     *     ESCAPE expression must be a single character
+     *
+     * Escape ! first, then LIKE wildcards, so literal searches for !, %, and
+     * _ remain correct.
+     */
     value
-        .replace('\\', "\\\\")
-        .replace('%', "\\%")
-        .replace('_', "\\_")
+        .replace('!', "!!")
+        .replace('%', "!%")
+        .replace('_', "!_")
 }
 
 fn search_pattern(value: &str, match_mode: &str) -> String {
@@ -921,13 +933,13 @@ fn build_where_clause(
                     WHERE rv.record_uid = e.uid
                       AND f.active = 1
                       AND f.searchable = 1
-                      AND LOWER({expression}) LIKE LOWER(?) ESCAPE '\\'
+                      AND LOWER({expression}) LIKE LOWER(?) ESCAPE '!'
                 )
                 OR EXISTS (
                     SELECT 1
                     FROM aris_attachments af
                     WHERE af.entry_uid = e.uid
-                      AND LOWER(af.file_name) LIKE LOWER(?) ESCAPE '\\'
+                      AND LOWER(af.file_name) LIKE LOWER(?) ESCAPE '!'
                 )
             )"#
         ));
@@ -983,7 +995,7 @@ fn build_where_clause(
                       ON f.uid = rv.field_uid
                     WHERE rv.record_uid = e.uid
                       AND f.uid = ?
-                      AND LOWER({expression}) LIKE LOWER(?) ESCAPE '\\'
+                      AND LOWER({expression}) LIKE LOWER(?) ESCAPE '!'
                 )"#
             ));
 
