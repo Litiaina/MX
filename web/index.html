@@ -2869,16 +2869,16 @@
           </div>
 
           <div class="field">
-            <label for="officeFilter">Office</label>
+            <label for="officeFilter" id="officeFilterLabel">Primary field</label>
             <select id="officeFilter">
-              <option value="">All offices</option>
+              <option value="">All values</option>
             </select>
           </div>
 
           <div class="field">
-            <label for="routeFilter">Routed to</label>
+            <label for="routeFilter" id="routeFilterLabel">Secondary field</label>
             <select id="routeFilter">
-              <option value="">All destinations</option>
+              <option value="">All values</option>
             </select>
           </div>
 
@@ -2987,15 +2987,15 @@
 
         <section class="insight-ribbon">
           <div class="insight">
-            <div class="insight-label">Busiest office</div>
+            <div class="insight-label" id="insightOfficeLabel">Top primary field value</div>
             <div class="insight-value" id="insightOffice">—</div>
           </div>
           <div class="insight">
-            <div class="insight-label">Top routing destination</div>
+            <div class="insight-label" id="insightRouteLabel">Top secondary field value</div>
             <div class="insight-value" id="insightRoute">—</div>
           </div>
           <div class="insight">
-            <div class="insight-label">Highest current-year control no.</div>
+            <div class="insight-label" id="insightControlLabel">Highest auto number</div>
             <div class="insight-value" id="insightControl">—</div>
           </div>
           <div class="insight">
@@ -3016,8 +3016,8 @@
           <article class="card">
             <div class="card-head">
               <div>
-                <h3>Record volume over time</h3>
-                <p>Counts are based on the stored business record date.</p>
+                <h3 id="trendTitle">Record volume over time</h3>
+                <p id="trendDescription">Counts are based on the stored business record date.</p>
               </div>
               <div class="card-head-stat">
                 <strong id="trendPeakValue">—</strong>
@@ -3034,12 +3034,12 @@
           <article class="card">
             <div class="card-head">
               <div>
-                <h3>Records by office</h3>
-                <p>Top originating offices within the selected reporting scope.</p>
+                <h3 id="officeCardTitle">Records by primary field</h3>
+                <p id="officeCardDescription">Top values within the selected reporting scope.</p>
               </div>
               <div class="card-head-stat">
                 <strong id="officeTopShare">—</strong>
-                <span>top office share</span>
+                <span id="officeTopShareLabel">top value share</span>
               </div>
             </div>
             <div class="card-body">
@@ -3050,8 +3050,8 @@
 
         <div class="section-head">
           <div>
-            <h2>Routing and document profile</h2>
-            <p>Understand where records are routed and what kinds of files are attached.</p>
+            <h2 id="routingSectionTitle">Field and document profile</h2>
+            <p id="routingSectionDescription">Understand record distribution and what kinds of files are attached.</p>
           </div>
         </div>
 
@@ -3059,8 +3059,8 @@
           <article class="card">
             <div class="card-head">
               <div>
-                <h3>Routing destinations</h3>
-                <p>Top values from the record's routing field.</p>
+                <h3 id="routeCardTitle">Secondary field distribution</h3>
+                <p id="routeCardDescription">Top values from a selected dashboard field.</p>
               </div>
             </div>
             <div class="card-body">
@@ -3123,7 +3123,7 @@
         <div class="section-head">
           <div>
             <h2>Management indicators</h2>
-            <p>Throughput, requestor concentration, weekday patterns, and record completeness.</p>
+            <p id="managementDescription">Throughput, field concentration, and record completeness.</p>
           </div>
         </div>
 
@@ -3131,8 +3131,8 @@
           <article class="card">
             <div class="card-head">
               <div>
-                <h3>Monthly throughput</h3>
-                <p>Record-date totals for the most recent 12 calendar months.</p>
+                <h3 id="monthlyTitle">Monthly throughput</h3>
+                <p id="monthlyDescription">Totals for the most recent 12 calendar months.</p>
               </div>
             </div>
             <div class="card-body">
@@ -3145,8 +3145,8 @@
           <article class="card">
             <div class="card-head">
               <div>
-                <h3>Top requestors</h3>
-                <p>Most frequently represented requestors in the selected scope.</p>
+                <h3 id="requestorCardTitle">Tertiary field distribution</h3>
+                <p id="requestorCardDescription">Most frequently represented values in the selected scope.</p>
               </div>
             </div>
             <div class="card-body">
@@ -3166,8 +3166,8 @@
                 <div class="quality-item">
                   <div class="quality-icon">✓</div>
                   <div class="quality-copy">
-                    <strong>Required-field completeness</strong>
-                    <span>Date, office, requestor, subject, and routing.</span>
+                    <strong id="qualityRequiredLabel">Required-field completeness</strong>
+                    <span id="qualityRequiredDesc">Required fields configured in the current schema.</span>
                   </div>
                   <div class="quality-value" id="qualityRequired">—</div>
                 </div>
@@ -3175,8 +3175,8 @@
                 <div class="quality-item">
                   <div class="quality-icon">#</div>
                   <div class="quality-copy">
-                    <strong>Control-number duplicates</strong>
-                    <span>Checked within each calendar year.</span>
+                    <strong id="qualityDuplicatesLabel">Auto-number duplicates</strong>
+                    <span id="qualityDuplicatesDesc">Duplicate values in the configured auto-number field.</span>
                   </div>
                   <div class="quality-value" id="qualityDuplicates">—</div>
                 </div>
@@ -3184,8 +3184,8 @@
                 <div class="quality-item">
                   <div class="quality-icon">R</div>
                   <div class="quality-copy">
-                    <strong>Remarks coverage</strong>
-                    <span>Records containing non-empty remarks.</span>
+                    <strong id="qualityRemarksLabel">Narrative-field coverage</strong>
+                    <span id="qualityRemarksDesc">Records containing a non-empty long-text field.</span>
                   </div>
                   <div class="quality-value" id="qualityRemarks">—</div>
                 </div>
@@ -3193,8 +3193,8 @@
                 <div class="quality-item">
                   <div class="quality-icon">D</div>
                   <div class="quality-copy">
-                    <strong>Valid record dates</strong>
-                    <span>Rows with a parseable YYYY-MM-DD date.</span>
+                    <strong id="qualityDatesLabel">Valid date values</strong>
+                    <span id="qualityDatesDesc">Rows with a parseable date in the configured date field.</span>
                   </div>
                   <div class="quality-value" id="qualityDates">—</div>
                 </div>
@@ -3216,11 +3216,11 @@
             <table class="data-table">
               <thead>
                 <tr>
-                  <th>Control No.</th>
-                  <th>Date</th>
-                  <th>Office</th>
-                  <th>Requestor / Subject</th>
-                  <th>Routed To</th>
+                  <th id="recentHeadControl">Record</th>
+                  <th id="recentHeadDate">Date</th>
+                  <th id="recentHeadPrimary">Primary field</th>
+                  <th id="recentHeadSummary">Summary</th>
+                  <th id="recentHeadSecondary">Secondary field</th>
                   <th>Files</th>
                 </tr>
               </thead>
@@ -9761,145 +9761,12 @@ bootstrapSession();
 
     .schema-system-editor-grid {
       display: grid;
-      grid-template-columns: minmax(180px, 320px);
+      grid-template-columns: 1fr 1fr;
       gap: 10px;
     }
 
     .schema-fixed-flag {
       opacity: .78;
-    }
-
-    .schema-order-section {
-      display: grid;
-      gap: 10px;
-      margin: 16px 0 6px;
-      padding: 13px;
-      border: 1px solid var(--line);
-      border-radius: 11px;
-      background: var(--panel);
-    }
-
-    .schema-order-head > div {
-      display: grid;
-      gap: 3px;
-    }
-
-    .schema-order-head strong {
-      color: var(--text);
-      font-size: .875rem;
-    }
-
-    .schema-order-head span {
-      color: var(--muted);
-      font-size: .71875rem;
-      line-height: 1.45;
-    }
-
-    .schema-order-list {
-      display: grid;
-      gap: 6px;
-    }
-
-    .schema-order-item {
-      display: grid;
-      grid-template-columns: 40px minmax(0, 1fr) 78px;
-      column-gap: 10px;
-      align-items: center;
-      min-height: 52px;
-      padding: 6px 8px;
-      border: 1px solid var(--line-soft);
-      border-radius: 9px;
-      background: var(--surface-2);
-      transition:
-        border-color .12s ease,
-        background .12s ease,
-        opacity .12s ease;
-    }
-
-    .schema-order-item.dragging {
-      opacity: .48;
-    }
-
-    .schema-order-item.drop-before {
-      border-top: 3px solid var(--primary);
-    }
-
-    .schema-order-item.drop-after {
-      border-bottom: 3px solid var(--primary);
-    }
-
-    .schema-order-handle {
-      width: 34px;
-      height: 34px;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      justify-self: center;
-      align-self: center;
-      padding: 0;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      color: var(--muted);
-      background: var(--panel);
-      cursor: grab;
-      user-select: none;
-      line-height: 1;
-    }
-
-    .schema-order-handle svg {
-      width: 14px;
-      height: 18px;
-      display: block;
-      flex: 0 0 auto;
-    }
-
-    .schema-order-handle:active {
-      cursor: grabbing;
-    }
-
-    .schema-order-copy {
-      min-width: 0;
-      align-self: center;
-    }
-
-    .schema-order-copy strong,
-    .schema-order-copy span {
-      display: block;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-
-    .schema-order-copy strong {
-      color: var(--text);
-      font-size: .8125rem;
-    }
-
-    .schema-order-copy span {
-      margin-top: 2px;
-      color: var(--muted);
-      font-size: .65625rem;
-    }
-
-    .schema-order-actions {
-      width: 78px;
-      display: grid;
-      grid-template-columns: 36px 36px;
-      gap: 6px;
-      align-items: center;
-      justify-content: end;
-      justify-self: end;
-    }
-
-    .schema-order-actions .btn {
-      width: 36px;
-      min-width: 36px;
-      height: 36px;
-      min-height: 36px;
-      padding: 0;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
     }
 
     .schema-fields {
@@ -9947,7 +9814,7 @@ bootstrapSession();
 
     .schema-field-editor {
       display: grid;
-      grid-template-columns: 1.6fr minmax(110px, .65fr);
+      grid-template-columns: 1.6fr repeat(2, minmax(90px, .65fr));
       gap: 10px;
       padding: 12px 13px;
       align-items: end;
@@ -10464,21 +10331,6 @@ bootstrapSession();
   </div>
   <div class="schema-fields" id="schemaSystemFields"></div>
 </div>
-
-<div class="schema-order-section">
-  <div class="schema-order-head">
-    <div>
-      <strong>Field Order</strong>
-      <span>
-        Drag fields to change their order. Custom fields use this order in forms and tables;
-        Attached Files uses it for its table-column position. Changes are saved automatically.
-      </span>
-    </div>
-  </div>
-  <div class="schema-order-list" id="schemaOrderList"></div>
-  <div class="status" id="schemaOrderStatus">Drag a field or use the arrow buttons to reorder.</div>
-</div>
-
 <div class="status" id="schemaStatus">Loading record structure...</div>
 <div class="schema-fields" id="schemaFields"></div>
 </div>
@@ -11084,7 +10936,6 @@ const ENDPOINTS = {
     get: "/aris/v1/admin/schema",
     create: "/aris/v1/admin/schema/fields",
     update: uid => `/aris/v1/admin/schema/fields/${encodeURIComponent(uid)}`,
-    order: "/aris/v1/admin/schema/order",
     systemField: key =>
       `/aris/v1/admin/schema/system/${encodeURIComponent(key)}`
   },
@@ -11117,8 +10968,6 @@ const state = {
   schemaRevision: 0,
   schemaFields: [],
   schemaSystemFields: [],
-  schemaOrderSaving: false,
-  schemaOrderDragKey: null,
   storageLayout: null,
   storageFolderUids: [],
   storagePrefixFieldUid: null
@@ -11178,8 +11027,6 @@ const els = {
   createFieldBtn: document.getElementById("createFieldBtn"),
   schemaStatus: document.getElementById("schemaStatus"),
   schemaSystemFields: document.getElementById("schemaSystemFields"),
-  schemaOrderList: document.getElementById("schemaOrderList"),
-  schemaOrderStatus: document.getElementById("schemaOrderStatus"),
   schemaFields: document.getElementById("schemaFields"),
   storageFolderFieldSelect: document.getElementById("storageFolderFieldSelect"),
   storageAddFolderBtn: document.getElementById("storageAddFolderBtn"),
@@ -11911,6 +11758,15 @@ function renderSystemSchemaFields() {
             >
           </label>
 
+          <label>
+            POSITION
+            <input
+              type="number"
+              min="0"
+              data-system-position="${escapeHtml(field.key)}"
+              value="${Number(field.position || 0)}"
+            >
+          </label>
         </div>
 
         <div class="schema-field-flags">
@@ -11962,9 +11818,8 @@ async function saveSystemSchemaField(key) {
 
   const payload = {
     table_visible: Boolean(query("table-visible")?.checked),
-    table_priority: Number(
-      query("priority")?.value || field.table_priority || 0
-    )
+    table_priority: Number(query("priority")?.value || field.table_priority || 0),
+    position: Number(query("position")?.value || field.position || 0)
   };
 
   els.schemaStatus.textContent = `Saving ${field.label} settings...`;
@@ -11984,200 +11839,6 @@ async function saveSystemSchemaField(key) {
   } catch (error) {
     els.schemaStatus.textContent = error.message;
   }
-}
-
-function schemaOrderItems() {
-  return [
-    ...state.schemaFields
-      .filter(field => field.active)
-      .map(field => ({
-        kind: "field",
-        id: field.uid,
-        label: field.label,
-        meta: fieldTypeLabel(field.field_type),
-        position: Number(field.position || 0)
-      })),
-
-    ...state.schemaSystemFields.map(field => ({
-      kind: "system",
-      id: field.key,
-      label: field.label,
-      meta: "Built-in system field",
-      position: Number(field.position || 0)
-    }))
-  ].sort((a, b) =>
-    a.position - b.position ||
-    String(a.label || "").localeCompare(String(b.label || ""))
-  );
-}
-
-function schemaOrderKey(item) {
-  return `${item.kind}:${item.id}`;
-}
-
-function clearSchemaOrderDropMarkers() {
-  els.schemaOrderList
-    .querySelectorAll(".drop-before, .drop-after")
-    .forEach(element => {
-      element.classList.remove("drop-before", "drop-after");
-    });
-}
-
-function applySchemaOrderLocally(items) {
-  items.forEach((item, index) => {
-    const position = index * 10;
-
-    if (item.kind === "field") {
-      const field =
-        state.schemaFields.find(value => value.uid === item.id);
-
-      if (field) {
-        field.position = position;
-      }
-    } else if (item.kind === "system") {
-      const field =
-        state.schemaSystemFields.find(value => value.key === item.id);
-
-      if (field) {
-        field.position = position;
-      }
-    }
-  });
-}
-
-function renderSchemaOrder() {
-  const items = schemaOrderItems();
-
-  if (!items.length) {
-    els.schemaOrderList.innerHTML =
-      `<div class="schema-empty"><strong>No fields to order.</strong><span>Add a field first.</span></div>`;
-    return;
-  }
-
-  els.schemaOrderList.innerHTML = items.map((item, index) => {
-    const key = schemaOrderKey(item);
-
-    return `
-      <div
-        class="schema-order-item"
-        data-schema-order-key="${escapeHtml(key)}"
-      >
-        <button
-          class="schema-order-handle"
-          type="button"
-          draggable="${state.schemaOrderSaving ? "false" : "true"}"
-          data-schema-drag="${escapeHtml(key)}"
-          aria-label="Drag ${escapeHtml(item.label)}"
-          title="Drag to reorder"
-          ${state.schemaOrderSaving ? "disabled" : ""}
-        >
-          <svg viewBox="0 0 14 18" aria-hidden="true" focusable="false">
-            <circle cx="4" cy="3" r="1.4" fill="currentColor"></circle>
-            <circle cx="10" cy="3" r="1.4" fill="currentColor"></circle>
-            <circle cx="4" cy="9" r="1.4" fill="currentColor"></circle>
-            <circle cx="10" cy="9" r="1.4" fill="currentColor"></circle>
-            <circle cx="4" cy="15" r="1.4" fill="currentColor"></circle>
-            <circle cx="10" cy="15" r="1.4" fill="currentColor"></circle>
-          </svg>
-        </button>
-
-        <div class="schema-order-copy">
-          <strong>${escapeHtml(item.label)}</strong>
-          <span>${escapeHtml(item.meta)}${item.kind === "system" ? " · System" : ""}</span>
-        </div>
-
-        <div class="schema-order-actions">
-          <button
-            class="btn btn-light btn-small"
-            type="button"
-            data-schema-order-up="${escapeHtml(key)}"
-            aria-label="Move ${escapeHtml(item.label)} up"
-            ${index === 0 || state.schemaOrderSaving ? "disabled" : ""}
-          >
-            ↑
-          </button>
-
-          <button
-            class="btn btn-light btn-small"
-            type="button"
-            data-schema-order-down="${escapeHtml(key)}"
-            aria-label="Move ${escapeHtml(item.label)} down"
-            ${index === items.length - 1 || state.schemaOrderSaving ? "disabled" : ""}
-          >
-            ↓
-          </button>
-        </div>
-      </div>
-    `;
-  }).join("");
-}
-
-async function saveSchemaOrder(items) {
-  if (state.schemaOrderSaving) {
-    return;
-  }
-
-  state.schemaOrderSaving = true;
-  applySchemaOrderLocally(items);
-  renderSchemaOrder();
-  renderSchemaFields();
-  renderSystemSchemaFields();
-  els.schemaOrderStatus.textContent = "Saving field order...";
-
-  try {
-    const data = await requestJson(
-      ENDPOINTS.schema.order,
-      {
-        method: "PUT",
-        body: {
-          items: items.map(item => ({
-            kind: item.kind,
-            id: item.id
-          }))
-        }
-      }
-    );
-
-    await loadRecordStructure();
-    window.ARIS_DATA?.schemaChanged?.();
-
-    els.schemaOrderStatus.textContent =
-      `Field order saved · schema revision ${Number(data?.revision || state.schemaRevision || 0)}`;
-
-    showToast("Field order saved.");
-  } catch (error) {
-    els.schemaOrderStatus.textContent = error.message;
-    showToast(error.message, "error");
-
-    await loadRecordStructure();
-  } finally {
-    state.schemaOrderSaving = false;
-    renderSchemaOrder();
-  }
-}
-
-function moveSchemaOrderItem(key, direction) {
-  if (state.schemaOrderSaving) {
-    return;
-  }
-
-  const items = schemaOrderItems();
-  const index = items.findIndex(item => schemaOrderKey(item) === key);
-
-  if (index < 0) {
-    return;
-  }
-
-  const targetIndex = index + direction;
-
-  if (targetIndex < 0 || targetIndex >= items.length) {
-    return;
-  }
-
-  [items[index], items[targetIndex]] =
-    [items[targetIndex], items[index]];
-
-  saveSchemaOrder(items);
 }
 
 function renderSchemaFields() {
@@ -12203,6 +11864,7 @@ function renderSchemaFields() {
       <div class="schema-field-editor">
         <label>LABEL<input data-schema-label="${escapeHtml(field.uid)}" value="${escapeHtml(field.label)}"></label>
         <label>PRIORITY<input type="number" data-schema-priority="${escapeHtml(field.uid)}" value="${Number(field.table_priority || 0)}"></label>
+        <label>POSITION<input type="number" min="0" data-schema-position="${escapeHtml(field.uid)}" value="${Number(field.position || 0)}"></label>
         <div class="schema-field-flags">
           <label class="schema-inline-check"><input type="checkbox" data-schema-required="${escapeHtml(field.uid)}" ${field.required ? "checked" : ""}> Required</label>
           <label class="schema-inline-check"><input type="checkbox" data-schema-unique="${escapeHtml(field.uid)}" ${field.unique_value ? "checked" : ""} ${field.field_type === "auto_number" ? "disabled" : ""}> Unique</label>
@@ -12378,7 +12040,6 @@ async function loadRecordStructure() {
 
     renderSystemSchemaFields();
     renderSchemaFields();
-    renderSchemaOrder();
 
     const activeCount =
       state.schemaFields.filter(field => field.active).length;
@@ -12468,6 +12129,7 @@ async function saveRecordField(uid) {
     sortable: field.field_type === "long_text" ? false : Boolean(query("sortable")?.checked),
     table_visible: Boolean(query("table-visible")?.checked),
     table_priority: Number(query("priority")?.value || 0),
+    position: Math.max(0, Number(query("position")?.value || 0)),
     config: fieldConfigFromEditor(field)
   };
 
@@ -12521,8 +12183,7 @@ const AUDIT_ACTION_LABELS = {
   "backup.verify": "Verified database backup",
   "backup.download": "Downloaded database backup",
   "schema.field.create": "Created record field",
-  "schema.field.update": "Changed record field",
-  "schema.order.update": "Changed field order"
+  "schema.field.update": "Changed record field"
 };
 
 function auditActionLabel(action) {
@@ -13090,136 +12751,6 @@ els.schemaSystemFields.addEventListener("click", event => {
   saveSystemSchemaField(button.dataset.saveSystemField);
 });
 
-els.schemaOrderList.addEventListener("click", event => {
-  const up = event.target.closest("[data-schema-order-up]");
-  const down = event.target.closest("[data-schema-order-down]");
-
-  if (up) {
-    moveSchemaOrderItem(up.dataset.schemaOrderUp, -1);
-    return;
-  }
-
-  if (down) {
-    moveSchemaOrderItem(down.dataset.schemaOrderDown, 1);
-  }
-});
-
-els.schemaOrderList.addEventListener("dragstart", event => {
-  const handle = event.target.closest("[data-schema-drag]");
-
-  if (!handle || state.schemaOrderSaving) {
-    event.preventDefault();
-    return;
-  }
-
-  const item = handle.closest(".schema-order-item");
-  const key = item?.dataset.schemaOrderKey;
-
-  if (!key) {
-    event.preventDefault();
-    return;
-  }
-
-  state.schemaOrderDragKey = key;
-  item.classList.add("dragging");
-
-  if (event.dataTransfer) {
-    event.dataTransfer.effectAllowed = "move";
-    event.dataTransfer.setData("text/plain", key);
-  }
-});
-
-els.schemaOrderList.addEventListener("dragover", event => {
-  if (!state.schemaOrderDragKey || state.schemaOrderSaving) {
-    return;
-  }
-
-  const target = event.target.closest(".schema-order-item");
-
-  if (
-    !target ||
-    target.dataset.schemaOrderKey === state.schemaOrderDragKey
-  ) {
-    return;
-  }
-
-  event.preventDefault();
-  clearSchemaOrderDropMarkers();
-
-  const rect = target.getBoundingClientRect();
-  const after = event.clientY >= rect.top + rect.height / 2;
-
-  target.classList.add(after ? "drop-after" : "drop-before");
-
-  if (event.dataTransfer) {
-    event.dataTransfer.dropEffect = "move";
-  }
-});
-
-els.schemaOrderList.addEventListener("drop", event => {
-  if (!state.schemaOrderDragKey || state.schemaOrderSaving) {
-    return;
-  }
-
-  const target = event.target.closest(".schema-order-item");
-
-  if (!target) {
-    return;
-  }
-
-  event.preventDefault();
-
-  const sourceKey = state.schemaOrderDragKey;
-  const targetKey = target.dataset.schemaOrderKey;
-
-  if (!targetKey || sourceKey === targetKey) {
-    clearSchemaOrderDropMarkers();
-    return;
-  }
-
-  const rect = target.getBoundingClientRect();
-  const after = event.clientY >= rect.top + rect.height / 2;
-
-  const items = schemaOrderItems();
-  const sourceIndex =
-    items.findIndex(item => schemaOrderKey(item) === sourceKey);
-
-  if (sourceIndex < 0) {
-    clearSchemaOrderDropMarkers();
-    return;
-  }
-
-  const [moved] = items.splice(sourceIndex, 1);
-
-  let targetIndex =
-    items.findIndex(item => schemaOrderKey(item) === targetKey);
-
-  if (targetIndex < 0) {
-    clearSchemaOrderDropMarkers();
-    return;
-  }
-
-  if (after) {
-    targetIndex += 1;
-  }
-
-  items.splice(targetIndex, 0, moved);
-
-  state.schemaOrderDragKey = null;
-  clearSchemaOrderDropMarkers();
-
-  saveSchemaOrder(items);
-});
-
-els.schemaOrderList.addEventListener("dragend", event => {
-  state.schemaOrderDragKey = null;
-  clearSchemaOrderDropMarkers();
-
-  event.target
-    .closest(".schema-order-item")
-    ?.classList.remove("dragging");
-});
-
 els.schemaFields.addEventListener("click", event => {
   const save = event.target.closest("[data-save-schema-field]");
   if (save) {
@@ -13539,6 +13070,38 @@ initialize();
       qualityDates: document.getElementById("qualityDates"),
 
       recentRecordsBody: document.getElementById("recentRecordsBody"),
+      officeFilterLabel: document.getElementById("officeFilterLabel"),
+      routeFilterLabel: document.getElementById("routeFilterLabel"),
+      insightOfficeLabel: document.getElementById("insightOfficeLabel"),
+      insightRouteLabel: document.getElementById("insightRouteLabel"),
+      insightControlLabel: document.getElementById("insightControlLabel"),
+      trendTitle: document.getElementById("trendTitle"),
+      trendDescription: document.getElementById("trendDescription"),
+      officeCardTitle: document.getElementById("officeCardTitle"),
+      officeCardDescription: document.getElementById("officeCardDescription"),
+      officeTopShareLabel: document.getElementById("officeTopShareLabel"),
+      routingSectionTitle: document.getElementById("routingSectionTitle"),
+      routingSectionDescription: document.getElementById("routingSectionDescription"),
+      routeCardTitle: document.getElementById("routeCardTitle"),
+      routeCardDescription: document.getElementById("routeCardDescription"),
+      managementDescription: document.getElementById("managementDescription"),
+      monthlyTitle: document.getElementById("monthlyTitle"),
+      monthlyDescription: document.getElementById("monthlyDescription"),
+      requestorCardTitle: document.getElementById("requestorCardTitle"),
+      requestorCardDescription: document.getElementById("requestorCardDescription"),
+      qualityRequiredLabel: document.getElementById("qualityRequiredLabel"),
+      qualityRequiredDesc: document.getElementById("qualityRequiredDesc"),
+      qualityDuplicatesLabel: document.getElementById("qualityDuplicatesLabel"),
+      qualityDuplicatesDesc: document.getElementById("qualityDuplicatesDesc"),
+      qualityRemarksLabel: document.getElementById("qualityRemarksLabel"),
+      qualityRemarksDesc: document.getElementById("qualityRemarksDesc"),
+      qualityDatesLabel: document.getElementById("qualityDatesLabel"),
+      qualityDatesDesc: document.getElementById("qualityDatesDesc"),
+      recentHeadControl: document.getElementById("recentHeadControl"),
+      recentHeadDate: document.getElementById("recentHeadDate"),
+      recentHeadPrimary: document.getElementById("recentHeadPrimary"),
+      recentHeadSummary: document.getElementById("recentHeadSummary"),
+      recentHeadSecondary: document.getElementById("recentHeadSecondary"),
 
       auditSection: document.getElementById("auditSection"),
       auditLoaded: document.getElementById("auditLoaded"),
@@ -14984,7 +14547,8 @@ initialize();
     }
 
     function populateDimensionFilters(
-      dimensions = {}
+      dimensions = {},
+      meta = {}
     ) {
       const currentOffice =
         els.officeFilter.value;
@@ -15006,14 +14570,28 @@ initialize();
           ? dimensions.routes
           : [];
 
+      const primaryLabel =
+        dashboardFieldLabel(
+          meta.primary_dimension,
+          "Primary field"
+        );
+
+      const secondaryLabel =
+        dashboardFieldLabel(
+          meta.secondary_dimension,
+          "Secondary field"
+        );
+
+      setFilterLabels(meta);
+
       els.officeFilter.innerHTML =
-        `<option value="">All offices</option>` +
+        `<option value="">All ${escapeHtml(primaryLabel.toLowerCase())} values</option>` +
         offices.map(value =>
           `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`
         ).join("");
 
       els.routeFilter.innerHTML =
-        `<option value="">All destinations</option>` +
+        `<option value="">All ${escapeHtml(secondaryLabel.toLowerCase())} values</option>` +
         routes.map(value =>
           `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`
         ).join("");
@@ -15165,7 +14743,8 @@ initialize();
           new Date();
 
         populateDimensionFilters(
-          data?.dimensions
+          data?.dimensions,
+          data?.meta || {}
         );
 
         renderDashboard();
@@ -15562,6 +15141,107 @@ initialize();
       }).join("");
     }
 
+    function dashboardFieldLabel(field, fallback) {
+      return field?.label || fallback;
+    }
+
+    function lowerLabel(field, fallback) {
+      return dashboardFieldLabel(field, fallback).toLowerCase();
+    }
+
+    function setFilterLabels(meta = {}) {
+      const primary = meta.primary_dimension || null;
+      const secondary = meta.secondary_dimension || null;
+
+      els.officeFilterLabel.textContent = dashboardFieldLabel(primary, "Primary field");
+      els.routeFilterLabel.textContent = dashboardFieldLabel(secondary, "Secondary field");
+    }
+
+    function setDashboardHeadings(meta = {}) {
+      const primary = meta.primary_dimension || null;
+      const secondary = meta.secondary_dimension || null;
+      const tertiary = meta.tertiary_dimension || null;
+      const dateField = meta.date_field || null;
+      const autoField = meta.auto_number_field || null;
+      const narrativeField = meta.narrative_field || null;
+      const requiredFields = Array.isArray(meta.required_fields) ? meta.required_fields : [];
+
+      els.insightOfficeLabel.textContent = `Top ${lowerLabel(primary, "primary field value")}`;
+      els.insightRouteLabel.textContent = `Top ${lowerLabel(secondary, "secondary field value")}`;
+      els.insightControlLabel.textContent = autoField
+        ? `Highest ${lowerLabel(autoField, "auto number")}`
+        : "Auto number";
+
+      els.trendTitle.textContent = dateField
+        ? `${dashboardFieldLabel(dateField, "Record date")} volume over time`
+        : "Record volume over time";
+      els.trendDescription.textContent = dateField
+        ? `Counts are based on ${lowerLabel(dateField, "the configured date field")}.`
+        : "No date field is configured for time-based reporting yet.";
+
+      els.officeCardTitle.textContent = `Records by ${lowerLabel(primary, "primary field")}`;
+      els.officeCardDescription.textContent = `Top ${lowerLabel(primary, "field values")} within the selected reporting scope.`;
+      els.officeTopShareLabel.textContent = `top ${lowerLabel(primary, "value")} share`;
+
+      els.routingSectionTitle.textContent = "Field and document profile";
+      els.routingSectionDescription.textContent = "Understand record distribution and what kinds of files are attached.";
+      els.routeCardTitle.textContent = secondary
+        ? `${dashboardFieldLabel(secondary, "Secondary field")} distribution`
+        : "Secondary field distribution";
+      els.routeCardDescription.textContent = secondary
+        ? `Top values from ${lowerLabel(secondary, "the selected field")}.`
+        : "Top values from the secondary dashboard field.";
+
+      els.managementDescription.textContent = "Throughput, field concentration, and record completeness.";
+      els.monthlyTitle.textContent = dateField
+        ? `Monthly ${lowerLabel(dateField, "date")} throughput`
+        : "Monthly throughput";
+      els.monthlyDescription.textContent = dateField
+        ? `Totals for the most recent 12 calendar months using ${lowerLabel(dateField, "the configured date field")}.`
+        : "No date field is configured for month-by-month reporting yet.";
+
+      els.requestorCardTitle.textContent = tertiary
+        ? `${dashboardFieldLabel(tertiary, "Tertiary field")} distribution`
+        : "Tertiary field distribution";
+      els.requestorCardDescription.textContent = tertiary
+        ? `Most frequently represented ${lowerLabel(tertiary, "values")} in the selected scope.`
+        : "Most frequently represented values in the selected scope.";
+
+      els.qualityRequiredLabel.textContent = "Required-field completeness";
+      els.qualityRequiredDesc.textContent = requiredFields.length
+        ? requiredFields.map(field => field.label).join(", ")
+        : "No required fields are configured.";
+
+      els.qualityDuplicatesLabel.textContent = autoField
+        ? `${dashboardFieldLabel(autoField, "Auto number")} duplicates`
+        : "Auto-number duplicates";
+      els.qualityDuplicatesDesc.textContent = autoField
+        ? `Duplicate values in ${lowerLabel(autoField, "the configured auto-number field")}.`
+        : "No auto-number field is configured.";
+
+      els.qualityRemarksLabel.textContent = narrativeField
+        ? `${dashboardFieldLabel(narrativeField, "Narrative field")} coverage`
+        : "Narrative-field coverage";
+      els.qualityRemarksDesc.textContent = narrativeField
+        ? `Records containing a non-empty ${lowerLabel(narrativeField, "long-text field")}.`
+        : "No long-text field is configured.";
+
+      els.qualityDatesLabel.textContent = dateField
+        ? `Valid ${dashboardFieldLabel(dateField, "date")} values`
+        : "Valid date values";
+      els.qualityDatesDesc.textContent = dateField
+        ? `Rows with a parseable date in ${lowerLabel(dateField, "the configured date field")}.`
+        : "No date field is configured.";
+
+      els.recentHeadControl.textContent = autoField ? dashboardFieldLabel(autoField, "Record") : "Record";
+      els.recentHeadDate.textContent = dateField ? dashboardFieldLabel(dateField, "Date") : "Date";
+      els.recentHeadPrimary.textContent = dashboardFieldLabel(primary, "Primary field");
+      els.recentHeadSummary.textContent = narrativeField || tertiary
+        ? [tertiary?.label, narrativeField?.label].filter(Boolean).join(" / ")
+        : "Summary";
+      els.recentHeadSecondary.textContent = dashboardFieldLabel(secondary, "Secondary field");
+    }
+
     function renderDashboard() {
       const summary =
         state.dashboard;
@@ -15572,6 +15252,34 @@ initialize();
 
       const scope =
         summary.scope || {};
+
+      const meta =
+        summary.meta || {};
+
+      const primaryField =
+        meta.primary_dimension || null;
+
+      const secondaryField =
+        meta.secondary_dimension || null;
+
+      const tertiaryField =
+        meta.tertiary_dimension || null;
+
+      const dateField =
+        meta.date_field || null;
+
+      const autoField =
+        meta.auto_number_field || null;
+
+      const narrativeField =
+        meta.narrative_field || null;
+
+      const requiredFields =
+        Array.isArray(meta.required_fields)
+          ? meta.required_fields
+          : [];
+
+      setDashboardHeadings(meta);
 
       const total =
         Number(scope.records || 0);
@@ -15648,7 +15356,7 @@ initialize();
         formatNumber(scope.offices || 0);
 
       els.kpiOfficesMeta.textContent =
-        "unique offices in current scope";
+        `unique ${lowerLabel(primaryField, "primary field")} values in current scope`;
 
       els.kpiCoverage.textContent =
         `${coverage}%`;
@@ -15660,7 +15368,7 @@ initialize();
         formatNumber(total);
 
       els.heroScopeMeta.textContent =
-        `${periodLabel()} · ${els.officeFilter.value || "All offices"}`;
+        `${periodLabel()} · ${els.officeFilter.value || `All ${lowerLabel(primaryField, "primary field")} values`}`;
 
       els.flowScopeTag.textContent =
         `${periodLabel()} · ${formatNumber(total)} records`;
@@ -15675,16 +15383,17 @@ initialize();
           ? `${routes[0].name} · ${formatNumber(routes[0].count)}`
           : "No data";
 
-      const currentYear =
-        new Date().getFullYear();
-
       const highest =
         Number(scope.highest_control || 0);
 
       els.insightControl.textContent =
-        highest
-          ? `${currentYear}-${String(highest).padStart(6, "0")}`
-          : "No current-year record";
+        autoField
+          ? (highest
+              ? (autoField.field_type === "auto_number"
+                  ? String(highest).padStart(6, "0")
+                  : String(highest))
+              : "No data")
+          : "N/A";
 
       els.insightFiles.textContent =
         total
@@ -15865,34 +15574,44 @@ initialize();
         summary.quality || {};
 
       const requiredPct =
-        percent(
-          quality.required_complete || 0,
-          total,
-          1
-        );
+        requiredFields.length
+          ? percent(
+              quality.required_complete || 0,
+              total,
+              1
+            )
+          : null;
 
       const remarksPct =
-        percent(
-          quality.remarks || 0,
-          total,
-          1
-        );
+        narrativeField
+          ? percent(
+              quality.remarks || 0,
+              total,
+              1
+            )
+          : null;
 
       const datesPct =
-        percent(
-          quality.valid_dates || 0,
-          total,
-          1
-        );
+        dateField
+          ? percent(
+              quality.valid_dates || 0,
+              total,
+              1
+            )
+          : null;
 
       els.qualityRequired.textContent =
-        `${requiredPct}%`;
+        requiredPct === null
+          ? "N/A"
+          : `${requiredPct}%`;
 
       qualityClass(
         els.qualityRequired,
-        requiredPct === 100
-          ? true
-          : null
+        requiredPct === null
+          ? null
+          : requiredPct === 100
+            ? true
+            : null
       );
 
       const duplicates =
@@ -15901,29 +15620,41 @@ initialize();
         );
 
       els.qualityDuplicates.textContent =
-        formatNumber(duplicates);
+        autoField
+          ? formatNumber(duplicates)
+          : "N/A";
 
       qualityClass(
         els.qualityDuplicates,
-        duplicates === 0
-      );
-
-      els.qualityRemarks.textContent =
-        `${remarksPct}%`;
-
-      qualityClass(
-        els.qualityRemarks,
-        remarksPct >= 75
-          ? true
+        autoField
+          ? duplicates === 0
           : null
       );
 
+      els.qualityRemarks.textContent =
+        remarksPct === null
+          ? "N/A"
+          : `${remarksPct}%`;
+
+      qualityClass(
+        els.qualityRemarks,
+        remarksPct === null
+          ? null
+          : remarksPct >= 75
+            ? true
+            : null
+      );
+
       els.qualityDates.textContent =
-        `${datesPct}%`;
+        datesPct === null
+          ? "N/A"
+          : `${datesPct}%`;
 
       qualityClass(
         els.qualityDates,
-        datesPct === 100
+        datesPct === null
+          ? null
+          : datesPct === 100
       );
 
       const recent =
@@ -15944,33 +15675,43 @@ initialize();
       } else {
         els.recentRecordsBody.innerHTML =
           recent.map(row => {
-            const control =
-              Number(row?.control_no || 0);
-
-            const controlLabel =
-              control
-                ? String(control).padStart(6, "0")
-                : "—";
-
             const files =
               Number(
                 row?.attachment_count || 0
               );
 
+            const controlLabel =
+              String(row?.control_value || "").trim() || "—";
+
+            const dateLabel =
+              String(row?.date_value || "").trim() || "—";
+
+            const primaryValue =
+              String(row?.primary_value || "").trim() || "Not specified";
+
+            const titleValue =
+              String(row?.summary_title || "").trim() || "No summary";
+
+            const subtitleValue =
+              String(row?.summary_subtitle || "").trim();
+
+            const secondaryValue =
+              String(row?.secondary_value || "").trim() || "—";
+
             return `
               <tr>
                 <td>
-                  <span class="record-control">#${escapeHtml(controlLabel)}</span>
+                  <span class="record-control">${escapeHtml(controlLabel)}</span>
                 </td>
-                <td>${escapeHtml(row?.date || "—")}</td>
+                <td>${escapeHtml(dateLabel)}</td>
                 <td>
-                  <span class="pill">${escapeHtml(row?.office || "Not specified")}</span>
+                  <span class="pill">${escapeHtml(primaryValue)}</span>
                 </td>
                 <td class="subject-cell">
-                  <strong title="${escapeHtml(row?.subject || "")}">${escapeHtml(row?.subject || "No subject")}</strong>
-                  <span title="${escapeHtml(row?.requestor || "")}">${escapeHtml(row?.requestor || "No requestor")}</span>
+                  <strong title="${escapeHtml(titleValue)}">${escapeHtml(titleValue)}</strong>
+                  <span title="${escapeHtml(subtitleValue)}">${escapeHtml(subtitleValue || "")}</span>
                 </td>
-                <td>${escapeHtml(row?.routed_to_div || "—")}</td>
+                <td>${escapeHtml(secondaryValue)}</td>
                 <td>
                   <span class="attachment-count">
                     ${formatNumber(files)} file${files === 1 ? "" : "s"}
@@ -15998,6 +15739,34 @@ initialize();
 
       const scope =
         summary.scope || {};
+
+      const meta =
+        summary.meta || {};
+
+      const primaryField =
+        meta.primary_dimension || null;
+
+      const secondaryField =
+        meta.secondary_dimension || null;
+
+      const tertiaryField =
+        meta.tertiary_dimension || null;
+
+      const dateField =
+        meta.date_field || null;
+
+      const autoField =
+        meta.auto_number_field || null;
+
+      const narrativeField =
+        meta.narrative_field || null;
+
+      const requiredFields =
+        Array.isArray(meta.required_fields)
+          ? meta.required_fields
+          : [];
+
+      setDashboardHeadings(meta);
 
       const rows = [
         ["metric", "value"],
