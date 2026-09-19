@@ -4,12 +4,12 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
-  <title>ARIS · Unified Workspace</title>
+  <title>MX · Unified Workspace</title>
   <link rel="icon" type="image/png" href="images/system-icon.png">
 
-  <script id="aris-theme-bootstrap">
+  <script id="mx-theme-bootstrap">
     (() => {
-      const key = "aris_theme";
+      const key = "mx_theme";
 
       try {
         const saved = localStorage.getItem(key);
@@ -24,10 +24,10 @@
     })();
   </script>
 
-  <script id="aris-display-bootstrap">
+  <script id="mx-display-bootstrap">
     (() => {
-      const AUTO_KEY = "aris_ui_scale_auto";
-      const VALUE_KEY = "aris_ui_scale_percent";
+      const AUTO_KEY = "mx_ui_scale_auto";
+      const VALUE_KEY = "mx_ui_scale_percent";
 
       function recommendedScalePercent() {
         const width = Math.max(
@@ -74,7 +74,7 @@
         : manual;
 
       document.documentElement.style.setProperty(
-        "--aris-font-scale",
+        "--mx-font-scale",
         String(percent / 100)
       );
 
@@ -130,7 +130,7 @@
 
       --sidebar-width: 272px;
       --topbar-height: 76px;
-      --aris-font-scale: 1;
+      --mx-font-scale: 1;
     }
 
     * {
@@ -2031,7 +2031,7 @@
 
 
   <!-- Modern visual layer: presentation-only; existing IDs/scripts/API bindings are untouched. -->
-  <style id="aris-modern-shell">
+  <style id="mx-modern-shell">
     :root {
       --bg: #f5f7fb;
       --surface: rgba(255, 255, 255, .94);
@@ -2622,6 +2622,271 @@
     :root[data-theme="dark"] .tab-admin-badge,
     :root[data-theme="dark"] .pill { color: #d0d5dd; background: #1d2939; border-color: #344054; }
 
+    .report-export-actions {
+      display:flex;
+      flex-wrap:wrap;
+      gap:9px;
+    }
+
+    .configured-report-stack {
+      display:grid;
+      gap:16px;
+    }
+
+    .configured-dashboard-grid {
+      display:grid;
+      grid-template-columns:repeat(2,minmax(0,1fr));
+      gap:16px;
+      margin-bottom:10px;
+    }
+
+    .configured-dashboard-status {
+      margin:2px 0 18px;
+    }
+
+    .dashboard-export-card {
+      margin-top:16px;
+    }
+
+    .dashboard-report-card {
+      min-width:0;
+    }
+
+    .dashboard-report-card.dashboard-report-wide {
+      grid-column:1/-1;
+    }
+
+    .dashboard-metric-body {
+      display:grid;
+      grid-template-columns:minmax(0,1fr) auto;
+      gap:16px;
+      align-items:end;
+      padding:18px;
+    }
+
+    .dashboard-metric-value {
+      font-size:44px;
+      line-height:1;
+      font-weight:850;
+      letter-spacing:-.04em;
+    }
+
+    .dashboard-metric-label {
+      margin-top:7px;
+      color:var(--muted);
+      font-size:12px;
+      font-weight:700;
+    }
+
+    .dashboard-metric-rate {
+      text-align:right;
+    }
+
+    .dashboard-metric-rate strong {
+      display:block;
+      font-size:22px;
+    }
+
+    .dashboard-progress-list {
+      display:grid;
+      gap:12px;
+      padding:16px;
+    }
+
+    .dashboard-progress-row {
+      display:grid;
+      gap:7px;
+    }
+
+    .dashboard-progress-meta {
+      display:flex;
+      justify-content:space-between;
+      gap:12px;
+      align-items:center;
+      font-size:12px;
+    }
+
+    .dashboard-progress-meta span {
+      color:var(--muted);
+    }
+
+    .dashboard-progress-track {
+      height:9px;
+      overflow:hidden;
+      border-radius:999px;
+      background:var(--surface-2);
+      border:1px solid var(--line);
+    }
+
+    .dashboard-progress-fill {
+      height:100%;
+      min-width:0;
+      border-radius:999px;
+      background:var(--accent);
+    }
+
+    .dashboard-chart-area {
+      padding:16px 18px 18px;
+      min-height:300px;
+    }
+
+    .dashboard-chart-svg {
+      display:block;
+      width:100%;
+      min-width:0;
+      height:auto;
+      overflow:visible;
+    }
+
+    .dashboard-chart-grid-line {
+      stroke:var(--line);
+      stroke-width:1;
+    }
+
+    .dashboard-chart-axis-text {
+      fill:var(--muted);
+      font-size:11px;
+      font-weight:650;
+    }
+
+    .dashboard-chart-label {
+      fill:var(--text-2);
+      font-size:11px;
+      font-weight:750;
+    }
+
+    .dashboard-chart-legend {
+      display:flex;
+      flex-wrap:wrap;
+      gap:8px 14px;
+      margin-top:12px;
+      color:var(--text-2);
+      font-size:11px;
+      font-weight:700;
+    }
+
+    .dashboard-chart-legend-item {
+      display:inline-flex;
+      align-items:center;
+      gap:6px;
+      min-width:0;
+    }
+
+    .dashboard-chart-swatch {
+      width:10px;
+      height:10px;
+      border-radius:3px;
+      flex:0 0 auto;
+    }
+
+    .dashboard-chart-empty {
+      display:grid;
+      place-items:center;
+      min-height:240px;
+      color:var(--muted);
+      font-size:12px;
+      text-align:center;
+    }
+
+    .dashboard-pie-layout {
+      display:grid;
+      grid-template-columns:minmax(240px,.9fr) minmax(220px,1.1fr);
+      gap:18px;
+      align-items:center;
+    }
+
+    .dashboard-pie-center {
+      fill:var(--surface);
+    }
+
+    .dashboard-pie-total {
+      fill:var(--text);
+      font-size:22px;
+      font-weight:850;
+      text-anchor:middle;
+    }
+
+    .dashboard-pie-caption {
+      fill:var(--muted);
+      font-size:10px;
+      font-weight:700;
+      text-anchor:middle;
+    }
+
+    .dashboard-chart-summary {
+      display:flex;
+      flex-wrap:wrap;
+      gap:10px;
+      margin-top:12px;
+      color:var(--muted);
+      font-size:11px;
+    }
+
+    .dashboard-chart-summary strong { color:var(--text-2); }
+
+    .dashboard-widget-definition {
+      padding:9px 16px 0;
+      color:var(--muted);
+      font-size:11px;
+      line-height:1.45;
+    }
+
+    .dashboard-empty-state {
+      grid-column:1/-1;
+      padding:24px;
+      border:1px dashed var(--line-strong);
+      border-radius:14px;
+      background:var(--surface-2);
+    }
+
+    .dashboard-empty-state strong,
+    .dashboard-empty-state span {
+      display:block;
+    }
+
+    .dashboard-empty-state span {
+      margin-top:5px;
+      color:var(--muted);
+    }
+
+    .report-summary-strip {
+      display:grid;
+      grid-template-columns:repeat(4,minmax(0,1fr));
+      gap:10px;
+      margin-bottom:14px;
+    }
+
+    .report-summary-cell {
+      padding:12px;
+      border:1px solid var(--line);
+      border-radius:10px;
+      background:var(--surface-2);
+    }
+
+    .report-summary-cell span {
+      display:block;
+      color:var(--muted);
+      font-size:10px;
+      font-weight:800;
+      text-transform:uppercase;
+      letter-spacing:.04em;
+    }
+
+    .report-summary-cell strong {
+      display:block;
+      margin-top:6px;
+      font-size:20px;
+    }
+
+    @media (max-width: 900px) {
+      .report-summary-strip { grid-template-columns:repeat(2,minmax(0,1fr)); }
+      .configured-dashboard-grid { grid-template-columns:1fr; }
+      .dashboard-report-card.dashboard-report-wide { grid-column:auto; }
+      .dashboard-metric-body { grid-template-columns:1fr; }
+      .dashboard-metric-rate { text-align:left; }
+      .dashboard-pie-layout { grid-template-columns:1fr; }
+    }
+
     @media (max-width: 1180px) {
       .topbar, .workspace-tabs { padding-left: 16px; padding-right: 16px; }
       .content { padding-left: 16px; padding-right: 16px; }
@@ -2654,13 +2919,13 @@
         <div class="brand-mark">
           <img
             src="images/system-icon.png"
-            alt="ARIS"
+            alt="MX"
             class="brand-logo"
           >
         </div>
         <div class="brand-copy">
-          <strong>ARIS</strong>
-          <span>Atomic Record Information System</span>
+          <strong>MX</strong>
+          <span>General-Purpose Information System</span>
         </div>
       </div>
 
@@ -2711,7 +2976,7 @@
             <path d="m8 11 4 4 4-4"/>
             <path d="M5 20h14"/>
           </svg>
-          Export dashboard summary
+          Export detailed records
         </button>
       </nav>
 
@@ -2755,11 +3020,11 @@
 
           <div class="topbar-left">
             <div class="breadcrumb">
-              <span>ARIS</span>
+              <span>MX</span>
               <span>/</span>
               <strong>Dashboard</strong>
             </div>
-            <div class="topbar-title">Records Intelligence</div>
+            <div class="topbar-title">Custom Dashboard</div>
           </div>
         </div>
 
@@ -2838,18 +3103,18 @@
           <div>
             <div class="hero-kicker">
               <span>●</span>
-              Operational overview
+              Custom dashboard
             </div>
-            <h1>See the flow of records, offices, routing, and attachments at a glance.</h1>
+            <h1>Dashboard</h1>
             <p>
-              This dashboard turns record metadata into operational statistics without touching the original files stored in N1. Use it to understand workload, record volume, attachment coverage, routing patterns, and data quality.
+              This view contains only the widgets configured by an Administrator from this deployment’s Record Structure. MX does not assume any business fields or predefined statistics.
             </p>
           </div>
 
           <div class="hero-summary">
-            <div class="hero-summary-label">Current data scope</div>
+            <div class="hero-summary-label">Dashboard configuration</div>
             <div class="hero-summary-value" id="heroScopeValue">—</div>
-            <div class="hero-summary-meta" id="heroScopeMeta">Waiting for data</div>
+            <div class="hero-summary-meta" id="heroScopeMeta">No dashboard widgets configured</div>
           </div>
         </section>
 
@@ -2868,14 +3133,14 @@
             </select>
           </div>
 
-          <div class="field">
+          <div class="field hidden">
             <label for="officeFilter" id="officeFilterLabel">Primary field</label>
             <select id="officeFilter">
               <option value="">All values</option>
             </select>
           </div>
 
-          <div class="field">
+          <div class="field hidden">
             <label for="routeFilter" id="routeFilterLabel">Secondary field</label>
             <select id="routeFilter">
               <option value="">All values</option>
@@ -2893,7 +3158,7 @@
           </div>
 
           <button class="btn btn-soft" id="clearFiltersBtn" type="button">Reset</button>
-          <button class="btn" id="exportBtn" type="button">Export Summary CSV</button>
+          <button class="btn hidden" id="exportBtn" type="button">Export Summary CSV</button>
         </section>
 
         <div class="load-status" id="loadStatus">
@@ -2901,7 +3166,7 @@
           <span id="loadStatusText">Loading records…</span>
         </div>
 
-        <section class="kpi-grid">
+        <section class="kpi-grid hidden">
           <article class="kpi">
             <div class="kpi-top">
               <div class="kpi-label">Records in scope</div>
@@ -2985,7 +3250,7 @@
           </article>
         </section>
 
-        <section class="insight-ribbon">
+        <section class="insight-ribbon hidden">
           <div class="insight">
             <div class="insight-label" id="insightOfficeLabel">Top primary field value</div>
             <div class="insight-value" id="insightOffice">—</div>
@@ -3004,6 +3269,7 @@
           </div>
         </section>
 
+        <div class="hidden" id="legacyGeneratedDashboard">
         <div class="section-head">
           <div>
             <h2>Record flow</h2>
@@ -3203,7 +3469,63 @@
           </article>
         </section>
 
+        </div><!-- legacyGeneratedDashboard -->
+
         <div class="section-head">
+          <div>
+            <h2>Dashboard Widgets</h2>
+            <p>Only widgets configured by an Administrator are shown. Each widget explains exactly what it measures.</p>
+          </div>
+          <span class="section-tag" id="reportScopeTag">Current reporting period</span>
+        </div>
+
+        <div class="configured-dashboard-grid" id="configuredReportsContainer"></div>
+        <div class="muted configured-dashboard-status" id="configuredReportStatus">Loading configured widgets…</div>
+
+        <section class="card dashboard-export-card">
+          <div class="card-head">
+            <div>
+              <h3>Exports</h3>
+              <p>Download complete records or attachment metadata separately from the dashboard widgets.</p>
+            </div>
+          </div>
+          <div class="card-body">
+            <div class="report-export-actions">
+              <button class="btn btn-primary" id="detailedRecordsExportBtn" type="button">Detailed Records CSV</button>
+              <button class="btn" id="attachmentExportBtn" type="button">Attachment Inventory CSV</button>
+              <button class="btn hidden" id="userPerformanceExportBtn" type="button">User Performance CSV</button>
+            </div>
+            <div class="muted" style="margin-top:12px;">Exports use SQLite metadata only. N1 file bytes are not downloaded.</div>
+          </div>
+        </section>
+
+        <div class="hidden" aria-hidden="true">
+          <span id="configuredReportCount">0</span>
+          <span id="configuredReportGroups">0</span>
+          <span id="configuredReportRecords">0</span>
+          <span id="configuredReportActioned">0</span>
+        </div>
+
+        <section id="userPerformanceSection" class="hidden">
+          <div class="section-head">
+            <div>
+              <h2>User Performance</h2>
+              <p>Administrator-only operational activity derived from the append-only audit log: records created/updated, attachments uploaded, successful/failed operations, and records touched.</p>
+            </div>
+          </div>
+          <article class="card">
+            <div class="table-wrap">
+              <table class="data-table">
+                <thead>
+                  <tr><th>User</th><th>Created</th><th>Updated</th><th>Uploads</th><th>Records touched</th><th>Successful actions</th><th>Failed</th><th>Last activity</th></tr>
+                </thead>
+                <tbody id="userPerformanceBody"><tr><td colspan="8" class="muted">Loading user activity…</td></tr></tbody>
+              </table>
+            </div>
+          </article>
+        </section>
+
+        <div class="section-head hidden">
           <div>
             <h2>Recent Records</h2>
             <p>Latest records in the current filter scope. Open the Records workspace for full editing, preview, and attachment operations.</p>
@@ -3211,7 +3533,7 @@
           <button class="btn" type="button" data-workspace-tab="records">Open records workspace</button>
         </div>
 
-        <section class="card">
+        <section class="card hidden">
           <div class="table-wrap">
             <table class="data-table">
               <thead>
@@ -3304,8 +3626,8 @@
   <section class="login-overlay" id="loginOverlay">
     <div class="login-card">
       <div class="login-brand">
-        <div class="login-brand-mark" style="border-radius:50%;overflow:hidden;padding:0;"><img src="images/system-icon.png" alt="ARIS" style="width:100%;height:100%;display:block;object-fit:cover;border-radius:50%;"></div>
-        <h1>ARIS · Dashboard</h1>
+        <div class="login-brand-mark" style="border-radius:50%;overflow:hidden;padding:0;"><img src="images/system-icon.png" alt="MX" style="width:100%;height:100%;display:block;object-fit:cover;border-radius:50%;"></div>
+        <h1>MX · Dashboard</h1>
         <p>
           Sign in to view operational record statistics. Your permissions remain enforced by the backend.
         </p>
@@ -3372,7 +3694,7 @@
           <input id="loginOtp" inputmode="numeric" autocomplete="one-time-code" maxlength="8" placeholder="Optional">
         </div>
 
-        <button class="btn btn-primary" id="loginBtn" type="submit">Sign in to ARIS</button>
+        <button class="btn btn-primary" id="loginBtn" type="submit">Sign in to MX</button>
         <div class="login-status" id="loginStatus"></div>
       </form>
     </div>
@@ -4882,7 +5204,7 @@
   <button class="btn btn-light column-menu-reset" id="columnsResetBtn" type="button">
     Use Administrator Defaults
   </button>
-  <div class="column-menu-note">Only your explicit overrides are saved. New fields and Attached Files follow the Administrator default automatically.</div>
+  <div class="column-menu-note">Only your explicit overrides are saved. New fields, including File Attachment fields, follow the Administrator default automatically.</div>
 </div>
 <button class="btn btn-primary" id="newEntryBtn" type="button">
   <span aria-hidden="true">＋</span>
@@ -4996,8 +5318,8 @@
 <div aria-labelledby="loginTitle" aria-modal="true" class="modal-card login-card" role="dialog">
 <div class="modal-header">
 <div>
-<div class="login-logo" style="border-radius:50%;overflow:hidden;padding:0;"><img src="images/system-icon.png" alt="ARIS" style="width:100%;height:100%;display:block;object-fit:cover;border-radius:50%;"></div>
-<h2 id="loginTitle">Sign in to ARIS</h2>
+<div class="login-logo" style="border-radius:50%;overflow:hidden;padding:0;"><img src="images/system-icon.png" alt="MX" style="width:100%;height:100%;display:block;object-fit:cover;border-radius:50%;"></div>
+<h2 id="loginTitle">Sign in to MX</h2>
 <p>Use your account. OTP is only required when 2FA is enabled.</p>
 </div>
 </div>
@@ -5115,13 +5437,13 @@
 <div class="modal-header">
 <div>
 <h2 id="entryModalTitle">New Record</h2>
-<p id="entryModalHint">Create a new atomic record.</p>
+<p id="entryModalHint">Create a new record.</p>
 </div>
 <button aria-label="Close" class="icon-btn" id="closeModalBtn" type="button">×</button>
 </div>
 <div class="modal-body">
 <form class="form-grid entry-form-drop-target" id="entryForm">
-<div class="drop-anywhere-overlay" id="dropAnywhereOverlay">
+<div class="drop-anywhere-overlay hidden" id="dropAnywhereOverlay">
 <div>
             Drop file(s) anywhere in this form<br/>
 <span style="font-size: 0.8125rem;font-weight:800;color:#475569;">
@@ -5131,34 +5453,19 @@
 </div>
 <input id="uid" type="hidden"/>
 <div class="form-section">
-<h3>Record Information</h3>
+<h3>Record Fields</h3>
+<div class="muted" style="margin-bottom:12px;font-size:.8125rem;">This form follows Record Structure in the Administrator-defined order. File Attachment fields appear here exactly like every other field type.</div>
 <div class="dynamic-fields-grid" id="dynamicFields">
   <div class="muted">Loading configured fields…</div>
 </div>
-</div>
-<div class="form-section">
-<h3>Attached Files</h3>
-<div class="file-drop" id="fileUploadSection">
-<label>
-              ADD FILES
-              <input id="fileInput" multiple="" type="file"/>
-</label>
-<div class="muted" style="margin-top:8px;font-size: 0.8125rem;">
-              Choose files here, or drag and drop files anywhere in this form. Attached Files is a built-in system capability and does not need to be created as a custom field. New uploads keep the original human-readable filename in N1. Default limit: 50 MiB per attachment.
-            </div>
-</div>
+<div class="hidden" id="fileUploadSection"><input id="fileInput" type="file" multiple></div>
 <div class="upload-progress-panel hidden" id="uploadProgressPanel">
-<div class="upload-progress-head">
-<span id="uploadProgressLabel">Uploading attachments…</span>
-<span id="uploadProgressPercent">0%</span>
-</div>
-<div class="upload-progress-track">
-<div class="upload-progress-bar" id="uploadProgressBar"></div>
-</div>
+<div class="upload-progress-head"><span id="uploadProgressLabel">Uploading File Attachment fields…</span><span id="uploadProgressPercent">0%</span></div>
+<div class="upload-progress-track"><div class="upload-progress-bar" id="uploadProgressBar"></div></div>
 <div class="file-progress-label" id="uploadProgressBytes"></div>
 </div>
-<div class="attachment-list" id="existingAttachments"></div>
-<div class="attachment-list" id="pendingAttachments"></div>
+<div class="attachment-list hidden" id="existingAttachments"></div>
+<div class="attachment-list hidden" id="pendingAttachments"></div>
 </div>
 <div class="modal-actions">
 <button class="btn btn-primary" id="saveBtn" type="submit">Save Record</button>
@@ -5199,7 +5506,7 @@
 
 
 
-<style id="aris-modern-records">
+<style id="mx-modern-records">
   :host {
     --bg: #f5f7fb;
     --panel: #ffffff;
@@ -5556,7 +5863,7 @@ const MAX_FILE_SIZE = 50 * 1024 * 1024;
 /*
   The UI expects the backend to accept these GET query parameters on:
 
-  GET /aris/v1/records
+  GET /mx/v1/records
 
   page
   limit
@@ -5592,36 +5899,36 @@ const MAX_FILE_SIZE = 50 * 1024 * 1024;
 */
 
 const ENDPOINTS = {
-  bootstrapStatus: "/aris/v1/auth/bootstrap/status",
-  bootstrapCreate: "/aris/v1/auth/create",
-  login: "/aris/v1/auth/authenticate",
-  refresh: "/aris/v1/auth/refresh",
-  session: "/aris/v1/auth/session",
+  bootstrapStatus: "/mx/v1/auth/bootstrap/status",
+  bootstrapCreate: "/mx/v1/auth/create",
+  login: "/mx/v1/auth/authenticate",
+  refresh: "/mx/v1/auth/refresh",
+  session: "/mx/v1/auth/session",
 
   accounts: {
-    list: "/aris/v1/auth/get",
-    create: "/aris/v1/user/create",
-    modify: "/aris/v1/auth/modify",
-    delete: "/aris/v1/auth/delete"
+    list: "/mx/v1/auth/get",
+    create: "/mx/v1/user/create",
+    modify: "/mx/v1/auth/modify",
+    delete: "/mx/v1/auth/delete"
   },
 
-  schema: "/aris/v1/schema",
-  entries: "/aris/v1/records",
+  schema: "/mx/v1/schema",
+  entries: "/mx/v1/records",
 
   entry: uid =>
-    `/aris/v1/records/${encodeURIComponent(uid)}`,
+    `/mx/v1/records/${encodeURIComponent(uid)}`,
 
-  upload: uid =>
-    `/aris/v1/records/${encodeURIComponent(uid)}/attachments`,
+  uploadField: (uid, fieldUid) =>
+    `/mx/v1/records/${encodeURIComponent(uid)}/attachments/fields/${encodeURIComponent(fieldUid)}`,
 
   attachment: (entryUid, attachmentUid) =>
-    `/aris/v1/records/${encodeURIComponent(entryUid)}/attachments/${encodeURIComponent(attachmentUid)}`,
+    `/mx/v1/records/${encodeURIComponent(entryUid)}/attachments/${encodeURIComponent(attachmentUid)}`,
 
   download: (entryUid, attachmentUid) =>
-    `/aris/v1/records/${encodeURIComponent(entryUid)}/attachments/${encodeURIComponent(attachmentUid)}/download`,
+    `/mx/v1/records/${encodeURIComponent(entryUid)}/attachments/${encodeURIComponent(attachmentUid)}/download`,
 
   preview: (entryUid, attachmentUid) =>
-    `/aris/v1/records/${encodeURIComponent(entryUid)}/attachments/${encodeURIComponent(attachmentUid)}/preview`
+    `/mx/v1/records/${encodeURIComponent(entryUid)}/attachments/${encodeURIComponent(attachmentUid)}/preview`
 };
 
 /* -------------------------------------------------------------------------- */
@@ -5632,6 +5939,7 @@ const state = {
   rows: [],
   fields: [],
   systemFields: [],
+  attachmentFields: [],
   schemaRevision: 0,
   userColumns: null,
   columnOverrides: null,
@@ -5647,6 +5955,7 @@ const state = {
 
   editing: null,
   pendingFiles: [],
+  pendingFieldFiles: new Map(),
   uploadState: new Map(),
   uploadInProgress: false,
 
@@ -5781,19 +6090,19 @@ els.serverPill.textContent = `${API_BASE} · page size ${PAGE_LIMIT}`;
 /* -------------------------------------------------------------------------- */
 
 const TOKEN_KEYS = {
-  access: "aris_access_token",
-  refresh: "aris_refresh_token"
+  access: "mx_access_token",
+  refresh: "mx_refresh_token"
 };
 
 function getAccessToken() {
-  return window.ARIS_AUTH
-    ? window.ARIS_AUTH.getAccessToken()
+  return window.MX_AUTH
+    ? window.MX_AUTH.getAccessToken()
     : (sessionStorage.getItem(TOKEN_KEYS.access) || "");
 }
 
 function getRefreshToken() {
-  return window.ARIS_AUTH
-    ? window.ARIS_AUTH.getRefreshToken()
+  return window.MX_AUTH
+    ? window.MX_AUTH.getRefreshToken()
     : (sessionStorage.getItem(TOKEN_KEYS.refresh) || "");
 }
 
@@ -5802,8 +6111,8 @@ function storeTokens(data) {
     throw new Error("The server did not return access and refresh tokens.");
   }
 
-  if (window.ARIS_AUTH) {
-    window.ARIS_AUTH.setTokens(data);
+  if (window.MX_AUTH) {
+    window.MX_AUTH.setTokens(data);
     return;
   }
 
@@ -5866,8 +6175,8 @@ function scheduleTokenRefresh(accessToken) {
 }
 
 async function refreshAccessToken() {
-  if (window.ARIS_AUTH) {
-    return window.ARIS_AUTH.refreshAccessToken();
+  if (window.MX_AUTH) {
+    return window.MX_AUTH.refreshAccessToken();
   }
 
   if (state.refreshPromise) {
@@ -5912,8 +6221,8 @@ async function refreshAccessToken() {
 }
 
 async function authenticatedFetch(path, options = {}, retry = true) {
-  if (window.ARIS_AUTH) {
-    return window.ARIS_AUTH.apiFetch(`${API_BASE}${path}`, options, retry);
+  if (window.MX_AUTH) {
+    return window.MX_AUTH.apiFetch(`${API_BASE}${path}`, options, retry);
   }
 
   const headers = authHeaders(options.headers || {});
@@ -5944,18 +6253,18 @@ function canManageAccounts() {
   return state.session?.access_level === 0;
 }
 
-function canDeleteAris() {
+function canDeleteMx() {
   return state.session?.access_level === 0 ||
          state.session?.access_level === 1;
 }
 
-function canWriteAris() {
+function canWriteMx() {
   return state.session?.access_level === 0 ||
          state.session?.access_level === 1 ||
          state.session?.access_level === 2;
 }
 
-function canReadAris() {
+function canReadMx() {
   return [0, 1, 2, 3].includes(state.session?.access_level);
 }
 
@@ -6142,13 +6451,13 @@ function applySessionUi() {
 
   els.newEntryBtn.classList.toggle(
     "hidden",
-    !canWriteAris()
+    !canWriteMx()
   );
 }
 
 async function loadSession() {
-  const session = window.ARIS_AUTH
-    ? await window.ARIS_AUTH.ensureSession()
+  const session = window.MX_AUTH
+    ? await window.MX_AUTH.ensureSession()
     : await requestJson(
         ENDPOINTS.session,
         { method: "GET" }
@@ -6161,11 +6470,11 @@ async function loadSession() {
 }
 
 async function bootstrapSession() {
-  if (window.ARIS_AUTH) {
+  if (window.MX_AUTH) {
     try {
       await loadSession();
 
-      if (!canReadAris()) {
+      if (!canReadMx()) {
         throw new Error("This account does not have access.");
       }
 
@@ -6176,7 +6485,7 @@ async function bootstrapSession() {
       state.session = null;
       applySessionUi();
       hideLogin();
-      window.ARIS_AUTH.requireLogin(error.message);
+      window.MX_AUTH.requireLogin(error.message);
     }
 
     return;
@@ -6196,7 +6505,7 @@ async function bootstrapSession() {
 
     await loadSession();
 
-    if (!canReadAris()) {
+    if (!canReadMx()) {
       throw new Error("This account does not have access.");
     }
 
@@ -6259,7 +6568,7 @@ async function login(event) {
 
     await loadSession();
 
-    if (!canReadAris()) {
+    if (!canReadMx()) {
       throw new Error("This account does not have access.");
     }
 
@@ -6471,7 +6780,7 @@ async function requestJson(path, options = {}) {
 /* Dynamic record structure                                                   */
 /* -------------------------------------------------------------------------- */
 
-const RECORD_COLUMNS_STORAGE_KEY = "aris_record_columns";
+const RECORD_COLUMNS_STORAGE_KEY = "mx_record_columns";
 const RECORD_COLUMNS_STORAGE_VERSION = 3;
 
 function orderedFields() {
@@ -6683,7 +6992,6 @@ function renderColumnsMenu() {
           >
           <span>
             ${escapeHtml(field.label)}
-            ${field.field_type === "attachments" ? `<small class="system-column-tag">SYSTEM</small>` : ""}
           </span>
         </label>
       `).join("")
@@ -6778,7 +7086,9 @@ function renderAdvancedFilters() {
     previous[input.dataset.schemaFilter] = input.value;
   });
 
-  const fields = orderedFields().filter(field => field.active && field.searchable);
+  const fields = orderedFields().filter(field =>
+    field.active && field.searchable && field.field_type !== "attachments"
+  );
   els.dynamicAdvancedFilters.innerHTML = fields.map(field => `
     <label>
       ${escapeHtml(field.label.toUpperCase())}
@@ -6803,11 +7113,15 @@ function renderAdvancedFilters() {
 function fieldInputMarkup(field, value, writable) {
   const key = escapeHtml(field.key);
   const label = escapeHtml(field.label);
-  const required = field.required && field.field_type !== "auto_number" ? "required" : "";
+  const required = field.required && !["auto_number", "attachments"].includes(field.field_type) ? "required" : "";
   const disabled = !writable || field.field_type === "auto_number" ? "disabled" : "";
   const requiredMark = field.required ? ` <span class="required-mark">*</span>` : "";
   const current = value === null || value === undefined ? "" : value;
-  const wide = field.field_type === "long_text" ? " dynamic-field-wide" : "";
+  const wide = ["long_text", "attachments"].includes(field.field_type) ? " dynamic-field-wide" : "";
+
+  if (field.field_type === "attachments") {
+    return `<div class="dynamic-field${wide}" data-dynamic-attachment-field="${escapeHtml(field.uid)}">${attachmentFieldControlMarkup(field, writable)}</div>`;
+  }
 
   let control;
 
@@ -6832,7 +7146,7 @@ function fieldInputMarkup(field, value, writable) {
   return `<label class="dynamic-field${wide}"><span>${label}${requiredMark}</span>${control}</label>`;
 }
 
-function renderDynamicFields(record = null, writable = canWriteAris()) {
+function renderDynamicFields(record = null, writable = canWriteMx()) {
   const today = new Date().toISOString().slice(0, 10);
   const values = record?.values || {};
   const fields = orderedFields().filter(field => field.active);
@@ -6854,7 +7168,7 @@ function renderDynamicFields(record = null, writable = canWriteAris()) {
 
 function dynamicInputValue(field) {
   const input = els.dynamicFields.querySelector(`[data-record-field="${CSS.escape(field.key)}"]`);
-  if (!input || field.field_type === "auto_number") return undefined;
+  if (!input || ["auto_number", "attachments"].includes(field.field_type)) return undefined;
 
   if (field.field_type === "boolean") return Boolean(input.checked);
 
@@ -6892,9 +7206,16 @@ async function loadRecordSchema() {
   state.fields = Array.isArray(data?.fields)
     ? data.fields.filter(field => field?.active !== false)
     : [];
-  state.systemFields = Array.isArray(data?.system_fields)
-    ? data.system_fields
-    : [];
+  state.systemFields = [];
+  state.attachmentFields = state.fields
+    .filter(field => field.field_type === "attachments")
+    .map(field => ({
+      ...field,
+      storage_name: String(field.config?.storage_name || field.label || "Attachments"),
+      description: String(field.config?.description || ""),
+      multiple: field.config?.multiple !== false,
+      max_files: Number(field.config?.max_files || 0) || null
+    }));
 
   /*
    * Recompute from the latest schema on every load. A field marked as a
@@ -6907,8 +7228,9 @@ async function loadRecordSchema() {
   renderAdvancedFilters();
   renderTableHead();
 
-  if (state.editing && !els.entryModal.classList.contains("hidden")) {
-    renderDynamicFields(state.editing, canWriteAris());
+  if (!els.entryModal.classList.contains("hidden")) {
+    renderDynamicFields(state.editing, canWriteMx());
+    renderCustomAttachmentFields();
   }
 
   return data;
@@ -7055,7 +7377,7 @@ async function loadPage(page = 1) {
     updatePagination();
     updateStatus();
 
-    window.ARIS_DATA?.markFresh("records");
+    window.MX_DATA?.markFresh("records");
 
     /*
       Every page starts at the top. We never append pages, keeping memory
@@ -7126,7 +7448,9 @@ function renderTable() {
         <td class="row-num">${startingRow + index}</td>
         ${fields.map(field => {
           if (field.field_type === "attachments") {
-            const count = attachments.length;
+            const count = attachments.filter(file =>
+              String(file?.attachment_field_uid || "") === String(field.uid || "")
+            ).length;
             const label = count === 1 ? "1 file" : `${count} files`;
 
             return `
@@ -7177,9 +7501,9 @@ function renderTable() {
               data-edit-entry="${escapeHtml(row.uid)}"
               title="${attachments.length ? `${attachments.length} attachment${attachments.length === 1 ? "" : "s"}` : "No attachments"}"
             >
-              ${canWriteAris() ? "Edit" : "View"}
+              ${canWriteMx() ? "Edit" : "View"}
             </button>
-            ${canDeleteAris() ? `
+            ${canDeleteMx() ? `
               <button class="btn btn-danger btn-small" type="button" data-delete-entry="${escapeHtml(row.uid)}">Delete</button>
             ` : ""}
           </div>
@@ -7596,6 +7920,155 @@ function previewPendingAttachment(index) {
   });
 }
 
+
+/* -------------------------------------------------------------------------- */
+/* Custom attachment fields                                                  */
+/* -------------------------------------------------------------------------- */
+
+function attachmentFieldStoredFiles(fieldUid) {
+  return attachmentList(state.editing)
+    .filter(file => String(file?.attachment_field_uid || "") === String(fieldUid || ""));
+}
+
+function attachmentFieldPendingFiles(fieldUid) {
+  return state.pendingFieldFiles.get(String(fieldUid || "")) || [];
+}
+
+function customAttachmentRowsHtml(files, entryUid) {
+  if (!files.length) {
+    return `<div class="muted">No stored files in this attachment field.</div>`;
+  }
+
+  return files.map(file => `
+    <div class="attachment-row">
+      <div>
+        <div class="attachment-name">📄 ${escapeHtml(file.file_name)}</div>
+        <div class="attachment-meta">
+          ${escapeHtml(file.mime_type || "application/octet-stream")}
+          · ${escapeHtml(formatBytes(file.size))}
+        </div>
+      </div>
+      <div class="attachment-actions">
+        <button class="btn btn-primary btn-small" type="button"
+          data-view-attachment="${escapeHtml(file.uid)}"
+          data-entry-uid="${escapeHtml(entryUid)}"
+          data-file-name="${escapeHtml(file.file_name)}"
+          data-mime-type="${escapeHtml(file.mime_type || "application/octet-stream")}">View</button>
+        <button class="btn btn-soft btn-small" type="button"
+          data-download-attachment="${escapeHtml(file.uid)}"
+          data-entry-uid="${escapeHtml(entryUid)}"
+          data-file-name="${escapeHtml(file.file_name)}">Download</button>
+        ${canDeleteMx() ? `
+          <button class="btn btn-danger btn-small" type="button"
+            data-remove-attachment="${escapeHtml(file.uid)}"
+            data-entry-uid="${escapeHtml(entryUid)}">Remove</button>
+        ` : ""}
+      </div>
+    </div>
+  `).join("");
+}
+
+function attachmentFieldControlMarkup(field, writable = canWriteMx()) {
+  const stored = attachmentFieldStoredFiles(field.uid);
+  const pending = attachmentFieldPendingFiles(field.uid);
+  const max = field.multiple === false ? 1 : Number(field.max_files || 0);
+  const limitText = max > 0 ? ` · maximum ${max} file${max === 1 ? "" : "s"}` : "";
+  const pathText = `records/<configured folders>/${field.storage_name || field.label}/file.ext`;
+  const entryUid = els.uid.value || state.editing?.uid || "";
+
+  return `
+    <div class="file-drop" data-attachment-field-card="${escapeHtml(field.uid)}">
+      <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap;">
+        <div>
+          <strong>${escapeHtml(field.label)}${field.required ? " *" : ""}</strong>
+          <div class="muted" style="margin-top:2px;font-size:.75rem;">File Attachment</div>
+          ${field.description ? `<div class="muted" style="margin-top:4px;">${escapeHtml(field.description)}</div>` : ""}
+          <div class="muted" style="margin-top:4px;font-size:.75rem;">
+            N1: <code>${escapeHtml(pathText)}</code>${escapeHtml(limitText)}
+          </div>
+        </div>
+        ${writable ? `
+          <label style="min-width:190px;">
+            ADD ${field.multiple === false ? "FILE" : "FILES"}
+            <input type="file"
+              data-attachment-field-input="${escapeHtml(field.uid)}"
+              ${field.multiple === false ? "" : "multiple"}>
+          </label>
+        ` : ""}
+      </div>
+      <div class="attachment-list" style="margin-top:10px;">
+        ${customAttachmentRowsHtml(stored, entryUid)}
+      </div>
+      ${pending.length ? `
+        <div class="attachment-list" style="margin-top:8px;">
+          ${pending.map((file, index) => `
+            <div class="attachment-row">
+              <div>
+                <div class="attachment-name">⏳ ${escapeHtml(file.name)}</div>
+                <div class="attachment-meta">${escapeHtml(formatBytes(file.size))} · uploads when the record is saved</div>
+              </div>
+              <div class="attachment-actions">
+                <button class="btn btn-soft btn-small" type="button"
+                  data-view-field-pending="${index}"
+                  data-field-uid="${escapeHtml(field.uid)}">View</button>
+                <button class="btn btn-light btn-small" type="button"
+                  data-remove-field-pending="${index}"
+                  data-field-uid="${escapeHtml(field.uid)}">Remove</button>
+              </div>
+            </div>
+          `).join("")}
+        </div>
+      ` : ""}
+    </div>
+  `;
+}
+
+function renderCustomAttachmentFields() {
+  for (const field of state.attachmentFields) {
+    const host = els.dynamicFields.querySelector(
+      `[data-dynamic-attachment-field="${CSS.escape(String(field.uid))}"]`
+    );
+    if (!host) continue;
+    host.innerHTML = attachmentFieldControlMarkup(field, canWriteMx());
+  }
+}
+
+function queueAttachmentFieldFiles(fieldUid, files) {
+  const field = state.attachmentFields.find(item => String(item.uid) === String(fieldUid));
+  if (!field) return;
+
+  const current = [...attachmentFieldPendingFiles(fieldUid)];
+  const storedCount = attachmentFieldStoredFiles(fieldUid).length;
+  const max = field.multiple === false ? 1 : Number(field.max_files || 0);
+
+  for (const file of Array.from(files || [])) {
+    if (!(file instanceof File)) continue;
+    if (file.size > MAX_FILE_SIZE) {
+      showToast(`${file.name} exceeds the 50 MiB attachment limit.`, "error");
+      continue;
+    }
+    if (current.some(existing => existing.name === file.name && existing.size === file.size && existing.lastModified === file.lastModified)) {
+      continue;
+    }
+    if (max > 0 && storedCount + current.length >= max) {
+      showToast(`${field.label} accepts a maximum of ${max} file${max === 1 ? "" : "s"}.`, "error");
+      break;
+    }
+    current.push(file);
+  }
+
+  state.pendingFieldFiles.set(String(fieldUid), current);
+  renderCustomAttachmentFields();
+  updateSaveButtonLabel();
+}
+
+function previewPendingFieldAttachment(fieldUid, index) {
+  const file = attachmentFieldPendingFiles(fieldUid)[index];
+  if (!file) return;
+  showAttachmentPreview(file, file.name, file.type)
+    .catch(error => showToast(error.message, "error"));
+}
+
 /* -------------------------------------------------------------------------- */
 /* Entry modal                                                                */
 /* -------------------------------------------------------------------------- */
@@ -7618,21 +8091,23 @@ function closeEntryModal() {
 function resetEntryForm() {
   state.editing = null;
   state.pendingFiles = [];
+  state.pendingFieldFiles.clear();
   clearUploadProgress();
 
   els.entryForm.reset();
   els.uid.value = "";
   if (els.fileInput) els.fileInput.value = "";
 
-  renderDynamicFields(null, canWriteAris());
+  renderDynamicFields(null, canWriteMx());
   renderExistingAttachments([]);
   renderPendingAttachments();
+  renderCustomAttachmentFields();
   applyEntryPermissions();
   updateSaveButtonLabel();
 }
 
 function newEntry() {
-  if (!canWriteAris()) {
+  if (!canWriteMx()) {
     showToast("Your account cannot create records.", "error");
     return;
   }
@@ -7640,7 +8115,7 @@ function newEntry() {
   resetEntryForm();
 
   els.entryModalTitle.textContent = "New Record";
-  els.entryModalHint.textContent = "Create a new atomic record.";
+  els.entryModalHint.textContent = "Create a new record.";
   applyEntryPermissions();
   updateSaveButtonLabel();
 
@@ -7648,7 +8123,7 @@ function newEntry() {
 }
 
 function applyEntryPermissions() {
-  const writable = canWriteAris();
+  const writable = canWriteMx();
 
   els.dynamicFields.querySelectorAll("[data-record-field]").forEach(input => {
     const field = fieldByKey(input.dataset.recordField);
@@ -7657,7 +8132,10 @@ function applyEntryPermissions() {
     input.classList.toggle("readonly-field", locked);
   });
 
-  els.fileUploadSection.classList.toggle("hidden", !writable);
+  els.fileUploadSection.classList.add("hidden");
+  els.dynamicFields.querySelectorAll("[data-attachment-field-input]").forEach(input => {
+    input.disabled = !writable;
+  });
   els.saveBtn.classList.toggle("hidden", !writable);
   els.resetFormBtn.classList.toggle("hidden", !writable);
 }
@@ -7672,16 +8150,18 @@ function editEntry(uid) {
 
   state.editing = row;
   state.pendingFiles = [];
+  state.pendingFieldFiles.clear();
   els.uid.value = row.uid || "";
   if (els.fileInput) els.fileInput.value = "";
 
-  renderDynamicFields(row, canWriteAris());
-  renderExistingAttachments(attachmentList(row));
+  renderDynamicFields(row, canWriteMx());
+  renderExistingAttachments(attachmentList(row).filter(file => !file.attachment_field_uid));
   renderPendingAttachments();
+  renderCustomAttachmentFields();
   applyEntryPermissions();
 
-  els.entryModalTitle.textContent = canWriteAris() ? "Edit Record" : "View Record";
-  els.entryModalHint.textContent = `${canWriteAris() ? "Editing" : "Viewing"} ${recordDisplayLabel(row)}`;
+  els.entryModalTitle.textContent = canWriteMx() ? "Edit Record" : "View Record";
+  els.entryModalHint.textContent = `${canWriteMx() ? "Editing" : "Viewing"} ${recordDisplayLabel(row)}`;
 
   updateSaveButtonLabel();
   openEntryModal();
@@ -7738,7 +8218,7 @@ function renderExistingAttachments(files) {
           </button>
 
           ${
-            canDeleteAris()
+            canDeleteMx()
               ? `
                 <button
                   class="btn btn-danger btn-small"
@@ -7836,11 +8316,13 @@ function renderPendingAttachments() {
 }
 
 function updateSaveButtonLabel() {
-  if (!canWriteAris()) {
+  if (!canWriteMx()) {
     return;
   }
 
-  const fileCount = state.pendingFiles.length;
+  const customFileCount = [...state.pendingFieldFiles.values()]
+    .reduce((sum, files) => sum + (Array.isArray(files) ? files.length : 0), 0);
+  const fileCount = customFileCount;
   const baseLabel = state.editing ? "Update Record" : "Save Record";
 
   els.saveBtn.textContent =
@@ -7861,7 +8343,9 @@ function buildEntryPayload() {
 }
 
 function validateEntryPayload(payload) {
-  for (const field of orderedFields().filter(field => field.active && field.required && field.field_type !== "auto_number")) {
+  for (const field of orderedFields().filter(field =>
+    field.active && field.required && !["auto_number", "attachments"].includes(field.field_type)
+  )) {
     const value = payload.values?.[field.key];
     const missing = value === null || value === undefined || (typeof value === "string" && value.trim() === "");
     if (missing) return `${field.label} is required.`;
@@ -7874,8 +8358,23 @@ function validateEntryPayload(payload) {
   });
   if (invalidNumber) return `${invalidNumber.label} must be a valid number.`;
 
-  const oversized = state.pendingFiles.find(file => file.size > MAX_FILE_SIZE);
-  if (oversized) return `${oversized.name} exceeds the 50 MiB attachment limit.`;
+  for (const field of state.attachmentFields) {
+    const stored = attachmentFieldStoredFiles(field.uid).length;
+    const pending = attachmentFieldPendingFiles(field.uid);
+    const total = stored + pending.length;
+
+    if (field.required && total === 0) {
+      return `${field.label} requires at least one attachment.`;
+    }
+
+    const max = field.multiple === false ? 1 : Number(field.max_files || 0);
+    if (max > 0 && total > max) {
+      return `${field.label} accepts a maximum of ${max} file${max === 1 ? "" : "s"}.`;
+    }
+
+    const oversizedCustom = pending.find(file => file.size > MAX_FILE_SIZE);
+    if (oversizedCustom) return `${oversizedCustom.name} exceeds the 50 MiB attachment limit.`;
+  }
 
   return null;
 }
@@ -7885,7 +8384,8 @@ function uploadOneFileWithProgress(
   file,
   completedBytes,
   totalBytes,
-  retry = true
+  retry = true,
+  attachmentFieldUid = null
 ) {
   return new Promise((resolve, reject) => {
     const xhr =
@@ -7900,9 +8400,14 @@ function uploadOneFileWithProgress(
       file.name
     );
 
+    if (!attachmentFieldUid) {
+      reject(new Error("A File Attachment field is required for every upload."));
+      return;
+    }
+
     xhr.open(
       "POST",
-      `${API_BASE}${ENDPOINTS.upload(entryUid)}`,
+      `${API_BASE}${ENDPOINTS.uploadField(entryUid, attachmentFieldUid)}`,
       true
     );
 
@@ -8029,7 +8534,8 @@ function uploadOneFileWithProgress(
                 file,
                 completedBytes,
                 totalBytes,
-                false
+                false,
+                attachmentFieldUid
               );
 
             resolve(result);
@@ -8173,10 +8679,55 @@ async function uploadPendingFiles(entryUid) {
   }
 }
 
+
+async function uploadPendingFieldFiles(entryUid) {
+  const groups = [...state.pendingFieldFiles.entries()]
+    .filter(([, files]) => Array.isArray(files) && files.length);
+
+  if (!groups.length) return [];
+
+  const all = groups.flatMap(([fieldUid, files]) =>
+    files.map(file => ({ fieldUid, file }))
+  );
+
+  const totalBytes = all.reduce((sum, item) => sum + item.file.size, 0);
+  let completedBytes = 0;
+  const uploaded = [];
+
+  state.uploadInProgress = true;
+  setOverallUploadProgress(0, totalBytes, `Uploading ${all.length} File Attachment item${all.length === 1 ? "" : "s"}…`);
+
+  try {
+    for (const item of all) {
+      const field = state.attachmentFields.find(candidate => String(candidate.uid) === String(item.fieldUid));
+      const result = await uploadOneFileWithProgress(
+        entryUid,
+        item.file,
+        completedBytes,
+        totalBytes,
+        true,
+        item.fieldUid
+      );
+      uploaded.push(...result);
+      completedBytes += item.file.size;
+      setOverallUploadProgress(
+        completedBytes,
+        totalBytes,
+        `Stored ${field?.label || "attachment field"} · ${item.file.name}`
+      );
+    }
+
+    state.pendingFieldFiles.clear();
+    return uploaded;
+  } finally {
+    state.uploadInProgress = false;
+  }
+}
+
 async function saveEntry(event) {
   event.preventDefault();
 
-  if (!canWriteAris()) {
+  if (!canWriteMx()) {
     showToast("Your account cannot modify records.", "error");
     return;
   }
@@ -8222,9 +8773,9 @@ async function saveEntry(event) {
       throw new Error("The server did not return the record UID.");
     }
 
-    if (state.pendingFiles.length) {
-      els.saveBtn.textContent = "Uploading attachments...";
-      await uploadPendingFiles(entryUid);
+    if ([...state.pendingFieldFiles.values()].some(files => files.length)) {
+      els.saveBtn.textContent = "Uploading File Attachment fields...";
+      await uploadPendingFieldFiles(entryUid);
     }
 
     showToast(
@@ -8233,7 +8784,7 @@ async function saveEntry(event) {
         : "Record created."
     );
 
-    window.ARIS_DATA?.recordsChanged();
+    window.MX_DATA?.recordsChanged();
 
     closeEntryModal();
     resetEntryForm();
@@ -8255,7 +8806,7 @@ async function saveEntry(event) {
 /* -------------------------------------------------------------------------- */
 
 async function deleteEntry(uid) {
-  if (!canDeleteAris()) {
+  if (!canDeleteMx()) {
     showToast("Your account cannot delete records.", "error");
     return;
   }
@@ -8288,7 +8839,7 @@ async function deleteEntry(uid) {
 
     showToast("Record deleted.");
 
-    window.ARIS_DATA?.recordsChanged();
+    window.MX_DATA?.recordsChanged();
 
     /*
       If this was the only row on a page > 1, move back one page.
@@ -8309,7 +8860,7 @@ async function deleteEntry(uid) {
 /* -------------------------------------------------------------------------- */
 
 async function removeAttachment(entryUid, attachmentUid) {
-  if (!canDeleteAris()) {
+  if (!canDeleteMx()) {
     showToast("Your account cannot remove attachments.", "error");
     return;
   }
@@ -8339,7 +8890,7 @@ async function removeAttachment(entryUid, attachmentUid) {
 
     showToast("Attachment removed.");
 
-    window.ARIS_DATA?.recordsChanged();
+    window.MX_DATA?.recordsChanged();
 
     await loadPage(state.page);
 
@@ -8347,7 +8898,10 @@ async function removeAttachment(entryUid, attachmentUid) {
 
     if (refreshed) {
       state.editing = refreshed;
-      renderExistingAttachments(attachmentList(refreshed));
+      renderExistingAttachments(
+        attachmentList(refreshed).filter(file => !file.attachment_field_uid)
+      );
+      renderCustomAttachmentFields();
     }
   } catch (error) {
     showToast(error.message, "error");
@@ -8827,165 +9381,98 @@ els.entryModal.addEventListener("click", event => {
 
 els.entryForm.addEventListener("submit", saveEntry);
 
-els.fileInput.addEventListener("change", () => {
-  queueFiles(
-    els.fileInput.files
-  );
-});
-
-let entryDragDepth = 0;
-
 function isFileDrag(event) {
-  return Array
-    .from(
-      event.dataTransfer?.types || []
-    )
-    .includes("Files");
+  return Array.from(event.dataTransfer?.types || []).includes("Files");
 }
 
-/*
-  Capture phase means dropping over input/textarea/select still becomes
-  an attachment instead of the browser trying to place the file into the
-  field itself.
-*/
-els.entryForm.addEventListener(
-  "dragenter",
-  event => {
-    if (!isFileDrag(event)) {
-      return;
-    }
+els.dynamicFields.addEventListener("change", event => {
+  const input = event.target.closest("[data-attachment-field-input]");
+  if (!input || state.uploadInProgress) return;
 
-    event.preventDefault();
+  queueAttachmentFieldFiles(
+    input.dataset.attachmentFieldInput,
+    input.files
+  );
 
-    entryDragDepth++;
+  // Selecting the exact same file again should still emit a change event.
+  input.value = "";
+});
 
-    els.entryForm
-      .classList
-      .add("drag-active");
-  },
-  true
-);
+els.dynamicFields.addEventListener("dragover", event => {
+  const card = event.target.closest("[data-attachment-field-card]");
+  if (!card || !isFileDrag(event)) return;
+  event.preventDefault();
+  event.dataTransfer.dropEffect = "copy";
+  card.classList.add("drag-active");
+});
 
-els.entryForm.addEventListener(
-  "dragover",
-  event => {
-    if (!isFileDrag(event)) {
-      return;
-    }
+els.dynamicFields.addEventListener("dragleave", event => {
+  const card = event.target.closest("[data-attachment-field-card]");
+  card?.classList.remove("drag-active");
+});
 
-    event.preventDefault();
+els.dynamicFields.addEventListener("drop", event => {
+  const card = event.target.closest("[data-attachment-field-card]");
+  if (!card || !isFileDrag(event) || state.uploadInProgress) return;
+  event.preventDefault();
+  event.stopPropagation();
+  card.classList.remove("drag-active");
+  queueAttachmentFieldFiles(card.dataset.attachmentFieldCard, event.dataTransfer.files);
+});
 
-    event.dataTransfer.dropEffect =
-      "copy";
-
-    els.entryForm
-      .classList
-      .add("drag-active");
-  },
-  true
-);
-
-els.entryForm.addEventListener(
-  "dragleave",
-  event => {
-    if (!isFileDrag(event)) {
-      return;
-    }
-
-    event.preventDefault();
-
-    entryDragDepth =
-      Math.max(
-        0,
-        entryDragDepth - 1
-      );
-
-    if (entryDragDepth === 0) {
-      els.entryForm
-        .classList
-        .remove("drag-active");
-    }
-  },
-  true
-);
-
-els.entryForm.addEventListener(
-  "drop",
-  event => {
-    if (!isFileDrag(event)) {
-      return;
-    }
-
-    event.preventDefault();
-    event.stopPropagation();
-
-    entryDragDepth = 0;
-
-    els.entryForm
-      .classList
-      .remove("drag-active");
-
-    queueFiles(
-      event.dataTransfer.files
+els.dynamicFields.addEventListener("click", event => {
+  const viewStored = event.target.closest("[data-view-attachment]");
+  if (viewStored) {
+    previewStoredAttachment(
+      viewStored.dataset.entryUid,
+      viewStored.dataset.viewAttachment,
+      viewStored.dataset.fileName,
+      viewStored.dataset.mimeType
     );
-  },
-  true
-);
-
-els.pendingAttachments.addEventListener("click", event => {
-  const viewButton =
-    event.target.closest(
-      "[data-view-pending]"
-    );
-
-  if (viewButton) {
-    previewPendingAttachment(
-      Number(
-        viewButton.dataset.viewPending
-      )
-    );
-
     return;
   }
 
-  const button =
-    event.target.closest(
-      "[data-remove-pending]"
+  const downloadStored = event.target.closest("[data-download-attachment]");
+  if (downloadStored) {
+    downloadAttachment(
+      downloadStored.dataset.entryUid,
+      downloadStored.dataset.downloadAttachment,
+      downloadStored.dataset.fileName
     );
-
-  if (
-    !button ||
-    state.uploadInProgress
-  ) {
     return;
   }
 
-  const index =
-    Number(
-      button.dataset.removePending
+  const removeStored = event.target.closest("[data-remove-attachment]");
+  if (removeStored) {
+    removeAttachment(
+      removeStored.dataset.entryUid,
+      removeStored.dataset.removeAttachment
     );
+    return;
+  }
 
-  if (
-    Number.isInteger(index) &&
-    index >= 0 &&
-    index < state.pendingFiles.length
-  ) {
-    const [removed] =
-      state.pendingFiles.splice(
-        index,
-        1
-      );
+  const viewPending = event.target.closest("[data-view-field-pending]");
+  if (viewPending) {
+    previewPendingFieldAttachment(
+      viewPending.dataset.fieldUid,
+      Number(viewPending.dataset.viewFieldPending)
+    );
+    return;
+  }
 
-    if (removed) {
-      state.uploadState.delete(
-        pendingFileKey(
-          removed
-        )
-      );
+  const removePending = event.target.closest("[data-remove-field-pending]");
+  if (removePending && !state.uploadInProgress) {
+    const fieldUid = String(removePending.dataset.fieldUid || "");
+    const index = Number(removePending.dataset.removeFieldPending);
+    const files = [...attachmentFieldPendingFiles(fieldUid)];
+    if (Number.isInteger(index) && index >= 0 && index < files.length) {
+      const [removed] = files.splice(index, 1);
+      if (removed) state.uploadState.delete(pendingFileKey(removed));
+      if (files.length) state.pendingFieldFiles.set(fieldUid, files);
+      else state.pendingFieldFiles.delete(fieldUid);
+      renderCustomAttachmentFields();
+      updateSaveButtonLabel();
     }
-
-    renderPendingAttachments();
-    updateSaveButtonLabel();
   }
 });
 
@@ -9132,7 +9619,7 @@ window.addEventListener("resize", () => {
 /* Initial load                                                               */
 /* -------------------------------------------------------------------------- */
 
-window.ARIS_RECORDS = Object.freeze({
+window.MX_RECORDS = Object.freeze({
   refresh: () => loadPage(state.page),
   reloadSchema: async () => {
     await loadRecordSchema();
@@ -9158,8 +9645,16 @@ bootstrapSession();
       --muted: #64748b;
       --line: #cbd5e1;
       --line-soft: #e2e8f0;
+      --line-strong: #94a3b8;
       --primary: #1d4ed8;
       --primary-dark: #1e40af;
+      --primary-soft: #eff6ff;
+      --surface-1: #ffffff;
+      --surface-2: #f8fafc;
+      --text-1: #0f172a;
+      --accent: #1d4ed8;
+      --accent-soft: #eff6ff;
+      --accent-line: #bfdbfe;
       --danger: #b91c1c;
       --success: #166534;
       --shadow: 0 18px 50px rgba(15, 23, 42, 0.12);
@@ -10210,13 +10705,369 @@ bootstrapSession();
   :host([data-theme="dark"]) .backup-status-failed {
     color:#fca5a5 !important;
   }
+
+  .admin-function-tabs {
+    position: sticky;
+    top: 10px;
+    z-index: 20;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    padding: 6px;
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    scrollbar-width: thin;
+    border: 1px solid var(--line-soft);
+    border-radius: 14px;
+    background: color-mix(in srgb, var(--panel) 94%, transparent);
+    box-shadow: 0 8px 24px rgba(16, 24, 40, .08);
+    backdrop-filter: blur(14px);
+  }
+
+  .admin-function-tab {
+    flex: 0 0 auto;
+    min-height: 40px;
+    padding: 9px 13px;
+    border: 1px solid transparent;
+    border-radius: 9px;
+    background: transparent;
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 850;
+    white-space: nowrap;
+    transition: background .16s ease, color .16s ease, border-color .16s ease, box-shadow .16s ease;
+  }
+
+  .admin-function-tab:hover {
+    color: var(--text);
+    background: var(--surface-2, #f8fafc);
+  }
+
+  .admin-function-tab.active,
+  .admin-function-tab[aria-selected="true"] {
+    color: #fff;
+    background: var(--primary);
+    border-color: var(--primary);
+    box-shadow: 0 5px 14px rgba(37, 99, 235, .22);
+  }
+
+  .admin-function-tab:focus-visible {
+    outline: 3px solid rgba(37, 99, 235, .22);
+    outline-offset: 2px;
+  }
+
+  .admin-function-panel[hidden] {
+    display: none !important;
+  }
+
+  :host([data-theme="dark"]) .admin-function-tabs {
+    background: rgba(15, 23, 42, .92);
+    border-color: var(--line);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, .2);
+  }
+
+  :host([data-theme="dark"]) .admin-function-tab:hover {
+    color: var(--text);
+    background: #172033;
+  }
+
+  .feature-grid {
+    display:grid;
+    grid-template-columns:repeat(2,minmax(0,1fr));
+    gap:12px;
+  }
+
+  .feature-form {
+    display:grid;
+    grid-template-columns:repeat(4,minmax(0,1fr));
+    gap:10px;
+    align-items:end;
+  }
+
+  .feature-form .span-2 { grid-column:span 2; }
+  .feature-form .span-all { grid-column:1/-1; }
+
+  .feature-checks {
+    display:flex;
+    flex-wrap:wrap;
+    gap:12px;
+    align-items:center;
+    padding:10px 0;
+  }
+
+  .feature-checks label {
+    display:flex;
+    align-items:center;
+    gap:7px;
+    font-size:12px;
+    font-weight:700;
+    color:var(--text-2);
+  }
+
+  .feature-list {
+    display:grid;
+    gap:10px;
+    margin-top:14px;
+  }
+
+  .feature-item {
+    display:grid;
+    grid-template-columns:minmax(180px,1.2fr) minmax(170px,1fr) minmax(170px,1fr) auto;
+    gap:10px;
+    align-items:center;
+    padding:12px;
+    border:1px solid var(--line);
+    border-radius:12px;
+    background:var(--surface-2);
+  }
+
+  .feature-item strong { display:block; }
+  .feature-item .muted { font-size:11px; }
+
+  .dashboard-builder-guide {
+    display:grid;
+    grid-template-columns:auto minmax(0,1fr) auto minmax(0,1fr) auto minmax(0,1fr);
+    gap:10px 12px;
+    align-items:start;
+    padding:14px;
+    margin-bottom:14px;
+    border:1px solid var(--line);
+    border-radius:14px;
+    background:var(--surface-2);
+  }
+
+  .dashboard-builder-guide-icon,
+  .dashboard-builder-step > span {
+    display:grid;
+    place-items:center;
+    width:28px;
+    height:28px;
+    border-radius:999px;
+    background:var(--accent-soft);
+    color:var(--accent);
+    font-size:12px;
+    font-weight:900;
+    flex:0 0 auto;
+  }
+
+  .dashboard-builder-guide strong,
+  .dashboard-builder-guide span {
+    display:block;
+  }
+
+  .dashboard-builder-guide span {
+    margin-top:3px;
+    color:var(--muted);
+    font-size:11px;
+    line-height:1.45;
+  }
+
+  .dashboard-builder-form {
+    display:grid;
+    gap:12px;
+  }
+
+  .dashboard-builder-section {
+    padding:14px;
+    border:1px solid var(--line);
+    border-radius:14px;
+    background:var(--surface-1);
+  }
+
+  .dashboard-builder-step {
+    display:flex;
+    align-items:flex-start;
+    gap:10px;
+    margin-bottom:12px;
+  }
+
+  .dashboard-builder-step strong,
+  .dashboard-builder-step small {
+    display:block;
+  }
+
+  .dashboard-builder-step small {
+    margin-top:2px;
+    color:var(--muted);
+    font-size:11px;
+    font-weight:500;
+  }
+
+  .dashboard-builder-grid {
+    display:grid;
+    grid-template-columns:repeat(2,minmax(0,1fr));
+    gap:12px;
+    align-items:start;
+  }
+
+  .dashboard-builder-grid .span-all {
+    grid-column:1/-1;
+  }
+
+  .dashboard-field-hint {
+    display:block;
+    margin-top:5px;
+    color:var(--muted);
+    font-size:10px;
+    font-weight:500;
+    line-height:1.35;
+    text-transform:none;
+    letter-spacing:0;
+  }
+
+  .dashboard-rule-preview {
+    margin-top:12px;
+    padding:11px 12px;
+    border:1px solid var(--accent-line);
+    border-radius:10px;
+    background:var(--accent-soft);
+    color:var(--text-1);
+    font-size:12px;
+    font-weight:700;
+    line-height:1.45;
+  }
+
+  .dashboard-builder-actions,
+  .dashboard-save-row {
+    display:flex;
+    justify-content:flex-end;
+    gap:9px;
+  }
+
+  .dashboard-admin-option {
+    margin-top:14px;
+    padding:12px 14px;
+    border:1px solid var(--line);
+    border-radius:12px;
+    background:var(--surface-2);
+  }
+
+  .dashboard-admin-option label {
+    display:flex;
+    align-items:flex-start;
+    gap:9px;
+    cursor:pointer;
+  }
+
+  .dashboard-admin-option input[type="checkbox"] {
+    width:auto;
+    min-width:0;
+    flex:0 0 auto;
+    margin:3px 0 0;
+    padding:0;
+  }
+
+  .dashboard-admin-option strong,
+  .dashboard-admin-option small {
+    display:block;
+  }
+
+  .dashboard-admin-option small {
+    margin-top:3px;
+    color:var(--muted);
+    font-size:11px;
+    font-weight:500;
+  }
+
+  .dashboard-widget-preview {
+    padding:14px;
+    border:1px dashed var(--line-strong);
+    border-radius:12px;
+    background:var(--surface-2);
+    margin-top:14px;
+  }
+
+  .dashboard-widget-preview-head {
+    display:flex;
+    justify-content:space-between;
+    gap:12px;
+    align-items:center;
+  }
+
+  .dashboard-widget-admin-item {
+    display:grid;
+    grid-template-columns:minmax(180px,1.2fr) minmax(220px,1.4fr) auto;
+    gap:12px;
+    align-items:center;
+    padding:12px;
+    border:1px solid var(--line);
+    border-radius:12px;
+    background:var(--surface-1);
+  }
+
+  .dashboard-widget-admin-item .widget-title-row {
+    display:flex;
+    gap:7px;
+    flex-wrap:wrap;
+    align-items:center;
+  }
+
+  .dashboard-widget-chip {
+    display:inline-flex;
+    align-items:center;
+    min-height:22px;
+    padding:3px 7px;
+    border-radius:999px;
+    border:1px solid var(--line);
+    background:var(--surface-2);
+    color:var(--muted);
+    font-size:9px;
+    font-weight:900;
+    letter-spacing:.04em;
+    text-transform:uppercase;
+  }
+
+  .dashboard-widget-actions {
+    display:flex;
+    gap:6px;
+    flex-wrap:wrap;
+    justify-content:flex-end;
+  }
+
+  .dashboard-save-row {
+    margin-top:12px;
+  }
+
+  .dashboard-chart-toggle {
+    display:flex;
+    align-items:flex-start;
+    gap:9px;
+    min-height:44px;
+    padding:10px 12px;
+    border:1px solid var(--line);
+    border-radius:10px;
+    background:var(--surface-2);
+    text-transform:none;
+    letter-spacing:0;
+  }
+
+  .dashboard-chart-toggle input { margin-top:3px; }
+  .dashboard-chart-toggle strong,
+  .dashboard-chart-toggle small { display:block; }
+  .dashboard-chart-toggle small {
+    margin-top:3px;
+    color:var(--muted);
+    font-size:10px;
+    font-weight:500;
+  }
+
+  @media (max-width:900px) {
+    .admin-function-tabs { top: 6px; border-radius: 12px; }
+    .admin-function-tab { min-height: 38px; padding: 8px 11px; }
+    .feature-grid, .feature-form, .dashboard-builder-grid { grid-template-columns:1fr; }
+    .feature-form .span-2, .feature-form .span-all, .dashboard-builder-grid .span-all { grid-column:auto; }
+    .feature-item, .dashboard-widget-admin-item { grid-template-columns:1fr; }
+    .dashboard-builder-guide { grid-template-columns:auto minmax(0,1fr); }
+    .dashboard-widget-actions { justify-content:flex-start; }
+  }
 </style>
 
 <div class="shell">
 <header class="topbar">
 <div class="brand">
 <h1>Administration</h1>
-<p>Administrator control plane for accounts, access levels, and authorization.</p>
+<p>Administrator-only configuration. Select a function below to manage one area at a time.</p>
 </div>
 <div class="topbar-actions">
 <div class="pill" id="serverPill">API</div>
@@ -10226,7 +11077,15 @@ bootstrapSession();
 </div>
 </header>
 <main class="main hidden" id="adminApp">
-<section class="card">
+<nav class="admin-function-tabs" id="adminFunctionTabs" role="tablist" aria-label="Administration functions">
+<button class="admin-function-tab active" id="adminTabAccounts" type="button" role="tab" aria-selected="true" aria-controls="adminAccountsPanel" data-admin-tab="accounts">Accounts</button>
+<button class="admin-function-tab" id="adminTabStructure" type="button" role="tab" aria-selected="false" aria-controls="recordStructureCard" data-admin-tab="structure">Record Structure</button>
+<button class="admin-function-tab" id="adminTabStorage" type="button" role="tab" aria-selected="false" aria-controls="n1StorageLayoutCard" data-admin-tab="storage">N1 Storage</button>
+<button class="admin-function-tab" id="adminTabDashboard" type="button" role="tab" aria-selected="false" aria-controls="reportCustomizationCard" data-admin-tab="dashboard">Dashboard</button>
+<button class="admin-function-tab" id="adminTabBackups" type="button" role="tab" aria-selected="false" aria-controls="backupCard" data-admin-tab="backups">Backups</button>
+<button class="admin-function-tab" id="adminTabAudit" type="button" role="tab" aria-selected="false" aria-controls="auditLogCard" data-admin-tab="audit">Audit Log</button>
+</nav>
+<section class="card admin-function-panel" id="adminAccountsPanel" role="tabpanel" aria-labelledby="adminTabAccounts" data-admin-panel="accounts">
 <div class="card-header">
 <h2>Account Management</h2>
 <p>Create accounts and control their access level. Changes take effect on the user's next refreshed access token.</p>
@@ -10266,14 +11125,14 @@ bootstrapSession();
 <div class="account-list" id="accountList"></div>
 </div>
 </section>
-<section class="card" id="recordStructureCard">
+<section class="card admin-function-panel" id="recordStructureCard" role="tabpanel" aria-labelledby="adminTabStructure" data-admin-panel="structure" hidden>
 <div class="card-header">
 <h2>Record Structure</h2>
 <p>Define the fields that make up a record. The structure is stored in SQLite and records, forms, and tables adapt without recompiling the application.</p>
 </div>
 <div class="card-body">
 <div class="schema-note">
-<b>No predefined fields are required.</b> Add only the information this deployment actually needs. A deployment can be as small as <b>Control No.</b> and <b>Subject</b>.
+<b>MX starts with no business fields.</b> Add only the fields this deployment needs. File Attachment is just another field type, so a deployment may define none, one, or many attachment fields.
 </div>
 <form class="schema-create-grid schema-create-simple" id="recordStructureForm">
 <label>FIELD NAME<input id="fieldLabel" autocomplete="off" placeholder="e.g. Subject" required></label>
@@ -10287,6 +11146,7 @@ bootstrapSession();
 <option value="boolean">Checkbox</option>
 <option value="select">Select list</option>
 <option value="auto_number">Automatic number</option>
+<option value="attachments">File Attachment</option>
 </select>
 </label>
 
@@ -10300,6 +11160,16 @@ bootstrapSession();
 <label>NUMBERING<select id="fieldAutoScope"><option value="global">Continuous</option><option value="yearly">Reset every year</option></select></label>
 <label>PREFIX<input id="fieldAutoPrefix" autocomplete="off" placeholder="Optional, e.g. REC-"></label>
 <label>DIGITS<input id="fieldAutoPadding" type="number" min="0" max="12" value="0"></label>
+</div>
+
+<div class="schema-config-row hidden" id="fieldAttachmentConfig">
+<label>DESCRIPTION<input id="fieldAttachmentDescription" autocomplete="off" placeholder="Optional instructions shown to users"></label>
+<label>N1 FOLDER NAME<input id="fieldAttachmentStorageName" autocomplete="off" placeholder="Defaults to field name"></label>
+<label>MAX FILES<input id="fieldAttachmentMaxFiles" type="number" min="1" max="10000" placeholder="Unlimited"></label>
+<div class="schema-checks" style="grid-column:1/-1;">
+<label><input id="fieldAttachmentMultiple" type="checkbox" checked> Allow multiple files</label>
+</div>
+<div class="muted" style="grid-column:1/-1;">This field stores files in N1 under <code>records/&lt;configured folders&gt;/&lt;this field&gt;/filename.ext</code>. It is an ordinary MX field and can be created multiple times or omitted entirely.</div>
 </div>
 
 <div class="schema-checks schema-checks-primary">
@@ -10322,28 +11192,19 @@ bootstrapSession();
 
 <button class="btn btn-primary" id="createFieldBtn" type="submit">Add Field</button>
 </form>
-<div class="schema-system-section">
-  <div class="schema-system-heading">
-    <div>
-      <strong>Built-in System Fields</strong>
-      <span>System capabilities that exist on every record and are not ordinary user-defined values.</span>
-    </div>
-  </div>
-  <div class="schema-fields" id="schemaSystemFields"></div>
-</div>
 <div class="status" id="schemaStatus">Loading record structure...</div>
 <div class="schema-fields" id="schemaFields"></div>
 </div>
 </section>
-<section class="card" id="n1StorageLayoutCard">
+<section class="card admin-function-panel" id="n1StorageLayoutCard" role="tabpanel" aria-labelledby="adminTabStorage" data-admin-panel="storage" hidden>
 <div class="card-header">
 <h2>N1 Storage Layout</h2>
 <p>Choose which dynamic fields become human-readable N1 folders, in order. You can also choose a field to prefix attachment filenames.</p>
 </div>
 <div class="card-body">
 <div class="storage-layout-note">
-<b>Example:</b> Folder 1 = <b>DIVISION/OFFICE</b>, Folder 2 = <b>DATE</b>, filename prefix = <b>CONTROL NO</b><br>
-The system will create: <code>records/CMO/2026-09-18/000006__memorandum.pdf</code>
+<b>Fully schema-driven.</b> Choose any non-attachment Record Structure fields as optional base folders and an optional filename prefix. Every File Attachment field automatically becomes its own final N1 folder segment.<br>
+Shape: <code>records/&lt;chosen field&gt;/&lt;optional field&gt;/&lt;File Attachment field&gt;/filename.ext</code>
 </div>
 
 <div class="storage-layout-grid">
@@ -10377,7 +11238,122 @@ FILENAME PREFIX FIELD
 </div>
 </div>
 </section>
-<section class="card" id="backupCard">
+<section class="card admin-function-panel" id="reportCustomizationCard" role="tabpanel" aria-labelledby="adminTabDashboard" data-admin-panel="dashboard" hidden>
+<div class="card-header">
+<h2>Dashboard Builder</h2>
+<p>Create the dashboard one widget at a time from Record Structure. Nothing here is predefined by MX.</p>
+</div>
+<div class="card-body">
+<div class="dashboard-builder-guide">
+<div class="dashboard-builder-guide-icon">1</div>
+<div><strong>Choose the visualization.</strong><span>Summary, progress, table, bar, line, pie, and donut widgets are all schema-driven.</span></div>
+<div class="dashboard-builder-guide-icon">2</div>
+<div><strong>Define what MX measures.</strong><span>Count all records or match any configured field, value, empty state, or File Attachment presence.</span></div>
+<div class="dashboard-builder-guide-icon">3</div>
+<div><strong>Choose dimensions and time behavior.</strong><span>Use any Record Structure field for categories and any Date field for filtering or time-series buckets.</span></div>
+</div>
+
+<form class="dashboard-builder-form" id="dashboardWidgetForm">
+<section class="dashboard-builder-section">
+<div class="dashboard-builder-step"><span>1</span><div><strong>Widget</strong><small>What should users see on the dashboard?</small></div></div>
+<div class="dashboard-builder-grid">
+<label>WIDGET TITLE<input id="dashboardWidgetTitle" autocomplete="off" placeholder="e.g. Completion by Department" required></label>
+<label>DISPLAY AS
+<select id="dashboardDisplayMode">
+<option value="metric">Summary number</option>
+<option value="bar">Bar chart</option>
+<option value="line">Line chart / trend</option>
+<option value="pie">Pie chart</option>
+<option value="donut">Donut chart</option>
+<option value="progress">Grouped progress</option>
+<option value="table">Detailed table</option>
+</select>
+</label>
+</div>
+</section>
+
+<section class="dashboard-builder-section">
+<div class="dashboard-builder-step"><span>2</span><div><strong>Measure</strong><small>Define what MX should count as matched.</small></div></div>
+<div class="dashboard-builder-grid">
+<label class="span-all">MATCH RULE
+<select id="dashboardMeasureType">
+<option value="all_records">Every record</option>
+<option value="field_equals">A field equals a value</option>
+<option value="field_not_equals">A field does not equal a value</option>
+<option value="field_nonempty">A field is not empty</option>
+<option value="field_empty">A field is empty</option>
+<option value="attachment_presence">A File Attachment field has files</option>
+</select>
+</label>
+<label id="dashboardActionFieldWrap">FIELD<select id="dashboardActionField"></select></label>
+<label id="dashboardActionValueWrap">VALUE<input id="dashboardActionValue" autocomplete="off" placeholder="Value to match"></label>
+<label class="hidden span-all" id="dashboardAttachmentFieldWrap">FILE ATTACHMENT FIELD<select id="dashboardAttachmentField"></select></label>
+</div>
+<div class="dashboard-rule-preview" id="dashboardRulePreview">This widget will count every record.</div>
+</section>
+
+<section class="dashboard-builder-section">
+<div class="dashboard-builder-step"><span>3</span><div><strong>Organize & visualize</strong><small>Choose categories, time-series behavior, and which statistic the chart should plot.</small></div></div>
+<div class="dashboard-builder-grid">
+<label id="dashboardGroupFieldWrap">GROUP / CATEGORY FIELD<select id="dashboardGroupField"></select><span class="dashboard-field-hint">Required for bar, pie, donut, and grouped-progress widgets. Any non-attachment field can be a dimension.</span></label>
+<label>DATE FIELD<select id="dashboardDateField"><option value="">Ignore dashboard date range</option></select><span class="dashboard-field-hint" id="dashboardDateFieldHint">Optional. If selected, the Dashboard reporting-period control filters this widget.</span></label>
+<label class="hidden" id="dashboardTimeBucketWrap">TIME INTERVAL
+<select id="dashboardTimeBucket">
+<option value="day">Day</option>
+<option value="week">Week</option>
+<option value="month" selected>Month</option>
+<option value="quarter">Quarter</option>
+<option value="year">Year</option>
+</select>
+<span class="dashboard-field-hint">Line charts aggregate the selected Date field into this interval.</span>
+</label>
+<label class="hidden" id="dashboardChartValueWrap">CHART VALUE
+<select id="dashboardChartValue">
+<option value="matched">Matched records</option>
+<option value="total">Total records</option>
+<option value="rate">Match rate (%)</option>
+<option value="breakdown">Matched vs not matched</option>
+</select>
+<span class="dashboard-field-hint">Choose what the chart compares. Pie and donut charts use counts only.</span>
+</label>
+<label class="hidden" id="dashboardCategoryLimitWrap">MAX CATEGORIES
+<select id="dashboardCategoryLimit">
+<option value="5">5</option>
+<option value="8" selected>8</option>
+<option value="10">10</option>
+<option value="15">15</option>
+<option value="25">25</option>
+<option value="0">All</option>
+</select>
+<span class="dashboard-field-hint">Keeps categorical charts readable. Remaining count-based categories are combined into “Other”.</span>
+</label>
+<label class="hidden dashboard-chart-toggle" id="dashboardLegendWrap"><input id="dashboardShowLegend" type="checkbox" checked> <span><strong>Show legend</strong><small>Useful for pie, donut, and matched/not-matched charts.</small></span></label>
+</div>
+</section>
+
+<div class="dashboard-builder-actions">
+<button class="btn btn-soft hidden" id="cancelDashboardWidgetEditBtn" type="button">Cancel Edit</button>
+<button class="btn btn-primary" id="addDashboardWidgetBtn" type="submit">Add Widget</button>
+</div>
+</form>
+
+<div class="dashboard-admin-option">
+<label><input id="dashboardShowUserPerformance" type="checkbox"> <span><strong>Administrator user activity</strong><small>Show audit-derived user activity statistics on the dashboard for administrators only.</small></span></label>
+</div>
+
+<div class="dashboard-widget-preview">
+<div class="dashboard-widget-preview-head">
+<div><strong>Dashboard widgets</strong><div class="muted">These are the only widgets that will appear. You can edit, reorder, or remove them.</div></div>
+</div>
+<div class="feature-list" id="dashboardWidgetList"></div>
+</div>
+<div class="status" id="dashboardConfigStatus">Loading dashboard configuration...</div>
+<div class="dashboard-save-row">
+<button class="btn btn-primary" id="saveDashboardConfigBtn" type="button">Save Dashboard</button>
+</div>
+</div>
+</section>
+<section class="card admin-function-panel" id="backupCard" role="tabpanel" aria-labelledby="adminTabBackups" data-admin-panel="backups" hidden>
 <div class="card-header">
 <h2>Database Backups</h2>
 <p>Create a consistent live SQLite snapshot, verify it with <code>PRAGMA integrity_check</code>, and store the verified database in the dedicated backup namespace in N1.</p>
@@ -10410,7 +11386,7 @@ Database restoration should place the application into maintenance mode and be p
 <div class="backup-toolbar">
 <div>
 <div class="status" id="backupStatus">Loading backup history...</div>
-<div class="muted">N1 namespace: <code>__aris/backups/database/YYYY/MM/DD/</code></div>
+<div class="muted">N1 namespace: <code>__mx/backups/database/YYYY/MM/DD/</code></div>
 </div>
 <div class="backup-actions">
 <button class="btn btn-light" id="backupRefreshBtn" type="button">Refresh</button>
@@ -10440,7 +11416,7 @@ Database restoration should place the application into maintenance mode and be p
 </div>
 </section>
 
-<section class="card">
+<section class="card admin-function-panel" id="auditLogCard" role="tabpanel" aria-labelledby="adminTabAudit" data-admin-panel="audit" hidden>
 <div class="card-header">
 <h2>Audit Log</h2>
 <p>
@@ -10517,7 +11493,7 @@ Database restoration should place the application into maintenance mode and be p
 <section class="auth-wrap hidden" id="authApp">
 <div class="card">
 <div class="card-header">
-<div class="logo" style="border-radius:50%;overflow:hidden;padding:0;"><img src="images/system-icon.png" alt="ARIS" style="width:100%;height:100%;display:block;object-fit:cover;border-radius:50%;"></div>
+<div class="logo" style="border-radius:50%;overflow:hidden;padding:0;"><img src="images/system-icon.png" alt="MX" style="width:100%;height:100%;display:block;object-fit:cover;border-radius:50%;"></div>
 <h2 id="authTitle">Administrator Login</h2>
 <p id="authSubtitle">Authenticate with an Administrator account.</p>
 </div>
@@ -10579,7 +11555,7 @@ Database restoration should place the application into maintenance mode and be p
 
 
 
-<style id="aris-modern-admin">
+<style id="mx-modern-admin">
   :host {
     --bg: #f5f7fb;
     --panel: #ffffff;
@@ -10809,8 +11785,16 @@ Database restoration should place the application into maintenance mode and be p
     --muted: #98a2b3;
     --line: #344054;
     --line-soft: #263244;
+    --line-strong: #475467;
     --primary: #3b82f6;
     --primary-dark: #2563eb;
+    --primary-soft: #172554;
+    --surface-1: #111827;
+    --surface-2: #151e2e;
+    --text-1: #f2f4f7;
+    --accent: #60a5fa;
+    --accent-soft: #172554;
+    --accent-line: #1e3a8a;
     --shadow: 0 14px 38px rgba(0, 0, 0, .28);
     color-scheme: dark;
   }
@@ -10918,43 +11902,45 @@ const API_BASE =
     : window.location.origin;
 
 const ENDPOINTS = {
-  bootstrapStatus: "/aris/v1/auth/bootstrap/status",
-  bootstrapCreate: "/aris/v1/auth/create",
-  login: "/aris/v1/auth/authenticate",
-  refresh: "/aris/v1/auth/refresh",
-  session: "/aris/v1/auth/session",
+  bootstrapStatus: "/mx/v1/auth/bootstrap/status",
+  bootstrapCreate: "/mx/v1/auth/create",
+  login: "/mx/v1/auth/authenticate",
+  refresh: "/mx/v1/auth/refresh",
+  session: "/mx/v1/auth/session",
   accounts: {
-    list: "/aris/v1/auth/get",
-    create: "/aris/v1/user/create",
-    modify: "/aris/v1/auth/modify",
-    delete: "/aris/v1/auth/delete"
+    list: "/mx/v1/auth/get",
+    create: "/mx/v1/user/create",
+    modify: "/mx/v1/auth/modify",
+    delete: "/mx/v1/auth/delete"
   },
 
-  audit: "/aris/v1/admin/audit",
+  audit: "/mx/v1/admin/audit",
 
   schema: {
-    get: "/aris/v1/admin/schema",
-    create: "/aris/v1/admin/schema/fields",
-    update: uid => `/aris/v1/admin/schema/fields/${encodeURIComponent(uid)}`,
-    systemField: key =>
-      `/aris/v1/admin/schema/system/${encodeURIComponent(key)}`
+    get: "/mx/v1/admin/schema",
+    create: "/mx/v1/admin/schema/fields",
+    update: uid => `/mx/v1/admin/schema/fields/${encodeURIComponent(uid)}`
   },
 
-  storageLayout: "/aris/v1/admin/storage-layout",
+  storageLayout: "/mx/v1/admin/storage-layout",
+
+
+  dashboardConfig: "/mx/v1/admin/dashboard-config",
+  dashboardConfigRead: "/mx/v1/dashboard/config",
 
   backups: {
-    list: "/aris/v1/admin/backups",
-    create: "/aris/v1/admin/backups",
+    list: "/mx/v1/admin/backups",
+    create: "/mx/v1/admin/backups",
     verify: uid =>
-      `/aris/v1/admin/backups/${encodeURIComponent(uid)}/verify`,
+      `/mx/v1/admin/backups/${encodeURIComponent(uid)}/verify`,
     download: uid =>
-      `/aris/v1/admin/backups/${encodeURIComponent(uid)}/download`
+      `/mx/v1/admin/backups/${encodeURIComponent(uid)}/download`
   }
 };
 
 const TOKEN_KEYS = {
-  access: "aris_access_token",
-  refresh: "aris_refresh_token"
+  access: "mx_access_token",
+  refresh: "mx_refresh_token"
 };
 
 const state = {
@@ -10967,10 +11953,15 @@ const state = {
   backups: [],
   schemaRevision: 0,
   schemaFields: [],
-  schemaSystemFields: [],
   storageLayout: null,
   storageFolderUids: [],
-  storagePrefixFieldUid: null
+  storagePrefixFieldUid: null,
+  attachmentFields: [],
+  dashboardConfigRevision: 0,
+  dashboardWidgets: [],
+  showUserPerformance: false,
+  editingDashboardWidgetIndex: null,
+  activeAdminTab: "accounts"
 };
 
 const els = {
@@ -10979,6 +11970,9 @@ const els = {
   refreshBtn: document.getElementById("refreshBtn"),
   logoutBtn: document.getElementById("logoutBtn"),
   adminApp: document.getElementById("adminApp"),
+  adminFunctionTabs: document.getElementById("adminFunctionTabs"),
+  adminTabButtons: Array.from(document.querySelectorAll("[data-admin-tab]")),
+  adminTabPanels: Array.from(document.querySelectorAll("[data-admin-panel]")),
   authApp: document.getElementById("authApp"),
   authTitle: document.getElementById("authTitle"),
   authSubtitle: document.getElementById("authSubtitle"),
@@ -11024,9 +12018,13 @@ const els = {
   fieldAutoScope: document.getElementById("fieldAutoScope"),
   fieldAutoPrefix: document.getElementById("fieldAutoPrefix"),
   fieldAutoPadding: document.getElementById("fieldAutoPadding"),
+  fieldAttachmentConfig: document.getElementById("fieldAttachmentConfig"),
+  fieldAttachmentDescription: document.getElementById("fieldAttachmentDescription"),
+  fieldAttachmentStorageName: document.getElementById("fieldAttachmentStorageName"),
+  fieldAttachmentMaxFiles: document.getElementById("fieldAttachmentMaxFiles"),
+  fieldAttachmentMultiple: document.getElementById("fieldAttachmentMultiple"),
   createFieldBtn: document.getElementById("createFieldBtn"),
   schemaStatus: document.getElementById("schemaStatus"),
-  schemaSystemFields: document.getElementById("schemaSystemFields"),
   schemaFields: document.getElementById("schemaFields"),
   storageFolderFieldSelect: document.getElementById("storageFolderFieldSelect"),
   storageAddFolderBtn: document.getElementById("storageAddFolderBtn"),
@@ -11036,6 +12034,37 @@ const els = {
   storageLayoutFreezeNote: document.getElementById("storageLayoutFreezeNote"),
   storageLayoutStatus: document.getElementById("storageLayoutStatus"),
   saveStorageLayoutBtn: document.getElementById("saveStorageLayoutBtn"),
+
+  dashboardWidgetForm: document.getElementById("dashboardWidgetForm"),
+  dashboardWidgetTitle: document.getElementById("dashboardWidgetTitle"),
+  dashboardDisplayMode: document.getElementById("dashboardDisplayMode"),
+  dashboardGroupFieldWrap: document.getElementById("dashboardGroupFieldWrap"),
+  dashboardGroupField: document.getElementById("dashboardGroupField"),
+  dashboardMeasureType: document.getElementById("dashboardMeasureType"),
+  dashboardActionFieldWrap: document.getElementById("dashboardActionFieldWrap"),
+  dashboardActionValueWrap: document.getElementById("dashboardActionValueWrap"),
+  dashboardActionField: document.getElementById("dashboardActionField"),
+  dashboardActionValue: document.getElementById("dashboardActionValue"),
+  dashboardAttachmentFieldWrap: document.getElementById("dashboardAttachmentFieldWrap"),
+  dashboardAttachmentField: document.getElementById("dashboardAttachmentField"),
+  dashboardDateField: document.getElementById("dashboardDateField"),
+  dashboardDateFieldHint: document.getElementById("dashboardDateFieldHint"),
+  dashboardTimeBucketWrap: document.getElementById("dashboardTimeBucketWrap"),
+  dashboardTimeBucket: document.getElementById("dashboardTimeBucket"),
+  dashboardChartValueWrap: document.getElementById("dashboardChartValueWrap"),
+  dashboardChartValue: document.getElementById("dashboardChartValue"),
+  dashboardCategoryLimitWrap: document.getElementById("dashboardCategoryLimitWrap"),
+  dashboardCategoryLimit: document.getElementById("dashboardCategoryLimit"),
+  dashboardLegendWrap: document.getElementById("dashboardLegendWrap"),
+  dashboardShowLegend: document.getElementById("dashboardShowLegend"),
+  dashboardRulePreview: document.getElementById("dashboardRulePreview"),
+  dashboardShowUserPerformance: document.getElementById("dashboardShowUserPerformance"),
+  addDashboardWidgetBtn: document.getElementById("addDashboardWidgetBtn"),
+  cancelDashboardWidgetEditBtn: document.getElementById("cancelDashboardWidgetEditBtn"),
+  dashboardWidgetList: document.getElementById("dashboardWidgetList"),
+  dashboardConfigStatus: document.getElementById("dashboardConfigStatus"),
+  saveDashboardConfigBtn: document.getElementById("saveDashboardConfigBtn"),
+
   auditFilterForm: document.getElementById("auditFilterForm"),
   auditUserFilter: document.getElementById("auditUserFilter"),
   auditActionFilter: document.getElementById("auditActionFilter"),
@@ -11060,6 +12089,66 @@ const els = {
 };
 
 els.serverPill.textContent = API_BASE;
+
+const ADMIN_TAB_STORAGE_KEY = "mx.admin.active_tab.v1";
+const ADMIN_TAB_ORDER = ["accounts", "structure", "storage", "dashboard", "backups", "audit"];
+
+function setAdminTab(tab, { focus = false, persist = true } = {}) {
+  const nextTab = ADMIN_TAB_ORDER.includes(tab) ? tab : "accounts";
+  state.activeAdminTab = nextTab;
+
+  for (const button of els.adminTabButtons) {
+    const active = button.dataset.adminTab === nextTab;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-selected", active ? "true" : "false");
+    button.tabIndex = active ? 0 : -1;
+  }
+
+  for (const panel of els.adminTabPanels) {
+    panel.hidden = panel.dataset.adminPanel !== nextTab;
+  }
+
+  if (persist) {
+    try {
+      localStorage.setItem(ADMIN_TAB_STORAGE_KEY, nextTab);
+    } catch (_) {}
+  }
+
+  if (focus) {
+    const activeButton = els.adminTabButtons.find(button => button.dataset.adminTab === nextTab);
+    activeButton?.focus();
+  }
+}
+
+function restoreAdminTab() {
+  let saved = "accounts";
+  try {
+    saved = localStorage.getItem(ADMIN_TAB_STORAGE_KEY) || "accounts";
+  } catch (_) {}
+  setAdminTab(saved, { persist: false });
+}
+
+for (const [index, button] of els.adminTabButtons.entries()) {
+  button.addEventListener("click", () => {
+    setAdminTab(button.dataset.adminTab || "accounts");
+  });
+
+  button.addEventListener("keydown", event => {
+    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+    event.preventDefault();
+
+    let targetIndex = index;
+    if (event.key === "ArrowLeft") targetIndex = (index - 1 + els.adminTabButtons.length) % els.adminTabButtons.length;
+    if (event.key === "ArrowRight") targetIndex = (index + 1) % els.adminTabButtons.length;
+    if (event.key === "Home") targetIndex = 0;
+    if (event.key === "End") targetIndex = els.adminTabButtons.length - 1;
+
+    const target = els.adminTabButtons[targetIndex];
+    setAdminTab(target?.dataset.adminTab || "accounts", { focus: true });
+  });
+}
+
+restoreAdminTab();
 
 function accessName(level) {
   switch (Number(level)) {
@@ -11111,14 +12200,14 @@ function showToast(message, type = "success") {
 }
 
 function getAccessToken() {
-  return window.ARIS_AUTH
-    ? window.ARIS_AUTH.getAccessToken()
+  return window.MX_AUTH
+    ? window.MX_AUTH.getAccessToken()
     : (sessionStorage.getItem(TOKEN_KEYS.access) || "");
 }
 
 function getRefreshToken() {
-  return window.ARIS_AUTH
-    ? window.ARIS_AUTH.getRefreshToken()
+  return window.MX_AUTH
+    ? window.MX_AUTH.getRefreshToken()
     : (sessionStorage.getItem(TOKEN_KEYS.refresh) || "");
 }
 
@@ -11143,8 +12232,8 @@ function storeTokens(data) {
     throw new Error("The server did not return access and refresh tokens.");
   }
 
-  if (window.ARIS_AUTH) {
-    window.ARIS_AUTH.setTokens(data);
+  if (window.MX_AUTH) {
+    window.MX_AUTH.setTokens(data);
     return;
   }
 
@@ -11182,8 +12271,8 @@ function scheduleTokenRefresh(accessToken) {
 }
 
 async function refreshAccessToken() {
-  if (window.ARIS_AUTH) {
-    return window.ARIS_AUTH.refreshAccessToken();
+  if (window.MX_AUTH) {
+    return window.MX_AUTH.refreshAccessToken();
   }
 
   if (state.refreshPromise) {
@@ -11227,8 +12316,8 @@ async function refreshAccessToken() {
 }
 
 async function authenticatedFetch(path, options = {}, retry = true) {
-  if (window.ARIS_AUTH) {
-    return window.ARIS_AUTH.apiFetch(`${API_BASE}${path}`, options, retry);
+  if (window.MX_AUTH) {
+    return window.MX_AUTH.apiFetch(`${API_BASE}${path}`, options, retry);
   }
 
   const token = getAccessToken();
@@ -11320,8 +12409,8 @@ function showAdminApp() {
 }
 
 async function loadSession() {
-  const session = window.ARIS_AUTH
-    ? await window.ARIS_AUTH.ensureSession()
+  const session = window.MX_AUTH
+    ? await window.MX_AUTH.ensureSession()
     : await requestJson(
         ENDPOINTS.session,
         { method: "GET" }
@@ -11411,6 +12500,7 @@ async function bootstrapAdministrator(event) {
     await Promise.all([
       loadAccounts(),
       loadRecordStructure(),
+      loadDashboardConfigAdmin(),
       loadBackups(),
       loadAudit(1)
     ]);
@@ -11457,6 +12547,7 @@ async function login(event) {
     await Promise.all([
       loadAccounts(),
       loadRecordStructure(),
+      loadDashboardConfigAdmin(),
       loadBackups(),
       loadAudit(1)
     ]);
@@ -11651,7 +12742,8 @@ function fieldTypeLabel(type) {
     date: "Date",
     boolean: "Checkbox",
     select: "Select",
-    auto_number: "Auto Number"
+    auto_number: "Auto Number",
+    attachments: "File Attachment"
   })[type] || type;
 }
 
@@ -11659,22 +12751,31 @@ function syncNewFieldConfig() {
   const type = els.fieldType.value;
   els.fieldSelectConfig.classList.toggle("hidden", type !== "select");
   els.fieldAutoConfig.classList.toggle("hidden", type !== "auto_number");
+  els.fieldAttachmentConfig.classList.toggle("hidden", type !== "attachments");
 
   if (type === "auto_number") {
     els.fieldUnique.checked = true;
     els.fieldUnique.disabled = true;
     els.fieldRequired.checked = true;
     els.fieldRequired.disabled = true;
+  } else if (type === "attachments") {
+    els.fieldUnique.checked = false;
+    els.fieldUnique.disabled = true;
+    els.fieldRequired.disabled = false;
   } else {
     els.fieldUnique.disabled = false;
     els.fieldRequired.disabled = false;
   }
 
-  if (type === "long_text") {
+  if (["long_text", "attachments"].includes(type)) {
     els.fieldSortable.checked = false;
     els.fieldSortable.disabled = true;
   } else {
     els.fieldSortable.disabled = false;
+  }
+
+  if (type === "attachments") {
+    els.fieldSearchable.checked = true;
   }
 }
 
@@ -11698,6 +12799,16 @@ function schemaConfigFromCreateForm() {
     };
   }
 
+  if (type === "attachments") {
+    const maxRaw = String(els.fieldAttachmentMaxFiles.value || "").trim();
+    return {
+      storage_name: els.fieldAttachmentStorageName.value.trim(),
+      description: els.fieldAttachmentDescription.value.trim(),
+      multiple: Boolean(els.fieldAttachmentMultiple.checked),
+      max_files: maxRaw ? Math.max(1, Math.min(10000, Number(maxRaw))) : null
+    };
+  }
+
   return {};
 }
 
@@ -11716,129 +12827,17 @@ function schemaFieldConfigEditor(field) {
     </div>`;
   }
 
+  if (field.field_type === "attachments") {
+    return `<div class="schema-field-config">
+      <label>DESCRIPTION<input data-schema-config-description="${escapeHtml(field.uid)}" value="${escapeHtml(field.config?.description || "")}" placeholder="Optional instructions"></label>
+      <label>N1 FOLDER NAME<input data-schema-config-storage="${escapeHtml(field.uid)}" value="${escapeHtml(field.config?.storage_name || "")}" placeholder="Defaults to field name"></label>
+      <label>MAX FILES<input type="number" min="1" max="10000" data-schema-config-max-files="${escapeHtml(field.uid)}" value="${escapeHtml(field.config?.max_files || "")}" placeholder="Unlimited"></label>
+      <label class="schema-inline-check" style="align-self:center;"><input type="checkbox" data-schema-config-multiple="${escapeHtml(field.uid)}" ${field.config?.multiple === false ? "" : "checked"}> Allow multiple files</label>
+      <div class="muted" style="grid-column:1/-1;">Stored in N1 as <code>records/&lt;configured folders&gt;/${escapeHtml(field.config?.storage_name || field.label)}/filename.ext</code>.</div>
+    </div>`;
+  }
+
   return "";
-}
-
-function renderSystemSchemaFields() {
-  const fields = [...state.schemaSystemFields].sort((a, b) =>
-    Number(a.position || 0) - Number(b.position || 0) ||
-    String(a.label || "").localeCompare(String(b.label || ""))
-  );
-
-  if (!fields.length) {
-    els.schemaSystemFields.innerHTML =
-      `<div class="muted">No built-in system fields are available.</div>`;
-    return;
-  }
-
-  els.schemaSystemFields.innerHTML = fields.map(field => `
-    <article class="schema-field-card schema-system-card" data-system-schema-field="${escapeHtml(field.key)}">
-      <div class="schema-field-head">
-        <div class="schema-field-name">
-          <strong>${escapeHtml(field.label)}</strong>
-          <div class="schema-field-meta">
-            ${escapeHtml(field.key)} · Built-in system / N1 capability
-          </div>
-        </div>
-        <span class="pill">SYSTEM</span>
-      </div>
-
-      <div class="schema-field-editor">
-        <div class="schema-system-description">
-          📎 Every record can attach files. Files are stored in N1 and attachment filenames participate in Universal Search. This capability cannot be archived or removed.
-        </div>
-
-        <div class="schema-system-editor-grid">
-          <label>
-            PRIORITY
-            <input
-              type="number"
-              data-system-priority="${escapeHtml(field.key)}"
-              value="${Number(field.table_priority || 0)}"
-            >
-          </label>
-
-          <label>
-            POSITION
-            <input
-              type="number"
-              min="0"
-              data-system-position="${escapeHtml(field.key)}"
-              value="${Number(field.position || 0)}"
-            >
-          </label>
-        </div>
-
-        <div class="schema-field-flags">
-          <label class="schema-inline-check">
-            <input
-              type="checkbox"
-              data-system-table-visible="${escapeHtml(field.key)}"
-              ${field.table_visible ? "checked" : ""}
-            >
-            Default table column
-          </label>
-
-          <label class="schema-inline-check schema-fixed-flag">
-            <input type="checkbox" checked disabled>
-            Searchable by filename
-          </label>
-
-          <label class="schema-inline-check schema-fixed-flag">
-            <input type="checkbox" checked disabled>
-            Always available on record forms
-          </label>
-        </div>
-
-        <div class="schema-field-actions">
-          <button
-            class="btn btn-soft btn-small"
-            type="button"
-            data-save-system-field="${escapeHtml(field.key)}"
-          >
-            Save Attached Files Settings
-          </button>
-        </div>
-      </div>
-    </article>
-  `).join("");
-}
-
-async function saveSystemSchemaField(key) {
-  const field = state.schemaSystemFields.find(item => item.key === key);
-
-  if (!field) {
-    return;
-  }
-
-  const query = name =>
-    els.schemaSystemFields.querySelector(
-      `[data-system-${name}="${CSS.escape(key)}"]`
-    );
-
-  const payload = {
-    table_visible: Boolean(query("table-visible")?.checked),
-    table_priority: Number(query("priority")?.value || field.table_priority || 0),
-    position: Number(query("position")?.value || field.position || 0)
-  };
-
-  els.schemaStatus.textContent = `Saving ${field.label} settings...`;
-
-  try {
-    await requestJson(
-      ENDPOINTS.schema.systemField(key),
-      {
-        method: "PUT",
-        body: payload
-      }
-    );
-
-    await loadRecordStructure();
-    notifyEmbeddedDataChanged();
-    els.schemaStatus.textContent = `${field.label} settings saved.`;
-  } catch (error) {
-    els.schemaStatus.textContent = error.message;
-  }
 }
 
 function renderSchemaFields() {
@@ -11867,9 +12866,9 @@ function renderSchemaFields() {
         <label>POSITION<input type="number" min="0" data-schema-position="${escapeHtml(field.uid)}" value="${Number(field.position || 0)}"></label>
         <div class="schema-field-flags">
           <label class="schema-inline-check"><input type="checkbox" data-schema-required="${escapeHtml(field.uid)}" ${field.required ? "checked" : ""}> Required</label>
-          <label class="schema-inline-check"><input type="checkbox" data-schema-unique="${escapeHtml(field.uid)}" ${field.unique_value ? "checked" : ""} ${field.field_type === "auto_number" ? "disabled" : ""}> Unique</label>
+          <label class="schema-inline-check"><input type="checkbox" data-schema-unique="${escapeHtml(field.uid)}" ${field.unique_value ? "checked" : ""} ${["auto_number", "attachments"].includes(field.field_type) ? "disabled" : ""}> Unique</label>
           <label class="schema-inline-check"><input type="checkbox" data-schema-searchable="${escapeHtml(field.uid)}" ${field.searchable ? "checked" : ""}> Searchable</label>
-          <label class="schema-inline-check"><input type="checkbox" data-schema-sortable="${escapeHtml(field.uid)}" ${field.sortable ? "checked" : ""} ${field.field_type === "long_text" ? "disabled" : ""}> Sortable</label>
+          <label class="schema-inline-check"><input type="checkbox" data-schema-sortable="${escapeHtml(field.uid)}" ${field.sortable ? "checked" : ""} ${["long_text", "attachments"].includes(field.field_type) ? "disabled" : ""}> Sortable</label>
           <label class="schema-inline-check"><input type="checkbox" data-schema-table-visible="${escapeHtml(field.uid)}" ${field.table_visible ? "checked" : ""}> Default table column</label>
         </div>
         ${schemaFieldConfigEditor(field)}
@@ -11884,7 +12883,7 @@ function renderSchemaFields() {
 
 function activeStorageFields() {
   return [...state.schemaFields]
-    .filter(field => field.active)
+    .filter(field => field.active && field.field_type !== "attachments")
     .sort((a, b) =>
       Number(a.position || 0) - Number(b.position || 0) ||
       String(a.label || "").localeCompare(String(b.label || ""))
@@ -11908,6 +12907,7 @@ function renderStorageLayoutPreview() {
     ? `<${prefixField.label}>__filename.ext`
     : "filename.ext";
 
+  parts.push("<File Attachment field>");
   parts.push(fileName);
   els.storageLayoutPreview.textContent = parts.join("/");
 }
@@ -11947,7 +12947,7 @@ function renderStorageLayout() {
           </div>
         `;
       }).join("")
-    : `<div class="schema-empty"><strong>No custom N1 folders selected.</strong><span>Without a configured layout, storage falls back to records/&lt;record-uid&gt;/filename.ext.</span></div>`;
+    : `<div class="schema-empty"><strong>No base N1 folders selected.</strong><span>MX will use records/&lt;record-uid&gt;/&lt;File Attachment field&gt;/filename.ext until you configure schema-derived base folders.</span></div>`;
 
   els.storagePrefixFieldSelect.innerHTML = [
     `<option value="">No filename prefix</option>`,
@@ -12034,19 +13034,26 @@ async function loadRecordStructure() {
     const data = await requestJson(ENDPOINTS.schema.get, { method: "GET" });
     state.schemaRevision = Number(data?.revision || 0);
     state.schemaFields = Array.isArray(data?.fields) ? data.fields : [];
-    state.schemaSystemFields = Array.isArray(data?.system_fields)
-      ? data.system_fields
-      : [];
+    state.attachmentFields = state.schemaFields
+      .filter(field => field.field_type === "attachments")
+      .map(field => ({
+        ...field,
+        storage_name: String(field.config?.storage_name || field.label || "Attachments"),
+        description: String(field.config?.description || ""),
+        multiple: field.config?.multiple !== false,
+        max_files: Number(field.config?.max_files || 0) || null
+      }));
 
-    renderSystemSchemaFields();
     renderSchemaFields();
+    renderDashboardReportFieldOptions();
+    renderDashboardWidgetsAdmin();
 
-    const activeCount =
-      state.schemaFields.filter(field => field.active).length;
+    const activeCount = state.schemaFields.filter(field => field.active).length;
+    const attachmentCount = state.schemaFields.filter(field => field.active && field.field_type === "attachments").length;
 
     els.schemaStatus.textContent =
-      `${activeCount} custom field${activeCount === 1 ? "" : "s"} · ` +
-      `${state.schemaSystemFields.length} built-in system field${state.schemaSystemFields.length === 1 ? "" : "s"} · ` +
+      `${activeCount} active field${activeCount === 1 ? "" : "s"} · ` +
+      `${attachmentCount} File Attachment field${attachmentCount === 1 ? "" : "s"} · ` +
       `schema revision ${state.schemaRevision}`;
 
     await loadStorageLayout();
@@ -12054,6 +13061,447 @@ async function loadRecordStructure() {
     els.schemaStatus.textContent = error.message;
     els.schemaFields.innerHTML = `<div class="muted">${escapeHtml(error.message)}</div>`;
     showToast(error.message, "error");
+  }
+}
+
+
+function reportFieldOptions({ datesOnly = false, includeAttachments = false } = {}) {
+  return state.schemaFields
+    .filter(field =>
+      field.active &&
+      (includeAttachments || field.field_type !== "attachments") &&
+      (!datesOnly || field.field_type === "date")
+    )
+    .sort((a, b) => Number(a.position || 0) - Number(b.position || 0))
+    .map(field => `<option value="${escapeHtml(field.uid)}">${escapeHtml(field.label)} · ${escapeHtml(fieldTypeLabel(field.field_type))}</option>`)
+    .join("");
+}
+
+function renderDashboardReportFieldOptions() {
+  if (!els.dashboardGroupField) return;
+
+  const previous = {
+    group: els.dashboardGroupField.value,
+    action: els.dashboardActionField.value,
+    attachment: els.dashboardAttachmentField.value,
+    date: els.dashboardDateField.value
+  };
+
+  const scalarFields = reportFieldOptions();
+  els.dashboardGroupField.innerHTML = `<option value="">No grouping · one overall result</option>${scalarFields}`;
+  els.dashboardActionField.innerHTML = scalarFields || `<option value="">No non-attachment fields configured</option>`;
+
+  const attachmentOptions = state.attachmentFields
+    .filter(field => field.active)
+    .sort((a, b) => Number(a.position || 0) - Number(b.position || 0))
+    .map(field => `<option value="${escapeHtml(field.uid)}">${escapeHtml(field.label)}</option>`)
+    .join("");
+
+  els.dashboardAttachmentField.innerHTML = attachmentOptions || `<option value="">No File Attachment fields configured</option>`;
+  els.dashboardDateField.innerHTML = `<option value="">Ignore dashboard date range</option>${reportFieldOptions({ datesOnly: true })}`;
+
+  const restore = (select, value) => {
+    if (!select) return;
+    const exists = Array.from(select.options).some(option => option.value === value);
+    if (exists) select.value = value;
+  };
+  restore(els.dashboardGroupField, previous.group);
+  restore(els.dashboardActionField, previous.action);
+  restore(els.dashboardAttachmentField, previous.attachment);
+  restore(els.dashboardDateField, previous.date);
+
+  syncDashboardMeasureType();
+}
+
+function selectedOptionText(select, fallback = "") {
+  if (!select) return fallback;
+  const option = select.options?.[select.selectedIndex];
+  if (!option) return fallback;
+  return String(option.textContent || fallback).replace(/\s+·\s+.*$/, "").trim() || fallback;
+}
+
+function syncDashboardMeasureType() {
+  const mode = els.dashboardMeasureType?.value || "all_records";
+  const displayMode = els.dashboardDisplayMode?.value || "metric";
+  const attachmentMode = mode === "attachment_presence";
+  const allMode = mode === "all_records";
+  const needsField = !attachmentMode && !allMode;
+  const needsValue = mode === "field_equals" || mode === "field_not_equals";
+  const metricMode = displayMode === "metric";
+  const lineMode = displayMode === "line";
+  const categoricalChart = ["bar", "pie", "donut"].includes(displayMode);
+  const chartMode = categoricalChart || lineMode;
+  const groupedRequired = ["bar", "pie", "donut", "progress"].includes(displayMode);
+
+  els.dashboardActionFieldWrap?.classList.toggle("hidden", !needsField);
+  els.dashboardActionValueWrap?.classList.toggle("hidden", !needsValue);
+  els.dashboardAttachmentFieldWrap?.classList.toggle("hidden", !attachmentMode);
+  els.dashboardGroupFieldWrap?.classList.toggle("hidden", metricMode || lineMode);
+  els.dashboardTimeBucketWrap?.classList.toggle("hidden", !lineMode);
+  els.dashboardChartValueWrap?.classList.toggle("hidden", !chartMode);
+  els.dashboardCategoryLimitWrap?.classList.toggle("hidden", !categoricalChart);
+
+  if (els.dashboardChartValue) {
+    for (const option of els.dashboardChartValue.options) {
+      option.disabled = ["pie", "donut"].includes(displayMode) && ["rate", "breakdown"].includes(option.value);
+    }
+    if (["pie", "donut"].includes(displayMode) && ["rate", "breakdown"].includes(els.dashboardChartValue.value)) {
+      els.dashboardChartValue.value = "matched";
+    }
+  }
+
+  const showLegend = ["pie", "donut"].includes(displayMode) ||
+    (chartMode && els.dashboardChartValue?.value === "breakdown");
+  els.dashboardLegendWrap?.classList.toggle("hidden", !showLegend);
+
+  if (els.dashboardActionValue) els.dashboardActionValue.required = needsValue;
+  if (els.dashboardGroupField) {
+    els.dashboardGroupField.disabled = metricMode || lineMode;
+    els.dashboardGroupField.required = groupedRequired;
+  }
+  if (els.dashboardDateField) els.dashboardDateField.required = lineMode;
+  if (els.dashboardDateFieldHint) {
+    els.dashboardDateFieldHint.textContent = lineMode
+      ? "Required. This Date field becomes the trend axis and also follows the Dashboard reporting-period filter."
+      : "Optional. If selected, the Dashboard reporting-period control filters this widget.";
+  }
+
+  updateDashboardRulePreview();
+}
+function updateDashboardRulePreview() {
+  if (!els.dashboardRulePreview) return;
+
+  const mode = els.dashboardMeasureType?.value || "all_records";
+  const displayMode = els.dashboardDisplayMode?.value || "metric";
+  let measureText = "count every record";
+
+  if (mode === "attachment_presence") {
+    const field = selectedOptionText(els.dashboardAttachmentField, "the selected File Attachment field");
+    measureText = `count records where “${field}” has one or more files`;
+  } else if (mode !== "all_records") {
+    const field = selectedOptionText(els.dashboardActionField, "the selected field");
+    const value = String(els.dashboardActionValue?.value || "").trim() || "…";
+    if (mode === "field_nonempty") measureText = `count records where “${field}” is not empty`;
+    if (mode === "field_empty") measureText = `count records where “${field}” is empty`;
+    if (mode === "field_equals") measureText = `count records where “${field}” equals “${value}”`;
+    if (mode === "field_not_equals") measureText = `count records where “${field}” does not equal “${value}”`;
+  }
+
+  let organizeText = " as one overall number";
+  if (displayMode === "line") {
+    const dateField = selectedOptionText(els.dashboardDateField, "the selected Date field");
+    const bucket = selectedOptionText(els.dashboardTimeBucket, "month").toLowerCase();
+    organizeText = ` over time by ${bucket} using “${dateField}”`;
+  } else if (displayMode !== "metric") {
+    organizeText = els.dashboardGroupField?.value
+      ? ` grouped by “${selectedOptionText(els.dashboardGroupField, "the selected field")}”`
+      : " as one overall result";
+  }
+
+  let chartText = "";
+  if (["bar", "line", "pie", "donut"].includes(displayMode)) {
+    const chartValue = els.dashboardChartValue?.value || "matched";
+    const chartValueLabel = chartValue === "total"
+      ? "total records"
+      : chartValue === "rate"
+        ? "match rate"
+        : chartValue === "breakdown"
+          ? "matched versus not matched"
+          : "matched records";
+    chartText = ` The ${dashboardDisplayModeLabel(displayMode).toLowerCase()} will plot ${chartValueLabel}.`;
+  }
+
+  const dateText = displayMode === "line"
+    ? ""
+    : (els.dashboardDateField?.value
+      ? ` The Dashboard reporting-period filter will use “${selectedOptionText(els.dashboardDateField, "the selected date field")}”.`
+      : " The Dashboard reporting-period filter will not limit this widget.");
+
+  els.dashboardRulePreview.textContent =
+    `This widget will ${measureText}${organizeText}.${chartText}${dateText}`;
+}
+function dashboardFieldName(uid) {
+  if (!uid) return "No grouping";
+  return state.schemaFields.find(field => String(field.uid) === String(uid))?.label || uid || "Unknown field";
+}
+
+function dashboardWidgetRuleText(widget) {
+  if (widget.kind === "attachment_presence") {
+    const label = state.attachmentFields.find(field => String(field.uid) === String(widget.attachment_field_uid))?.label || "File Attachment";
+    return `${label} has one or more files`;
+  }
+  const mode = widget.action_mode || "equals";
+  if (mode === "all") return "Every record";
+  const field = dashboardFieldName(widget.action_field_uid);
+  if (mode === "nonempty") return `${field} is not empty`;
+  if (mode === "empty") return `${field} is empty`;
+  if (mode === "not_equals") return `${field} does not equal ${widget.action_value || ""}`;
+  return `${field} equals ${widget.action_value || ""}`;
+}
+
+function dashboardDisplayModeLabel(mode) {
+  if (mode === "bar") return "Bar chart";
+  if (mode === "line") return "Line chart";
+  if (mode === "pie") return "Pie chart";
+  if (mode === "donut") return "Donut chart";
+  if (mode === "progress") return "Grouped progress";
+  if (mode === "table") return "Detailed table";
+  return "Summary number";
+}
+function resetDashboardWidgetEditor() {
+  state.editingDashboardWidgetIndex = null;
+  els.dashboardWidgetForm?.reset();
+  if (els.dashboardDisplayMode) els.dashboardDisplayMode.value = "metric";
+  if (els.dashboardMeasureType) els.dashboardMeasureType.value = "all_records";
+  if (els.dashboardGroupField) els.dashboardGroupField.value = "";
+  if (els.dashboardTimeBucket) els.dashboardTimeBucket.value = "month";
+  if (els.dashboardChartValue) els.dashboardChartValue.value = "matched";
+  if (els.dashboardCategoryLimit) els.dashboardCategoryLimit.value = "8";
+  if (els.dashboardShowLegend) els.dashboardShowLegend.checked = true;
+  if (els.addDashboardWidgetBtn) els.addDashboardWidgetBtn.textContent = "Add Widget";
+  els.cancelDashboardWidgetEditBtn?.classList.add("hidden");
+  if (els.dashboardShowUserPerformance) {
+    els.dashboardShowUserPerformance.checked = Boolean(state.showUserPerformance);
+  }
+  syncDashboardMeasureType();
+}
+function editDashboardWidget(index) {
+  const widget = state.dashboardWidgets[index];
+  if (!widget) return;
+
+  state.editingDashboardWidgetIndex = index;
+  renderDashboardReportFieldOptions();
+
+  els.dashboardWidgetTitle.value = widget.title || "";
+  els.dashboardDisplayMode.value = widget.display_mode || (widget.group_field_uid ? "table" : "metric");
+  els.dashboardGroupField.value = widget.group_field_uid || "";
+  els.dashboardDateField.value = widget.date_field_uid || "";
+  if (els.dashboardTimeBucket) els.dashboardTimeBucket.value = widget.time_bucket || "month";
+  if (els.dashboardChartValue) els.dashboardChartValue.value = widget.chart_value || "matched";
+  if (els.dashboardCategoryLimit) els.dashboardCategoryLimit.value = String(widget.category_limit ?? 8);
+  if (els.dashboardShowLegend) els.dashboardShowLegend.checked = widget.show_legend !== false;
+
+  if (widget.kind === "attachment_presence") {
+    els.dashboardMeasureType.value = "attachment_presence";
+    els.dashboardAttachmentField.value = widget.attachment_field_uid || "";
+  } else {
+    const mode = widget.action_mode || "all";
+    els.dashboardMeasureType.value =
+      mode === "all" ? "all_records" :
+      mode === "nonempty" ? "field_nonempty" :
+      mode === "empty" ? "field_empty" :
+      mode === "not_equals" ? "field_not_equals" :
+      "field_equals";
+    els.dashboardActionField.value = widget.action_field_uid || "";
+    els.dashboardActionValue.value = widget.action_value || "";
+  }
+
+  els.addDashboardWidgetBtn.textContent = "Update Widget";
+  els.cancelDashboardWidgetEditBtn?.classList.remove("hidden");
+  syncDashboardMeasureType();
+  els.dashboardWidgetForm?.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+function moveDashboardWidget(index, delta) {
+  const target = index + delta;
+  if (index < 0 || target < 0 || index >= state.dashboardWidgets.length || target >= state.dashboardWidgets.length) {
+    return;
+  }
+  const [widget] = state.dashboardWidgets.splice(index, 1);
+  state.dashboardWidgets.splice(target, 0, widget);
+
+  if (state.editingDashboardWidgetIndex === index) {
+    state.editingDashboardWidgetIndex = target;
+  } else if (state.editingDashboardWidgetIndex === target) {
+    state.editingDashboardWidgetIndex = index;
+  }
+
+  renderDashboardWidgetsAdmin();
+}
+
+function renderDashboardWidgetsAdmin() {
+  renderDashboardReportFieldOptions();
+  if (els.dashboardShowUserPerformance) {
+    els.dashboardShowUserPerformance.checked = Boolean(state.showUserPerformance);
+  }
+  const widgets = Array.isArray(state.dashboardWidgets) ? state.dashboardWidgets : [];
+
+  if (!widgets.length) {
+    els.dashboardWidgetList.innerHTML = `<div class="schema-empty"><strong>No dashboard widgets configured.</strong><span>Use the builder above to add the first widget. Nothing appears on the Dashboard until an Administrator creates it here and saves.</span></div>`;
+  } else {
+    els.dashboardWidgetList.innerHTML = widgets.map((widget, index) => {
+      const displayMode = widget.display_mode || (widget.group_field_uid ? "table" : "metric");
+      const grouping = displayMode === "line"
+        ? `Timeline by ${widget.time_bucket || "month"}`
+        : (widget.group_field_uid ? `Grouped by ${dashboardFieldName(widget.group_field_uid)}` : "Overall");
+      const dateText = widget.date_field_uid ? `Date field: ${dashboardFieldName(widget.date_field_uid)}` : "No date filter";
+      const chartText = ["bar", "line", "pie", "donut"].includes(displayMode)
+        ? ` · ${widget.chart_value === "total" ? "total records" : widget.chart_value === "rate" ? "match rate" : widget.chart_value === "breakdown" ? "matched vs not matched" : "matched records"}`
+        : "";
+      return `
+        <div class="dashboard-widget-admin-item">
+          <div>
+            <div class="widget-title-row">
+              <strong>${escapeHtml(widget.title || "Dashboard widget")}</strong>
+              <span class="dashboard-widget-chip">${escapeHtml(dashboardDisplayModeLabel(displayMode))}</span>
+            </div>
+            <div class="muted">${escapeHtml(grouping)} · ${escapeHtml(dateText)}${escapeHtml(chartText)}</div>
+          </div>
+          <div><strong>Counts as matched when:</strong><div class="muted">${escapeHtml(dashboardWidgetRuleText(widget))}</div></div>
+          <div class="dashboard-widget-actions">
+            <button class="btn btn-small" type="button" data-move-dashboard-widget="-1" data-dashboard-widget-index="${index}" ${index === 0 ? "disabled" : ""}>↑</button>
+            <button class="btn btn-small" type="button" data-move-dashboard-widget="1" data-dashboard-widget-index="${index}" ${index === widgets.length - 1 ? "disabled" : ""}>↓</button>
+            <button class="btn btn-soft btn-small" type="button" data-edit-dashboard-widget="${index}">Edit</button>
+            <button class="btn btn-danger btn-small" type="button" data-remove-dashboard-widget="${index}">Remove</button>
+          </div>
+        </div>`;
+    }).join("");
+  }
+
+  els.dashboardConfigStatus.textContent =
+    `${widgets.length} dashboard widget${widgets.length === 1 ? "" : "s"} · configuration revision ${state.dashboardConfigRevision} · changes are not live until Save Dashboard`;
+}
+
+async function loadDashboardConfigAdmin() {
+  els.dashboardConfigStatus.textContent = "Loading dashboard configuration...";
+  try {
+    const data = await requestJson(ENDPOINTS.dashboardConfigRead, { method: "GET" });
+    const config = data?.config && typeof data.config === "object" ? data.config : {};
+    state.dashboardConfigRevision = Number(data?.revision || 0);
+    state.dashboardWidgets = Array.isArray(config.widgets)
+      ? config.widgets
+          .filter(widget => ["action_rate", "attachment_presence"].includes(widget?.kind))
+          .map(widget => ({
+            ...widget,
+            display_mode: ["metric", "bar", "line", "pie", "donut", "progress", "table"].includes(widget?.display_mode)
+              ? widget.display_mode
+              : (widget?.group_field_uid ? "table" : "metric"),
+            chart_value: ["matched", "total", "rate", "breakdown"].includes(widget?.chart_value)
+              ? widget.chart_value
+              : "matched",
+            time_bucket: ["day", "week", "month", "quarter", "year"].includes(widget?.time_bucket)
+              ? widget.time_bucket
+              : "month",
+            category_limit: Math.max(0, Number(widget?.category_limit ?? 8) || 0),
+            show_legend: widget?.show_legend !== false
+          }))
+      : [];
+    state.showUserPerformance = config.show_user_performance === true;
+    state.editingDashboardWidgetIndex = null;
+    renderDashboardWidgetsAdmin();
+    resetDashboardWidgetEditor();
+  } catch (error) {
+    els.dashboardConfigStatus.textContent = error.message;
+    showToast(error.message, "error");
+  }
+}
+
+function addDashboardWidget(event) {
+  event.preventDefault();
+
+  const mode = els.dashboardMeasureType.value || "all_records";
+  const displayMode = els.dashboardDisplayMode.value || "metric";
+  const attachmentMode = mode === "attachment_presence";
+  const allMode = mode === "all_records";
+  const fieldMode = !attachmentMode && !allMode;
+  const needsValue = mode === "field_equals" || mode === "field_not_equals";
+  const lineMode = displayMode === "line";
+  const categoricalChart = ["bar", "pie", "donut"].includes(displayMode);
+  const chartMode = categoricalChart || lineMode;
+  const groupedRequired = ["bar", "pie", "donut", "progress"].includes(displayMode);
+  const actionMode = allMode
+    ? "all"
+    : mode === "field_nonempty"
+      ? "nonempty"
+      : mode === "field_empty"
+        ? "empty"
+        : mode === "field_not_equals"
+          ? "not_equals"
+          : "equals";
+
+  const existingIndex = Number.isInteger(state.editingDashboardWidgetIndex)
+    ? state.editingDashboardWidgetIndex
+    : null;
+  const existingUid = existingIndex !== null ? state.dashboardWidgets[existingIndex]?.uid : null;
+
+  let chartValue = chartMode ? (els.dashboardChartValue.value || "matched") : null;
+  if (["pie", "donut"].includes(displayMode) && ["rate", "breakdown"].includes(chartValue)) {
+    chartValue = "matched";
+  }
+
+  const widget = {
+    uid: existingUid || (globalThis.crypto?.randomUUID?.() || `widget_${Date.now()}`),
+    kind: attachmentMode ? "attachment_presence" : "action_rate",
+    display_mode: displayMode,
+    title: els.dashboardWidgetTitle.value.trim(),
+    group_field_uid: (displayMode === "metric" || lineMode) ? null : (els.dashboardGroupField.value || null),
+    action_field_uid: fieldMode ? els.dashboardActionField.value : null,
+    action_mode: attachmentMode ? null : actionMode,
+    action_value: fieldMode && needsValue ? els.dashboardActionValue.value.trim() : null,
+    attachment_field_uid: attachmentMode ? els.dashboardAttachmentField.value : null,
+    date_field_uid: els.dashboardDateField.value || null,
+    time_bucket: lineMode ? (els.dashboardTimeBucket.value || "month") : null,
+    chart_value: chartValue,
+    category_limit: categoricalChart ? Math.max(0, Number(els.dashboardCategoryLimit.value || 0)) : null,
+    show_legend: chartMode ? Boolean(els.dashboardShowLegend.checked) : null,
+    definition: String(els.dashboardRulePreview?.textContent || "")
+      .replace(/^This widget will\s*/i, "")
+      .trim() || null
+  };
+
+  let errorMessage = "";
+  if (!widget.title) {
+    errorMessage = "Give the widget a title.";
+  } else if (attachmentMode && !widget.attachment_field_uid) {
+    errorMessage = "Choose a File Attachment field to measure.";
+  } else if (fieldMode && !widget.action_field_uid) {
+    errorMessage = "Choose the field to test.";
+  } else if (fieldMode && needsValue && !widget.action_value) {
+    errorMessage = "Enter the value MX should match.";
+  } else if (groupedRequired && !widget.group_field_uid) {
+    errorMessage = `${dashboardDisplayModeLabel(displayMode)} requires a Group / Category field.`;
+  } else if (lineMode && !widget.date_field_uid) {
+    errorMessage = "Line charts require a Date field for the time axis.";
+  }
+
+  if (errorMessage) {
+    showToast(errorMessage, "error");
+    return;
+  }
+
+  if (existingIndex !== null && state.dashboardWidgets[existingIndex]) {
+    state.dashboardWidgets[existingIndex] = widget;
+    showToast("Widget updated. Save Dashboard to publish the change.");
+  } else {
+    state.dashboardWidgets.push(widget);
+    showToast("Widget added. Save Dashboard to publish it.");
+  }
+
+  resetDashboardWidgetEditor();
+  renderDashboardWidgetsAdmin();
+}
+async function saveDashboardConfigAdmin() {
+  state.showUserPerformance = els.dashboardShowUserPerformance.checked;
+  els.saveDashboardConfigBtn.disabled = true;
+  els.dashboardConfigStatus.textContent = "Saving dashboard report configuration...";
+  try {
+    const result = await requestJson(ENDPOINTS.dashboardConfig, {
+      method: "PUT",
+      body: {
+        config: {
+          widgets: state.dashboardWidgets,
+          show_user_performance: state.showUserPerformance
+        }
+      }
+    });
+    state.dashboardConfigRevision = Number(result?.revision || state.dashboardConfigRevision + 1);
+    renderDashboardWidgetsAdmin();
+    window.MX_DATA?.recordsChanged?.();
+    showToast("Dashboard and report configuration saved.");
+  } catch (error) {
+    els.dashboardConfigStatus.textContent = error.message;
+    showToast(error.message, "error");
+  } finally {
+    els.saveDashboardConfigBtn.disabled = false;
   }
 }
 
@@ -12087,7 +13535,7 @@ async function createRecordField(event) {
     els.fieldTableVisible.checked = true;
     syncNewFieldConfig();
     await loadRecordStructure();
-    window.ARIS_DATA?.schemaChanged?.();
+    window.MX_DATA?.schemaChanged?.();
     showToast("Record field added.");
   } catch (error) {
     showToast(error.message, "error");
@@ -12113,6 +13561,20 @@ function fieldConfigFromEditor(field) {
     };
   }
 
+  if (field.field_type === "attachments") {
+    const description = els.schemaFields.querySelector(`[data-schema-config-description="${CSS.escape(field.uid)}"]`);
+    const storage = els.schemaFields.querySelector(`[data-schema-config-storage="${CSS.escape(field.uid)}"]`);
+    const maxFiles = els.schemaFields.querySelector(`[data-schema-config-max-files="${CSS.escape(field.uid)}"]`);
+    const multiple = els.schemaFields.querySelector(`[data-schema-config-multiple="${CSS.escape(field.uid)}"]`);
+    const maxRaw = String(maxFiles?.value || "").trim();
+    return {
+      description: String(description?.value || "").trim(),
+      storage_name: String(storage?.value || "").trim(),
+      multiple: Boolean(multiple?.checked),
+      max_files: maxRaw ? Math.max(1, Math.min(10000, Number(maxRaw))) : null
+    };
+  }
+
   return {};
 }
 
@@ -12124,9 +13586,9 @@ async function saveRecordField(uid) {
   const payload = {
     label: String(query("label")?.value || "").trim(),
     required: Boolean(query("required")?.checked),
-    unique_value: field.field_type === "auto_number" ? true : Boolean(query("unique")?.checked),
+    unique_value: field.field_type === "auto_number" ? true : (field.field_type === "attachments" ? false : Boolean(query("unique")?.checked)),
     searchable: Boolean(query("searchable")?.checked),
-    sortable: field.field_type === "long_text" ? false : Boolean(query("sortable")?.checked),
+    sortable: ["long_text", "attachments"].includes(field.field_type) ? false : Boolean(query("sortable")?.checked),
     table_visible: Boolean(query("table-visible")?.checked),
     table_priority: Number(query("priority")?.value || 0),
     position: Math.max(0, Number(query("position")?.value || 0)),
@@ -12136,7 +13598,7 @@ async function saveRecordField(uid) {
   try {
     await requestJson(ENDPOINTS.schema.update(uid), { method: "PUT", body: payload });
     await loadRecordStructure();
-    window.ARIS_DATA?.schemaChanged?.();
+    window.MX_DATA?.schemaChanged?.();
     showToast("Record field updated.");
   } catch (error) {
     showToast(error.message, "error");
@@ -12154,7 +13616,7 @@ async function toggleRecordField(uid) {
   try {
     await requestJson(ENDPOINTS.schema.update(uid), { method: "PUT", body: { active: nextActive } });
     await loadRecordStructure();
-    window.ARIS_DATA?.schemaChanged?.();
+    window.MX_DATA?.schemaChanged?.();
     showToast(nextActive ? "Record field restored." : "Record field archived.");
   } catch (error) {
     showToast(error.message, "error");
@@ -12565,7 +14027,7 @@ async function downloadDatabaseBackup(
 
     anchor.href = url;
     anchor.download =
-      fileName || "aris-backup.db";
+      fileName || "mx-backup.db";
 
     window.document.body
       .appendChild(anchor);
@@ -12650,15 +14112,16 @@ async function refreshAdminData() {
   await Promise.all([
     loadAccounts(),
     loadRecordStructure(),
+    loadDashboardConfigAdmin(),
     loadBackups(),
     loadAudit(state.auditPage)
   ]);
 
-  window.ARIS_DATA?.markFresh("admin");
+  window.MX_DATA?.markFresh("admin");
 }
 
 async function initialize() {
-  if (window.ARIS_AUTH) {
+  if (window.MX_AUTH) {
     try {
       await loadSession();
       showAdminApp();
@@ -12666,15 +14129,16 @@ async function initialize() {
       await Promise.all([
         loadAccounts(),
         loadRecordStructure(),
+          loadDashboardConfigAdmin(),
         loadBackups(),
         loadAudit(1)
       ]);
 
-      window.ARIS_DATA?.markFresh("admin");
+      window.MX_DATA?.markFresh("admin");
     } catch (error) {
       state.session = null;
       els.authApp.classList.add("hidden");
-      window.ARIS_AUTH.requireLogin(error.message);
+      window.MX_AUTH.requireLogin(error.message);
     }
 
     return;
@@ -12703,6 +14167,7 @@ async function initialize() {
     await Promise.all([
       loadAccounts(),
       loadRecordStructure(),
+      loadDashboardConfigAdmin(),
       loadBackups(),
       loadAudit(1)
     ]);
@@ -12716,6 +14181,8 @@ async function initialize() {
 els.bootstrapForm.addEventListener("submit", bootstrapAdministrator);
 els.loginForm.addEventListener("submit", login);
 els.createAccountForm.addEventListener("submit", createAccount);
+els.dashboardWidgetForm?.addEventListener("submit", addDashboardWidget);
+els.saveDashboardConfigBtn?.addEventListener("click", saveDashboardConfigAdmin);
 els.recordStructureForm.addEventListener("submit", createRecordField);
 els.fieldType.addEventListener("change", syncNewFieldConfig);
 function generatedFieldKey() {
@@ -12741,14 +14208,51 @@ function syncFieldKey() {
 els.fieldLabel.addEventListener("input", syncFieldKey);
 els.fieldKeyDisplay?.addEventListener("input", syncFieldKey);
 
-els.schemaSystemFields.addEventListener("click", event => {
-  const button = event.target.closest("[data-save-system-field]");
-
-  if (!button) {
+els.dashboardWidgetList?.addEventListener("click", event => {
+  const edit = event.target.closest("[data-edit-dashboard-widget]");
+  if (edit) {
+    editDashboardWidget(Number(edit.dataset.editDashboardWidget));
     return;
   }
 
-  saveSystemSchemaField(button.dataset.saveSystemField);
+  const move = event.target.closest("[data-move-dashboard-widget]");
+  if (move) {
+    moveDashboardWidget(
+      Number(move.dataset.dashboardWidgetIndex),
+      Number(move.dataset.moveDashboardWidget)
+    );
+    return;
+  }
+
+  const remove = event.target.closest("[data-remove-dashboard-widget]");
+  if (!remove) return;
+  const index = Number(remove.dataset.removeDashboardWidget);
+  if (Number.isInteger(index) && index >= 0 && index < state.dashboardWidgets.length) {
+    state.dashboardWidgets.splice(index, 1);
+    if (state.editingDashboardWidgetIndex === index) {
+      resetDashboardWidgetEditor();
+    } else if (Number.isInteger(state.editingDashboardWidgetIndex) && state.editingDashboardWidgetIndex > index) {
+      state.editingDashboardWidgetIndex -= 1;
+    }
+    renderDashboardWidgetsAdmin();
+  }
+});
+
+els.dashboardMeasureType?.addEventListener("change", syncDashboardMeasureType);
+els.dashboardDisplayMode?.addEventListener("change", syncDashboardMeasureType);
+els.dashboardGroupField?.addEventListener("change", updateDashboardRulePreview);
+els.dashboardActionField?.addEventListener("change", updateDashboardRulePreview);
+els.dashboardActionValue?.addEventListener("input", updateDashboardRulePreview);
+els.dashboardAttachmentField?.addEventListener("change", updateDashboardRulePreview);
+els.dashboardDateField?.addEventListener("change", updateDashboardRulePreview);
+els.dashboardTimeBucket?.addEventListener("change", updateDashboardRulePreview);
+els.dashboardChartValue?.addEventListener("change", syncDashboardMeasureType);
+els.dashboardCategoryLimit?.addEventListener("change", updateDashboardRulePreview);
+els.dashboardShowLegend?.addEventListener("change", updateDashboardRulePreview);
+els.cancelDashboardWidgetEditBtn?.addEventListener("click", resetDashboardWidgetEditor);
+
+els.dashboardShowUserPerformance?.addEventListener("change", () => {
+  state.showUserPerformance = els.dashboardShowUserPerformance.checked;
 });
 
 els.schemaFields.addEventListener("click", event => {
@@ -12891,7 +14395,7 @@ els.accountList.addEventListener("click", event => {
   }
 });
 
-window.ARIS_ADMIN = Object.freeze({
+window.MX_ADMIN = Object.freeze({
   refresh: refreshAdminData
 });
 
@@ -12903,21 +14407,24 @@ initialize();
     "use strict";
 
     const ENDPOINTS = {
-      bootstrapStatus: "/aris/v1/auth/bootstrap/status",
-      bootstrapCreate: "/aris/v1/auth/create",
-      authenticate: "/aris/v1/auth/authenticate",
-      refresh: "/aris/v1/auth/refresh",
-      session: "/aris/v1/auth/session",
-      records: "/aris/v1/records",
-      dashboardSummary: "/aris/v1/dashboard/summary",
-      revision: "/aris/v1/status/revision",
-      audit: "/aris/v1/admin/audit",
-      backups: "/aris/v1/admin/backups"
+      bootstrapStatus: "/mx/v1/auth/bootstrap/status",
+      bootstrapCreate: "/mx/v1/auth/create",
+      authenticate: "/mx/v1/auth/authenticate",
+      refresh: "/mx/v1/auth/refresh",
+      session: "/mx/v1/auth/session",
+      records: "/mx/v1/records",
+      dashboardConfig: "/mx/v1/dashboard/config",
+      actionRateReport: "/mx/v1/reports/action-rate",
+      userPerformanceReport: "/mx/v1/reports/user-performance",
+      reportExport: "/mx/v1/reports/export.csv",
+      revision: "/mx/v1/status/revision",
+      audit: "/mx/v1/admin/audit",
+      backups: "/mx/v1/admin/backups"
     };
 
     const STORAGE_KEYS = {
-      access: "aris_access_token",
-      refresh: "aris_refresh_token"
+      access: "mx_access_token",
+      refresh: "mx_refresh_token"
     };
 
     const ACCESS_NAMES = {
@@ -12937,6 +14444,9 @@ initialize();
       recordsRevision: null,
       schemaRevision: null,
       audit: [],
+      dashboardConfig: null,
+      configuredReports: [],
+      userPerformance: [],
       refreshPromise: null,
       loadedAt: null,
       workspace: "dashboard",
@@ -13103,6 +14613,19 @@ initialize();
       recentHeadSummary: document.getElementById("recentHeadSummary"),
       recentHeadSecondary: document.getElementById("recentHeadSecondary"),
 
+      reportScopeTag: document.getElementById("reportScopeTag"),
+      detailedRecordsExportBtn: document.getElementById("detailedRecordsExportBtn"),
+      attachmentExportBtn: document.getElementById("attachmentExportBtn"),
+      userPerformanceExportBtn: document.getElementById("userPerformanceExportBtn"),
+      configuredReportCount: document.getElementById("configuredReportCount"),
+      configuredReportGroups: document.getElementById("configuredReportGroups"),
+      configuredReportRecords: document.getElementById("configuredReportRecords"),
+      configuredReportActioned: document.getElementById("configuredReportActioned"),
+      configuredReportStatus: document.getElementById("configuredReportStatus"),
+      configuredReportsContainer: document.getElementById("configuredReportsContainer"),
+      userPerformanceSection: document.getElementById("userPerformanceSection"),
+      userPerformanceBody: document.getElementById("userPerformanceBody"),
+
       auditSection: document.getElementById("auditSection"),
       auditLoaded: document.getElementById("auditLoaded"),
       audit24h: document.getElementById("audit24h"),
@@ -13114,9 +14637,9 @@ initialize();
     };
 
     const DISPLAY_STORAGE_KEYS = {
-      autoScale: "aris_ui_scale_auto",
-      scalePercent: "aris_ui_scale_percent",
-      autoRefreshSeconds: "aris_auto_refresh_seconds"
+      autoScale: "mx_ui_scale_auto",
+      scalePercent: "mx_ui_scale_percent",
+      autoRefreshSeconds: "mx_auto_refresh_seconds"
     };
 
     const DEFAULT_AUTO_REFRESH_SECONDS = 30;
@@ -13234,7 +14757,7 @@ initialize();
         Number(document.documentElement.dataset.uiScale || 0);
 
       document.documentElement.style.setProperty(
-        "--aris-font-scale",
+        "--mx-font-scale",
         String(percent / 100)
       );
 
@@ -13320,7 +14843,7 @@ initialize();
       els.settingsOverlay.setAttribute("aria-hidden", "true");
     }
 
-    const THEME_STORAGE_KEY = "aris_theme";
+    const THEME_STORAGE_KEY = "mx_theme";
 
     function getStoredTheme() {
       try {
@@ -13687,7 +15210,7 @@ initialize();
     const WORKSPACE_META = {
       dashboard: {
         breadcrumb: "Dashboard",
-        title: "Records Intelligence"
+        title: "Custom Dashboard"
       },
       records: {
         breadcrumb: "Records",
@@ -13731,7 +15254,7 @@ initialize();
       markWorkspaceDirty("admin");
     }
 
-    window.ARIS_DATA = Object.freeze({
+    window.MX_DATA = Object.freeze({
       markFresh: markWorkspaceFresh,
       invalidate: markWorkspaceDirty,
       recordsChanged,
@@ -13804,8 +15327,8 @@ initialize();
 
             ensureWorkspaceMounted("admin");
 
-            if (window.ARIS_ADMIN?.refresh) {
-              await window.ARIS_ADMIN.refresh();
+            if (window.MX_ADMIN?.refresh) {
+              await window.MX_ADMIN.refresh();
               markWorkspaceFresh("admin");
 
               if (notify) {
@@ -13818,18 +15341,15 @@ initialize();
 
           if (force) {
             if (name === "dashboard") {
-              await fetchDashboardSummary({
-                force: true,
-                notify
-              });
+              await refreshConfiguredDashboard({ notify });
               return;
             }
 
             if (name === "records") {
               ensureWorkspaceMounted("records");
 
-              if (window.ARIS_RECORDS?.refresh) {
-                await window.ARIS_RECORDS.refresh();
+              if (window.MX_RECORDS?.refresh) {
+                await window.MX_RECORDS.refresh();
                 const revisions =
                   await fetchRecordsRevision();
 
@@ -13863,10 +15383,7 @@ initialize();
 
           if (name === "dashboard") {
             if (recordsChanged || schemaChanged || state.workspaceDirty.dashboard) {
-              await fetchDashboardSummary({
-                force: true,
-                notify: false
-              });
+              await refreshConfiguredDashboard({ notify: false });
             } else {
               markWorkspaceFresh("dashboard");
             }
@@ -13879,14 +15396,14 @@ initialize();
           if (name === "records") {
             ensureWorkspaceMounted("records");
 
-            if (schemaChanged && window.ARIS_RECORDS?.reloadSchema) {
-              await window.ARIS_RECORDS.reloadSchema();
+            if (schemaChanged && window.MX_RECORDS?.reloadSchema) {
+              await window.MX_RECORDS.reloadSchema();
             } else if (
               recordsChanged ||
               state.workspaceDirty.records
             ) {
-              if (window.ARIS_RECORDS?.refresh) {
-                await window.ARIS_RECORDS.refresh();
+              if (window.MX_RECORDS?.refresh) {
+                await window.MX_RECORDS.refresh();
               }
             }
 
@@ -14212,7 +15729,7 @@ initialize();
       });
     }
 
-    window.ARIS_AUTH = Object.freeze({
+    window.MX_AUTH = Object.freeze({
       getAccessToken,
       getRefreshToken,
       setTokens,
@@ -14607,177 +16124,6 @@ initialize();
       }
     }
 
-    async function fetchDashboardSummary({
-      force = false,
-      notify = false
-    } = {}) {
-      const params =
-        dashboardQueryParams();
-
-      const queryKey =
-        params.toString();
-
-      const url =
-        queryKey
-          ? `${ENDPOINTS.dashboardSummary}?${queryKey}`
-          : ENDPOINTS.dashboardSummary;
-
-      if (state.dashboardAbortController) {
-        state.dashboardAbortController.abort();
-      }
-
-      const controller =
-        new AbortController();
-
-      state.dashboardAbortController =
-        controller;
-
-      const requestId =
-        ++state.dashboardRequestId;
-
-      const headers =
-        new Headers({
-          "Accept":
-            "application/json"
-        });
-
-      if (
-        !force &&
-        state.dashboardQueryKey === queryKey
-      ) {
-        const etag =
-          state.dashboardEtags.get(
-            queryKey
-          );
-
-        if (etag) {
-          headers.set(
-            "If-None-Match",
-            etag
-          );
-        }
-      }
-
-      setLoading(
-        true,
-        notify
-          ? "Refreshing dashboard…"
-          : "Loading dashboard summary…"
-      );
-
-      try {
-        const response =
-          await apiFetch(
-            url,
-            {
-              method: "GET",
-              headers,
-              signal:
-                controller.signal
-            }
-          );
-
-        if (
-          requestId !==
-          state.dashboardRequestId
-        ) {
-          return null;
-        }
-
-        if (
-          response.status === 304 &&
-          state.dashboard
-        ) {
-          markWorkspaceFresh(
-            "dashboard"
-          );
-
-          setLoading(false);
-          return state.dashboard;
-        }
-
-        const data =
-          await readJsonSafe(response);
-
-        if (!response.ok) {
-          throw new Error(
-            messageFromPayload(
-              data,
-              `Dashboard request failed (${response.status}).`
-            )
-          );
-        }
-
-        const etag =
-          response.headers.get("etag");
-
-        if (etag) {
-          state.dashboardEtags.set(
-            queryKey,
-            etag
-          );
-
-          while (
-            state.dashboardEtags.size > 32
-          ) {
-            const oldestKey =
-              state.dashboardEtags
-                .keys()
-                .next()
-                .value;
-
-            state.dashboardEtags.delete(
-              oldestKey
-            );
-          }
-        }
-
-        state.dashboard = data;
-        state.dashboardQueryKey =
-          queryKey;
-
-        state.recordsRevision =
-          Number(data?.revision || 0);
-
-        state.loadedAt =
-          new Date();
-
-        populateDimensionFilters(
-          data?.dimensions,
-          data?.meta || {}
-        );
-
-        renderDashboard();
-        markWorkspaceFresh(
-          "dashboard"
-        );
-
-        if (notify) {
-          showToast(
-            `Dashboard refreshed · ${formatNumber(data?.scope?.records || 0)} records in scope`
-          );
-        }
-
-        setLoading(false);
-        return data;
-      } catch (error) {
-        if (
-          error?.name ===
-          "AbortError"
-        ) {
-          return null;
-        }
-
-        if (
-          requestId ===
-          state.dashboardRequestId
-        ) {
-          setLoading(false);
-        }
-
-        throw error;
-      }
-    }
 
     async function loadAudit() {
       if (Number(state.session?.access_level) !== 0) {
@@ -14846,10 +16192,7 @@ initialize();
     }
 
     function applyFilters() {
-      return fetchDashboardSummary({
-        force: false,
-        notify: false
-      }).catch(error => {
+      return refreshConfiguredDashboard({ notify: false }).catch(error => {
         showToast(
           error.message,
           "error"
@@ -15240,6 +16583,339 @@ initialize();
         ? [tertiary?.label, narrativeField?.label].filter(Boolean).join(" / ")
         : "Summary";
       els.recentHeadSecondary.textContent = dashboardFieldLabel(secondary, "Secondary field");
+    }
+
+
+    function reportDateQuery() {
+      const range = activeDateRange();
+      const query = {};
+      if (range.from) query.date_from = todayYmd(range.from);
+      if (range.to) query.date_to = todayYmd(addDays(range.to, -1));
+      return query;
+    }
+
+    function reportQueryForWidget(widget) {
+      const params = new URLSearchParams();
+      if (widget.group_field_uid) {
+        params.set("group_field_uid", String(widget.group_field_uid));
+      }
+
+      if (widget.kind === "attachment_presence") {
+        params.set("attachment_field_uid", String(widget.attachment_field_uid || ""));
+      } else {
+        const actionMode = String(widget.action_mode || "equals");
+        params.set("action_mode", actionMode);
+        if (widget.action_field_uid) {
+          params.set("action_field_uid", String(widget.action_field_uid));
+        }
+        if (["equals", "not_equals"].includes(actionMode)) {
+          params.set("action_value", String(widget.action_value || ""));
+        }
+      }
+
+      if (widget.date_field_uid) {
+        params.set("date_field_uid", String(widget.date_field_uid));
+        const dateQuery = reportDateQuery();
+        if (dateQuery.date_from) params.set("date_from", dateQuery.date_from);
+        if (dateQuery.date_to) params.set("date_to", dateQuery.date_to);
+      }
+      if (widget.display_mode === "line" && widget.time_bucket) {
+        params.set("time_bucket", String(widget.time_bucket));
+      }
+      return params;
+    }
+
+    const DASHBOARD_CHART_PALETTE = [
+      "#2563eb", "#7c3aed", "#0891b2", "#059669", "#d97706",
+      "#dc2626", "#4f46e5", "#0f766e", "#9333ea", "#ea580c",
+      "#0284c7", "#65a30d", "#be123c", "#475569", "#a16207"
+    ];
+
+    function dashboardChartColor(index) {
+      return DASHBOARD_CHART_PALETTE[index % DASHBOARD_CHART_PALETTE.length];
+    }
+
+    function dashboardChartValueLabel(mode) {
+      if (mode === "total") return "Total records";
+      if (mode === "rate") return "Match rate";
+      if (mode === "breakdown") return "Matched vs not matched";
+      return "Matched records";
+    }
+
+    function dashboardChartValue(row, mode) {
+      if (mode === "total") return Number(row.total || 0);
+      if (mode === "rate") return Number(row.rate || 0);
+      return Number(row.actioned || 0);
+    }
+
+    function shortChartLabel(value, max = 28) {
+      const text = String(value ?? "Unspecified");
+      return text.length > max ? `${text.slice(0, Math.max(1, max - 1))}…` : text;
+    }
+
+    function preparedDashboardChartRows(rows, widget) {
+      const source = Array.isArray(rows) ? rows.map(row => ({ ...row })) : [];
+      if (widget.display_mode === "line") return source;
+      const mode = widget.chart_value || "matched";
+      source.sort((a, b) => {
+        const av = mode === "breakdown" ? Number(a.total || 0) : dashboardChartValue(a, mode);
+        const bv = mode === "breakdown" ? Number(b.total || 0) : dashboardChartValue(b, mode);
+        return bv - av || String(a.group || "").localeCompare(String(b.group || ""));
+      });
+      const limit = Math.max(0, Number(widget.category_limit ?? 8) || 0);
+      if (!limit || source.length <= limit) return source;
+      const kept = source.slice(0, limit);
+      const remainder = source.slice(limit);
+      if (["pie", "donut", "bar"].includes(widget.display_mode) && mode !== "rate") {
+        const other = remainder.reduce((acc, row) => {
+          acc.total += Number(row.total || 0);
+          acc.actioned += Number(row.actioned || 0);
+          acc.pending += Number(row.pending || 0);
+          return acc;
+        }, { group: "Other", total: 0, actioned: 0, pending: 0, rate: 0 });
+        other.rate = other.total ? other.actioned * 100 / other.total : 0;
+        kept.push(other);
+      }
+      return kept;
+    }
+
+    function dashboardLegendHtml(items) {
+      if (!items?.length) return "";
+      return `<div class="dashboard-chart-legend">${items.map(item => `
+        <span class="dashboard-chart-legend-item"><span class="dashboard-chart-swatch" style="background:${escapeHtml(item.color)}"></span><span>${escapeHtml(item.label)}</span></span>`).join("")}</div>`;
+    }
+
+    function renderDashboardBarChart(widget, rawRows) {
+      const rows = preparedDashboardChartRows(rawRows, widget);
+      if (!rows.length) return `<div class="dashboard-chart-empty">No data is available for this chart in the current scope.</div>`;
+      const mode = widget.chart_value || "matched";
+      const breakdown = mode === "breakdown";
+      const width = 920, left = 190, right = 42, top = 30, rowHeight = 42, bottom = 42;
+      const height = Math.max(260, top + rows.length * rowHeight + bottom);
+      const plotWidth = width - left - right;
+      const maxValue = mode === "rate" ? 100 : Math.max(1, ...rows.map(row => breakdown ? Number(row.total || 0) : dashboardChartValue(row, mode)));
+      const grid = [0, .25, .5, .75, 1].map(part => {
+        const x = left + plotWidth * part;
+        const value = mode === "rate" ? `${Math.round(100 * part)}%` : formatNumber(Math.round(maxValue * part));
+        return `<line class="dashboard-chart-grid-line" x1="${x}" y1="${top - 8}" x2="${x}" y2="${height - bottom + 4}"></line><text class="dashboard-chart-axis-text" x="${x}" y="${height - 13}" text-anchor="middle">${escapeHtml(value)}</text>`;
+      }).join("");
+      const bars = rows.map((row, index) => {
+        const y = top + index * rowHeight;
+        const label = shortChartLabel(row.group || "Unspecified", 26);
+        if (breakdown) {
+          const matched = Number(row.actioned || 0), pending = Number(row.pending || 0);
+          const matchedWidth = plotWidth * matched / maxValue, pendingWidth = plotWidth * pending / maxValue;
+          return `<text class="dashboard-chart-label" x="${left - 12}" y="${y + 20}" text-anchor="end">${escapeHtml(label)}</text><rect x="${left}" y="${y + 7}" width="${matchedWidth}" height="20" rx="5" fill="${dashboardChartColor(0)}"><title>${escapeHtml(row.group || "Unspecified")}: ${formatNumber(matched)} matched</title></rect><rect x="${left + matchedWidth}" y="${y + 7}" width="${pendingWidth}" height="20" rx="5" fill="${dashboardChartColor(5)}" opacity=".72"><title>${escapeHtml(row.group || "Unspecified")}: ${formatNumber(pending)} not matched</title></rect>`;
+        }
+        const value = dashboardChartValue(row, mode), barWidth = plotWidth * value / maxValue;
+        const valueText = mode === "rate" ? `${value.toFixed(1)}%` : formatNumber(value);
+        return `<text class="dashboard-chart-label" x="${left - 12}" y="${y + 20}" text-anchor="end">${escapeHtml(label)}</text><rect x="${left}" y="${y + 7}" width="${Math.max(0, barWidth)}" height="20" rx="5" fill="${dashboardChartColor(index)}"><title>${escapeHtml(row.group || "Unspecified")}: ${escapeHtml(valueText)}</title></rect><text class="dashboard-chart-axis-text" x="${Math.min(width - right, left + barWidth + 7)}" y="${y + 21}">${escapeHtml(valueText)}</text>`;
+      }).join("");
+      const legend = breakdown && widget.show_legend !== false ? dashboardLegendHtml([{ color: dashboardChartColor(0), label: "Matched" }, { color: dashboardChartColor(5), label: "Not matched" }]) : "";
+      return `<div class="dashboard-chart-area"><svg class="dashboard-chart-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeHtml(widget.title || "Bar chart")}">${grid}${bars}</svg>${legend}</div>`;
+    }
+
+    function renderDashboardLineChart(widget, rows) {
+      const data = Array.isArray(rows) ? rows : [];
+      if (!data.length) return `<div class="dashboard-chart-empty">No dated records are available for this trend in the current scope.</div>`;
+      const mode = widget.chart_value || "matched", breakdown = mode === "breakdown";
+      const width = 920, height = 340, left = 58, right = 28, top = 28, bottom = 58;
+      const plotWidth = width - left - right, plotHeight = height - top - bottom;
+      const series = breakdown ? [{ key: "actioned", label: "Matched", color: dashboardChartColor(0) }, { key: "pending", label: "Not matched", color: dashboardChartColor(5) }] : [{ key: mode === "total" ? "total" : mode === "rate" ? "rate" : "actioned", label: dashboardChartValueLabel(mode), color: dashboardChartColor(0) }];
+      const allValues = series.flatMap(item => data.map(row => Number(row[item.key] || 0)));
+      const maxValue = mode === "rate" ? 100 : Math.max(1, ...allValues);
+      const xAt = index => data.length === 1 ? left + plotWidth / 2 : left + plotWidth * index / (data.length - 1);
+      const yAt = value => top + plotHeight - (Math.max(0, Number(value || 0)) / maxValue) * plotHeight;
+      const grid = [0, .25, .5, .75, 1].map(part => { const y = top + plotHeight * (1 - part); const value = mode === "rate" ? `${Math.round(100 * part)}%` : formatNumber(Math.round(maxValue * part)); return `<line class="dashboard-chart-grid-line" x1="${left}" y1="${y}" x2="${width - right}" y2="${y}"></line><text class="dashboard-chart-axis-text" x="${left - 10}" y="${y + 4}" text-anchor="end">${escapeHtml(value)}</text>`; }).join("");
+      const tickEvery = Math.max(1, Math.ceil(data.length / 9));
+      const xTicks = data.map((row, index) => (index % tickEvery !== 0 && index !== data.length - 1) ? "" : `<text class="dashboard-chart-axis-text" x="${xAt(index)}" y="${height - 20}" text-anchor="middle">${escapeHtml(shortChartLabel(row.group || "", 14))}</text>`).join("");
+      const lines = series.map(item => { const points = data.map((row, index) => `${xAt(index)},${yAt(row[item.key])}`).join(" "); const circles = data.map((row, index) => { const value = Number(row[item.key] || 0); const valueText = mode === "rate" ? `${value.toFixed(1)}%` : formatNumber(value); return `<circle cx="${xAt(index)}" cy="${yAt(value)}" r="4" fill="${item.color}" stroke="var(--surface)" stroke-width="2"><title>${escapeHtml(row.group || "")}: ${escapeHtml(item.label)} ${escapeHtml(valueText)}</title></circle>`; }).join(""); return `<polyline points="${points}" fill="none" stroke="${item.color}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"></polyline>${circles}`; }).join("");
+      const legend = widget.show_legend !== false ? dashboardLegendHtml(series.map(item => ({ color: item.color, label: item.label }))) : "";
+      return `<div class="dashboard-chart-area"><svg class="dashboard-chart-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeHtml(widget.title || "Line chart")}">${grid}${xTicks}${lines}</svg>${legend}</div>`;
+    }
+
+    function polarPoint(cx, cy, radius, angleDegrees) { const radians = (angleDegrees - 90) * Math.PI / 180; return { x: cx + radius * Math.cos(radians), y: cy + radius * Math.sin(radians) }; }
+    function pieArcPath(cx, cy, radius, startAngle, endAngle, innerRadius = 0) { const start = polarPoint(cx, cy, radius, endAngle), end = polarPoint(cx, cy, radius, startAngle), largeArc = endAngle - startAngle <= 180 ? 0 : 1; if (!innerRadius) return [`M ${cx} ${cy}`, `L ${start.x} ${start.y}`, `A ${radius} ${radius} 0 ${largeArc} 0 ${end.x} ${end.y}`, "Z"].join(" "); const innerStart = polarPoint(cx, cy, innerRadius, startAngle), innerEnd = polarPoint(cx, cy, innerRadius, endAngle); return [`M ${start.x} ${start.y}`, `A ${radius} ${radius} 0 ${largeArc} 0 ${end.x} ${end.y}`, `L ${innerStart.x} ${innerStart.y}`, `A ${innerRadius} ${innerRadius} 0 ${largeArc} 1 ${innerEnd.x} ${innerEnd.y}`, "Z"].join(" "); }
+
+    function renderDashboardPieChart(widget, rawRows, donut = false) {
+      const mode = widget.chart_value === "total" ? "total" : "matched";
+      const rows = preparedDashboardChartRows(rawRows, { ...widget, chart_value: mode }).map(row => ({ ...row, chartValue: dashboardChartValue(row, mode) })).filter(row => row.chartValue > 0);
+      if (!rows.length) return `<div class="dashboard-chart-empty">No positive values are available for this chart in the current scope.</div>`;
+      const total = rows.reduce((sum, row) => sum + row.chartValue, 0), cx = 150, cy = 150, radius = 116, inner = donut ? 68 : 0;
+      let angle = 0;
+      const slices = rows.map((row, index) => { const share = row.chartValue / total, sweep = share * 360, color = dashboardChartColor(index); let shape; if (share >= .999999) shape = donut ? `<circle cx="${cx}" cy="${cy}" r="${(radius + inner) / 2}" fill="none" stroke="${color}" stroke-width="${radius - inner}"></circle>` : `<circle cx="${cx}" cy="${cy}" r="${radius}" fill="${color}"></circle>`; else shape = `<path d="${pieArcPath(cx, cy, radius, angle, angle + sweep, inner)}" fill="${color}"></path>`; const title = `${row.group || "Unspecified"}: ${formatNumber(row.chartValue)} (${(share * 100).toFixed(1)}%)`; angle += sweep; return `<g>${shape}<title>${escapeHtml(title)}</title></g>`; }).join("");
+      const legend = widget.show_legend === false ? "" : `<div class="dashboard-chart-legend">${rows.map((row, index) => { const share = total ? row.chartValue * 100 / total : 0; return `<span class="dashboard-chart-legend-item"><span class="dashboard-chart-swatch" style="background:${dashboardChartColor(index)}"></span><span>${escapeHtml(row.group || "Unspecified")} · ${formatNumber(row.chartValue)} · ${share.toFixed(1)}%</span></span>`; }).join("")}</div>`;
+      return `<div class="dashboard-chart-area dashboard-pie-layout"><svg class="dashboard-chart-svg" viewBox="0 0 300 300" role="img" aria-label="${escapeHtml(widget.title || (donut ? "Donut chart" : "Pie chart"))}">${slices}${donut ? `<text class="dashboard-pie-total" x="${cx}" y="${cy - 2}">${formatNumber(total)}</text><text class="dashboard-pie-caption" x="${cx}" y="${cy + 18}">${escapeHtml(mode === "total" ? "total records" : "matched records")}</text>` : ""}</svg><div>${legend}<div class="dashboard-chart-summary"><span><strong>${formatNumber(total)}</strong> ${escapeHtml(mode === "total" ? "records represented" : "matched records represented")}</span><span><strong>${rows.length}</strong> categories shown</span></div></div></div>`;
+    }
+
+    function renderDashboardChart(widget, rows) { if (widget.display_mode === "bar") return renderDashboardBarChart(widget, rows); if (widget.display_mode === "line") return renderDashboardLineChart(widget, rows); if (widget.display_mode === "pie") return renderDashboardPieChart(widget, rows, false); if (widget.display_mode === "donut") return renderDashboardPieChart(widget, rows, true); return ""; }
+
+    function renderConfiguredReports() {
+      const reports = Array.isArray(state.configuredReports) ? state.configuredReports : [];
+      const rows = reports.flatMap(report => report.rows || []);
+      const totalGroups = rows.length;
+      const totalRecords = rows.reduce((sum, row) => sum + Number(row.total || 0), 0);
+      const totalActioned = rows.reduce((sum, row) => sum + Number(row.actioned || 0), 0);
+      if (els.configuredReportCount) els.configuredReportCount.textContent = formatNumber(reports.length);
+      if (els.configuredReportGroups) els.configuredReportGroups.textContent = formatNumber(totalGroups);
+      if (els.configuredReportRecords) els.configuredReportRecords.textContent = formatNumber(totalRecords);
+      if (els.configuredReportActioned) els.configuredReportActioned.textContent = formatNumber(totalActioned);
+      els.reportScopeTag.textContent = periodLabel();
+      els.configuredReportStatus.textContent = reports.length ? `${reports.length} administrator-configured widget${reports.length === 1 ? "" : "s"} · ${periodLabel()}` : "No dashboard widgets are configured.";
+      if (!reports.length) { els.configuredReportsContainer.innerHTML = `<div class="dashboard-empty-state"><strong>No dashboard widgets yet.</strong><span>An Administrator can build summary numbers, bar charts, line trends, pie/donut charts, progress views, or detailed tables from Administration → Dashboard.</span></div>`; return; }
+      els.configuredReportsContainer.innerHTML = reports.map((report, reportIndex) => {
+        const widget = report.widget || {}, reportRows = Array.isArray(report.rows) ? report.rows : [];
+        const measured = reportRows.reduce((sum, row) => sum + Number(row.total || 0), 0), actioned = reportRows.reduce((sum, row) => sum + Number(row.actioned || 0), 0), pending = Math.max(0, measured - actioned), rate = measured ? actioned * 100 / measured : 0;
+        const validModes = ["metric", "bar", "line", "pie", "donut", "progress", "table"];
+        const displayMode = validModes.includes(widget.display_mode) ? widget.display_mode : (widget.group_field_uid ? "table" : "metric");
+        const allRecordsMetric = widget.kind === "action_rate" && String(widget.action_mode || "") === "all";
+        const definition = String(widget.definition || "").trim() || (widget.kind === "attachment_presence" ? "Counts records where the configured File Attachment field has one or more files." : "Counts records using the Administrator-configured match rule.");
+        if (report.error) return `<article class="card dashboard-report-card ${displayMode === "metric" ? "" : "dashboard-report-wide"}"><div class="card-head"><div><h3>${escapeHtml(widget.title || "Dashboard widget")}</h3><p>Unable to calculate this widget.</p></div></div><div class="card-body"><div class="status error">${escapeHtml(report.error)}</div></div></article>`;
+        if (displayMode === "metric") { const value = allRecordsMetric ? measured : actioned, label = allRecordsMetric ? "records" : "matched records"; return `<article class="card dashboard-report-card"><div class="card-head"><div><h3>${escapeHtml(widget.title || "Summary")}</h3><p>${escapeHtml(definition)}</p></div><button class="btn btn-soft" type="button" data-export-action-report="${reportIndex}">Export CSV</button></div><div class="dashboard-metric-body"><div><div class="dashboard-metric-value">${formatNumber(value)}</div><div class="dashboard-metric-label">${escapeHtml(label)} · ${formatNumber(measured)} records measured</div></div><div class="dashboard-metric-rate">${allRecordsMetric ? `<strong>${formatNumber(measured)}</strong><span class="muted">total in scope</span>` : `<strong>${rate.toFixed(1)}%</strong><span class="muted">${formatNumber(pending)} not matched</span>`}</div></div></article>`; }
+        if (["bar", "line", "pie", "donut"].includes(displayMode)) { const chartLabel = dashboardChartValueLabel(widget.chart_value || "matched"), subtitle = displayMode === "line" ? `${chartLabel} over time · ${widget.time_bucket || "month"} intervals` : `${chartLabel} · ${formatNumber(actioned)} matched out of ${formatNumber(measured)} records`; return `<article class="card dashboard-report-card dashboard-report-wide"><div class="card-head"><div><h3>${escapeHtml(widget.title || dashboardDisplayModeLabel(displayMode))}</h3><p>${escapeHtml(subtitle)}</p></div><button class="btn btn-soft" type="button" data-export-action-report="${reportIndex}">Export CSV</button></div><div class="dashboard-widget-definition">${escapeHtml(definition)}</div>${renderDashboardChart({ ...widget, display_mode: displayMode }, reportRows)}</article>`; }
+        if (displayMode === "progress") return `<article class="card dashboard-report-card dashboard-report-wide"><div class="card-head"><div><h3>${escapeHtml(widget.title || "Grouped progress")}</h3><p>${formatNumber(actioned)} matched out of ${formatNumber(measured)} records · ${rate.toFixed(1)}% overall</p></div><button class="btn btn-soft" type="button" data-export-action-report="${reportIndex}">Export CSV</button></div><div class="dashboard-widget-definition">${escapeHtml(definition)}</div><div class="dashboard-progress-list">${reportRows.length ? reportRows.map(row => { const rowRate = Math.max(0, Math.min(100, Number(row.rate || 0))); return `<div class="dashboard-progress-row"><div class="dashboard-progress-meta"><strong>${escapeHtml(row.group || "Unspecified")}</strong><span>${formatNumber(row.actioned || 0)} / ${formatNumber(row.total || 0)} matched · ${rowRate.toFixed(1)}%</span></div><div class="dashboard-progress-track"><div class="dashboard-progress-fill" style="width:${rowRate}%"></div></div></div>`; }).join("") : `<div class="muted">No records are available for this widget in the current scope.</div>`}</div></article>`;
+        return `<article class="card dashboard-report-card dashboard-report-wide"><div class="card-head"><div><h3>${escapeHtml(widget.title || "Detailed report")}</h3><p>${formatNumber(actioned)} matched out of ${formatNumber(measured)} records · ${rate.toFixed(1)}% overall</p></div><button class="btn btn-soft" type="button" data-export-action-report="${reportIndex}">Export CSV</button></div><div class="dashboard-widget-definition">${escapeHtml(definition)}</div><div class="table-wrap"><table class="data-table"><thead><tr><th>Group</th><th>Total</th><th>Matched</th><th>Not matched</th><th>Match rate</th></tr></thead><tbody>${reportRows.length ? reportRows.map(row => `<tr><td><strong>${escapeHtml(row.group || "Unspecified")}</strong></td><td>${formatNumber(row.total || 0)}</td><td>${formatNumber(row.actioned || 0)}</td><td>${formatNumber(row.pending || 0)}</td><td>${Number(row.rate || 0).toFixed(1)}%</td></tr>`).join("") : `<tr><td colspan="5" class="muted">No records are available for this widget in the current scope.</td></tr>`}</tbody></table></div></article>`;
+      }).join("");
+    }
+
+    function renderUserPerformance() {
+      const isAdmin = Number(state.session?.access_level) === 0;
+      const enabled = state.dashboardConfig?.show_user_performance === true;
+      els.userPerformanceSection.classList.toggle("hidden", !(isAdmin && enabled));
+      els.userPerformanceExportBtn.classList.toggle("hidden", !(isAdmin && enabled));
+      if (!(isAdmin && enabled)) return;
+
+      const rows = Array.isArray(state.userPerformance) ? state.userPerformance : [];
+      els.userPerformanceBody.innerHTML = rows.length ? rows.map(row => `
+        <tr>
+          <td><strong>${escapeHtml(row.actor_name || row.actor_email || row.actor_uid)}</strong><div class="muted">${escapeHtml(row.actor_email || "")}</div></td>
+          <td>${formatNumber(row.records_created || 0)}</td>
+          <td>${formatNumber(row.records_updated || 0)}</td>
+          <td>${formatNumber(row.attachments_uploaded || 0)}</td>
+          <td>${formatNumber(row.unique_records_touched || 0)}</td>
+          <td>${formatNumber(row.successful_actions || 0)}</td>
+          <td>${formatNumber(row.failed_actions || 0)}</td>
+          <td>${row.last_activity ? escapeHtml(new Date(Number(row.last_activity)).toLocaleString()) : "—"}</td>
+        </tr>`).join("") : `<tr><td colspan="8" class="muted">No user activity is available for this period.</td></tr>`;
+    }
+
+    async function loadRichReports() {
+      try {
+        const configResponse = await apiJson(ENDPOINTS.dashboardConfig, { method: "GET" });
+        state.dashboardConfig = configResponse?.config && typeof configResponse.config === "object"
+          ? configResponse.config
+          : { widgets: [], show_user_performance: false };
+
+        const widgets = Array.isArray(state.dashboardConfig.widgets)
+          ? state.dashboardConfig.widgets.filter(widget => ["action_rate", "attachment_presence"].includes(widget?.kind))
+          : [];
+
+        const reportResults = await Promise.all(widgets.map(async widget => {
+          try {
+            const query = reportQueryForWidget(widget);
+            const data = await apiJson(`${ENDPOINTS.actionRateReport}?${query}`, { method: "GET" });
+            return { widget, rows: Array.isArray(data?.rows) ? data.rows : [] };
+          } catch (error) {
+            return { widget, rows: [], error: error.message };
+          }
+        }));
+        state.configuredReports = reportResults;
+        renderConfiguredReports();
+
+        if (Number(state.session?.access_level) === 0 && state.dashboardConfig.show_user_performance === true) {
+          const dateQuery = reportDateQuery();
+          const params = new URLSearchParams();
+          if (dateQuery.date_from) params.set("date_from", dateQuery.date_from);
+          if (dateQuery.date_to) params.set("date_to", dateQuery.date_to);
+          const data = await apiJson(`${ENDPOINTS.userPerformanceReport}?${params}`, { method: "GET" });
+          state.userPerformance = Array.isArray(data?.rows) ? data.rows : [];
+        } else {
+          state.userPerformance = [];
+        }
+        renderUserPerformance();
+      } catch (error) {
+        state.configuredReports = [];
+        state.userPerformance = [];
+        els.configuredReportStatus.textContent = `Rich reports unavailable: ${error.message}`;
+        els.configuredReportsContainer.innerHTML = "";
+        renderUserPerformance();
+      }
+    }
+
+    function renderConfiguredDashboardScope() {
+      const widgets = Array.isArray(state.dashboardConfig?.widgets)
+        ? state.dashboardConfig.widgets.filter(widget => ["action_rate", "attachment_presence"].includes(widget?.kind))
+        : [];
+
+      els.heroScopeValue.textContent = String(widgets.length);
+      els.heroScopeMeta.textContent = widgets.length
+        ? `${widgets.length} administrator-configured widget${widgets.length === 1 ? "" : "s"} · ${periodLabel()} applies only where a widget selects a Date field`
+        : "No dashboard widgets configured · this deployment is intentionally blank";
+    }
+
+    async function refreshConfiguredDashboard({ notify = false } = {}) {
+      setLoading(
+        true,
+        notify
+          ? "Refreshing configured dashboard…"
+          : "Loading configured dashboard…"
+      );
+
+      try {
+        await loadRichReports();
+        state.loadedAt = new Date();
+        renderConfiguredDashboardScope();
+        markWorkspaceFresh("dashboard");
+
+        if (notify) {
+          const count = Array.isArray(state.dashboardConfig?.widgets)
+            ? state.dashboardConfig.widgets.length
+            : 0;
+          showToast(
+            count
+              ? `Dashboard refreshed · ${count} configured widget${count === 1 ? "" : "s"}`
+              : "Dashboard refreshed · no widgets configured"
+          );
+        }
+
+        return state.dashboardConfig;
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    async function downloadDetailedReport(kind, widget = null) {
+      const params = new URLSearchParams({ kind });
+      const dateQuery = reportDateQuery();
+      if (kind === "user_performance") {
+        if (dateQuery.date_from) params.set("date_from", dateQuery.date_from);
+        if (dateQuery.date_to) params.set("date_to", dateQuery.date_to);
+      }
+      if (kind === "action_rate" && widget) {
+        const widgetParams = reportQueryForWidget(widget);
+        for (const [key, value] of widgetParams) params.set(key, value);
+      }
+
+      const response = await apiFetch(`${ENDPOINTS.reportExport}?${params}`, {
+        method: "GET",
+        headers: { "Accept": "text/csv" }
+      });
+      if (!response.ok) {
+        const payload = await readJsonSafe(response);
+        throw new Error(messageFromPayload(payload, `Export failed (${response.status}).`));
+      }
+      const blob = await response.blob();
+      const disposition = response.headers.get("content-disposition") || "";
+      const fileMatch = disposition.match(/filename="?([^";]+)"?/i);
+      const fileName = fileMatch?.[1] || `mx-${kind}-${todayYmd()}.csv`;
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = fileName;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
     }
 
     function renderDashboard() {
@@ -15812,7 +17488,7 @@ initialize();
 
       anchor.href = url;
       anchor.download =
-        `aris-dashboard-summary-${todayYmd()}.csv`;
+        `mx-dashboard-summary-${todayYmd()}.csv`;
 
       document.body.appendChild(
         anchor
@@ -15835,10 +17511,7 @@ initialize();
           try {
             await loadSession();
 
-            await fetchDashboardSummary({
-              force: true,
-              notify
-            });
+            await refreshConfiguredDashboard({ notify });
 
             if (
               Number(
@@ -15892,10 +17565,7 @@ initialize();
         await loadSession();
         els.loginOverlay.classList.add("hidden");
 
-        await fetchDashboardSummary({
-          force: true,
-          notify: false
-        });
+        await refreshConfiguredDashboard({ notify: false });
 
         const revisions = await fetchRecordsRevision();
         state.recordsRevision = revisions.recordsRevision;
@@ -16081,7 +17751,26 @@ initialize();
       );
 
       els.exportBtn.addEventListener("click", exportCsv);
-      els.sidebarExportBtn.addEventListener("click", exportCsv);
+      els.sidebarExportBtn.addEventListener("click", () => {
+        downloadDetailedReport("detailed_records").catch(error => showToast(error.message, "error"));
+      });
+
+      els.detailedRecordsExportBtn.addEventListener("click", () => {
+        downloadDetailedReport("detailed_records").catch(error => showToast(error.message, "error"));
+      });
+      els.attachmentExportBtn.addEventListener("click", () => {
+        downloadDetailedReport("attachments").catch(error => showToast(error.message, "error"));
+      });
+      els.userPerformanceExportBtn.addEventListener("click", () => {
+        downloadDetailedReport("user_performance").catch(error => showToast(error.message, "error"));
+      });
+      els.configuredReportsContainer.addEventListener("click", event => {
+        const button = event.target.closest("[data-export-action-report]");
+        if (!button) return;
+        const report = state.configuredReports[Number(button.dataset.exportActionReport)];
+        if (!report?.widget) return;
+        downloadDetailedReport("action_rate", report.widget).catch(error => showToast(error.message, "error"));
+      });
 
       els.periodFilter.addEventListener("change", () => {
         updateCustomRangeVisibility();

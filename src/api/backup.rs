@@ -20,7 +20,7 @@ use serde_json::json;
 use uuid::Uuid;
 
 use crate::{
-    api::aris::handler::{
+    api::mx::handler::{
         n1_access_token, n1_download, n1_ensure_directory, n1_soft_delete, n1_upload_one_shot,
     },
     db::connector::{SqliteDatabaseError, with_sql_connection},
@@ -62,7 +62,7 @@ fn backup_access_denied() -> Response {
     (
         StatusCode::FORBIDDEN,
         Json(json!({
-            "response": "Administrator access is required for ARIS backups."
+            "response": "Administrator access is required for MX backups."
         })),
     )
         .into_response()
@@ -79,9 +79,10 @@ fn backup_error(status: StatusCode, message: impl Into<String>) -> Response {
 }
 
 fn ensure_backup_schema(connection: &rusqlite::Connection) -> Result<(), rusqlite::Error> {
+    crate::api::mx::migration::migrate_legacy_schema(connection)?;
     connection.execute_batch(
         r#"
-        CREATE TABLE IF NOT EXISTS aris_backups (
+        CREATE TABLE IF NOT EXISTS mx_backups (
             id               INTEGER PRIMARY KEY AUTOINCREMENT,
             uid              TEXT NOT NULL UNIQUE,
             file_name        TEXT NOT NULL,
@@ -94,8 +95,8 @@ fn ensure_backup_schema(connection: &rusqlite::Connection) -> Result<(), rusqlit
         );
 
         CREATE INDEX IF NOT EXISTS
-            idx_aris_backups_created_at
-        ON aris_backups (
+            idx_mx_backups_created_at
+        ON mx_backups (
             created_at DESC
         );
         "#,
@@ -103,11 +104,11 @@ fn ensure_backup_schema(connection: &rusqlite::Connection) -> Result<(), rusqlit
 }
 
 fn backup_temp_directory() -> Result<PathBuf, String> {
-    let path = std::env::temp_dir().join("aris-database-backups");
+    let path = std::env::temp_dir().join("mx-database-backups");
 
     fs::create_dir_all(&path).map_err(|error| {
         format!(
-            "failed to create ARIS backup temporary directory '{}': {error}",
+            "failed to create MX backup temporary directory '{}': {error}",
             path.display()
         )
     })?;
@@ -134,8 +135,8 @@ async fn create_sqlite_snapshot(destination: PathBuf) -> Result<(), String> {
         })
     })
     .await
-    .map_err(|error| format!("ARIS backup snapshot task failed: {error}"))?
-    .map_err(|error| format!("SQLite could not create the ARIS backup snapshot: {error}"))
+    .map_err(|error| format!("MX backup snapshot task failed: {error}"))?
+    .map_err(|error| format!("SQLite could not create the MX backup snapshot: {error}"))
 }
 
 fn verify_sqlite_file(path: &FsPath) -> Result<String, String> {
@@ -182,14 +183,14 @@ fn verify_sqlite_file(path: &FsPath) -> Result<String, String> {
 async fn verify_sqlite_file_async(path: PathBuf) -> Result<String, String> {
     tokio::task::spawn_blocking(move || verify_sqlite_file(&path))
         .await
-        .map_err(|error| format!("ARIS backup verification task failed: {error}"))?
+        .map_err(|error| format!("MX backup verification task failed: {error}"))?
 }
 
 async fn read_backup_bytes(path: PathBuf) -> Result<Vec<u8>, String> {
     tokio::task::spawn_blocking(move || fs::read(&path))
         .await
-        .map_err(|error| format!("ARIS backup read task failed: {error}"))?
-        .map_err(|error| format!("failed to read ARIS backup snapshot: {error}"))
+        .map_err(|error| format!("MX backup read task failed: {error}"))?
+        .map_err(|error| format!("failed to read MX backup snapshot: {error}"))
 }
 
 fn backup_row(row: &rusqlite::Row<'_>) -> Result<BackupEntry, rusqlite::Error> {
@@ -214,7 +215,7 @@ async fn insert_backup_entry(entry: BackupEntry) -> Result<(), String> {
 
             connection.execute(
                 r#"
-                    INSERT INTO aris_backups (
+                    INSERT INTO mx_backups (
                         uid,
                         file_name,
                         object_key,
@@ -244,8 +245,8 @@ async fn insert_backup_entry(entry: BackupEntry) -> Result<(), String> {
         })
     })
     .await
-    .map_err(|error| format!("ARIS backup metadata task failed: {error}"))?
-    .map_err(|error| format!("failed to store ARIS backup metadata: {error}"))
+    .map_err(|error| format!("MX backup metadata task failed: {error}"))?
+    .map_err(|error| format!("failed to store MX backup metadata: {error}"))
 }
 
 async fn get_backup_entry(uid: String) -> Result<Option<BackupEntry>, String> {
@@ -266,7 +267,7 @@ async fn get_backup_entry(uid: String) -> Result<Option<BackupEntry>, String> {
                             integrity_check,
                             created_at,
                             verified_at
-                        FROM aris_backups
+                        FROM mx_backups
                         WHERE uid = ?1
                         LIMIT 1
                         "#,
@@ -278,8 +279,8 @@ async fn get_backup_entry(uid: String) -> Result<Option<BackupEntry>, String> {
         },
     )
     .await
-    .map_err(|error| format!("ARIS backup lookup task failed: {error}"))?
-    .map_err(|error| format!("failed to read ARIS backup metadata: {error}"))
+    .map_err(|error| format!("MX backup lookup task failed: {error}"))?
+    .map_err(|error| format!("failed to read MX backup metadata: {error}"))
 }
 
 async fn update_backup_verification(
@@ -294,7 +295,7 @@ async fn update_backup_verification(
 
             connection.execute(
                 r#"
-                    UPDATE aris_backups
+                    UPDATE mx_backups
                     SET
                         status = ?1,
                         integrity_check = ?2,
@@ -308,8 +309,8 @@ async fn update_backup_verification(
         })
     })
     .await
-    .map_err(|error| format!("ARIS backup verification metadata task failed: {error}"))?
-    .map_err(|error| format!("failed to update ARIS backup verification metadata: {error}"))
+    .map_err(|error| format!("MX backup verification metadata task failed: {error}"))?
+    .map_err(|error| format!("failed to update MX backup verification metadata: {error}"))
 }
 
 async fn prepare_backup_namespace(
@@ -319,12 +320,12 @@ async fn prepare_backup_namespace(
     day: &str,
 ) -> Result<(), String> {
     for path in [
-        "__aris",
-        "__aris/backups",
-        "__aris/backups/database",
-        &format!("__aris/backups/database/{year}"),
-        &format!("__aris/backups/database/{year}/{month}"),
-        &format!("__aris/backups/database/{year}/{month}/{day}"),
+        "__mx",
+        "__mx/backups",
+        "__mx/backups/database",
+        &format!("__mx/backups/database/{year}"),
+        &format!("__mx/backups/database/{year}/{month}"),
+        &format!("__mx/backups/database/{year}/{month}/{day}"),
     ] {
         n1_ensure_directory(path, token).await.map_err(|error| {
             format!("N1 could not prepare backup directory '{path}': {error:?}")
@@ -355,7 +356,7 @@ pub async fn list_backups(claims: Claims) -> Response {
                                 integrity_check,
                                 created_at,
                                 verified_at
-                            FROM aris_backups
+                            FROM mx_backups
                             ORDER BY created_at DESC
                             LIMIT 200
                             "#,
@@ -392,7 +393,7 @@ pub async fn list_backups(claims: Claims) -> Response {
 
             backup_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                "ARIS could not read backup history.",
+                "MX could not read backup history.",
             )
         }
 
@@ -405,7 +406,7 @@ pub async fn list_backups(claims: Claims) -> Response {
 
             backup_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                "ARIS backup history task failed.",
+                "MX backup history task failed.",
             )
         }
     }
@@ -422,7 +423,7 @@ pub async fn create_backup(claims: Claims) -> Response {
         Err(()) => {
             return backup_error(
                 StatusCode::CONFLICT,
-                "An ARIS database backup is already running.",
+                "An MX database backup is already running.",
             );
         }
     };
@@ -430,13 +431,13 @@ pub async fn create_backup(claims: Claims) -> Response {
     let now = chrono::Utc::now();
     let uid = Uuid::new_v4().to_string();
 
-    let file_name = format!("aris-{}.db", now.format("%Y%m%dT%H%M%SZ"));
+    let file_name = format!("mx-{}.db", now.format("%Y%m%dT%H%M%SZ"));
 
     let year = now.format("%Y").to_string();
     let month = now.format("%m").to_string();
     let day = now.format("%d").to_string();
 
-    let object_key = format!("__aris/backups/database/{year}/{month}/{day}/{file_name}");
+    let object_key = format!("__mx/backups/database/{year}/{month}/{day}/{file_name}");
 
     let temp_directory = match backup_temp_directory() {
         Ok(path) => path,
@@ -476,7 +477,7 @@ pub async fn create_backup(claims: Claims) -> Response {
 
             return backup_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                format!("failed to read ARIS backup size: {error}"),
+                format!("failed to read MX backup size: {error}"),
             );
         }
     };
@@ -501,7 +502,7 @@ pub async fn create_backup(claims: Claims) -> Response {
 
             return backup_error(
                 StatusCode::BAD_GATEWAY,
-                "ARIS created a local backup snapshot, but N1 authentication failed. The temporary snapshot was removed.",
+                "MX created a local backup snapshot, but N1 authentication failed. The temporary snapshot was removed.",
             );
         }
     };
@@ -523,7 +524,7 @@ pub async fn create_backup(claims: Claims) -> Response {
 
         return backup_error(
             StatusCode::BAD_GATEWAY,
-            "ARIS verified the SQLite snapshot, but N1 could not store the backup.",
+            "MX verified the SQLite snapshot, but N1 could not store the backup.",
         );
     }
 
@@ -542,7 +543,7 @@ pub async fn create_backup(claims: Claims) -> Response {
 
     if let Err(error) = insert_backup_entry(entry.clone()).await {
         /*
-         * N1 accepted the backup but ARIS could not commit its metadata.
+         * N1 accepted the backup but MX could not commit its metadata.
          * Soft-delete the N1 object so the backup system does not
          * intentionally leave an untracked database snapshot.
          */
@@ -561,7 +562,7 @@ pub async fn create_backup(claims: Claims) -> Response {
         StatusCode::CREATED,
         Json(json!({
             "response":
-                "ARIS database backup created and verified.",
+                "MX database backup created and verified.",
             "backup":
                 entry
         })),
@@ -578,7 +579,7 @@ pub async fn verify_backup(claims: Claims, Path(uid): Path<String>) -> Response 
         Ok(Some(backup)) => backup,
 
         Ok(None) => {
-            return backup_error(StatusCode::NOT_FOUND, "ARIS backup was not found.");
+            return backup_error(StatusCode::NOT_FOUND, "MX backup was not found.");
         }
 
         Err(error) => {
@@ -596,7 +597,7 @@ pub async fn verify_backup(claims: Claims, Path(uid): Path<String>) -> Response 
 
             return backup_error(
                 StatusCode::BAD_GATEWAY,
-                "N1 could not return the selected ARIS backup for verification.",
+                "N1 could not return the selected MX backup for verification.",
             );
         }
     };
@@ -632,7 +633,7 @@ pub async fn verify_backup(claims: Claims, Path(uid): Path<String>) -> Response 
     if let Err(error) = fs::write(&temp_path, &bytes) {
         return backup_error(
             StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to stage ARIS backup verification: {error}"),
+            format!("failed to stage MX backup verification: {error}"),
         );
     }
 
@@ -659,7 +660,7 @@ pub async fn verify_backup(claims: Claims, Path(uid): Path<String>) -> Response 
                 StatusCode::OK,
                 Json(json!({
                     "response":
-                        "ARIS backup passed SQLite integrity verification.",
+                        "MX backup passed SQLite integrity verification.",
                     "backup_uid":
                         backup.uid,
                     "integrity_check":
@@ -696,7 +697,7 @@ pub async fn download_backup(claims: Claims, Path(uid): Path<String>) -> Respons
         Ok(Some(backup)) => backup,
 
         Ok(None) => {
-            return backup_error(StatusCode::NOT_FOUND, "ARIS backup was not found.");
+            return backup_error(StatusCode::NOT_FOUND, "MX backup was not found.");
         }
 
         Err(error) => {
@@ -712,7 +713,7 @@ pub async fn download_backup(claims: Claims, Path(uid): Path<String>) -> Respons
 
             return backup_error(
                 StatusCode::BAD_GATEWAY,
-                "N1 could not return the selected ARIS backup.",
+                "N1 could not return the selected MX backup.",
             );
         }
     };

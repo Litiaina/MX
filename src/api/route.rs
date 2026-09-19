@@ -10,21 +10,25 @@ use crate::api::admin::handler::{
     execute_query, get_user, modify_super_user,
 };
 
-use crate::api::aris::handler::{
-    delete_aris_attachment, delete_aris_record, download_aris_attachment, preview_aris_attachment,
-    upload_aris_attachments,
+use crate::api::mx::handler::{
+    delete_mx_attachment, delete_mx_record, download_mx_attachment, preview_mx_attachment,
+    upload_mx_attachment_field,
 };
-use crate::api::aris::records::{create_aris_record, list_aris_records, update_aris_record};
-use crate::api::aris::schema::{
+use crate::api::mx::records::{create_mx_record, list_mx_records, update_mx_record};
+use crate::api::mx::schema::{
     create_schema_field, get_admin_record_schema, get_record_schema, update_schema_field,
     update_schema_order, update_system_schema_field,
 };
 
-use crate::api::aris::storage::{get_storage_layout, update_storage_layout};
+use crate::api::mx::storage::{get_storage_layout, update_storage_layout};
 
 use crate::api::audit::{audit_request, get_audit_log};
 use crate::api::backup::{create_backup, download_backup, list_backups, verify_backup};
-use crate::api::dashboard::{get_dashboard_summary, get_records_revision};
+use crate::api::dashboard::get_records_revision;
+use crate::api::reports::{
+    export_report_csv, get_action_rate_report, get_dashboard_config, get_user_performance_report,
+    save_dashboard_config,
+};
 use crate::api::user::handler::{create_user, delete_user, modify_user};
 
 use crate::config::load_config::CONFIG;
@@ -38,7 +42,7 @@ pub fn api_route() -> Router {
         .merge(public_routes())
         .merge(admin_routes())
         .merge(user_routes())
-        .merge(aris_routes())
+        .merge(mx_routes())
         .layer(axum::middleware::from_fn(audit_request))
         .layer(cors_layer())
 }
@@ -46,64 +50,59 @@ pub fn api_route() -> Router {
 fn public_routes() -> Router {
     Router::new()
         .route("/ping", get(ping))
-        .route("/aris/v1/auth/bootstrap/status", get(bootstrap_status))
-        .route("/aris/v1/auth/authenticate", post(authorize))
-        .route("/aris/v1/auth/refresh", post(refresh_access_token))
+        .route("/mx/v1/auth/bootstrap/status", get(bootstrap_status))
+        .route("/mx/v1/auth/authenticate", post(authorize))
+        .route("/mx/v1/auth/refresh", post(refresh_access_token))
 }
 
 fn bootstrap_routes() -> Router {
     Router::new()
-        .route("/aris/v1/auth/create", post(create_super_user))
+        .route("/mx/v1/auth/create", post(create_super_user))
         .layer(axum::middleware::from_fn(signup_auth))
 }
 
 fn admin_routes() -> Router {
     Router::new()
-        .route("/aris/v1/admin/audit", get(get_audit_log))
-        .route("/aris/v1/admin/schema", get(get_admin_record_schema))
-        .route("/aris/v1/admin/schema/fields", post(create_schema_field))
-        .route("/aris/v1/admin/schema/order", put(update_schema_order))
+        .route("/mx/v1/admin/audit", get(get_audit_log))
+        .route("/mx/v1/admin/schema", get(get_admin_record_schema))
+        .route("/mx/v1/admin/schema/fields", post(create_schema_field))
+        .route("/mx/v1/admin/schema/order", put(update_schema_order))
+        .route("/mx/v1/admin/schema/fields/{uid}", put(update_schema_field))
         .route(
-            "/aris/v1/admin/schema/fields/{uid}",
-            put(update_schema_field),
-        )
-        .route(
-            "/aris/v1/admin/schema/system/{key}",
+            "/mx/v1/admin/schema/system/{key}",
             put(update_system_schema_field),
         )
+        .route("/mx/v1/admin/dashboard-config", put(save_dashboard_config))
         .route(
-            "/aris/v1/admin/storage-layout",
+            "/mx/v1/admin/storage-layout",
             get(get_storage_layout).put(update_storage_layout),
         )
         .route(
-            "/aris/v1/admin/backups",
+            "/mx/v1/admin/backups",
             get(list_backups).post(create_backup),
         )
-        .route("/aris/v1/admin/backups/{uid}/verify", post(verify_backup))
-        .route(
-            "/aris/v1/admin/backups/{uid}/download",
-            get(download_backup),
-        )
-        .route("/aris/v1/auth/get", post(get_user))
-        .route("/aris/v1/auth/modify", patch(modify_super_user))
-        .route("/aris/v1/auth/delete", delete(delete_super_user))
-        .route("/aris/v1/auth/enable_2fa", post(enable_2fa_user))
-        .route("/aris/v1/auth/disable_2fa", post(disable_2fa_user))
-        .route("/aris/v1/auth/check_2fa", post(check_2fa_status))
-        .route("/aris/v1/db/query", post(execute_query))
+        .route("/mx/v1/admin/backups/{uid}/verify", post(verify_backup))
+        .route("/mx/v1/admin/backups/{uid}/download", get(download_backup))
+        .route("/mx/v1/auth/get", post(get_user))
+        .route("/mx/v1/auth/modify", patch(modify_super_user))
+        .route("/mx/v1/auth/delete", delete(delete_super_user))
+        .route("/mx/v1/auth/enable_2fa", post(enable_2fa_user))
+        .route("/mx/v1/auth/disable_2fa", post(disable_2fa_user))
+        .route("/mx/v1/auth/check_2fa", post(check_2fa_status))
+        .route("/mx/v1/db/query", post(execute_query))
         .layer(axum::middleware::from_fn(auth))
 }
 
 fn user_routes() -> Router {
     Router::new()
-        .route("/aris/v1/auth/session", get(session_info))
-        .route("/aris/v1/user/create", post(create_user))
-        .route("/aris/v1/user/modify", patch(modify_user))
-        .route("/aris/v1/user/delete", delete(delete_user))
+        .route("/mx/v1/auth/session", get(session_info))
+        .route("/mx/v1/user/create", post(create_user))
+        .route("/mx/v1/user/modify", patch(modify_user))
+        .route("/mx/v1/user/delete", delete(delete_user))
         .layer(axum::middleware::from_fn(auth))
 }
 
-fn aris_routes() -> Router {
+fn mx_routes() -> Router {
     let attachment_body_limit = CONFIG
         .n1
         .attachment_max_size_mb
@@ -111,32 +110,38 @@ fn aris_routes() -> Router {
         .saturating_add(1024 * 1024);
 
     Router::new()
-        .route("/aris/v1/schema", get(get_record_schema))
-        .route("/aris/v1/dashboard/summary", get(get_dashboard_summary))
-        .route("/aris/v1/status/revision", get(get_records_revision))
+        .route("/mx/v1/schema", get(get_record_schema))
+        .route("/mx/v1/dashboard/config", get(get_dashboard_config))
+        .route("/mx/v1/reports/action-rate", get(get_action_rate_report))
         .route(
-            "/aris/v1/records",
-            get(list_aris_records).post(create_aris_record),
+            "/mx/v1/reports/user-performance",
+            get(get_user_performance_report),
+        )
+        .route("/mx/v1/reports/export.csv", get(export_report_csv))
+        .route("/mx/v1/status/revision", get(get_records_revision))
+        .route(
+            "/mx/v1/records",
+            get(list_mx_records).post(create_mx_record),
         )
         .route(
-            "/aris/v1/records/{uid}",
-            put(update_aris_record).delete(delete_aris_record),
+            "/mx/v1/records/{uid}",
+            put(update_mx_record).delete(delete_mx_record),
         )
         .route(
-            "/aris/v1/records/{uid}/attachments",
-            post(upload_aris_attachments).layer(DefaultBodyLimit::max(attachment_body_limit)),
+            "/mx/v1/records/{uid}/attachments/fields/{field_uid}",
+            post(upload_mx_attachment_field).layer(DefaultBodyLimit::max(attachment_body_limit)),
         )
         .route(
-            "/aris/v1/records/{record_uid}/attachments/{attachment_uid}",
-            delete(delete_aris_attachment),
+            "/mx/v1/records/{record_uid}/attachments/{attachment_uid}",
+            delete(delete_mx_attachment),
         )
         .route(
-            "/aris/v1/records/{record_uid}/attachments/{attachment_uid}/preview",
-            get(preview_aris_attachment),
+            "/mx/v1/records/{record_uid}/attachments/{attachment_uid}/preview",
+            get(preview_mx_attachment),
         )
         .route(
-            "/aris/v1/records/{record_uid}/attachments/{attachment_uid}/download",
-            get(download_aris_attachment),
+            "/mx/v1/records/{record_uid}/attachments/{attachment_uid}/download",
+            get(download_mx_attachment),
         )
         .layer(axum::middleware::from_fn(auth))
 }
@@ -149,7 +154,10 @@ fn cors_layer() -> CorsLayer {
             HeaderName::from_static("content-type"),
             HeaderName::from_static("if-none-match"),
         ])
-        .expose_headers([HeaderName::from_static("etag")])
+        .expose_headers([
+            HeaderName::from_static("etag"),
+            HeaderName::from_static("content-disposition"),
+        ])
         .allow_methods([
             Method::GET,
             Method::POST,

@@ -7,8 +7,8 @@ pub fn create_env_file(path: &str) -> io::Result<()> {
     writeln!(file, "JWT_SECRET=")?;
     writeln!(file, "AUTH_KEYS=")?;
 
-    // Secret for the dedicated N1 ARIS fragment.
-    writeln!(file, "N1_ARIS_SECRET=")?;
+    // Secret for the dedicated N1 MX fragment.
+    writeln!(file, "N1_MX_SECRET=")?;
 
     Ok(())
 }

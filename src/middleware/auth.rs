@@ -647,7 +647,7 @@ where
                 /*
                  * Invalid/expired client JWTs are authentication failures,
                  * not application failures. A stale browser session after
-                 * logout, restore, JWT_SECRET rotation, or an older ARIS
+                 * logout, restore, JWT_SECRET rotation, or an older MX
                  * build should receive 401 without ERROR-level log spam.
                  */
                 AuthError::InvalidToken

@@ -67,7 +67,7 @@ pub async fn create_super_user(
     /*
     Bootstrap is transactional.
 
-    Only the first account may be created through /aris/v1/auth/create.
+    Only the first account may be created through /mx/v1/auth/create.
     The first account is ALWAYS access level 0 (Administrator).
     */
     let database_result =
@@ -124,7 +124,7 @@ pub async fn create_super_user(
         Ok(Ok(false)) => Err((
             StatusCode::CONFLICT,
             Json(json!({
-                "response": "ARIS is already initialized; create additional accounts from the Administrator Accounts panel"
+                "response": "MX is already initialized; create additional accounts from the Administrator Accounts panel"
             })),
         )),
 
@@ -927,8 +927,8 @@ async fn update_totp_secret_by_uid(
     uid: String,
 ) -> Result<Vec<u8>, TotpSecretUpdateError> {
     let secret = generate_random_base32(20);
-    let label = format!("ARIS:{}", email);
-    let issuer = "ARIS";
+    let label = format!("MX:{}", email);
+    let issuer = "MX";
     let totp_uri = format!(
         "otpauth://totp/{}?secret={}&issuer={}",
         label, secret, issuer

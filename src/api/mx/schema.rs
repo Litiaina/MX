@@ -12,8 +12,8 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use crate::{
-    api::aris::{
-        handler::ensure_aris_record_schema,
+    api::mx::{
+        handler::ensure_mx_record_schema,
         storage::{ensure_storage_layout_schema, field_used_by_storage_layout_db},
     },
     db::connector::{SqliteDatabaseError, with_sql_connection},
@@ -137,7 +137,7 @@ fn access_denied() -> Response {
     api_json(
         StatusCode::FORBIDDEN,
         json!({
-            "response": "administrator access is required to modify the ARIS record structure"
+            "response": "administrator access is required to modify the MX record structure"
         }),
     )
 }
@@ -146,7 +146,7 @@ fn read_denied() -> Response {
     api_json(
         StatusCode::FORBIDDEN,
         json!({
-            "response": "your account does not have permission to read the ARIS record structure"
+            "response": "your account does not have permission to read the MX record structure"
         }),
     )
 }
@@ -186,10 +186,43 @@ fn normalize_type(value: &str) -> Result<String, String> {
 
     match field_type.as_str() {
         "text" | "long_text" | "integer" | "decimal" | "date" | "boolean" | "select"
-        | "auto_number" => Ok(field_type),
+        | "auto_number" | "attachments" => Ok(field_type),
 
-        _ => Err(format!("Unsupported ARIS field type '{field_type}'.")),
+        _ => Err(format!("Unsupported MX field type '{field_type}'.")),
     }
+}
+
+fn normalize_attachment_storage_name(value: &str) -> String {
+    let mut normalized = String::new();
+
+    for character in value.trim().chars() {
+        if character.is_ascii_alphanumeric()
+            || character == '.'
+            || character == '-'
+            || character == '_'
+        {
+            normalized.push(character);
+        } else {
+            normalized.push('_');
+        }
+    }
+
+    while normalized.contains("__") {
+        normalized = normalized.replace("__", "_");
+    }
+
+    normalized = normalized
+        .trim_matches(|character| character == '.' || character == '_' || character == '-')
+        .to_string();
+
+    if normalized.len() > 96 {
+        normalized.truncate(96);
+        normalized = normalized
+            .trim_matches(|character| character == '.' || character == '_' || character == '-')
+            .to_string();
+    }
+
+    normalized
 }
 
 fn validate_config(field_type: &str, config: &Value) -> Result<Value, String> {
@@ -258,6 +291,43 @@ fn validate_config(field_type: &str, config: &Value) -> Result<Value, String> {
             }))
         }
 
+        "attachments" => {
+            let storage_name = config
+                .get("storage_name")
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            let normalized_storage = normalize_attachment_storage_name(storage_name);
+
+            let description = config
+                .get("description")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .trim()
+                .to_string();
+
+            let multiple = config
+                .get("multiple")
+                .and_then(Value::as_bool)
+                .unwrap_or(true);
+
+            let max_files = if multiple {
+                config
+                    .get("max_files")
+                    .and_then(Value::as_u64)
+                    .filter(|value| *value > 0)
+                    .map(|value| value.min(10_000))
+            } else {
+                Some(1)
+            };
+
+            Ok(json!({
+                "storage_name": normalized_storage,
+                "description": description,
+                "multiple": multiple,
+                "max_files": max_files,
+            }))
+        }
+
         _ => Ok(json!({})),
     }
 }
@@ -303,7 +373,7 @@ fn insert_builtin_field(
 ) -> rusqlite::Result<()> {
     connection.execute(
         r#"
-        INSERT OR IGNORE INTO aris_fields (
+        INSERT OR IGNORE INTO mx_fields (
             uid,
             field_key,
             label,
@@ -342,23 +412,23 @@ fn insert_builtin_field(
 }
 
 pub(crate) fn ensure_dynamic_schema(connection: &rusqlite::Connection) -> rusqlite::Result<()> {
-    ensure_aris_record_schema(connection)?;
+    ensure_mx_record_schema(connection)?;
 
     connection.execute_batch(
         r#"
-        CREATE TABLE IF NOT EXISTS aris_schema_meta (
+        CREATE TABLE IF NOT EXISTS mx_schema_meta (
             id               INTEGER PRIMARY KEY CHECK(id = 1),
             schema_revision  INTEGER NOT NULL DEFAULT 1 CHECK(schema_revision >= 1),
             legacy_migrated  INTEGER NOT NULL DEFAULT 0 CHECK(legacy_migrated IN (0, 1))
         );
 
-        INSERT OR IGNORE INTO aris_schema_meta (
+        INSERT OR IGNORE INTO mx_schema_meta (
             id,
             schema_revision,
             legacy_migrated
         ) VALUES (1, 1, 0);
 
-        CREATE TABLE IF NOT EXISTS aris_system_fields (
+        CREATE TABLE IF NOT EXISTS mx_system_fields (
             field_key       TEXT PRIMARY KEY NOT NULL COLLATE NOCASE,
             label           TEXT NOT NULL,
             field_type      TEXT NOT NULL,
@@ -369,27 +439,7 @@ pub(crate) fn ensure_dynamic_schema(connection: &rusqlite::Connection) -> rusqli
             position        INTEGER NOT NULL DEFAULT 1000000
         );
 
-        INSERT OR IGNORE INTO aris_system_fields (
-            field_key,
-            label,
-            field_type,
-            searchable,
-            sortable,
-            table_visible,
-            table_priority,
-            position
-        ) VALUES (
-            'attachments',
-            'Attached Files',
-            'attachments',
-            1,
-            0,
-            1,
-            80,
-            1000000
-        );
-
-        CREATE TABLE IF NOT EXISTS aris_fields (
+        CREATE TABLE IF NOT EXISTS mx_fields (
             uid             TEXT PRIMARY KEY NOT NULL,
             field_key       TEXT NOT NULL UNIQUE COLLATE NOCASE,
             label           TEXT NOT NULL,
@@ -405,13 +455,13 @@ pub(crate) fn ensure_dynamic_schema(connection: &rusqlite::Connection) -> rusqli
             config_json     TEXT NOT NULL DEFAULT '{}'
         );
 
-        CREATE INDEX IF NOT EXISTS idx_aris_fields_active_position
-            ON aris_fields(active, position, label COLLATE NOCASE);
+        CREATE INDEX IF NOT EXISTS idx_mx_fields_active_position
+            ON mx_fields(active, position, label COLLATE NOCASE);
 
-        CREATE INDEX IF NOT EXISTS idx_aris_fields_table
-            ON aris_fields(active, table_visible, table_priority DESC, position);
+        CREATE INDEX IF NOT EXISTS idx_mx_fields_table
+            ON mx_fields(active, table_visible, table_priority DESC, position);
 
-        CREATE TABLE IF NOT EXISTS aris_record_values (
+        CREATE TABLE IF NOT EXISTS mx_record_values (
             record_uid      TEXT NOT NULL,
             field_uid       TEXT NOT NULL,
             value_text      TEXT,
@@ -420,56 +470,278 @@ pub(crate) fn ensure_dynamic_schema(connection: &rusqlite::Connection) -> rusqli
             value_boolean   INTEGER CHECK(value_boolean IS NULL OR value_boolean IN (0, 1)),
             PRIMARY KEY(record_uid, field_uid),
             FOREIGN KEY(record_uid)
-                REFERENCES aris_records(uid)
+                REFERENCES mx_records(uid)
                 ON DELETE CASCADE,
             FOREIGN KEY(field_uid)
-                REFERENCES aris_fields(uid)
+                REFERENCES mx_fields(uid)
                 ON DELETE RESTRICT
         );
 
-        CREATE INDEX IF NOT EXISTS idx_aris_record_values_field_text
-            ON aris_record_values(field_uid, value_text COLLATE NOCASE, record_uid);
+        CREATE INDEX IF NOT EXISTS idx_mx_record_values_field_text
+            ON mx_record_values(field_uid, value_text COLLATE NOCASE, record_uid);
 
-        CREATE INDEX IF NOT EXISTS idx_aris_record_values_field_integer
-            ON aris_record_values(field_uid, value_integer, record_uid);
+        CREATE INDEX IF NOT EXISTS idx_mx_record_values_field_integer
+            ON mx_record_values(field_uid, value_integer, record_uid);
 
-        CREATE INDEX IF NOT EXISTS idx_aris_record_values_field_real
-            ON aris_record_values(field_uid, value_real, record_uid);
+        CREATE INDEX IF NOT EXISTS idx_mx_record_values_field_real
+            ON mx_record_values(field_uid, value_real, record_uid);
 
-        CREATE INDEX IF NOT EXISTS idx_aris_record_values_record
-            ON aris_record_values(record_uid, field_uid);
+        CREATE INDEX IF NOT EXISTS idx_mx_record_values_record
+            ON mx_record_values(record_uid, field_uid);
 
-        CREATE TABLE IF NOT EXISTS aris_unique_values (
+        CREATE TABLE IF NOT EXISTS mx_unique_values (
             field_uid         TEXT NOT NULL,
             normalized_value  TEXT NOT NULL,
             record_uid        TEXT NOT NULL,
             PRIMARY KEY(field_uid, normalized_value),
             UNIQUE(field_uid, record_uid),
             FOREIGN KEY(field_uid)
-                REFERENCES aris_fields(uid)
+                REFERENCES mx_fields(uid)
                 ON DELETE RESTRICT,
             FOREIGN KEY(record_uid)
-                REFERENCES aris_records(uid)
+                REFERENCES mx_records(uid)
                 ON DELETE CASCADE
         );
 
-        CREATE TABLE IF NOT EXISTS aris_field_sequences (
+        CREATE TABLE IF NOT EXISTS mx_field_sequences (
             field_uid   TEXT NOT NULL,
             scope_key   TEXT NOT NULL,
             last_value  INTEGER NOT NULL DEFAULT 0 CHECK(last_value >= 0),
             PRIMARY KEY(field_uid, scope_key),
             FOREIGN KEY(field_uid)
-                REFERENCES aris_fields(uid)
+                REFERENCES mx_fields(uid)
                 ON DELETE RESTRICT
         );
         "#,
     )?;
 
+    // Bring old attachment metadata tables up to the minimum shape needed for
+    // File Attachment fields before migration. Fresh databases already have
+    // these columns; ALTER TABLE runs only for older deployments.
+    let attachment_column_exists =
+        |name: &str| -> rusqlite::Result<bool> {
+            connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('mx_attachments') WHERE name = ?1)",
+            params![name],
+            |row| row.get::<_, i64>(0),
+        ).map(|value| value != 0)
+        };
+
+    if !attachment_column_exists("attachment_field_uid")? {
+        connection.execute(
+            "ALTER TABLE mx_attachments ADD COLUMN attachment_field_uid TEXT",
+            [],
+        )?;
+    }
+    if !attachment_column_exists("attachment_field_label")? {
+        connection.execute(
+            "ALTER TABLE mx_attachments ADD COLUMN attachment_field_label TEXT NOT NULL DEFAULT ''",
+            [],
+        )?;
+    }
+    if !attachment_column_exists("attachment_field_storage_name")? {
+        connection.execute(
+            "ALTER TABLE mx_attachments ADD COLUMN attachment_field_storage_name TEXT NOT NULL DEFAULT ''",
+            [],
+        )?;
+    }
+    if !attachment_column_exists("created_at")? {
+        connection.execute(
+            "ALTER TABLE mx_attachments ADD COLUMN created_at INTEGER NOT NULL DEFAULT 0",
+            [],
+        )?;
+        connection.execute(
+            "UPDATE mx_attachments SET created_at = CAST(STRFTIME('%s','now') AS INTEGER) * 1000 WHERE created_at = 0",
+            [],
+        )?;
+    }
+
+    // MX has no built-in business fields. Older builds exposed a permanent
+    // Attached Files system field; remove only that compatibility row.
+    connection.execute(
+        "DELETE FROM mx_system_fields WHERE field_key = 'attachments' COLLATE NOCASE",
+        [],
+    )?;
+
+    // Migrate attachment-field definitions created by the presentation-feedback
+    // patch into the ordinary dynamic schema. This is deliberately additive:
+    // existing field UIDs are preserved so attachment metadata keeps pointing
+    // at the same logical field without moving N1 objects.
+    let legacy_attachment_fields_exist: bool = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='mx_attachment_fields')",
+        [],
+        |row| row.get::<_, i64>(0),
+    )? != 0;
+
+    if legacy_attachment_fields_exist {
+        let mut statement = connection.prepare(
+            r#"
+            SELECT
+                uid,
+                field_key,
+                label,
+                storage_name,
+                description,
+                required,
+                multiple,
+                max_files,
+                position,
+                active
+            FROM mx_attachment_fields
+            ORDER BY position ASC, label COLLATE NOCASE ASC
+            "#,
+        )?;
+
+        let legacy_fields = statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, i64>(5)?,
+                    row.get::<_, i64>(6)?,
+                    row.get::<_, Option<i64>>(7)?,
+                    row.get::<_, i64>(8)?,
+                    row.get::<_, i64>(9)?,
+                ))
+            })?
+            .collect::<Result<Vec<_>, rusqlite::Error>>()?;
+
+        let mut migrated = 0usize;
+        for (
+            uid,
+            key,
+            label,
+            storage_name,
+            description,
+            required,
+            multiple,
+            max_files,
+            position,
+            active,
+        ) in legacy_fields
+        {
+            let config = json!({
+                "storage_name": storage_name,
+                "description": description,
+                "multiple": multiple != 0,
+                "max_files": max_files.and_then(|value| if value > 0 { Some(value) } else { None }),
+            });
+
+            migrated += connection.execute(
+                r#"
+                INSERT OR IGNORE INTO mx_fields (
+                    uid,
+                    field_key,
+                    label,
+                    field_type,
+                    required,
+                    unique_value,
+                    searchable,
+                    sortable,
+                    table_visible,
+                    table_priority,
+                    position,
+                    active,
+                    config_json
+                ) VALUES (
+                    ?1, ?2, ?3, 'attachments', ?4, 0, 1, 0, 1, 50, ?5, ?6, ?7
+                )
+                "#,
+                params![
+                    uid,
+                    key,
+                    label,
+                    if required != 0 { 1_i64 } else { 0_i64 },
+                    position.max(0),
+                    if active != 0 { 1_i64 } else { 0_i64 },
+                    config.to_string(),
+                ],
+            )?;
+        }
+
+        if migrated > 0 {
+            connection.execute(
+                "UPDATE mx_schema_meta SET schema_revision = schema_revision + 1 WHERE id = 1",
+                [],
+            )?;
+        }
+    }
+
+    // If a deployment already contains old unscoped attachments, surface them
+    // as one ordinary File Attachment field instead of retaining a hidden
+    // permanent system capability. Fresh/empty installations remain blank.
+    let attachment_columns_exist: bool = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('mx_attachments') WHERE name='attachment_field_uid')",
+        [],
+        |row| row.get::<_, i64>(0),
+    )? != 0;
+
+    if attachment_columns_exist {
+        let legacy_unscoped_count: i64 = connection.query_row(
+            "SELECT COUNT(*) FROM mx_attachments WHERE attachment_field_uid IS NULL OR TRIM(attachment_field_uid) = ''",
+            [],
+            |row| row.get(0),
+        )?;
+
+        if legacy_unscoped_count > 0 {
+            let legacy_uid = "mx-field-legacy-attachments";
+            connection.execute(
+                r#"
+                INSERT OR IGNORE INTO mx_fields (
+                    uid,
+                    field_key,
+                    label,
+                    field_type,
+                    required,
+                    unique_value,
+                    searchable,
+                    sortable,
+                    table_visible,
+                    table_priority,
+                    position,
+                    active,
+                    config_json
+                ) VALUES (
+                    ?1,
+                    'legacy_attachments',
+                    'Migrated Attachments',
+                    'attachments',
+                    0,
+                    0,
+                    1,
+                    0,
+                    1,
+                    50,
+                    1000000,
+                    1,
+                    '{"storage_name":"Migrated_Attachments","description":"Preserved files migrated from an older MX attachment capability. This is now an ordinary editable File Attachment field.","multiple":true,"max_files":null}'
+                )
+                "#,
+                params![legacy_uid],
+            )?;
+
+            connection.execute(
+                r#"
+                UPDATE mx_attachments
+                SET
+                    attachment_field_uid = ?1,
+                    attachment_field_label = 'Migrated Attachments',
+                    attachment_field_storage_name = 'Migrated_Attachments'
+                WHERE attachment_field_uid IS NULL OR TRIM(attachment_field_uid) = ''
+                "#,
+                params![legacy_uid],
+            )?;
+        }
+    }
+
     let record_count: i64 =
-        connection.query_row("SELECT COUNT(*) FROM aris_records", [], |row| row.get(0))?;
+        connection.query_row("SELECT COUNT(*) FROM mx_records", [], |row| row.get(0))?;
 
     /*
-     * Fresh deployments own their structure. ARIS must not invent one.
+     * Fresh deployments own their structure. MX must not invent one.
      *
      * Earlier dynamic builds accidentally inserted seven historical fields
      * into empty databases. Those defaults used fixed UIDs, so when there
@@ -479,15 +751,15 @@ pub(crate) fn ensure_dynamic_schema(connection: &rusqlite::Connection) -> rusqli
     if record_count == 0 {
         connection.execute(
             r#"
-            DELETE FROM aris_field_sequences
+            DELETE FROM mx_field_sequences
             WHERE field_uid IN (
-                'aris-field-control-no',
-                'aris-field-date',
-                'aris-field-office',
-                'aris-field-requestor',
-                'aris-field-subject',
-                'aris-field-route',
-                'aris-field-remarks'
+                'mx-field-control-no',
+                'mx-field-date',
+                'mx-field-office',
+                'mx-field-requestor',
+                'mx-field-subject',
+                'mx-field-route',
+                'mx-field-remarks'
             )
             "#,
             [],
@@ -495,15 +767,15 @@ pub(crate) fn ensure_dynamic_schema(connection: &rusqlite::Connection) -> rusqli
 
         connection.execute(
             r#"
-            DELETE FROM aris_unique_values
+            DELETE FROM mx_unique_values
             WHERE field_uid IN (
-                'aris-field-control-no',
-                'aris-field-date',
-                'aris-field-office',
-                'aris-field-requestor',
-                'aris-field-subject',
-                'aris-field-route',
-                'aris-field-remarks'
+                'mx-field-control-no',
+                'mx-field-date',
+                'mx-field-office',
+                'mx-field-requestor',
+                'mx-field-subject',
+                'mx-field-route',
+                'mx-field-remarks'
             )
             "#,
             [],
@@ -511,15 +783,15 @@ pub(crate) fn ensure_dynamic_schema(connection: &rusqlite::Connection) -> rusqli
 
         connection.execute(
             r#"
-            DELETE FROM aris_record_values
+            DELETE FROM mx_record_values
             WHERE field_uid IN (
-                'aris-field-control-no',
-                'aris-field-date',
-                'aris-field-office',
-                'aris-field-requestor',
-                'aris-field-subject',
-                'aris-field-route',
-                'aris-field-remarks'
+                'mx-field-control-no',
+                'mx-field-date',
+                'mx-field-office',
+                'mx-field-requestor',
+                'mx-field-subject',
+                'mx-field-route',
+                'mx-field-remarks'
             )
             "#,
             [],
@@ -527,15 +799,15 @@ pub(crate) fn ensure_dynamic_schema(connection: &rusqlite::Connection) -> rusqli
 
         let removed_defaults = connection.execute(
             r#"
-            DELETE FROM aris_fields
+            DELETE FROM mx_fields
             WHERE uid IN (
-                'aris-field-control-no',
-                'aris-field-date',
-                'aris-field-office',
-                'aris-field-requestor',
-                'aris-field-subject',
-                'aris-field-route',
-                'aris-field-remarks'
+                'mx-field-control-no',
+                'mx-field-date',
+                'mx-field-office',
+                'mx-field-requestor',
+                'mx-field-subject',
+                'mx-field-route',
+                'mx-field-remarks'
             )
             "#,
             [],
@@ -544,7 +816,7 @@ pub(crate) fn ensure_dynamic_schema(connection: &rusqlite::Connection) -> rusqli
         if removed_defaults > 0 {
             connection.execute(
                 r#"
-                UPDATE aris_schema_meta
+                UPDATE mx_schema_meta
                 SET schema_revision = schema_revision + 1
                 WHERE id = 1
                 "#,
@@ -554,7 +826,7 @@ pub(crate) fn ensure_dynamic_schema(connection: &rusqlite::Connection) -> rusqli
     }
 
     let field_count: i64 =
-        connection.query_row("SELECT COUNT(*) FROM aris_fields", [], |row| row.get(0))?;
+        connection.query_row("SELECT COUNT(*) FROM mx_fields", [], |row| row.get(0))?;
 
     /*
      * Compatibility only.
@@ -566,7 +838,7 @@ pub(crate) fn ensure_dynamic_schema(connection: &rusqlite::Connection) -> rusqli
     if record_count > 0 && field_count == 0 {
         insert_builtin_field(
             connection,
-            "aris-field-control-no",
+            "mx-field-control-no",
             "control_no",
             "Control No.",
             "auto_number",
@@ -586,7 +858,7 @@ pub(crate) fn ensure_dynamic_schema(connection: &rusqlite::Connection) -> rusqli
 
         insert_builtin_field(
             connection,
-            "aris-field-date",
+            "mx-field-date",
             "date",
             "Date",
             "date",
@@ -602,7 +874,7 @@ pub(crate) fn ensure_dynamic_schema(connection: &rusqlite::Connection) -> rusqli
 
         insert_builtin_field(
             connection,
-            "aris-field-office",
+            "mx-field-office",
             "office",
             "Office",
             "text",
@@ -618,7 +890,7 @@ pub(crate) fn ensure_dynamic_schema(connection: &rusqlite::Connection) -> rusqli
 
         insert_builtin_field(
             connection,
-            "aris-field-requestor",
+            "mx-field-requestor",
             "requestor",
             "Requestor",
             "text",
@@ -634,7 +906,7 @@ pub(crate) fn ensure_dynamic_schema(connection: &rusqlite::Connection) -> rusqli
 
         insert_builtin_field(
             connection,
-            "aris-field-subject",
+            "mx-field-subject",
             "subject",
             "Subject",
             "long_text",
@@ -650,7 +922,7 @@ pub(crate) fn ensure_dynamic_schema(connection: &rusqlite::Connection) -> rusqli
 
         insert_builtin_field(
             connection,
-            "aris-field-route",
+            "mx-field-route",
             "routed_to_div",
             "Routed To Div.",
             "text",
@@ -666,7 +938,7 @@ pub(crate) fn ensure_dynamic_schema(connection: &rusqlite::Connection) -> rusqli
 
         insert_builtin_field(
             connection,
-            "aris-field-remarks",
+            "mx-field-remarks",
             "remarks",
             "Remarks",
             "long_text",
@@ -682,7 +954,7 @@ pub(crate) fn ensure_dynamic_schema(connection: &rusqlite::Connection) -> rusqli
     }
 
     let legacy_migrated: i64 = connection.query_row(
-        "SELECT legacy_migrated FROM aris_schema_meta WHERE id = 1",
+        "SELECT legacy_migrated FROM mx_schema_meta WHERE id = 1",
         [],
         |row| row.get(0),
     )?;
@@ -690,7 +962,7 @@ pub(crate) fn ensure_dynamic_schema(connection: &rusqlite::Connection) -> rusqli
     if legacy_migrated == 0 && record_count > 0 {
         connection.execute_batch(
             r#"
-            INSERT OR IGNORE INTO aris_record_values (
+            INSERT OR IGNORE INTO mx_record_values (
                 record_uid,
                 field_uid,
                 value_integer
@@ -699,68 +971,68 @@ pub(crate) fn ensure_dynamic_schema(connection: &rusqlite::Connection) -> rusqli
                 r.uid,
                 f.uid,
                 r.control_no
-            FROM aris_records r
-            JOIN aris_fields f
+            FROM mx_records r
+            JOIN mx_fields f
               ON f.field_key = 'control_no' COLLATE NOCASE;
 
-            INSERT OR IGNORE INTO aris_record_values (
+            INSERT OR IGNORE INTO mx_record_values (
                 record_uid,
                 field_uid,
                 value_text
             )
             SELECT r.uid, f.uid, r.date
-            FROM aris_records r
-            JOIN aris_fields f
+            FROM mx_records r
+            JOIN mx_fields f
               ON f.field_key = 'date' COLLATE NOCASE;
 
-            INSERT OR IGNORE INTO aris_record_values (
+            INSERT OR IGNORE INTO mx_record_values (
                 record_uid,
                 field_uid,
                 value_text
             )
             SELECT r.uid, f.uid, r.office
-            FROM aris_records r
-            JOIN aris_fields f
+            FROM mx_records r
+            JOIN mx_fields f
               ON f.field_key = 'office' COLLATE NOCASE;
 
-            INSERT OR IGNORE INTO aris_record_values (
+            INSERT OR IGNORE INTO mx_record_values (
                 record_uid,
                 field_uid,
                 value_text
             )
             SELECT r.uid, f.uid, r.requestor
-            FROM aris_records r
-            JOIN aris_fields f
+            FROM mx_records r
+            JOIN mx_fields f
               ON f.field_key = 'requestor' COLLATE NOCASE;
 
-            INSERT OR IGNORE INTO aris_record_values (
+            INSERT OR IGNORE INTO mx_record_values (
                 record_uid,
                 field_uid,
                 value_text
             )
             SELECT r.uid, f.uid, r.subject
-            FROM aris_records r
-            JOIN aris_fields f
+            FROM mx_records r
+            JOIN mx_fields f
               ON f.field_key = 'subject' COLLATE NOCASE;
 
-            INSERT OR IGNORE INTO aris_record_values (
+            INSERT OR IGNORE INTO mx_record_values (
                 record_uid,
                 field_uid,
                 value_text
             )
             SELECT r.uid, f.uid, r.routed_to_div
-            FROM aris_records r
-            JOIN aris_fields f
+            FROM mx_records r
+            JOIN mx_fields f
               ON f.field_key = 'routed_to_div' COLLATE NOCASE;
 
-            INSERT OR IGNORE INTO aris_record_values (
+            INSERT OR IGNORE INTO mx_record_values (
                 record_uid,
                 field_uid,
                 value_text
             )
             SELECT r.uid, f.uid, r.remarks
-            FROM aris_records r
-            JOIN aris_fields f
+            FROM mx_records r
+            JOIN mx_fields f
               ON f.field_key = 'remarks' COLLATE NOCASE;
 
             /*
@@ -768,7 +1040,7 @@ pub(crate) fn ensure_dynamic_schema(connection: &rusqlite::Connection) -> rusqli
              * control-number data. This prevents the first dynamic record from
              * starting at 1 again on an existing deployment.
              */
-            INSERT INTO aris_field_sequences (
+            INSERT INTO mx_field_sequences (
                 field_uid,
                 scope_key,
                 last_value
@@ -777,8 +1049,8 @@ pub(crate) fn ensure_dynamic_schema(connection: &rusqlite::Connection) -> rusqli
                 f.uid,
                 CAST(r.control_year AS TEXT),
                 MAX(r.control_no)
-            FROM aris_records r
-            JOIN aris_fields f
+            FROM mx_records r
+            JOIN mx_fields f
               ON f.field_key = 'control_no' COLLATE NOCASE
             WHERE r.control_year > 0
             GROUP BY f.uid, r.control_year
@@ -786,7 +1058,7 @@ pub(crate) fn ensure_dynamic_schema(connection: &rusqlite::Connection) -> rusqli
             DO UPDATE SET
                 last_value = MAX(last_value, excluded.last_value);
 
-            UPDATE aris_schema_meta
+            UPDATE mx_schema_meta
             SET legacy_migrated = 1
             WHERE id = 1;
             "#,
@@ -794,7 +1066,7 @@ pub(crate) fn ensure_dynamic_schema(connection: &rusqlite::Connection) -> rusqli
     } else if legacy_migrated == 0 {
         connection.execute(
             r#"
-            UPDATE aris_schema_meta
+            UPDATE mx_schema_meta
             SET legacy_migrated = 1
             WHERE id = 1
             "#,
@@ -809,7 +1081,7 @@ pub(crate) fn schema_revision_db(connection: &rusqlite::Connection) -> rusqlite:
     ensure_dynamic_schema(connection)?;
 
     let revision: i64 = connection.query_row(
-        "SELECT schema_revision FROM aris_schema_meta WHERE id = 1",
+        "SELECT schema_revision FROM mx_schema_meta WHERE id = 1",
         [],
         |row| row.get(0),
     )?;
@@ -817,10 +1089,10 @@ pub(crate) fn schema_revision_db(connection: &rusqlite::Connection) -> rusqlite:
     Ok(revision.max(1) as u64)
 }
 
-fn bump_schema_revision(connection: &rusqlite::Connection) -> rusqlite::Result<()> {
+pub(crate) fn bump_schema_revision(connection: &rusqlite::Connection) -> rusqlite::Result<()> {
     connection.execute(
         r#"
-        UPDATE aris_schema_meta
+        UPDATE mx_schema_meta
         SET schema_revision = schema_revision + 1
         WHERE id = 1
         "#,
@@ -852,7 +1124,7 @@ pub(crate) fn load_fields_db(
             position,
             active,
             config_json
-        FROM aris_fields
+        FROM mx_fields
         ORDER BY active DESC, position ASC, label COLLATE NOCASE ASC
         "#
     } else {
@@ -871,7 +1143,7 @@ pub(crate) fn load_fields_db(
             position,
             active,
             config_json
-        FROM aris_fields
+        FROM mx_fields
         WHERE active = 1
         ORDER BY position ASC, label COLLATE NOCASE ASC
         "#
@@ -912,7 +1184,7 @@ fn load_system_fields_db(
             table_visible,
             table_priority,
             position
-        FROM aris_system_fields
+        FROM mx_system_fields
         ORDER BY position ASC, label COLLATE NOCASE ASC
         "#,
     )?;
@@ -949,7 +1221,7 @@ async fn load_schema(include_archived: bool) -> Result<SchemaResponse, String> {
 
     match database_result {
         Ok(Ok(schema)) => Ok(schema),
-        Ok(Err(error)) => Err(format!("failed to load ARIS record structure: {error}")),
+        Ok(Err(error)) => Err(format!("failed to load MX record structure: {error}")),
         Err(error) => Err(format!("record structure blocking task failed: {error}")),
     }
 }
@@ -970,7 +1242,7 @@ pub async fn get_record_schema(claims: Claims) -> Response {
 
             api_json(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                json!({ "response": "failed to load ARIS record structure" }),
+                json!({ "response": "failed to load MX record structure" }),
             )
         }
     }
@@ -988,7 +1260,7 @@ pub async fn get_admin_record_schema(claims: Claims) -> Response {
 
             api_json(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                json!({ "response": "failed to load ARIS record structure" }),
+                json!({ "response": "failed to load MX record structure" }),
             )
         }
     }
@@ -1025,18 +1297,37 @@ pub async fn create_schema_field(
         }
     };
 
-    let config = match validate_config(&field_type, &request.config) {
+    let mut config = match validate_config(&field_type, &request.config) {
         Ok(value) => value,
         Err(error) => {
             return api_json(StatusCode::BAD_REQUEST, json!({ "response": error }));
         }
     };
 
+    if field_type == "attachments"
+        && config
+            .get("storage_name")
+            .and_then(Value::as_str)
+            .map_or(true, str::is_empty)
+    {
+        let mut default_storage = normalize_attachment_storage_name(&label);
+        if default_storage.is_empty() {
+            default_storage = normalize_attachment_storage_name(&key);
+        }
+        if let Some(object) = config.as_object_mut() {
+            object.insert("storage_name".to_string(), Value::String(default_storage));
+        }
+    }
+
     let uid = Uuid::new_v4().to_string();
     let requested_position = request.position;
     let required = request.required || field_type == "auto_number";
-    let unique_value = request.unique_value || field_type == "auto_number";
-    let sortable = request.sortable && field_type != "long_text";
+    let unique_value = if field_type == "attachments" {
+        false
+    } else {
+        request.unique_value || field_type == "auto_number"
+    };
+    let sortable = request.sortable && field_type != "long_text" && field_type != "attachments";
     let key_for_db = key.clone();
     let label_for_db = label.clone();
     let field_type_for_db = field_type.clone();
@@ -1055,13 +1346,13 @@ pub async fn create_schema_field(
                         SELECT COALESCE(MAX(position), -10) + 10
                         FROM (
                             SELECT position
-                            FROM aris_fields
+                            FROM mx_fields
                             WHERE active = 1
 
                             UNION ALL
 
                             SELECT position
-                            FROM aris_system_fields
+                            FROM mx_system_fields
                         )
                         "#,
                         [],
@@ -1071,7 +1362,7 @@ pub async fn create_schema_field(
 
                 connection.execute(
                     r#"
-                    INSERT INTO aris_fields (
+                    INSERT INTO mx_fields (
                         uid,
                         field_key,
                         label,
@@ -1124,7 +1415,7 @@ pub async fn create_schema_field(
                         position,
                         active,
                         config_json
-                    FROM aris_fields
+                    FROM mx_fields
                     WHERE uid = ?1
                     "#,
                     params![uid],
@@ -1153,7 +1444,7 @@ pub async fn create_schema_field(
 
             api_json(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                json!({ "response": "failed to create ARIS field" }),
+                json!({ "response": "failed to create MX field" }),
             )
         }
 
@@ -1162,7 +1453,7 @@ pub async fn create_schema_field(
 
             api_json(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                json!({ "response": "failed to create ARIS field" }),
+                json!({ "response": "failed to create MX field" }),
             )
         }
     }
@@ -1186,8 +1477,8 @@ fn duplicate_value_exists(
                         ELSE LOWER(TRIM(COALESCE(rv.value_text, '')))
                     END AS normalized,
                     COUNT(*) AS value_count
-                FROM aris_record_values rv
-                JOIN aris_fields f
+                FROM mx_record_values rv
+                JOIN mx_fields f
                   ON f.uid = rv.field_uid
                 WHERE rv.field_uid = ?1
                 GROUP BY normalized
@@ -1210,7 +1501,7 @@ fn rebuild_unique_values_for_field(
     field: &FieldDefinition,
 ) -> rusqlite::Result<()> {
     connection.execute(
-        "DELETE FROM aris_unique_values WHERE field_uid = ?1",
+        "DELETE FROM mx_unique_values WHERE field_uid = ?1",
         params![&field.uid],
     )?;
 
@@ -1227,7 +1518,7 @@ fn rebuild_unique_values_for_field(
 
     let sql = format!(
         r#"
-        INSERT INTO aris_unique_values (
+        INSERT INTO mx_unique_values (
             field_uid,
             normalized_value,
             record_uid
@@ -1236,7 +1527,7 @@ fn rebuild_unique_values_for_field(
             rv.field_uid,
             {normalized_expression},
             rv.record_uid
-        FROM aris_record_values rv
+        FROM mx_record_values rv
         WHERE rv.field_uid = ?1
           AND {normalized_expression} <> ''
         "#
@@ -1260,7 +1551,7 @@ pub async fn update_system_schema_field(
     if key != "attachments" {
         return api_json(
             StatusCode::NOT_FOUND,
-            json!({ "response": "unknown ARIS system field" }),
+            json!({ "response": "unknown MX system field" }),
         );
     }
 
@@ -1282,7 +1573,7 @@ pub async fn update_system_schema_field(
                         table_visible,
                         table_priority,
                         position
-                    FROM aris_system_fields
+                    FROM mx_system_fields
                     WHERE field_key = ?1
                     "#,
                     params![&key_for_db],
@@ -1291,7 +1582,7 @@ pub async fn update_system_schema_field(
 
                 connection.execute(
                     r#"
-                    UPDATE aris_system_fields
+                    UPDATE mx_system_fields
                     SET
                         table_visible = ?2,
                         table_priority = ?3,
@@ -1323,7 +1614,7 @@ pub async fn update_system_schema_field(
                         table_visible,
                         table_priority,
                         position
-                    FROM aris_system_fields
+                    FROM mx_system_fields
                     WHERE field_key = ?1
                     "#,
                     params![&key_for_db],
@@ -1338,26 +1629,26 @@ pub async fn update_system_schema_field(
         Ok(Ok(field)) => api_json(
             StatusCode::OK,
             json!({
-                "response": "ARIS system field updated",
+                "response": "MX system field updated",
                 "field": field
             }),
         ),
 
         Ok(Err(SqliteDatabaseError::Sqlite(rusqlite::Error::QueryReturnedNoRows))) => api_json(
             StatusCode::NOT_FOUND,
-            json!({ "response": "ARIS system field was not found" }),
+            json!({ "response": "MX system field was not found" }),
         ),
 
         Ok(Err(error)) => {
             crate::report_error!(
-                format!("failed to update ARIS system field: {error}"),
+                format!("failed to update MX system field: {error}"),
                 "function",
                 "update_system_schema_field()"
             );
 
             api_json(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                json!({ "response": "failed to update ARIS system field" }),
+                json!({ "response": "failed to update MX system field" }),
             )
         }
 
@@ -1370,7 +1661,7 @@ pub async fn update_system_schema_field(
 
             api_json(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                json!({ "response": "failed to update ARIS system field" }),
+                json!({ "response": "failed to update MX system field" }),
             )
         }
     }
@@ -1395,7 +1686,7 @@ pub async fn update_schema_order(
                     let mut statement = connection.prepare(
                         r#"
                         SELECT uid
-                        FROM aris_fields
+                        FROM mx_fields
                         WHERE active = 1
                         "#,
                     )?;
@@ -1409,7 +1700,7 @@ pub async fn update_schema_order(
                     let mut statement = connection.prepare(
                         r#"
                         SELECT field_key
-                        FROM aris_system_fields
+                        FROM mx_system_fields
                         "#,
                     )?;
 
@@ -1467,7 +1758,7 @@ pub async fn update_schema_order(
                         "field" => {
                             transaction.execute(
                                 r#"
-                                UPDATE aris_fields
+                                UPDATE mx_fields
                                 SET position = ?2
                                 WHERE uid = ?1
                                   AND active = 1
@@ -1479,7 +1770,7 @@ pub async fn update_schema_order(
                         "system" => {
                             transaction.execute(
                                 r#"
-                                UPDATE aris_system_fields
+                                UPDATE mx_system_fields
                                 SET position = ?2
                                 WHERE field_key = ?1
                                 "#,
@@ -1493,7 +1784,7 @@ pub async fn update_schema_order(
 
                 transaction.execute(
                     r#"
-                    UPDATE aris_schema_meta
+                    UPDATE mx_schema_meta
                     SET schema_revision = schema_revision + 1
                     WHERE id = 1
                     "#,
@@ -1610,7 +1901,7 @@ pub async fn update_schema_field(
                         position,
                         active,
                         config_json
-                    FROM aris_fields
+                    FROM mx_fields
                     WHERE uid = ?1
                     "#,
                     params![&uid_for_db],
@@ -1622,13 +1913,31 @@ pub async fn update_schema_field(
 
                     if field_used_by_storage_layout_db(connection, &uid_for_db)? {
                         return Err(rusqlite::Error::InvalidParameterName(
-                            "ARIS_STORAGE_LAYOUT_FIELD".to_string(),
+                            "MX_STORAGE_LAYOUT_FIELD".to_string(),
                         ));
+                    }
+
+                    if existing.field_type == "attachments" {
+                        let attached_count: i64 = connection.query_row(
+                            "SELECT COUNT(*) FROM mx_attachments WHERE attachment_field_uid = ?1",
+                            params![&uid_for_db],
+                            |row| row.get(0),
+                        )?;
+
+                        if attached_count > 0 {
+                            return Err(rusqlite::Error::InvalidParameterName(
+                                "MX_ATTACHMENT_FIELD_HAS_FILES".to_string(),
+                            ));
+                        }
                     }
                 }
 
-                let next_unique = request.unique_value.unwrap_or(existing.unique_value)
-                    || existing.field_type == "auto_number";
+                let next_unique = if existing.field_type == "attachments" {
+                    false
+                } else {
+                    request.unique_value.unwrap_or(existing.unique_value)
+                        || existing.field_type == "auto_number"
+                };
 
                 if next_unique
                     && !existing.unique_value
@@ -1636,7 +1945,7 @@ pub async fn update_schema_field(
                     && duplicate_value_exists(connection, &uid_for_db)?
                 {
                     return Err(rusqlite::Error::InvalidParameterName(
-                        "ARIS_DUPLICATE_VALUES".to_string(),
+                        "MX_DUPLICATE_VALUES".to_string(),
                     ));
                 }
 
@@ -1649,13 +1958,13 @@ pub async fn update_schema_field(
                             SELECT COALESCE(MAX(position), -10) + 10
                             FROM (
                                 SELECT position
-                                FROM aris_fields
+                                FROM mx_fields
                                 WHERE active = 1
 
                                 UNION ALL
 
                                 SELECT position
-                                FROM aris_system_fields
+                                FROM mx_system_fields
                             )
                             "#,
                         [],
@@ -1665,21 +1974,50 @@ pub async fn update_schema_field(
                     request.position.unwrap_or(existing.position).max(0)
                 };
 
-                let next_config = match request.config {
+                let next_label = label.clone().unwrap_or_else(|| existing.label.clone());
+
+                let mut next_config = match request.config {
                     Some(config) => {
                         validate_config(&existing.field_type, &config).map_err(|message| {
-                            rusqlite::Error::InvalidParameterName(format!("ARIS_CONFIG:{message}"))
+                            rusqlite::Error::InvalidParameterName(format!("MX_CONFIG:{message}"))
                         })?
                     }
                     None => existing.config.clone(),
                 };
 
+                if existing.field_type == "attachments"
+                    && next_config
+                        .get("storage_name")
+                        .and_then(Value::as_str)
+                        .map_or(true, str::is_empty)
+                {
+                    let stable_name = existing
+                        .config
+                        .get("storage_name")
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .map(str::to_string)
+                        .unwrap_or_else(|| {
+                            let mut value = normalize_attachment_storage_name(&existing.label);
+                            if value.is_empty() {
+                                value = normalize_attachment_storage_name(&existing.key);
+                            }
+                            value
+                        });
+
+                    if let Some(object) = next_config.as_object_mut() {
+                        object.insert("storage_name".to_string(), Value::String(stable_name));
+                    }
+                }
+
                 let next_sortable = request.sortable.unwrap_or(existing.sortable)
-                    && existing.field_type != "long_text";
+                    && existing.field_type != "long_text"
+                    && existing.field_type != "attachments";
 
                 connection.execute(
                     r#"
-                    UPDATE aris_fields
+                    UPDATE mx_fields
                     SET
                         label = ?2,
                         required = ?3,
@@ -1695,7 +2033,7 @@ pub async fn update_schema_field(
                     "#,
                     params![
                         &uid_for_db,
-                        label.unwrap_or(existing.label),
+                        next_label,
                         if request.required.unwrap_or(existing.required)
                             || existing.field_type == "auto_number"
                         {
@@ -1744,7 +2082,7 @@ pub async fn update_schema_field(
                         position,
                         active,
                         config_json
-                    FROM aris_fields
+                    FROM mx_fields
                     WHERE uid = ?1
                     "#,
                     params![&uid_for_db],
@@ -1763,11 +2101,11 @@ pub async fn update_schema_field(
 
         Ok(Err(SqliteDatabaseError::Sqlite(rusqlite::Error::QueryReturnedNoRows))) => api_json(
             StatusCode::NOT_FOUND,
-            json!({ "response": "ARIS field was not found." }),
+            json!({ "response": "MX field was not found." }),
         ),
 
         Ok(Err(SqliteDatabaseError::Sqlite(rusqlite::Error::InvalidParameterName(message))))
-            if message == "ARIS_DUPLICATE_VALUES" =>
+            if message == "MX_DUPLICATE_VALUES" =>
         {
             api_json(
                 StatusCode::CONFLICT,
@@ -1778,18 +2116,18 @@ pub async fn update_schema_field(
         }
 
         Ok(Err(SqliteDatabaseError::Sqlite(rusqlite::Error::InvalidParameterName(message))))
-            if message.starts_with("ARIS_CONFIG:") =>
+            if message.starts_with("MX_CONFIG:") =>
         {
             api_json(
                 StatusCode::BAD_REQUEST,
                 json!({
-                    "response": message.trim_start_matches("ARIS_CONFIG:")
+                    "response": message.trim_start_matches("MX_CONFIG:")
                 }),
             )
         }
 
         Ok(Err(SqliteDatabaseError::Sqlite(rusqlite::Error::InvalidParameterName(message))))
-            if message == "ARIS_STORAGE_LAYOUT_FIELD" =>
+            if message == "MX_STORAGE_LAYOUT_FIELD" =>
         {
             api_json(
                 StatusCode::CONFLICT,
@@ -1799,12 +2137,23 @@ pub async fn update_schema_field(
             )
         }
 
+        Ok(Err(SqliteDatabaseError::Sqlite(rusqlite::Error::InvalidParameterName(message))))
+            if message == "MX_ATTACHMENT_FIELD_HAS_FILES" =>
+        {
+            api_json(
+                StatusCode::CONFLICT,
+                json!({
+                    "response": "This File Attachment field still owns stored files. Remove or migrate those files before archiving the field."
+                }),
+            )
+        }
+
         Ok(Err(error)) => {
             crate::report_error!(format!("{error}"), "function", "update_schema_field()");
 
             api_json(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                json!({ "response": "failed to update ARIS field" }),
+                json!({ "response": "failed to update MX field" }),
             )
         }
 
@@ -1813,7 +2162,7 @@ pub async fn update_schema_field(
 
             api_json(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                json!({ "response": "failed to update ARIS field" }),
+                json!({ "response": "failed to update MX field" }),
             )
         }
     }

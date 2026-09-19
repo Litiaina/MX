@@ -32,8 +32,8 @@ mod macros;
 mod middleware;
 mod util;
 
-pub const ENV_FILE: &str = "aris.env";
-pub const CONFIG_FILE: &str = "aris.config";
+pub const ENV_FILE: &str = "mx.env";
+pub const CONFIG_FILE: &str = "mx.config";
 
 #[derive(Debug, Clone, Copy)]
 pub struct Ports {
@@ -148,9 +148,9 @@ async fn server() {
 
     let current_time = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
-    tracing::info!("╔════════════════════════════════════════╗");
-    tracing::info!("║        L I T I A I N A  A R I S        ║");
-    tracing::info!("╚════════════════════════════════════════╝");
+    tracing::info!("╔════════════════════════════════════╗");
+    tracing::info!("║        L I T I A I N A  M X        ║");
+    tracing::info!("╚════════════════════════════════════╝");
     tracing::info!("{} - Status: ONLINE", current_time);
     tracing::info!("Press CTRL+C to terminate");
     tracing::info!("══════════════ ACTIVE CONNECTIONS ══════════════");

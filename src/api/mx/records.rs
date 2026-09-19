@@ -12,7 +12,8 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use crate::{
-    api::aris::{
+    api::mx::{
+        attachment_fields::ensure_attachment_fields_schema,
         model::FileAttachment,
         schema::{
             FieldDefinition, ensure_dynamic_schema, field_map_by_key, load_active_schema,
@@ -99,7 +100,7 @@ fn access_denied() -> Response {
     api_json(
         StatusCode::FORBIDDEN,
         json!({
-            "response": "your account does not have permission for this ARIS operation"
+            "response": "your account does not have permission for this MX operation"
         }),
     )
 }
@@ -282,7 +283,7 @@ fn normalize_field_value(
             Ok(Some(NormalizedValue::Boolean(boolean)))
         }
 
-        "auto_number" => Ok(None),
+        "auto_number" | "attachments" => Ok(None),
 
         _ => Err(format!(
             "{} has unsupported type '{}'.",
@@ -300,7 +301,7 @@ fn validate_payload(
     for key in raw_values.keys() {
         if !field_map.contains_key(key) {
             return Err(format!(
-                "'{key}' is not an active ARIS record field. Refresh the page and try again."
+                "'{key}' is not an active MX record field. Refresh the page and try again."
             ));
         }
     }
@@ -308,7 +309,7 @@ fn validate_payload(
     let mut normalized = BTreeMap::new();
 
     for field in fields {
-        if field.field_type == "auto_number" {
+        if matches!(field.field_type.as_str(), "auto_number" | "attachments") {
             continue;
         }
 
@@ -354,7 +355,7 @@ fn next_auto_number(
 
     transaction.execute(
         r#"
-        INSERT OR IGNORE INTO aris_field_sequences (
+        INSERT OR IGNORE INTO mx_field_sequences (
             field_uid,
             scope_key,
             last_value
@@ -365,7 +366,7 @@ fn next_auto_number(
 
     transaction.execute(
         r#"
-        UPDATE aris_field_sequences
+        UPDATE mx_field_sequences
         SET last_value = last_value + 1
         WHERE field_uid = ?1
           AND scope_key = ?2
@@ -376,7 +377,7 @@ fn next_auto_number(
     transaction.query_row(
         r#"
         SELECT last_value
-        FROM aris_field_sequences
+        FROM mx_field_sequences
         WHERE field_uid = ?1
           AND scope_key = ?2
         "#,
@@ -400,7 +401,7 @@ fn load_existing_auto_numbers(
             .query_row(
                 r#"
                 SELECT value_integer
-                FROM aris_record_values
+                FROM mx_record_values
                 WHERE record_uid = ?1
                   AND field_uid = ?2
                 "#,
@@ -454,7 +455,7 @@ fn insert_record_value(
 
     transaction.execute(
         r#"
-        INSERT INTO aris_record_values (
+        INSERT INTO mx_record_values (
             record_uid,
             field_uid,
             value_text,
@@ -476,14 +477,14 @@ fn write_dynamic_values(
     values: &BTreeMap<String, NormalizedValue>,
 ) -> rusqlite::Result<()> {
     transaction.execute(
-        "DELETE FROM aris_unique_values WHERE record_uid = ?1",
+        "DELETE FROM mx_unique_values WHERE record_uid = ?1",
         params![record_uid],
     )?;
 
     for field in fields {
         transaction.execute(
             r#"
-            DELETE FROM aris_record_values
+            DELETE FROM mx_record_values
             WHERE record_uid = ?1
               AND field_uid = ?2
             "#,
@@ -502,7 +503,7 @@ fn write_dynamic_values(
             if !normalized.is_empty() {
                 transaction.execute(
                     r#"
-                    INSERT INTO aris_unique_values (
+                    INSERT INTO mx_unique_values (
                         field_uid,
                         normalized_value,
                         record_uid
@@ -552,7 +553,7 @@ fn year_from_date(value: &str) -> Option<i32> {
 fn next_hidden_legacy_number(transaction: &rusqlite::Transaction<'_>) -> rusqlite::Result<i64> {
     transaction.execute(
         r#"
-        INSERT OR IGNORE INTO aris_control_sequence (
+        INSERT OR IGNORE INTO mx_control_sequence (
             year,
             last_value
         ) VALUES (0, 0)
@@ -562,7 +563,7 @@ fn next_hidden_legacy_number(transaction: &rusqlite::Transaction<'_>) -> rusqlit
 
     transaction.execute(
         r#"
-        UPDATE aris_control_sequence
+        UPDATE mx_control_sequence
         SET last_value = last_value + 1
         WHERE year = 0
         "#,
@@ -570,7 +571,7 @@ fn next_hidden_legacy_number(transaction: &rusqlite::Transaction<'_>) -> rusqlit
     )?;
 
     transaction.query_row(
-        "SELECT last_value FROM aris_control_sequence WHERE year = 0",
+        "SELECT last_value FROM mx_control_sequence WHERE year = 0",
         [],
         |row| row.get::<_, i64>(0),
     )
@@ -609,7 +610,7 @@ fn create_record_db(
 
         transaction.execute(
             r#"
-            INSERT INTO aris_records (
+            INSERT INTO mx_records (
                 uid,
                 control_year,
                 control_no,
@@ -661,7 +662,7 @@ fn update_record_db(
                     subject,
                     routed_to_div,
                     remarks
-                FROM aris_records
+                FROM mx_records
                 WHERE uid = ?1
                 "#,
             params![&uid],
@@ -728,7 +729,7 @@ fn update_record_db(
 
         let affected = transaction.execute(
             r#"
-            UPDATE aris_records
+            UPDATE mx_records
             SET
                 date = ?2,
                 office = ?3,
@@ -798,8 +799,8 @@ fn load_record_values(
             rv.value_integer,
             rv.value_real,
             rv.value_boolean
-        FROM aris_record_values rv
-        JOIN aris_fields f
+        FROM mx_record_values rv
+        JOIN mx_fields f
           ON f.uid = rv.field_uid
         WHERE f.active = 1
           AND rv.record_uid IN ({placeholders})
@@ -839,6 +840,8 @@ fn load_attachments(
     connection: &rusqlite::Connection,
     record_uids: &[String],
 ) -> rusqlite::Result<HashMap<String, Vec<FileAttachment>>> {
+    ensure_attachment_fields_schema(connection)?;
+
     if record_uids.is_empty() {
         return Ok(HashMap::new());
     }
@@ -857,8 +860,11 @@ fn load_attachments(
             mime_type,
             size,
             object_key,
-            version_id
-        FROM aris_attachments
+            version_id,
+            attachment_field_uid,
+            attachment_field_label,
+            attachment_field_storage_name
+        FROM mx_attachments
         WHERE entry_uid IN ({placeholders})
         ORDER BY rowid ASC
         "#
@@ -888,6 +894,9 @@ fn load_attachments(
                 size: size.max(0) as u64,
                 object_key: row.get(5)?,
                 version_id: row.get(6)?,
+                attachment_field_uid: row.get(7)?,
+                attachment_field_label: row.get(8)?,
+                attachment_field_storage_name: row.get(9)?,
             });
     }
 
@@ -927,8 +936,8 @@ fn build_where_clause(
             r#"(
                 EXISTS (
                     SELECT 1
-                    FROM aris_record_values rv
-                    JOIN aris_fields f
+                    FROM mx_record_values rv
+                    JOIN mx_fields f
                       ON f.uid = rv.field_uid
                     WHERE rv.record_uid = e.uid
                       AND f.active = 1
@@ -937,7 +946,7 @@ fn build_where_clause(
                 )
                 OR EXISTS (
                     SELECT 1
-                    FROM aris_attachments af
+                    FROM mx_attachments af
                     WHERE af.entry_uid = e.uid
                       AND LOWER(af.file_name) LIKE LOWER(?) ESCAPE '!'
                 )
@@ -957,11 +966,11 @@ fn build_where_clause(
         .filter(|value| !value.is_empty())
     {
         let filters = serde_json::from_str::<BTreeMap<String, Value>>(raw_filters)
-            .map_err(|_| "Invalid ARIS field filter payload.".to_string())?;
+            .map_err(|_| "Invalid MX field filter payload.".to_string())?;
 
         for (key, raw_value) in filters {
             let Some(field) = field_map.get(&key) else {
-                return Err(format!("Unknown ARIS filter field '{key}'."));
+                return Err(format!("Unknown MX filter field '{key}'."));
             };
 
             if !field.searchable {
@@ -990,8 +999,8 @@ fn build_where_clause(
             conditions.push(format!(
                 r#"EXISTS (
                     SELECT 1
-                    FROM aris_record_values rv
-                    JOIN aris_fields f
+                    FROM mx_record_values rv
+                    JOIN mx_fields f
                       ON f.uid = rv.field_uid
                     WHERE rv.record_uid = e.uid
                       AND f.uid = ?
@@ -1011,11 +1020,11 @@ fn build_where_clause(
         .filter(|value| !value.is_empty())
     {
         Some("with") => conditions.push(
-            "EXISTS (SELECT 1 FROM aris_attachments af WHERE af.entry_uid = e.uid)".to_string(),
+            "EXISTS (SELECT 1 FROM mx_attachments af WHERE af.entry_uid = e.uid)".to_string(),
         ),
 
         Some("without") => conditions.push(
-            "NOT EXISTS (SELECT 1 FROM aris_attachments af WHERE af.entry_uid = e.uid)".to_string(),
+            "NOT EXISTS (SELECT 1 FROM mx_attachments af WHERE af.entry_uid = e.uid)".to_string(),
         ),
 
         Some(_) => {
@@ -1077,7 +1086,7 @@ fn build_order_clause(query: &DynamicListQuery, fields: &[FieldDefinition]) -> S
     format!(
         r#"ORDER BY (
             SELECT {value_column}
-            FROM aris_record_values rv
+            FROM mx_record_values rv
             WHERE rv.record_uid = e.uid
               AND rv.field_uid = '{field_uid}'
             LIMIT 1
@@ -1103,7 +1112,7 @@ fn list_records_db(query: DynamicListQuery) -> Result<DynamicPage, SqliteDatabas
         let count_sql = format!(
             r#"
             SELECT COUNT(*)
-            FROM aris_records e
+            FROM mx_records e
             {where_clause}
             "#
         );
@@ -1117,7 +1126,7 @@ fn list_records_db(query: DynamicListQuery) -> Result<DynamicPage, SqliteDatabas
         let data_sql = format!(
             r#"
             SELECT e.uid
-            FROM aris_records e
+            FROM mx_records e
             {where_clause}
             {order_clause}
             LIMIT ? OFFSET ?
@@ -1170,7 +1179,7 @@ fn get_record_db(uid: String) -> Result<DynamicRecord, SqliteDatabaseError> {
 
         let exists = connection
             .query_row(
-                "SELECT uid FROM aris_records WHERE uid = ?1",
+                "SELECT uid FROM mx_records WHERE uid = ?1",
                 params![&uid],
                 |row| row.get::<_, String>(0),
             )
@@ -1196,7 +1205,7 @@ fn database_error_response(error: SqliteDatabaseError) -> Response {
     match error {
         SqliteDatabaseError::Sqlite(rusqlite::Error::QueryReturnedNoRows) => api_json(
             StatusCode::NOT_FOUND,
-            json!({ "response": "ARIS record was not found." }),
+            json!({ "response": "MX record was not found." }),
         ),
 
         SqliteDatabaseError::Sqlite(rusqlite::Error::InvalidParameterName(message)) => {
@@ -1209,7 +1218,7 @@ fn database_error_response(error: SqliteDatabaseError) -> Response {
             api_json(
                 StatusCode::CONFLICT,
                 json!({
-                    "response": "A configured unique ARIS field conflicts with an existing record."
+                    "response": "A configured unique MX field conflicts with an existing record."
                 }),
             )
         }
@@ -1218,7 +1227,7 @@ fn database_error_response(error: SqliteDatabaseError) -> Response {
             crate::report_error!(
                 format!("{error}"),
                 "function",
-                "dynamic ARIS record operation"
+                "dynamic MX record operation"
             );
 
             api_json(
@@ -1229,7 +1238,7 @@ fn database_error_response(error: SqliteDatabaseError) -> Response {
     }
 }
 
-pub async fn create_aris_record(
+pub async fn create_mx_record(
     claims: Claims,
     Json(request): Json<DynamicRecordRequest>,
 ) -> Response {
@@ -1240,11 +1249,11 @@ pub async fn create_aris_record(
     let schema = match load_active_schema().await {
         Ok(schema) => schema,
         Err(error) => {
-            crate::report_error!(error, "function", "create_aris_record()");
+            crate::report_error!(error, "function", "create_mx_record()");
 
             return api_json(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                json!({ "response": "failed to load ARIS record structure" }),
+                json!({ "response": "failed to load MX record structure" }),
             );
         }
     };
@@ -1262,7 +1271,7 @@ pub async fn create_aris_record(
         Ok(Ok(uid)) => uid,
         Ok(Err(error)) => return database_error_response(error),
         Err(error) => {
-            crate::report_error!(format!("{error}"), "function", "create_aris_record()");
+            crate::report_error!(format!("{error}"), "function", "create_mx_record()");
 
             return api_json(
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -1277,7 +1286,7 @@ pub async fn create_aris_record(
         Ok(Ok(record)) => api_json(StatusCode::CREATED, json!(record)),
         Ok(Err(error)) => database_error_response(error),
         Err(error) => {
-            crate::report_error!(format!("{error}"), "function", "create_aris_record()");
+            crate::report_error!(format!("{error}"), "function", "create_mx_record()");
 
             api_json(
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -1287,7 +1296,7 @@ pub async fn create_aris_record(
     }
 }
 
-pub async fn update_aris_record(
+pub async fn update_mx_record(
     claims: Claims,
     Path(uid): Path<String>,
     Json(request): Json<DynamicRecordRequest>,
@@ -1299,11 +1308,11 @@ pub async fn update_aris_record(
     let schema = match load_active_schema().await {
         Ok(schema) => schema,
         Err(error) => {
-            crate::report_error!(error, "function", "update_aris_record()");
+            crate::report_error!(error, "function", "update_mx_record()");
 
             return api_json(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                json!({ "response": "failed to load ARIS record structure" }),
+                json!({ "response": "failed to load MX record structure" }),
             );
         }
     };
@@ -1323,7 +1332,7 @@ pub async fn update_aris_record(
         Ok(Ok(())) => {}
         Ok(Err(error)) => return database_error_response(error),
         Err(error) => {
-            crate::report_error!(format!("{error}"), "function", "update_aris_record()");
+            crate::report_error!(format!("{error}"), "function", "update_mx_record()");
 
             return api_json(
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -1338,7 +1347,7 @@ pub async fn update_aris_record(
         Ok(Ok(record)) => api_json(StatusCode::OK, json!(record)),
         Ok(Err(error)) => database_error_response(error),
         Err(error) => {
-            crate::report_error!(format!("{error}"), "function", "update_aris_record()");
+            crate::report_error!(format!("{error}"), "function", "update_mx_record()");
 
             api_json(
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -1348,7 +1357,7 @@ pub async fn update_aris_record(
     }
 }
 
-pub async fn list_aris_records(claims: Claims, Query(query): Query<DynamicListQuery>) -> Response {
+pub async fn list_mx_records(claims: Claims, Query(query): Query<DynamicListQuery>) -> Response {
     if !claims.can_read_records() {
         return access_denied();
     }
@@ -1359,7 +1368,7 @@ pub async fn list_aris_records(claims: Claims, Query(query): Query<DynamicListQu
         Ok(Ok(page)) => api_json(StatusCode::OK, json!(page)),
         Ok(Err(error)) => database_error_response(error),
         Err(error) => {
-            crate::report_error!(format!("{error}"), "function", "list_aris_records()");
+            crate::report_error!(format!("{error}"), "function", "list_mx_records()");
 
             api_json(
                 StatusCode::INTERNAL_SERVER_ERROR,

@@ -7,7 +7,7 @@
     height="150"
   />
 
-  <h1>Litiaina ARIS</h1>
+  <h1>Litiaina MX</h1>
 
   <p>
     <b>Atomic Record Information System</b><br>
@@ -21,16 +21,16 @@
 
 ## Overview
 
-ARIS is a reusable information-system core for organizations that need more than fixed forms or simple file storage.
+MX is a reusable information-system core for organizations that need more than fixed forms or simple file storage.
 
-Instead of defining one permanent record structure in Rust, ARIS stores the record schema as data. Administrators can define the fields that make sense for a deployment, reorder them, control which fields are searchable or sortable, and choose how records are represented in the interface.
+Instead of defining one permanent record structure in Rust, MX stores the record schema as data. Administrators can define the fields that make sense for a deployment, reorder them, control which fields are searchable or sortable, and choose how records are represented in the interface.
 
 A record can represent a document transaction, procurement request, incident report, equipment record, referral, workflow request, inventory item, correspondence item, or another domain-specific business object.
 
 The application remains the same while the record structure changes.
 
 ```text
-ARIS
+MX
 ├── Dynamic Record Schema
 │   ├── user-defined fields
 │   ├── field types
@@ -59,11 +59,11 @@ SQLite handles structured information and transactional state. N1 handles durabl
 
 ## Why Atomic
 
-ARIS treats each record as a stable atomic business object with its own identity, values, attachments, audit history, and storage namespace.
+MX treats each record as a stable atomic business object with its own identity, values, attachments, audit history, and storage namespace.
 
 The record format is configurable, but the internal system model remains stable.
 
-This separation allows ARIS to support different organizational workflows without rebuilding the storage, authentication, search, attachment, audit, and backup layers for every deployment.
+This separation allows MX to support different organizational workflows without rebuilding the storage, authentication, search, attachment, audit, and backup layers for every deployment.
 
 ## Dynamic Record Structure
 
@@ -119,11 +119,11 @@ REQ-000001
 INC-2026-000042
 ```
 
-without requiring ARIS itself to understand the organization-specific meaning of the number.
+without requiring MX itself to understand the organization-specific meaning of the number.
 
 ## Record Model
 
-ARIS keeps a small stable internal record identity and stores business values separately.
+MX keeps a small stable internal record identity and stores business values separately.
 
 Conceptually:
 
@@ -153,7 +153,7 @@ Those concepts are created only when a deployment needs them.
 
 ## Built-in System Fields
 
-Some capabilities belong to ARIS itself rather than to the user-defined business schema.
+Some capabilities belong to MX itself rather than to the user-defined business schema.
 
 `Attached Files` is currently a built-in system field.
 
@@ -167,7 +167,7 @@ Record Structure supports drag-and-drop ordering.
 
 Administrators can reorder custom fields and built-in fields without manually editing numeric positions.
 
-ARIS normalizes positions internally:
+MX normalizes positions internally:
 
 ```text
 0
@@ -225,22 +225,22 @@ Records are paginated by the backend instead of loading the complete database in
 
 ## Storage
 
-ARIS uses a normalized SQLite schema for the dynamic record engine.
+MX uses a normalized SQLite schema for the dynamic record engine.
 
 Important tables include:
 
 ```text
-aris_records
-aris_schema_meta
-aris_fields
-aris_system_fields
-aris_record_values
-aris_unique_values
-aris_field_sequences
-aris_attachments
-aris_record_storage
-aris_audit_log
-aris_backups
+mx_records
+mx_schema_meta
+mx_fields
+mx_system_fields
+mx_record_values
+mx_unique_values
+mx_field_sequences
+mx_attachments
+mx_record_storage
+mx_audit_log
+mx_backups
 ```
 
 ### Dynamic Values
@@ -257,7 +257,7 @@ Fields marked `Unique` are enforced through dedicated uniqueness state rather th
 
 ### Field Sequences
 
-Auto-number fields maintain server-side sequence state in `aris_field_sequences`.
+Auto-number fields maintain server-side sequence state in `mx_field_sequences`.
 
 The client does not allocate authoritative sequence values.
 
@@ -308,7 +308,7 @@ Store attachment objects
 
 Changing the global storage layout affects records whose storage namespace has not yet been established.
 
-If a required storage-path value is missing, ARIS rejects the upload instead of creating an ambiguous path.
+If a required storage-path value is missing, MX rejects the upload instead of creating an ambiguous path.
 
 Existing attachment object keys remain valid and are not silently migrated.
 
@@ -324,7 +324,7 @@ Derived previews may be regenerated.
 
 ## Attachment Preview
 
-ARIS previews supported files directly where possible:
+MX previews supported files directly where possible:
 
 ```text
 Images       -> browser image viewer
@@ -358,7 +358,7 @@ Authorization is enforced by the backend, not only by the interface.
 
 ## Authentication
 
-ARIS supports:
+MX supports:
 
 ```text
 JWT access tokens
@@ -371,7 +371,7 @@ A fresh deployment may create its first Administrator through the bootstrap flow
 
 ## Audit Logging
 
-ARIS records meaningful authenticated actions for administrator review.
+MX records meaningful authenticated actions for administrator review.
 
 Examples include:
 
@@ -428,16 +428,16 @@ N1
 Verified backups are stored under:
 
 ```text
-__aris/backups/database/YYYY/MM/DD/
+__mx/backups/database/YYYY/MM/DD/
 ```
 
 Example:
 
 ```text
-__aris/backups/database/2026/09/18/aris-20260918T020000Z.db
+__mx/backups/database/2026/09/18/mx-20260918T020000Z.db
 ```
 
-ARIS can download a stored backup and re-verify it by opening the downloaded database and running:
+MX can download a stored backup and re-verify it by opening the downloaded database and running:
 
 ```sql
 PRAGMA integrity_check;
@@ -450,7 +450,7 @@ Database recovery is intentionally an offline administrative operation.
 Stop the service first:
 
 ```bash
-sudo systemctl stop litiaina-aris
+sudo systemctl stop litiaina-mx
 ```
 
 Preserve the current database files:
@@ -458,15 +458,15 @@ Preserve the current database files:
 ```bash
 mkdir -p recovery-before-restore
 
-cp -a aris.db recovery-before-restore/ 2>/dev/null || true
-cp -a aris.db-wal recovery-before-restore/ 2>/dev/null || true
-cp -a aris.db-shm recovery-before-restore/ 2>/dev/null || true
+cp -a mx.db recovery-before-restore/ 2>/dev/null || true
+cp -a mx.db-wal recovery-before-restore/ 2>/dev/null || true
+cp -a mx.db-shm recovery-before-restore/ 2>/dev/null || true
 ```
 
 Verify the selected backup:
 
 ```bash
-sqlite3 aris-backup.db "PRAGMA integrity_check;"
+sqlite3 mx-backup.db "PRAGMA integrity_check;"
 ```
 
 Expected result:
@@ -478,29 +478,29 @@ ok
 Restore it:
 
 ```bash
-cp aris-backup.db aris.db
-rm -f aris.db-wal aris.db-shm
+cp mx-backup.db mx.db
+rm -f mx.db-wal mx.db-shm
 ```
 
 Start the service again:
 
 ```bash
-sudo systemctl start litiaina-aris
+sudo systemctl start litiaina-mx
 ```
 
-Do not replace the database or remove WAL/SHM files while ARIS is running.
+Do not replace the database or remove WAL/SHM files while MX is running.
 
 ## Dashboard
 
 The Dashboard uses dedicated summary endpoints rather than loading the full records database.
 
-ARIS also exposes a lightweight revision endpoint so the interface can determine when record data has changed and refresh only when necessary.
+MX also exposes a lightweight revision endpoint so the interface can determine when record data has changed and refresh only when necessary.
 
 This keeps dashboard retrieval independent from the number of stored records.
 
 ## Unified Interface
 
-`aris.html` contains the application workspaces in one shell:
+`mx.html` contains the application workspaces in one shell:
 
 ```text
 Dashboard
@@ -524,7 +524,7 @@ audit review
 database backups
 ```
 
-The frontend uses the current page origin for API requests when served by ARIS:
+The frontend uses the current page origin for API requests when served by MX:
 
 ```javascript
 const API_BASE =
@@ -543,44 +543,44 @@ the interface automatically uses that same origin for API requests.
 
 ## API
 
-ARIS uses the `/aris/v1` namespace.
+MX uses the `/mx/v1` namespace.
 
 ### Authentication
 
 ```http
-GET  /aris/v1/auth/bootstrap/status
-POST /aris/v1/auth/create
-POST /aris/v1/auth/authenticate
-POST /aris/v1/auth/refresh
-GET  /aris/v1/auth/session
+GET  /mx/v1/auth/bootstrap/status
+POST /mx/v1/auth/create
+POST /mx/v1/auth/authenticate
+POST /mx/v1/auth/refresh
+GET  /mx/v1/auth/session
 ```
 
 ### Schema
 
 ```http
-GET  /aris/v1/schema
+GET  /mx/v1/schema
 
-GET  /aris/v1/admin/schema
-POST /aris/v1/admin/schema/fields
-PUT  /aris/v1/admin/schema/fields/{uid}
-PUT  /aris/v1/admin/schema/system/{key}
-PUT  /aris/v1/admin/schema/order
+GET  /mx/v1/admin/schema
+POST /mx/v1/admin/schema/fields
+PUT  /mx/v1/admin/schema/fields/{uid}
+PUT  /mx/v1/admin/schema/system/{key}
+PUT  /mx/v1/admin/schema/order
 ```
 
 ### Storage Layout
 
 ```http
-GET /aris/v1/admin/storage-layout
-PUT /aris/v1/admin/storage-layout
+GET /mx/v1/admin/storage-layout
+PUT /mx/v1/admin/storage-layout
 ```
 
 ### Records
 
 ```http
-GET    /aris/v1/records
-POST   /aris/v1/records
-PUT    /aris/v1/records/{uid}
-DELETE /aris/v1/records/{uid}
+GET    /mx/v1/records
+POST   /mx/v1/records
+PUT    /mx/v1/records/{uid}
+DELETE /mx/v1/records/{uid}
 ```
 
 Record listing supports server-side search, filtering, sorting, and pagination.
@@ -588,44 +588,44 @@ Record listing supports server-side search, filtering, sorting, and pagination.
 ### Attachments
 
 ```http
-POST   /aris/v1/records/{uid}/attachments
-GET    /aris/v1/records/{record_uid}/attachments/{attachment_uid}/preview
-GET    /aris/v1/records/{record_uid}/attachments/{attachment_uid}/download
-DELETE /aris/v1/records/{record_uid}/attachments/{attachment_uid}
+POST   /mx/v1/records/{uid}/attachments
+GET    /mx/v1/records/{record_uid}/attachments/{attachment_uid}/preview
+GET    /mx/v1/records/{record_uid}/attachments/{attachment_uid}/download
+DELETE /mx/v1/records/{record_uid}/attachments/{attachment_uid}
 ```
 
 ### Dashboard
 
 ```http
-GET /aris/v1/dashboard/summary
-GET /aris/v1/status/revision
+GET /mx/v1/dashboard/summary
+GET /mx/v1/status/revision
 ```
 
 ### Administration
 
 ```http
-GET  /aris/v1/admin/audit
+GET  /mx/v1/admin/audit
 
-GET  /aris/v1/admin/backups
-POST /aris/v1/admin/backups
-POST /aris/v1/admin/backups/{uid}/verify
-GET  /aris/v1/admin/backups/{uid}/download
+GET  /mx/v1/admin/backups
+POST /mx/v1/admin/backups
+POST /mx/v1/admin/backups/{uid}/verify
+GET  /mx/v1/admin/backups/{uid}/download
 
-POST /aris/v1/db/query
+POST /mx/v1/db/query
 ```
 
 Administrator-only endpoints require an Administrator account.
 
 ## Configuration
 
-ARIS reads runtime settings from `aris.config` and secrets from `aris.env`.
+MX reads runtime settings from `mx.config` and secrets from `mx.env`.
 
 Example N1 configuration:
 
 ```ini
 [n1]
 base_url=https://127.0.0.1:50001
-fragment=<ARIS_FRAGMENT_HASH>
+fragment=<MX_FRAGMENT_HASH>
 insecure_tls=true
 attachment_max_size_mb=50
 ```
@@ -633,10 +633,10 @@ attachment_max_size_mb=50
 N1 secret:
 
 ```env
-N1_ARIS_SECRET=<ARIS_FRAGMENT_SECRET>
+N1_MX_SECRET=<MX_FRAGMENT_SECRET>
 ```
 
-The ARIS server may bind to localhost for local-only use or to a LAN-facing address for network access.
+The MX server may bind to localhost for local-only use or to a LAN-facing address for network access.
 
 Example:
 
@@ -677,7 +677,7 @@ Production:
 
 ```bash
 cargo build --release
-./target/release/litiaina-aris
+./target/release/litiaina-mx
 ```
 
 ## First Administrator
@@ -687,7 +687,7 @@ A fresh deployment starts without users.
 The first Administrator is created through the bootstrap API:
 
 ```http
-POST /aris/v1/auth/create
+POST /mx/v1/auth/create
 ```
 
 This operation requires a configured `AUTH_KEYS` value and is available only while the user table is empty.
@@ -700,7 +700,7 @@ The unified interface detects this state and presents the first-administrator se
 src/
 ├── api/
 │   ├── admin/
-│   ├── aris/
+│   ├── mx/
 │   │   ├── handler.rs
 │   │   ├── model.rs
 │   │   ├── records.rs
@@ -721,12 +721,12 @@ src/
 ├── util/
 └── main.rs
 
-aris.html
-aris.config
-aris.env
+mx.html
+mx.config
+mx.env
 ```
 
-The ARIS modules are separated by responsibility:
+The MX modules are separated by responsibility:
 
 ```text
 schema.rs   -> dynamic record structure
@@ -737,7 +737,7 @@ handler.rs  -> attachments, preview, download, and N1 operations
 
 ## Design Principles
 
-ARIS follows a small set of rules:
+MX follows a small set of rules:
 
 - stable internal record identities
 - deployment-defined business fields
@@ -759,7 +759,7 @@ ARIS follows a small set of rules:
 
 ## Philosophy
 
-ARIS is not a single-purpose document tracker.
+MX is not a single-purpose document tracker.
 
 It is an **Atomic Record Information System**: a reusable engine where an organization defines what a record means while the platform provides the infrastructure required to manage it safely.
 
@@ -767,4 +767,4 @@ The record schema, field order, search behavior, uniqueness rules, numbering str
 
 Identity, authorization, persistence, attachment integrity, auditing, search execution, and backup safety remain system responsibilities.
 
-That boundary is what allows one ARIS deployment to behave like a correspondence registry while another can represent inventory, incidents, procurement requests, referrals, equipment, or another structured workflow without rewriting the core.
+That boundary is what allows one MX deployment to behave like a correspondence registry while another can represent inventory, incidents, procurement requests, referrals, equipment, or another structured workflow without rewriting the core.

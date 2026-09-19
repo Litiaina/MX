@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::{
-    api::aris::schema::ensure_dynamic_schema,
+    api::mx::schema::ensure_dynamic_schema,
     db::connector::{SqliteDatabaseError, with_sql_connection},
     middleware::auth::Claims,
 };
@@ -84,42 +84,42 @@ pub(crate) fn ensure_storage_layout_schema(
 
     connection.execute_batch(
         r#"
-        CREATE TABLE IF NOT EXISTS aris_storage_layout_meta (
+        CREATE TABLE IF NOT EXISTS mx_storage_layout_meta (
             id                     INTEGER PRIMARY KEY NOT NULL CHECK(id = 1),
             revision               INTEGER NOT NULL DEFAULT 0 CHECK(revision >= 0),
             file_prefix_field_uid  TEXT,
             FOREIGN KEY(file_prefix_field_uid)
-                REFERENCES aris_fields(uid)
+                REFERENCES mx_fields(uid)
                 ON DELETE RESTRICT
         );
 
-        INSERT OR IGNORE INTO aris_storage_layout_meta (
+        INSERT OR IGNORE INTO mx_storage_layout_meta (
             id,
             revision,
             file_prefix_field_uid
         ) VALUES (1, 0, NULL);
 
-        CREATE TABLE IF NOT EXISTS aris_storage_layout_folders (
+        CREATE TABLE IF NOT EXISTS mx_storage_layout_folders (
             position   INTEGER PRIMARY KEY NOT NULL CHECK(position >= 0),
             field_uid  TEXT NOT NULL UNIQUE,
             FOREIGN KEY(field_uid)
-                REFERENCES aris_fields(uid)
+                REFERENCES mx_fields(uid)
                 ON DELETE RESTRICT
         );
 
-        CREATE TABLE IF NOT EXISTS aris_record_storage (
+        CREATE TABLE IF NOT EXISTS mx_record_storage (
             record_uid       TEXT PRIMARY KEY NOT NULL,
             directory_path   TEXT NOT NULL,
             file_prefix      TEXT,
             layout_revision  INTEGER NOT NULL DEFAULT 0 CHECK(layout_revision >= 0),
             created_at       INTEGER NOT NULL,
             FOREIGN KEY(record_uid)
-                REFERENCES aris_records(uid)
+                REFERENCES mx_records(uid)
                 ON DELETE CASCADE
         );
 
-        CREATE INDEX IF NOT EXISTS idx_aris_record_storage_directory
-            ON aris_record_storage(directory_path);
+        CREATE INDEX IF NOT EXISTS idx_mx_record_storage_directory
+            ON mx_record_storage(directory_path);
         "#,
     )
 }
@@ -134,13 +134,13 @@ pub(crate) fn field_used_by_storage_layout_db(
         r#"
         SELECT EXISTS(
             SELECT 1
-            FROM aris_storage_layout_folders
+            FROM mx_storage_layout_folders
             WHERE field_uid = ?1
 
             UNION ALL
 
             SELECT 1
-            FROM aris_storage_layout_meta
+            FROM mx_storage_layout_meta
             WHERE id = 1
               AND file_prefix_field_uid = ?1
         )
@@ -163,7 +163,7 @@ fn load_field(
             field_key,
             label,
             field_type
-        FROM aris_fields
+        FROM mx_fields
         WHERE uid = ?1
           AND active = 1
         "#,
@@ -185,7 +185,7 @@ fn load_layout_db(connection: &rusqlite::Connection) -> rusqlite::Result<Storage
     let (revision, prefix_uid): (i64, Option<String>) = connection.query_row(
         r#"
         SELECT revision, file_prefix_field_uid
-        FROM aris_storage_layout_meta
+        FROM mx_storage_layout_meta
         WHERE id = 1
         "#,
         [],
@@ -195,8 +195,8 @@ fn load_layout_db(connection: &rusqlite::Connection) -> rusqlite::Result<Storage
     let mut statement = connection.prepare(
         r#"
         SELECT f.uid, f.field_key, f.label, f.field_type
-        FROM aris_storage_layout_folders layout
-        JOIN aris_fields f
+        FROM mx_storage_layout_folders layout
+        JOIN mx_fields f
           ON f.uid = layout.field_uid
         WHERE f.active = 1
         ORDER BY layout.position ASC
@@ -220,7 +220,7 @@ fn load_layout_db(connection: &rusqlite::Connection) -> rusqlite::Result<Storage
     };
 
     let frozen_records: i64 =
-        connection.query_row("SELECT COUNT(*) FROM aris_record_storage", [], |row| {
+        connection.query_row("SELECT COUNT(*) FROM mx_record_storage", [], |row| {
             row.get(0)
         })?;
 
@@ -264,7 +264,7 @@ pub async fn get_storage_layout(claims: Claims) -> Response {
 
         Ok(Err(error)) => {
             crate::report_error!(
-                format!("failed to load ARIS N1 storage layout: {error}"),
+                format!("failed to load MX N1 storage layout: {error}"),
                 "function",
                 "get_storage_layout()"
             );
@@ -339,29 +339,39 @@ pub async fn update_storage_layout(
                 ensure_storage_layout_schema(connection)?;
 
                 for uid in &unique_uids {
-                    load_field(connection, uid).map_err(|_| {
+                    let field = load_field(connection, uid).map_err(|_| {
                         rusqlite::Error::InvalidParameterName(
-                            "ARIS_STORAGE_FIELD_NOT_FOUND".to_string(),
+                            "MX_STORAGE_FIELD_NOT_FOUND".to_string(),
                         )
                     })?;
+                    if field.field_type == "attachments" {
+                        return Err(rusqlite::Error::InvalidParameterName(
+                            "MX_STORAGE_ATTACHMENT_FIELD".to_string(),
+                        ));
+                    }
                 }
 
                 if let Some(uid) = prefix_uid.as_deref() {
-                    load_field(connection, uid).map_err(|_| {
+                    let field = load_field(connection, uid).map_err(|_| {
                         rusqlite::Error::InvalidParameterName(
-                            "ARIS_STORAGE_FIELD_NOT_FOUND".to_string(),
+                            "MX_STORAGE_FIELD_NOT_FOUND".to_string(),
                         )
                     })?;
+                    if field.field_type == "attachments" {
+                        return Err(rusqlite::Error::InvalidParameterName(
+                            "MX_STORAGE_ATTACHMENT_FIELD".to_string(),
+                        ));
+                    }
                 }
 
                 let transaction = connection.unchecked_transaction()?;
 
-                transaction.execute("DELETE FROM aris_storage_layout_folders", [])?;
+                transaction.execute("DELETE FROM mx_storage_layout_folders", [])?;
 
                 for (position, uid) in unique_uids.iter().enumerate() {
                     transaction.execute(
                         r#"
-                        INSERT INTO aris_storage_layout_folders (
+                        INSERT INTO mx_storage_layout_folders (
                             position,
                             field_uid
                         ) VALUES (?1, ?2)
@@ -372,7 +382,7 @@ pub async fn update_storage_layout(
 
                 transaction.execute(
                     r#"
-                    UPDATE aris_storage_layout_meta
+                    UPDATE mx_storage_layout_meta
                     SET
                         revision = revision + 1,
                         file_prefix_field_uid = ?1
@@ -399,7 +409,7 @@ pub async fn update_storage_layout(
         ),
 
         Ok(Err(SqliteDatabaseError::Sqlite(rusqlite::Error::InvalidParameterName(message))))
-            if message == "ARIS_STORAGE_FIELD_NOT_FOUND" =>
+            if message == "MX_STORAGE_FIELD_NOT_FOUND" =>
         {
             api_json(
                 StatusCode::BAD_REQUEST,
@@ -409,9 +419,20 @@ pub async fn update_storage_layout(
             )
         }
 
+        Ok(Err(SqliteDatabaseError::Sqlite(rusqlite::Error::InvalidParameterName(message))))
+            if message == "MX_STORAGE_ATTACHMENT_FIELD" =>
+        {
+            api_json(
+                StatusCode::BAD_REQUEST,
+                json!({
+                    "response": "File Attachment fields cannot be used as N1 base folders or filename prefixes. Their folder is appended automatically when files are uploaded."
+                }),
+            )
+        }
+
         Ok(Err(error)) => {
             crate::report_error!(
-                format!("failed to update ARIS N1 storage layout: {error}"),
+                format!("failed to update MX N1 storage layout: {error}"),
                 "function",
                 "update_storage_layout()"
             );
@@ -492,8 +513,8 @@ fn render_record_field_value(
                 rv.value_integer,
                 rv.value_real,
                 rv.value_boolean
-            FROM aris_fields f
-            LEFT JOIN aris_record_values rv
+            FROM mx_fields f
+            LEFT JOIN mx_record_values rv
               ON rv.field_uid = f.uid
              AND rv.record_uid = ?1
             WHERE f.uid = ?2
@@ -559,7 +580,7 @@ fn resolve_record_storage_db(
     ensure_storage_layout_schema(connection)?;
 
     let record_exists = connection.query_row(
-        "SELECT EXISTS(SELECT 1 FROM aris_records WHERE uid = ?1)",
+        "SELECT EXISTS(SELECT 1 FROM mx_records WHERE uid = ?1)",
         params![record_uid],
         |row| row.get::<_, i64>(0),
     )? != 0;
@@ -572,7 +593,7 @@ fn resolve_record_storage_db(
         .query_row(
             r#"
             SELECT directory_path, file_prefix, layout_revision
-            FROM aris_record_storage
+            FROM mx_record_storage
             WHERE record_uid = ?1
             "#,
             params![record_uid],
@@ -592,13 +613,13 @@ fn resolve_record_storage_db(
     /*
      * Preserve an already-used legacy directory when a record predates the
      * configurable layout. This prevents one record's files from being split
-     * across two N1 namespaces merely because ARIS was upgraded.
+     * across two N1 namespaces merely because MX was upgraded.
      */
     if let Some(existing_object_key) = connection
         .query_row(
             r#"
             SELECT object_key
-            FROM aris_attachments
+            FROM mx_attachments
             WHERE entry_uid = ?1
             ORDER BY rowid ASC
             LIMIT 1
@@ -616,7 +637,7 @@ fn resolve_record_storage_db(
         let (layout_revision, _): (i64, Option<String>) = connection.query_row(
             r#"
             SELECT revision, file_prefix_field_uid
-            FROM aris_storage_layout_meta
+            FROM mx_storage_layout_meta
             WHERE id = 1
             "#,
             [],
@@ -625,7 +646,7 @@ fn resolve_record_storage_db(
 
         connection.execute(
             r#"
-            INSERT OR IGNORE INTO aris_record_storage (
+            INSERT OR IGNORE INTO mx_record_storage (
                 record_uid,
                 directory_path,
                 file_prefix,
@@ -646,7 +667,7 @@ fn resolve_record_storage_db(
     let (layout_revision, prefix_uid): (i64, Option<String>) = connection.query_row(
         r#"
         SELECT revision, file_prefix_field_uid
-        FROM aris_storage_layout_meta
+        FROM mx_storage_layout_meta
         WHERE id = 1
         "#,
         [],
@@ -657,7 +678,7 @@ fn resolve_record_storage_db(
         let mut statement = connection.prepare(
             r#"
             SELECT field_uid
-            FROM aris_storage_layout_folders
+            FROM mx_storage_layout_folders
             ORDER BY position ASC
             "#,
         )?;
@@ -679,7 +700,7 @@ fn resolve_record_storage_db(
 
         connection.execute(
             r#"
-            INSERT OR IGNORE INTO aris_record_storage (
+            INSERT OR IGNORE INTO mx_record_storage (
                 record_uid,
                 directory_path,
                 file_prefix,
@@ -702,7 +723,7 @@ fn resolve_record_storage_db(
     for field_uid in &folder_uids {
         let value = render_record_field_value(connection, record_uid, field_uid)?;
 
-        let Some((_label, value)) = value else {
+        let Some((label, value)) = value else {
             let label = load_field(connection, field_uid)
                 .map(|field| field.label)
                 .unwrap_or_else(|_| field_uid.clone());
@@ -710,7 +731,7 @@ fn resolve_record_storage_db(
             return Ok(StorageResolutionOutcome::MissingFieldValue(label));
         };
 
-        components.push(sanitize_component(&value, &_label));
+        components.push(sanitize_component(&value, &label));
     }
 
     let file_prefix = match prefix_uid.as_deref() {
@@ -738,7 +759,7 @@ fn resolve_record_storage_db(
 
     connection.execute(
         r#"
-        INSERT OR IGNORE INTO aris_record_storage (
+        INSERT OR IGNORE INTO mx_record_storage (
             record_uid,
             directory_path,
             file_prefix,
@@ -758,7 +779,7 @@ fn resolve_record_storage_db(
     let frozen = connection.query_row(
         r#"
         SELECT directory_path, file_prefix, layout_revision
-        FROM aris_record_storage
+        FROM mx_record_storage
         WHERE record_uid = ?1
         "#,
         params![record_uid],

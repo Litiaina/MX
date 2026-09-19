@@ -195,7 +195,7 @@ pub async fn get_audit_log(claims: Claims, Query(query): Query<AuditQuery>) -> R
                 let total: i64 = connection.query_row(
                     r#"
                             SELECT COUNT(*)
-                            FROM aris_audit_log
+                            FROM mx_audit_log
                             WHERE (
                                 ?1 = 0
                                 OR actor_uid LIKE ?2 COLLATE NOCASE
@@ -241,7 +241,7 @@ pub async fn get_audit_log(claims: Claims, Query(query): Query<AuditQuery>) -> R
                                 success,
                                 user_agent,
                                 created_at
-                            FROM aris_audit_log
+                            FROM mx_audit_log
                             WHERE (
                                 ?1 = 0
                                 OR actor_uid LIKE ?2 COLLATE NOCASE
@@ -375,7 +375,7 @@ async fn record_audit_event(write: AuditWrite) -> Result<(), String> {
 
                 connection.execute(
                     r#"
-                        INSERT INTO aris_audit_log (
+                        INSERT INTO mx_audit_log (
                             event_uid,
                             actor_uid,
                             actor_name,
@@ -421,16 +421,17 @@ async fn record_audit_event(write: AuditWrite) -> Result<(), String> {
     match database_result {
         Ok(Ok(())) => Ok(()),
 
-        Ok(Err(error)) => Err(format!("failed to write ARIS audit event: {error}")),
+        Ok(Err(error)) => Err(format!("failed to write MX audit event: {error}")),
 
         Err(error) => Err(format!("audit write blocking task failed: {error}")),
     }
 }
 
 fn ensure_audit_schema(connection: &rusqlite::Connection) -> Result<(), rusqlite::Error> {
+    crate::api::mx::migration::migrate_legacy_schema(connection)?;
     connection.execute_batch(
         r#"
-        CREATE TABLE IF NOT EXISTS aris_audit_log (
+        CREATE TABLE IF NOT EXISTS mx_audit_log (
             id              INTEGER PRIMARY KEY AUTOINCREMENT,
             event_uid       TEXT NOT NULL UNIQUE,
             actor_uid       TEXT NOT NULL,
@@ -449,50 +450,50 @@ fn ensure_audit_schema(connection: &rusqlite::Connection) -> Result<(), rusqlite
         );
 
         CREATE INDEX IF NOT EXISTS
-            idx_aris_audit_created_at
-        ON aris_audit_log (
+            idx_mx_audit_created_at
+        ON mx_audit_log (
             created_at DESC
         );
 
         CREATE INDEX IF NOT EXISTS
-            idx_aris_audit_actor_uid
-        ON aris_audit_log (
+            idx_mx_audit_actor_uid
+        ON mx_audit_log (
             actor_uid,
             created_at DESC
         );
 
         CREATE INDEX IF NOT EXISTS
-            idx_aris_audit_action
-        ON aris_audit_log (
+            idx_mx_audit_action
+        ON mx_audit_log (
             action,
             created_at DESC
         );
 
         CREATE INDEX IF NOT EXISTS
-            idx_aris_audit_target
-        ON aris_audit_log (
+            idx_mx_audit_target
+        ON mx_audit_log (
             target_type,
             target_uid,
             created_at DESC
         );
 
         CREATE TRIGGER IF NOT EXISTS
-            aris_audit_log_no_update
-        BEFORE UPDATE ON aris_audit_log
+            mx_audit_log_no_update
+        BEFORE UPDATE ON mx_audit_log
         BEGIN
             SELECT RAISE(
                 ABORT,
-                'ARIS audit log is append-only'
+                'MX audit log is append-only'
             );
         END;
 
         CREATE TRIGGER IF NOT EXISTS
-            aris_audit_log_no_delete
-        BEFORE DELETE ON aris_audit_log
+            mx_audit_log_no_delete
+        BEFORE DELETE ON mx_audit_log
         BEGIN
             SELECT RAISE(
                 ABORT,
-                'ARIS audit log is append-only'
+                'MX audit log is append-only'
             );
         END;
         "#,
@@ -502,7 +503,7 @@ fn ensure_audit_schema(connection: &rusqlite::Connection) -> Result<(), rusqlite
 fn classify_action(method: &Method, path: &str) -> Option<AuditClassification> {
     let segments = path.trim_matches('/').split('/').collect::<Vec<_>>();
 
-    if path == "/aris/v1/admin/audit" && method == Method::GET {
+    if path == "/mx/v1/admin/audit" && method == Method::GET {
         return Some(AuditClassification {
             action: "audit.view",
             target_type: None,
@@ -510,7 +511,7 @@ fn classify_action(method: &Method, path: &str) -> Option<AuditClassification> {
         });
     }
 
-    if path == "/aris/v1/admin/schema/order" && method == Method::PUT {
+    if path == "/mx/v1/admin/schema/order" && method == Method::PUT {
         return Some(AuditClassification {
             action: "schema.order.update",
             target_type: Some("record-structure"),
@@ -518,7 +519,7 @@ fn classify_action(method: &Method, path: &str) -> Option<AuditClassification> {
         });
     }
 
-    if path == "/aris/v1/admin/schema/fields" && method == Method::POST {
+    if path == "/mx/v1/admin/schema/fields" && method == Method::POST {
         return Some(AuditClassification {
             action: "schema.field.create",
             target_type: Some("record-field"),
@@ -527,7 +528,7 @@ fn classify_action(method: &Method, path: &str) -> Option<AuditClassification> {
     }
 
     if segments.len() == 6
-        && segments[0] == "aris"
+        && segments[0] == "mx"
         && segments[1] == "v1"
         && segments[2] == "admin"
         && segments[3] == "schema"
@@ -541,7 +542,45 @@ fn classify_action(method: &Method, path: &str) -> Option<AuditClassification> {
         });
     }
 
-    if path == "/aris/v1/admin/storage-layout" && method == Method::PUT {
+    if path == "/mx/v1/admin/attachment-fields" && method == Method::POST {
+        return Some(AuditClassification {
+            action: "attachment-field.create",
+            target_type: Some("attachment-field"),
+            target_uid: None,
+        });
+    }
+
+    if segments.len() == 5
+        && segments[0] == "mx"
+        && segments[1] == "v1"
+        && segments[2] == "admin"
+        && segments[3] == "attachment-fields"
+        && method == Method::PUT
+    {
+        return Some(AuditClassification {
+            action: "attachment-field.update",
+            target_type: Some("attachment-field"),
+            target_uid: segments.get(4).map(|value| value.to_string()),
+        });
+    }
+
+    if path == "/mx/v1/admin/dashboard-config" && method == Method::PUT {
+        return Some(AuditClassification {
+            action: "dashboard.config.update",
+            target_type: Some("dashboard-config"),
+            target_uid: None,
+        });
+    }
+
+    if path == "/mx/v1/reports/export.csv" && method == Method::GET {
+        return Some(AuditClassification {
+            action: "report.export",
+            target_type: Some("report"),
+            target_uid: None,
+        });
+    }
+
+    if path == "/mx/v1/admin/storage-layout" && method == Method::PUT {
         return Some(AuditClassification {
             action: "storage.layout.update",
             target_type: Some("n1-storage-layout"),
@@ -549,7 +588,7 @@ fn classify_action(method: &Method, path: &str) -> Option<AuditClassification> {
         });
     }
 
-    if path == "/aris/v1/admin/backups" && method == Method::POST {
+    if path == "/mx/v1/admin/backups" && method == Method::POST {
         return Some(AuditClassification {
             action: "backup.create",
             target_type: Some("database-backup"),
@@ -558,7 +597,7 @@ fn classify_action(method: &Method, path: &str) -> Option<AuditClassification> {
     }
 
     if segments.len() == 6
-        && segments[0] == "aris"
+        && segments[0] == "mx"
         && segments[1] == "v1"
         && segments[2] == "admin"
         && segments[3] == "backups"
@@ -582,7 +621,7 @@ fn classify_action(method: &Method, path: &str) -> Option<AuditClassification> {
         }
     }
 
-    if path == "/aris/v1/db/query" && method == Method::POST {
+    if path == "/mx/v1/db/query" && method == Method::POST {
         return Some(AuditClassification {
             action: "database.query",
             target_type: Some("database"),
@@ -590,7 +629,7 @@ fn classify_action(method: &Method, path: &str) -> Option<AuditClassification> {
         });
     }
 
-    if path == "/aris/v1/auth/get" && method == Method::POST {
+    if path == "/mx/v1/auth/get" && method == Method::POST {
         return Some(AuditClassification {
             action: "account.list",
             target_type: Some("account"),
@@ -598,7 +637,7 @@ fn classify_action(method: &Method, path: &str) -> Option<AuditClassification> {
         });
     }
 
-    if path == "/aris/v1/auth/modify" && method == Method::PATCH {
+    if path == "/mx/v1/auth/modify" && method == Method::PATCH {
         return Some(AuditClassification {
             action: "account.modify",
             target_type: Some("account"),
@@ -606,7 +645,7 @@ fn classify_action(method: &Method, path: &str) -> Option<AuditClassification> {
         });
     }
 
-    if path == "/aris/v1/auth/delete" && method == Method::DELETE {
+    if path == "/mx/v1/auth/delete" && method == Method::DELETE {
         return Some(AuditClassification {
             action: "account.delete",
             target_type: Some("account"),
@@ -614,7 +653,7 @@ fn classify_action(method: &Method, path: &str) -> Option<AuditClassification> {
         });
     }
 
-    if path == "/aris/v1/auth/enable_2fa" && method == Method::POST {
+    if path == "/mx/v1/auth/enable_2fa" && method == Method::POST {
         return Some(AuditClassification {
             action: "account.2fa.enable",
             target_type: Some("account"),
@@ -622,7 +661,7 @@ fn classify_action(method: &Method, path: &str) -> Option<AuditClassification> {
         });
     }
 
-    if path == "/aris/v1/auth/disable_2fa" && method == Method::POST {
+    if path == "/mx/v1/auth/disable_2fa" && method == Method::POST {
         return Some(AuditClassification {
             action: "account.2fa.disable",
             target_type: Some("account"),
@@ -630,7 +669,7 @@ fn classify_action(method: &Method, path: &str) -> Option<AuditClassification> {
         });
     }
 
-    if path == "/aris/v1/user/create" && method == Method::POST {
+    if path == "/mx/v1/user/create" && method == Method::POST {
         return Some(AuditClassification {
             action: "account.create",
             target_type: Some("account"),
@@ -638,7 +677,7 @@ fn classify_action(method: &Method, path: &str) -> Option<AuditClassification> {
         });
     }
 
-    if path == "/aris/v1/user/modify" && method == Method::PATCH {
+    if path == "/mx/v1/user/modify" && method == Method::PATCH {
         return Some(AuditClassification {
             action: "account.self.modify",
             target_type: Some("account"),
@@ -646,7 +685,7 @@ fn classify_action(method: &Method, path: &str) -> Option<AuditClassification> {
         });
     }
 
-    if path == "/aris/v1/user/delete" && method == Method::DELETE {
+    if path == "/mx/v1/user/delete" && method == Method::DELETE {
         return Some(AuditClassification {
             action: "account.self.delete",
             target_type: Some("account"),
@@ -654,10 +693,7 @@ fn classify_action(method: &Method, path: &str) -> Option<AuditClassification> {
         });
     }
 
-    if segments.len() < 3
-        || segments[0] != "aris"
-        || segments[1] != "v1"
-        || segments[2] != "records"
+    if segments.len() < 3 || segments[0] != "mx" || segments[1] != "v1" || segments[2] != "records"
     {
         return None;
     }
@@ -701,6 +737,16 @@ fn classify_action(method: &Method, path: &str) -> Option<AuditClassification> {
     }
 
     if segments.len() == 5 && method == Method::POST {
+        return Some(AuditClassification {
+            action: "attachment.upload",
+            target_type: Some("record"),
+            target_uid: record_uid,
+        });
+    }
+
+    // File Attachment field upload:
+    // /mx/v1/records/{record}/attachments/fields/{field}
+    if segments.len() == 7 && segments.get(5) == Some(&"fields") && method == Method::POST {
         return Some(AuditClassification {
             action: "attachment.upload",
             target_type: Some("record"),
