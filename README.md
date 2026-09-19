@@ -2,17 +2,17 @@
 
   <img
     src="https://github.com/Litiaina/litiaina-admin-webpage/blob/master/images/litiaina_icon.png?raw=true"
-    alt="Litiaina Icon"
+    alt="Litiaina"
     width="150"
     height="150"
   />
 
-  <h1>Litiaina MX</h1>
+  <h1>MX</h1>
 
   <p>
-    <b>Atomic Record Information System</b><br>
-    A dynamic records platform for building structured, searchable, auditable information systems
-    without hard-coding one organization’s record format into the server.
+    <b>Self-hosted, fully customizable general-purpose information system</b><br>
+    Build the record structure, attachments, storage layout, dashboard, statistics,
+    and reporting model that each deployment actually needs.
   </p>
 
 </div>
@@ -21,57 +21,146 @@
 
 ## Overview
 
-MX is a reusable information-system core for organizations that need more than fixed forms or simple file storage.
+**MX** is a schema-driven information-system platform built for deployments that should not be locked to one predefined record format.
 
-Instead of defining one permanent record structure in Rust, MX stores the record schema as data. Administrators can define the fields that make sense for a deployment, reorder them, control which fields are searchable or sortable, and choose how records are represented in the interface.
+A fresh MX deployment starts with **no business fields and no predefined dashboard statistics**. An Administrator defines the information model through the application itself. Forms, record tables, search, attachment handling, N1 storage paths, dashboard widgets, statistics, and exports adapt to that configuration.
 
-A record can represent a document transaction, procurement request, incident report, equipment record, referral, workflow request, inventory item, correspondence item, or another domain-specific business object.
+MX is therefore not a hard-coded document tracker, correspondence registry, inventory system, ticketing system, or workflow application.
 
-The application remains the same while the record structure changes.
+It is the reusable system underneath those possibilities.
+
+A deployment can use MX for:
+
+- document and correspondence tracking;
+- procurement and request records;
+- inventory and asset information;
+- incident and maintenance records;
+- referrals and operational workflows;
+- research or administrative datasets;
+- office-specific registries;
+- other structured information systems that can be represented as records and fields.
+
+The core application stays the same while the deployment-defined schema changes.
+
+---
+
+## Core Principle
+
+MX separates **platform responsibilities** from **business structure**.
 
 ```text
-MX
-├── Dynamic Record Schema
-│   ├── user-defined fields
-│   ├── field types
-│   ├── validation rules
-│   ├── searchable/sortable flags
-│   ├── table visibility
-│   └── field ordering
-│
-├── SQLite
-│   ├── record identities
-│   ├── dynamic field values
-│   ├── uniqueness indexes
-│   ├── auto-number sequences
-│   ├── users and permissions
-│   ├── attachment metadata
-│   ├── frozen storage namespaces
-│   ├── audit history
-│   └── backup metadata
-│
-└── N1
-    ├── original attachment bytes
-    └── verified database backups
+MX platform
+├── identity
+├── authentication
+├── authorization
+├── persistence
+├── validation
+├── search
+├── attachment handling
+├── N1 object storage integration
+├── reporting
+├── dashboard rendering
+├── audit logging
+└── backup safety
+
+Deployment configuration
+├── fields
+├── field order
+├── validation rules
+├── file-attachment fields
+├── N1 folder layout
+├── table presentation
+├── dashboard widgets
+├── statistics
+└── reporting dimensions
 ```
 
-SQLite handles structured information and transactional state. N1 handles durable binary objects.
+MX does not need to know what **Office**, **Department**, **Subject**, **Status**, **Action Taken**, **Control Number**, or any other organization-specific concept means.
 
-## Why Atomic
+If a deployment needs one of those concepts, the Administrator creates it as a field.
 
-MX treats each record as a stable atomic business object with its own identity, values, attachments, audit history, and storage namespace.
+---
 
-The record format is configurable, but the internal system model remains stable.
+## Architecture
 
-This separation allows MX to support different organizational workflows without rebuilding the storage, authentication, search, attachment, audit, and backup layers for every deployment.
+```text
+Browser
+   │
+   │ HTTPS / JSON
+   ▼
+MX Server
+Rust + Axum + Tokio
+   │
+   ├──────────────► SQLite
+   │                structured state
+   │                schema
+   │                records
+   │                users
+   │                audit
+   │                reports
+   │                backup metadata
+   │
+   └──────────────► N1
+                    attachment bytes
+                    verified database backups
+```
 
-## Dynamic Record Structure
+### Browser
 
-A fresh deployment does not require a predefined business schema.
+The browser provides the unified MX interface:
 
-Administrators create the fields required by the organization from the Administration interface.
+- Dashboard
+- Records
+- Administration
+- attachment preview
+- search and filtering
+- account management
+- schema configuration
+- reporting and exports
 
-Supported field types include:
+### MX Server
+
+The Rust server owns:
+
+- API routing;
+- authentication and authorization;
+- schema validation;
+- dynamic record validation;
+- transactional database operations;
+- attachment coordination;
+- N1 integration;
+- search construction;
+- dashboard/report queries;
+- audit events;
+- database backup operations.
+
+### SQLite
+
+SQLite stores structured and queryable state.
+
+Binary attachment data is deliberately kept out of SQLite.
+
+### N1
+
+N1 stores:
+
+- original uploaded attachment bytes;
+- attachment versions;
+- verified SQLite backup objects.
+
+The N1 object is authoritative for file content. Preview files are derived data and may be regenerated.
+
+---
+
+## Fully Dynamic Record Structure
+
+The **Record Structure** is the source of truth for the business model of a deployment.
+
+A fresh installation can contain zero fields.
+
+Administrators add only what that deployment requires.
+
+### Supported field types
 
 ```text
 Text
@@ -82,50 +171,73 @@ Date
 Boolean
 Select
 Auto Number
+File Attachment
 ```
 
-Each field may define behavior such as:
+### Common field behavior
+
+Depending on the field type, a field can define:
 
 ```text
 Required
 Unique
 Searchable
 Sortable
-Default table column
+Show in records table
 Table priority
 Field order
-Default value
 Type-specific configuration
 ```
 
-Fields have stable internal UIDs. Their labels, ordering, and presentation may change without changing the identity used by stored records.
+Fields use stable internal UIDs so labels and presentation can evolve without changing the identity used by stored records.
 
-Archived fields are retained instead of being destructively removed from historical data.
+Archived fields can remain represented in historical data instead of forcing destructive schema changes.
 
-### Auto Number
+---
 
-`Auto Number` is a dynamic field type rather than a hard-coded control-number property.
+## File Attachment Is a Normal Field Type
 
-A deployment may use one or more auto-number fields, or none at all.
+MX does **not** require one permanent built-in attachment area.
 
-Sequences are allocated transactionally by the server and can be configured independently from other fields.
+`File Attachment` is an ordinary Record Structure type.
 
-This allows deployments to define identifiers such as:
+An Administrator can create:
 
 ```text
-000001
-2026-000001
-REQ-000001
-INC-2026-000042
+Supporting Documents    File Attachment
+Signed Copy             File Attachment
+Photo Evidence          File Attachment
+Action Documents        File Attachment
 ```
 
-without requiring MX itself to understand the organization-specific meaning of the number.
+or create **no attachment fields at all**.
+
+Each File Attachment field can define:
+
+- its field name;
+- its N1 storage-folder name;
+- an optional user-facing description;
+- whether multiple files are allowed;
+- the maximum number of files;
+- whether the field is required.
+
+Because attachment fields are part of Record Structure, the same schema drives:
+
+- the record form;
+- attachment upload controls;
+- table presentation;
+- search;
+- reporting;
+- exports;
+- N1 storage organization.
+
+---
 
 ## Record Model
 
-MX keeps a small stable internal record identity and stores business values separately.
+MX keeps the internal identity of a record small and stable.
 
-Conceptually:
+Business values are stored separately and interpreted using Record Structure.
 
 ```text
 Record
@@ -138,205 +250,369 @@ Record
 │   ├── Field UID -> Value
 │   └── ...
 │
-└── Attachments
-    ├── UID
-    ├── File Name
-    ├── MIME Type
-    ├── Size
-    ├── N1 Object Key
-    └── N1 Version ID
+└── File Attachment Fields
+    ├── Field UID
+    │   ├── Attachment
+    │   ├── Attachment
+    │   └── ...
+    └── Field UID
+        └── Attachment
 ```
 
-There is no required hard-coded `Office`, `Subject`, `Date`, `Requestor`, `Routing`, or `Control Number` field in the engine.
+There is no required hard-coded `Office`, `Date`, `Subject`, `Requestor`, `Routing`, `Status`, or `Control Number` column in the business model.
 
-Those concepts are created only when a deployment needs them.
+---
 
-## Built-in System Fields
+## Auto Number
 
-Some capabilities belong to MX itself rather than to the user-defined business schema.
+`Auto Number` is a dynamic field type.
 
-`Attached Files` is currently a built-in system field.
+A deployment may have one auto-number field, several, or none.
 
-Attachments are therefore always available to records without pretending that uploaded files are ordinary text or numeric values.
+The server allocates authoritative sequence values transactionally.
 
-The built-in field can participate in table-column ordering and visibility, but it cannot be archived or removed like a custom field.
-
-## Field Ordering
-
-Record Structure supports drag-and-drop ordering.
-
-Administrators can reorder custom fields and built-in fields without manually editing numeric positions.
-
-MX normalizes positions internally:
+Configuration can include:
 
 ```text
-0
-10
-20
-30
-40
-...
+Scope     global | yearly
+Prefix    optional text
+Padding   0..12
 ```
 
-The order is saved transactionally and becomes the source for generated forms and record-table presentation.
+Examples:
 
-New fields append to the end of the current structure.
+```text
+1
+000001
+REQ-000001
+2026-000001
+```
 
-## Search
+The browser does not allocate the authoritative sequence value.
 
-Search is generated from the active dynamic schema.
+---
+
+## Dynamic Search
+
+Search is generated from the active Record Structure rather than hard-coded business columns.
 
 ### Universal Search
 
-Universal Search searches all active fields marked `Searchable`.
+Universal Search can search active fields marked `Searchable` and attachment filenames.
 
-It also searches attachment filenames.
+### Field Search
 
-The server supports:
+Queries can use dynamic field UIDs for field-specific filtering.
 
-```text
-Contains
-Starts with
-Exact
-```
+MX supports server-side:
 
-Search safely escapes SQL `LIKE` metacharacters so literal `%`, `_`, and `!` values can be queried correctly.
+- search;
+- filtering;
+- sort selection;
+- sort direction;
+- pagination.
 
-### Advanced Search
+The browser does not need to download the complete database just to find or display records.
 
-Advanced Search operates on dynamic field UIDs rather than hard-coded column names.
-
-It supports combinations of:
-
-```text
-field filters
-match mode
-attachment presence
-sortable fields
-sort direction
-pagination
-```
-
-Fields not marked `Searchable` are excluded from search filters.
-
-Fields not marked `Sortable` cannot be used as sort keys.
-
-Records are paginated by the backend instead of loading the complete database into the browser.
-
-## Storage
-
-MX uses a normalized SQLite schema for the dynamic record engine.
-
-Important tables include:
-
-```text
-mx_records
-mx_schema_meta
-mx_fields
-mx_system_fields
-mx_record_values
-mx_unique_values
-mx_field_sequences
-mx_attachments
-mx_record_storage
-mx_audit_log
-mx_backups
-```
-
-### Dynamic Values
-
-Business values are stored separately from record identity.
-
-The schema determines how a value is interpreted and validated.
-
-This allows new fields to be introduced without adding new SQLite columns or changing the Rust record struct.
-
-### Unique Values
-
-Fields marked `Unique` are enforced through dedicated uniqueness state rather than relying on UI validation.
-
-### Field Sequences
-
-Auto-number fields maintain server-side sequence state in `mx_field_sequences`.
-
-The client does not allocate authoritative sequence values.
+---
 
 ## Configurable N1 Storage Layout
 
-Attachment storage is also schema-aware.
+Administrators can select Record Structure fields to build the base N1 hierarchy.
 
-Administrators can choose dynamic fields to build the visible N1 folder hierarchy and may optionally select a field as the filename prefix.
+A File Attachment field automatically contributes its own final folder segment.
 
-Example configuration:
+Example:
 
 ```text
-Folder 1       OFFICE
-Folder 2       DATE
-Filename prefix CONTROL NO
+Record Structure
+
+Office                 Select
+Year                   Integer
+Supporting Documents   File Attachment
+Signed Copy             File Attachment
 ```
 
-may produce:
+Storage layout:
+
+```text
+Base folder 1: Office
+Base folder 2: Year
+```
+
+Result:
 
 ```text
 records/
 └── MISO/
-    └── 2026-09-18/
-        └── 000125__purchase_request.docx
+    └── 2026/
+        ├── Supporting Documents/
+        │   ├── request.pdf
+        │   └── quotation.xlsx
+        │
+        └── Signed Copy/
+            └── approved.pdf
 ```
 
-Another deployment can choose an entirely different layout without changing the backend.
-
-The storage layout references field UIDs, not hard-coded names.
-
-### Frozen Record Namespace
-
-The resolved N1 namespace is frozen per record when storage is first established.
-
-This prevents later edits to fields such as Office or Date from splitting one record's attachments across multiple paths.
-
-Conceptually:
+If no schema-derived base folders are configured, MX can use the record identity as the stable base:
 
 ```text
-Global storage layout
-        ↓
-Resolve dynamic field values
-        ↓
-Freeze record namespace
-        ↓
-Store attachment objects
+records/<record-uid>/<File Attachment field>/filename.ext
 ```
 
-Changing the global storage layout affects records whose storage namespace has not yet been established.
+### Frozen record namespace
 
-If a required storage-path value is missing, MX rejects the upload instead of creating an ambiguous path.
+Once a record establishes its storage namespace, MX freezes that base namespace for the record.
 
-Existing attachment object keys remain valid and are not silently migrated.
+This prevents later edits to values such as office, division, or date from scattering one record's attachments across unrelated paths.
 
-## Attachments
+Changing the global storage-layout configuration affects records whose storage namespace has not yet been established.
 
-Attachment bytes are stored in N1 rather than inside SQLite.
+Existing N1 object keys are not silently moved just because a label or global layout changes.
 
-SQLite stores only the attachment metadata required to associate an object with its record.
+---
 
-The original object stored in N1 remains authoritative.
+## Custom Dashboard Builder
 
-Derived previews may be regenerated.
+MX does not ship with organization-specific dashboard assumptions.
 
-## Attachment Preview
-
-MX previews supported files directly where possible:
+A new deployment starts with:
 
 ```text
-Images       -> browser image viewer
-PDF          -> embedded PDF viewer
-Text         -> text viewer
-Audio        -> browser audio player
-Video        -> browser video player
-Office       -> LibreOffice -> PDF preview
-Other files  -> download
+Dashboard
+
+No dashboard widgets configured.
 ```
 
-Office preview supports common Word, Excel, PowerPoint, and OpenDocument formats while keeping the original uploaded object unchanged in N1.
+Administrators build the dashboard from Record Structure.
+
+### Widget types
+
+MX supports:
+
+```text
+Summary number / KPI
+Bar chart
+Line chart / trend
+Pie chart
+Donut chart
+Grouped progress
+Detailed statistical table
+```
+
+### Measure rules
+
+A widget can measure records using rules such as:
+
+```text
+Every record
+Field equals a value
+Field does not equal a value
+Field is empty
+Field is not empty
+File Attachment field has files
+```
+
+The Administrator chooses the fields. MX does not hard-code business meaning into these rules.
+
+### Grouping
+
+Categorical widgets can group results by a deployment-defined field.
+
+Example:
+
+```text
+Title: Records by Department
+Display: Pie chart
+Measure: Every record
+Category: Department
+```
+
+### Completion / match statistics
+
+Example:
+
+```text
+Title: Completion by Division
+Display: Bar chart
+
+Measure:
+Action Taken is not empty
+
+Group by:
+Division
+```
+
+If a division has 100 records and 50 match the configured rule, the report can represent:
+
+```text
+Total          100
+Matched         50
+Not matched     50
+Match rate      50%
+```
+
+`Action Taken` and `Division` are merely example field names. MX does not require them.
+
+### Time-series statistics
+
+Line charts can use any `Date` field as the time axis.
+
+Supported aggregation intervals:
+
+```text
+Day
+Week
+Month
+Quarter
+Year
+```
+
+Example:
+
+```text
+Title: Monthly Completed Requests
+Display: Line chart
+
+Date field:
+Date Received
+
+Interval:
+Month
+
+Measure:
+Status equals Completed
+```
+
+### Chart options
+
+Categorical charts can limit the number of displayed categories.
+
+Current category limits include:
+
+```text
+5
+8
+10
+15
+25
+All
+```
+
+For count-based views, remaining categories can be combined into `Other`.
+
+Pie and donut charts use count-based values so their slices represent a meaningful whole.
+
+### Dashboard persistence
+
+Dashboard configuration is stored by MX.
+
+Administrators can:
+
+- add widgets;
+- edit widgets;
+- reorder widgets;
+- remove widgets;
+- save the final dashboard configuration.
+
+Only configured widgets appear on the dashboard.
+
+---
+
+## Reporting and CSV Export
+
+MX performs reporting on the backend instead of fetching the entire records database into the browser.
+
+The reporting engine supports:
+
+- grouping by dynamic fields;
+- match rules;
+- empty/non-empty conditions;
+- exact values;
+- attachment presence;
+- date ranges;
+- time buckets;
+- total counts;
+- matched counts;
+- not-matched counts;
+- match rates.
+
+### Detailed Records export
+
+The detailed CSV export includes active Record Structure fields.
+
+File Attachment fields receive their own attachment filename columns, together with attachment totals.
+
+### Attachment inventory
+
+Attachment inventory can include attachment metadata such as:
+
+- record UID;
+- attachment field UID;
+- filename;
+- size;
+- N1 object key.
+
+### User performance
+
+Administrator reporting can derive activity metrics from the audit log, including:
+
+```text
+records created
+records updated
+attachments uploaded
+records deleted
+attachment downloads
+successful actions
+failed actions
+unique records touched
+last activity
+```
+
+These are audit-derived operational statistics. They are not treated as business completion metrics unless the deployment explicitly configures a business field/rule for that purpose.
+
+---
+
+## Administration
+
+Administration is separated into function-specific tabs.
+
+```text
+Accounts
+Record Structure
+N1 Storage
+Dashboard
+Backups
+Audit Log
+```
+
+### Accounts
+
+Manage users and access levels.
+
+### Record Structure
+
+Build and maintain the deployment's dynamic schema.
+
+### N1 Storage
+
+Choose the dynamic fields used in the storage hierarchy and optional filename-prefix behavior.
+
+### Dashboard
+
+Create and maintain dashboard/statistics widgets.
+
+### Backups
+
+Create, verify, list, and download SQLite backup snapshots stored in N1.
+
+### Audit Log
+
+Review authenticated system activity.
+
+These configuration areas are intended for Administrators.
+
+---
 
 ## Access Levels
 
@@ -347,14 +623,16 @@ Office preview supports common Word, Excel, PowerPoint, and OpenDocument formats
 3 = Viewer
 ```
 
-| Role | Capabilities |
+| Role | General capabilities |
 |---|---|
-| Administrator | Full record access, account management, record-structure management, storage-layout management, database administration, audit, and backups |
-| Manager | Read, create, edit, upload, download, and delete |
+| Administrator | Full record access plus accounts, schema, storage layout, dashboard configuration, database administration, audit, and backups |
+| Manager | Read, create, edit, upload, download, and delete records/attachments |
 | Editor | Read, create, edit, upload, and download; no delete |
-| Viewer | Read, search, preview, and download only |
+| Viewer | Read, search, preview, and download |
 
-Authorization is enforced by the backend, not only by the interface.
+Authorization is enforced by the backend rather than only by hiding interface controls.
+
+---
 
 ## Authentication
 
@@ -364,14 +642,16 @@ MX supports:
 JWT access tokens
 Refresh tokens
 Optional TOTP two-factor authentication
-First-run administrator bootstrap
+First-run Administrator bootstrap
 ```
 
-A fresh deployment may create its first Administrator through the bootstrap flow while the user table is empty.
+A fresh deployment can create its first Administrator only while the user table is empty and the bootstrap authorization requirement is satisfied.
+
+---
 
 ## Audit Logging
 
-MX records meaningful authenticated actions for administrator review.
+MX records meaningful authenticated actions for Administrator review.
 
 Examples include:
 
@@ -403,29 +683,31 @@ backup.verify
 backup.download
 ```
 
-Passwords, JWTs, authentication keys, request bodies, uploaded file bytes, and SQL text are not copied into the audit log.
+Passwords, JWTs, authentication secrets, request bodies, uploaded file bytes, and SQL text are not copied into normal audit events.
 
-The audit log is append-only at the database level.
+---
 
 ## Database Backups
 
-Administrators can create a live SQLite backup from the Administration interface.
-
-Backup flow:
+MX can create a consistent live SQLite snapshot and store the verified result in N1.
 
 ```text
 SQLite
-  ↓
+  │
+  ▼
 VACUUM INTO
-  ↓
-standalone .db snapshot
-  ↓
+  │
+  ▼
+standalone database snapshot
+  │
+  ▼
 PRAGMA integrity_check
-  ↓
+  │
+  ▼
 N1
 ```
 
-Verified backups are stored under:
+New MX backups use:
 
 ```text
 __mx/backups/database/YYYY/MM/DD/
@@ -434,116 +716,41 @@ __mx/backups/database/YYYY/MM/DD/
 Example:
 
 ```text
-__mx/backups/database/2026/09/18/mx-20260918T020000Z.db
+__mx/backups/database/2026/09/19/mx-20260919T120000Z.db
 ```
 
-MX can download a stored backup and re-verify it by opening the downloaded database and running:
+Backup verification can download the stored object, check its expected size, open it as SQLite, and run `PRAGMA integrity_check` again.
 
-```sql
-PRAGMA integrity_check;
-```
+Database restore remains a deliberate offline administrative operation rather than a one-click browser action.
 
-### Recovery
+---
 
-Database recovery is intentionally an offline administrative operation.
+## Main SQLite State
 
-Stop the service first:
-
-```bash
-sudo systemctl stop litiaina-mx
-```
-
-Preserve the current database files:
-
-```bash
-mkdir -p recovery-before-restore
-
-cp -a mx.db recovery-before-restore/ 2>/dev/null || true
-cp -a mx.db-wal recovery-before-restore/ 2>/dev/null || true
-cp -a mx.db-shm recovery-before-restore/ 2>/dev/null || true
-```
-
-Verify the selected backup:
-
-```bash
-sqlite3 mx-backup.db "PRAGMA integrity_check;"
-```
-
-Expected result:
+Important MX tables include:
 
 ```text
-ok
+mx_records
+mx_schema_meta
+mx_fields
+mx_record_values
+mx_unique_values
+mx_field_sequences
+mx_attachments
+mx_record_storage
+mx_storage_layout
+mx_dashboard_config
+mx_audit_log
+mx_backups
 ```
 
-Restore it:
+The exact internal schema may evolve, but deployment-defined business fields remain data rather than Rust struct columns.
 
-```bash
-cp mx-backup.db mx.db
-rm -f mx.db-wal mx.db-shm
-```
+---
 
-Start the service again:
+## HTTP API
 
-```bash
-sudo systemctl start litiaina-mx
-```
-
-Do not replace the database or remove WAL/SHM files while MX is running.
-
-## Dashboard
-
-The Dashboard uses dedicated summary endpoints rather than loading the full records database.
-
-MX also exposes a lightweight revision endpoint so the interface can determine when record data has changed and refresh only when necessary.
-
-This keeps dashboard retrieval independent from the number of stored records.
-
-## Unified Interface
-
-`mx.html` contains the application workspaces in one shell:
-
-```text
-Dashboard
-Records
-Administration
-```
-
-The interface includes:
-
-```text
-dynamic forms
-dynamic record columns
-horizontal table scrolling
-local display scaling
-persistent light/dark theme
-persistent column preferences
-record-structure management
-N1 storage-layout management
-account administration
-audit review
-database backups
-```
-
-The frontend uses the current page origin for API requests when served by MX:
-
-```javascript
-const API_BASE =
-  window.location.protocol === "file:"
-    ? "https://localhost:21001"
-    : window.location.origin;
-```
-
-When the application is served from:
-
-```text
-https://192.168.0.12:21001
-```
-
-the interface automatically uses that same origin for API requests.
-
-## API
-
-MX uses the `/mx/v1` namespace.
+MX uses the `/mx/v1` API namespace.
 
 ### Authentication
 
@@ -555,6 +762,22 @@ POST /mx/v1/auth/refresh
 GET  /mx/v1/auth/session
 ```
 
+### Account administration
+
+```http
+POST   /mx/v1/auth/get
+PATCH  /mx/v1/auth/modify
+DELETE /mx/v1/auth/delete
+
+POST /mx/v1/auth/enable_2fa
+POST /mx/v1/auth/disable_2fa
+POST /mx/v1/auth/check_2fa
+
+POST   /mx/v1/user/create
+PATCH  /mx/v1/user/modify
+DELETE /mx/v1/user/delete
+```
+
 ### Schema
 
 ```http
@@ -563,62 +786,94 @@ GET  /mx/v1/schema
 GET  /mx/v1/admin/schema
 POST /mx/v1/admin/schema/fields
 PUT  /mx/v1/admin/schema/fields/{uid}
-PUT  /mx/v1/admin/schema/system/{key}
 PUT  /mx/v1/admin/schema/order
 ```
 
-### Storage Layout
+### N1 storage layout
 
 ```http
 GET /mx/v1/admin/storage-layout
 PUT /mx/v1/admin/storage-layout
 ```
 
+### Dashboard
+
+```http
+GET /mx/v1/dashboard/config
+PUT /mx/v1/admin/dashboard-config
+```
+
+### Reports
+
+```http
+GET /mx/v1/reports/action-rate
+GET /mx/v1/reports/user-performance
+GET /mx/v1/reports/export.csv
+```
+
+The `action-rate` endpoint is schema-driven: its action/group/date fields are supplied dynamically rather than representing hard-coded MX business fields.
+
 ### Records
 
 ```http
 GET    /mx/v1/records
 POST   /mx/v1/records
+
 PUT    /mx/v1/records/{uid}
 DELETE /mx/v1/records/{uid}
 ```
 
-Record listing supports server-side search, filtering, sorting, and pagination.
-
-### Attachments
+### File Attachment fields
 
 ```http
-POST   /mx/v1/records/{uid}/attachments
-GET    /mx/v1/records/{record_uid}/attachments/{attachment_uid}/preview
-GET    /mx/v1/records/{record_uid}/attachments/{attachment_uid}/download
+POST /mx/v1/records/{uid}/attachments/fields/{field_uid}
+
 DELETE /mx/v1/records/{record_uid}/attachments/{attachment_uid}
+
+GET /mx/v1/records/{record_uid}/attachments/{attachment_uid}/preview
+GET /mx/v1/records/{record_uid}/attachments/{attachment_uid}/download
 ```
 
-### Dashboard
+The upload route includes the File Attachment field UID so a record can contain multiple independent attachment fields.
+
+### Revision tracking
 
 ```http
-GET /mx/v1/dashboard/summary
 GET /mx/v1/status/revision
 ```
 
-### Administration
+The frontend can use the lightweight revision value to decide when record state needs to be refreshed.
+
+### Audit and backups
 
 ```http
 GET  /mx/v1/admin/audit
 
 GET  /mx/v1/admin/backups
 POST /mx/v1/admin/backups
+
 POST /mx/v1/admin/backups/{uid}/verify
 GET  /mx/v1/admin/backups/{uid}/download
+```
 
+### Database administration
+
+```http
 POST /mx/v1/db/query
 ```
 
-Administrator-only endpoints require an Administrator account.
+Administrator-only endpoints require Administrator authorization on the backend.
+
+---
 
 ## Configuration
 
-MX reads runtime settings from `mx.config` and secrets from `mx.env`.
+MX uses:
+
+```text
+mx.config
+mx.env
+```
 
 Example N1 configuration:
 
@@ -636,18 +891,25 @@ N1 secret:
 N1_MX_SECRET=<MX_FRAGMENT_SECRET>
 ```
 
-The MX server may bind to localhost for local-only use or to a LAN-facing address for network access.
+Do not commit deployment secrets to source control.
 
-Example:
+---
+
+## Office Preview
+
+MX previews supported files directly where possible.
 
 ```text
-127.0.0.1  -> local machine only
-0.0.0.0    -> listen on available interfaces
+Images       -> browser image viewer
+PDF          -> embedded PDF viewer
+Text         -> text viewer
+Audio        -> browser audio player
+Video        -> browser video player
+Office       -> LibreOffice -> PDF preview
+Other files  -> download
 ```
 
-## Office Preview Requirements
-
-On Debian:
+On Debian, Office/OpenDocument preview requires LibreOffice components:
 
 ```bash
 sudo apt update
@@ -664,107 +926,188 @@ Verify:
 libreoffice --headless --version
 ```
 
-## Build
+LibreOffice is used as a headless conversion worker. The original N1 object is not replaced by the generated preview.
 
-Development:
+---
+
+## Development
+
+Current project location:
+
+```text
+/home/altear/Development/mx
+```
+
+Enter the project:
 
 ```bash
+cd /home/altear/Development/mx
+```
+
+Format and check:
+
+```bash
+cargo fmt
 cargo check
+```
+
+Strict warning-free check:
+
+```bash
+RUSTFLAGS="-D warnings" cargo check
+```
+
+Run development build:
+
+```bash
 cargo run
 ```
 
-Production:
+Production build:
 
 ```bash
 cargo build --release
+```
+
+Run the production binary:
+
+```bash
 ./target/release/litiaina-mx
 ```
 
-## First Administrator
-
-A fresh deployment starts without users.
-
-The first Administrator is created through the bootstrap API:
-
-```http
-POST /mx/v1/auth/create
-```
-
-This operation requires a configured `AUTH_KEYS` value and is available only while the user table is empty.
-
-The unified interface detects this state and presents the first-administrator setup flow automatically.
+---
 
 ## Project Structure
 
 ```text
-src/
-├── api/
-│   ├── admin/
-│   ├── mx/
-│   │   ├── handler.rs
-│   │   ├── model.rs
-│   │   ├── records.rs
-│   │   ├── schema.rs
-│   │   └── storage.rs
-│   │
-│   ├── user/
-│   ├── audit.rs
-│   ├── backup.rs
-│   ├── dashboard.rs
-│   ├── query_handler.rs
-│   └── route.rs
+mx/
+├── Cargo.toml
+├── mx.config
+├── mx.env
+├── web/
+│   └── index.html
 │
-├── config/
-├── db/
-├── middleware/
-├── macros/
-├── util/
-└── main.rs
-
-mx.html
-mx.config
-mx.env
+└── src/
+    ├── api/
+    │   ├── admin/
+    │   ├── mx/
+    │   │   ├── attachment_fields.rs
+    │   │   ├── handler.rs
+    │   │   ├── migration.rs
+    │   │   ├── model.rs
+    │   │   ├── records.rs
+    │   │   ├── schema.rs
+    │   │   └── storage.rs
+    │   │
+    │   ├── user/
+    │   ├── audit.rs
+    │   ├── backup.rs
+    │   ├── dashboard.rs
+    │   ├── reports.rs
+    │   ├── query_handler.rs
+    │   └── route.rs
+    │
+    ├── config/
+    ├── db/
+    ├── middleware/
+    ├── macros/
+    ├── util/
+    └── main.rs
 ```
 
-The MX modules are separated by responsibility:
+The main responsibilities are intentionally separated:
 
 ```text
-schema.rs   -> dynamic record structure
-records.rs  -> dynamic record values, search, filtering, sorting, pagination
-storage.rs  -> configurable N1 namespace layout
-handler.rs  -> attachments, preview, download, and N1 operations
+schema.rs             dynamic Record Structure
+records.rs            dynamic values, search, sorting, pagination
+attachment_fields.rs  File Attachment field behavior and metadata
+storage.rs            configurable and frozen N1 namespaces
+handler.rs            record/attachment operations and N1 coordination
+reports.rs            statistics, dashboard reporting, CSV export
+dashboard.rs          dashboard support
+audit.rs              accountability history
+backup.rs             verified SQLite snapshots stored in N1
 ```
+
+---
+
+## ARIS to MX Migration
+
+MX is the canonical product name.
+
+The active API namespace is:
+
+```text
+/mx/v1
+```
+
+The Rust application module is:
+
+```text
+crate::api::mx
+```
+
+The Cargo package/binary is:
+
+```text
+litiaina-mx
+```
+
+The current repository directory is:
+
+```text
+/home/altear/Development/mx
+```
+
+Existing deployments upgraded from ARIS can migrate legacy internal SQLite objects to `mx_*`.
+
+Existing database filenames and existing N1 attachment object keys do not need to be physically moved only for branding. Keeping durable object locations stable avoids unnecessary data movement and migration risk.
+
+New MX backup objects use the `__mx` namespace.
+
+---
 
 ## Design Principles
 
-MX follows a small set of rules:
+MX follows these principles:
 
-- stable internal record identities
-- deployment-defined business fields
-- dynamic field values instead of hard-coded record columns
-- backend-enforced validation and authorization
-- transactional auto-number allocation
-- transactional field-order updates
-- server-side search, filtering, sorting, and pagination
-- SQLite for structured queryable state
-- N1 for durable binary objects
-- human-readable configurable attachment namespaces
-- frozen per-record storage paths
-- original uploads remain authoritative
-- large binary data stays out of SQLite
-- meaningful administrator actions are auditable
-- backups are verified before being treated as valid
-- schema evolution does not require recompiling the record model
-- the same core can support different organizational workflows
+- start with a blank business schema;
+- make the deployment define the information model;
+- treat File Attachment as a normal configurable field type;
+- keep business fields out of hard-coded Rust structs;
+- use stable internal record and field identities;
+- enforce validation and authorization on the server;
+- allocate automatic numbers transactionally;
+- perform search, filtering, pagination, and reporting server-side;
+- keep large binary data out of SQLite;
+- use N1 as authoritative object storage for attachment bytes;
+- keep storage namespaces deterministic and stable;
+- allow dashboard/statistics behavior to be built from the same schema;
+- keep operational audit history separate from business completion semantics;
+- verify database backups before treating them as valid;
+- avoid recompilation when a deployment changes its business record structure.
+
+---
 
 ## Philosophy
 
-MX is not a single-purpose document tracker.
+**MX is an information-system engine, not a predefined information system.**
 
-It is an **Atomic Record Information System**: a reusable engine where an organization defines what a record means while the platform provides the infrastructure required to manage it safely.
+The platform provides the mechanisms required to store, search, secure, audit, visualize, and preserve information.
 
-The record schema, field order, search behavior, uniqueness rules, numbering strategy, table presentation, and N1 storage hierarchy are configuration.
+The organization decides what that information means.
 
-Identity, authorization, persistence, attachment integrity, auditing, search execution, and backup safety remain system responsibilities.
+```text
+Start blank.
 
-That boundary is what allows one MX deployment to behave like a correspondence registry while another can represent inventory, incidents, procurement requests, referrals, equipment, or another structured workflow without rewriting the core.
+Define the Record Structure.
+Define File Attachment fields.
+Define the N1 layout.
+Define the dashboard.
+Define the statistics.
+Define the reports.
+
+MX becomes the information system the deployment needs.
+```
+
+That boundary allows the same MX core to serve very different organizations and workflows without rewriting the application for every deployment.
