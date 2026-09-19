@@ -564,6 +564,14 @@ fn classify_action(method: &Method, path: &str) -> Option<AuditClassification> {
         });
     }
 
+    if path == "/mx/v1/admin/deployment-config" && method == Method::PUT {
+        return Some(AuditClassification {
+            action: "deployment.config.update",
+            target_type: Some("deployment-config"),
+            target_uid: None,
+        });
+    }
+
     if path == "/mx/v1/admin/dashboard-config" && method == Method::PUT {
         return Some(AuditClassification {
             action: "dashboard.config.update",

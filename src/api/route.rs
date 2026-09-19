@@ -25,6 +25,7 @@ use crate::api::mx::storage::{get_storage_layout, update_storage_layout};
 use crate::api::audit::{audit_request, get_audit_log};
 use crate::api::backup::{create_backup, download_backup, list_backups, verify_backup};
 use crate::api::dashboard::get_records_revision;
+use crate::api::deployment::{get_deployment_config, save_deployment_config};
 use crate::api::reports::{
     export_report_csv, get_action_rate_report, get_dashboard_config, get_user_performance_report,
     save_dashboard_config,
@@ -53,6 +54,7 @@ fn public_routes() -> Router {
         .route("/mx/v1/auth/bootstrap/status", get(bootstrap_status))
         .route("/mx/v1/auth/authenticate", post(authorize))
         .route("/mx/v1/auth/refresh", post(refresh_access_token))
+        .route("/mx/v1/deployment/config", get(get_deployment_config))
 }
 
 fn bootstrap_routes() -> Router {
@@ -73,6 +75,10 @@ fn admin_routes() -> Router {
             put(update_system_schema_field),
         )
         .route("/mx/v1/admin/dashboard-config", put(save_dashboard_config))
+        .route(
+            "/mx/v1/admin/deployment-config",
+            put(save_deployment_config),
+        )
         .route(
             "/mx/v1/admin/storage-layout",
             get(get_storage_layout).put(update_storage_layout),

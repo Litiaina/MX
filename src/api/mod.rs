@@ -3,6 +3,7 @@ pub mod api_error;
 pub mod audit;
 pub mod backup;
 pub mod dashboard;
+pub mod deployment;
 pub mod hosting;
 pub mod mx;
 pub mod query_handler;

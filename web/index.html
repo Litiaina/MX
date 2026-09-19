@@ -24,6 +24,77 @@
     })();
   </script>
 
+  <script id="mx-deployment-bootstrap">
+    (() => {
+      const CACHE_KEY = "mx_deployment_config_cache_v1";
+      const PRESETS = {
+        blue:    { primary: "#1d4ed8", sidebar: "#0f172a" },
+        emerald: { primary: "#047857", sidebar: "#064e3b" },
+        violet:  { primary: "#6d28d9", sidebar: "#2e1065" },
+        amber:   { primary: "#b45309", sidebar: "#451a03" },
+        rose:    { primary: "#be123c", sidebar: "#4c0519" },
+        slate:   { primary: "#475569", sidebar: "#0f172a" }
+      };
+
+      function safeConfig(value) {
+        return value && typeof value === "object" ? value : {};
+      }
+
+      function apply(config) {
+        config = safeConfig(config);
+        const appearance = safeConfig(config.appearance);
+        const branding = safeConfig(config.branding);
+        const preset = PRESETS[appearance.preset] || PRESETS.blue;
+        const primary = appearance.preset === "custom"
+          ? (appearance.primary_color || preset.primary)
+          : preset.primary;
+        const sidebar = appearance.preset === "custom"
+          ? (appearance.sidebar_color || preset.sidebar)
+          : preset.sidebar;
+
+        const root = document.documentElement;
+        root.style.setProperty("--primary", primary);
+        root.style.setProperty("--primary-2", primary);
+        root.style.setProperty("--sidebar", sidebar);
+        root.dataset.mxRadius = appearance.radius || "rounded";
+        root.dataset.mxDensity = appearance.density || "normal";
+        root.dataset.mxContentWidth = appearance.content_width || "wide";
+
+        try {
+          if (!localStorage.getItem("mx_theme")) {
+            let theme = appearance.default_theme || "light";
+            if (theme === "system") {
+              theme = window.matchMedia?.("(prefers-color-scheme: dark)")?.matches
+                ? "dark"
+                : "light";
+            }
+            root.dataset.theme = theme === "dark" ? "dark" : "light";
+            root.style.colorScheme = root.dataset.theme;
+          }
+        } catch (_) {}
+
+        if (branding.display_name) {
+          document.title = `${branding.display_name} · Workspace`;
+        }
+      }
+
+      let cached = null;
+      try {
+        cached = JSON.parse(localStorage.getItem(CACHE_KEY) || "null");
+      } catch (_) {}
+
+      if (cached?.config) {
+        apply(cached.config);
+      }
+
+      window.MX_DEPLOYMENT_BOOTSTRAP = Object.freeze({
+        cacheKey: CACHE_KEY,
+        presets: PRESETS,
+        apply
+      });
+    })();
+  </script>
+
   <script id="mx-display-bootstrap">
     (() => {
       const AUTO_KEY = "mx_ui_scale_auto";
@@ -2910,6 +2981,65 @@
     }
   </style>
 
+  <style id="mx-deployment-style">
+    :root[data-mx-radius="square"] {
+      --radius-sm: 2px;
+      --radius: 3px;
+      --radius-lg: 4px;
+    }
+    :root[data-mx-radius="subtle"] {
+      --radius-sm: 5px;
+      --radius: 7px;
+      --radius-lg: 10px;
+    }
+    :root[data-mx-radius="rounded"] {
+      --radius-sm: 8px;
+      --radius: 12px;
+      --radius-lg: 18px;
+    }
+    :root[data-mx-radius="soft"] {
+      --radius-sm: 12px;
+      --radius: 18px;
+      --radius-lg: 26px;
+    }
+
+    :root[data-mx-density="compact"] {
+      --mx-density-factor: .82;
+    }
+    :root[data-mx-density="normal"] {
+      --mx-density-factor: 1;
+    }
+    :root[data-mx-density="comfortable"] {
+      --mx-density-factor: 1.18;
+    }
+
+    :root[data-mx-content-width="standard"] { --mx-content-max: 1280px; }
+    :root[data-mx-content-width="wide"] { --mx-content-max: 1600px; }
+    :root[data-mx-content-width="full"] { --mx-content-max: 100%; }
+
+    .content {
+      width: min(var(--mx-content-max, 1600px), 100%) !important;
+    }
+    .deployment-hidden { display:none !important; }
+    .workspace-tab.active { color:var(--primary) !important; }
+    .workspace-tab.active::after { background:var(--primary) !important; }
+    .nav-link.active { box-shadow:inset 3px 0 0 var(--primary) !important; }
+
+    :root[data-mx-density="compact"] .card-body,
+    :root[data-mx-density="compact"] .hero,
+    :root[data-mx-density="compact"] .filter-strip {
+      padding-top: 12px !important;
+      padding-bottom: 12px !important;
+    }
+
+    :root[data-mx-density="comfortable"] .card-body,
+    :root[data-mx-density="comfortable"] .hero,
+    :root[data-mx-density="comfortable"] .filter-strip {
+      padding-top: 24px !important;
+      padding-bottom: 24px !important;
+    }
+  </style>
+
 </head>
 
 <body>
@@ -2918,14 +3048,15 @@
       <div class="brand">
         <div class="brand-mark">
           <img
+            id="deploymentBrandLogo"
             src="images/system-icon.png"
             alt="MX"
             class="brand-logo"
           >
         </div>
         <div class="brand-copy">
-          <strong>MX</strong>
-          <span>General-Purpose Information System</span>
+          <strong id="deploymentBrandName">MX</strong>
+          <span id="deploymentBrandSubtitle">General-Purpose Information System</span>
         </div>
       </div>
 
@@ -2939,7 +3070,7 @@
             <rect x="3" y="14" width="7" height="7" rx="1.5"/>
             <rect x="14" y="14" width="7" height="7" rx="1.5"/>
           </svg>
-          Dashboard
+          <span id="dashboardNavLabel">Dashboard</span>
         </button>
 
         <button class="nav-link" type="button" data-workspace-tab="records" style="width:100%;text-align:left;">
@@ -2948,7 +3079,7 @@
             <path d="M14 3.5v4h4"/>
             <path d="M9.5 11h5M9.5 14.5h5"/>
           </svg>
-          Records
+          <span id="recordsNavLabel">Records</span>
         </button>
 
         <button class="nav-link hidden" type="button" data-workspace-tab="admin" id="adminNavLink" style="width:100%;text-align:left;">
@@ -2956,10 +3087,11 @@
             <path d="M12 3 4.5 6v5.2c0 4.5 3 7.8 7.5 9.8 4.5-2 7.5-5.3 7.5-9.8V6z"/>
             <path d="M9.4 12.1 11 13.7l3.7-4"/>
           </svg>
-          Administration
+          <span id="adminNavLabel">Administration</span>
         </button>
       </nav>
 
+      <div id="quickActionsSection">
       <div class="sidebar-section-label">Quick actions</div>
 
       <nav class="nav">
@@ -2967,7 +3099,7 @@
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
             <path d="M12 5v14M5 12h14"/>
           </svg>
-          Open record workspace
+          <span id="openRecordWorkspaceLabel">Open record workspace</span>
         </button>
 
         <button class="nav-link" id="sidebarExportBtn" type="button" style="width:100%;text-align:left;">
@@ -2976,9 +3108,10 @@
             <path d="m8 11 4 4 4-4"/>
             <path d="M5 20h14"/>
           </svg>
-          Export detailed records
+          <span id="exportDetailedRecordsLabel">Export detailed records</span>
         </button>
       </nav>
+      </div>
 
       <div class="sidebar-spacer"></div>
 
@@ -3020,11 +3153,11 @@
 
           <div class="topbar-left">
             <div class="breadcrumb">
-              <span>MX</span>
+              <span id="breadcrumbProduct">MX</span>
               <span>/</span>
-              <strong>Dashboard</strong>
+              <strong id="breadcrumbWorkspace">Dashboard</strong>
             </div>
-            <div class="topbar-title">Custom Dashboard</div>
+            <div class="topbar-title" id="workspaceTopbarTitle">Custom Dashboard</div>
           </div>
         </div>
 
@@ -3075,7 +3208,7 @@
             <rect x="3" y="14" width="7" height="7" rx="1.5"/>
             <rect x="14" y="14" width="7" height="7" rx="1.5"/>
           </svg>
-          Dashboard
+          <span id="dashboardWorkspaceLabel">Dashboard</span>
         </button>
 
         <button class="workspace-tab" type="button" data-workspace-tab="records">
@@ -3084,7 +3217,7 @@
             <path d="M14 3.5v4h4"/>
             <path d="M9.5 11h5M9.5 14.5h5"/>
           </svg>
-          Records
+          <span id="recordsWorkspaceLabel">Records</span>
         </button>
 
         <button class="workspace-tab hidden" type="button" data-workspace-tab="admin" id="adminWorkspaceTab">
@@ -3092,7 +3225,7 @@
             <path d="M12 3 4.5 6v5.2c0 4.5 3 7.8 7.5 9.8 4.5-2 7.5-5.3 7.5-9.8V6z"/>
             <path d="M9.4 12.1 11 13.7l3.7-4"/>
           </svg>
-          Administration
+          <span id="adminWorkspaceLabel">Administration</span>
           <span class="tab-admin-badge">Admin</span>
         </button>
       </nav>
@@ -3105,7 +3238,7 @@
               <span>●</span>
               Custom dashboard
             </div>
-            <h1>Dashboard</h1>
+            <h1 id="dashboardHeroTitle">Dashboard</h1>
             <p>
               This view contains only the widgets configured by an Administrator from this deployment’s Record Structure. MX does not assume any business fields or predefined statistics.
             </p>
@@ -3626,8 +3759,8 @@
   <section class="login-overlay" id="loginOverlay">
     <div class="login-card">
       <div class="login-brand">
-        <div class="login-brand-mark" style="border-radius:50%;overflow:hidden;padding:0;"><img src="images/system-icon.png" alt="MX" style="width:100%;height:100%;display:block;object-fit:cover;border-radius:50%;"></div>
-        <h1>MX · Dashboard</h1>
+        <div class="login-brand-mark" style="border-radius:50%;overflow:hidden;padding:0;"><img id="loginBrandLogo" src="images/system-icon.png" alt="MX" style="width:100%;height:100%;display:block;object-fit:cover;border-radius:50%;"></div>
+        <h1 id="loginBrandTitle">MX · Dashboard</h1>
         <p>
           Sign in to view operational record statistics. Your permissions remain enforced by the backend.
         </p>
@@ -3694,7 +3827,7 @@
           <input id="loginOtp" inputmode="numeric" autocomplete="one-time-code" maxlength="8" placeholder="Optional">
         </div>
 
-        <button class="btn btn-primary" id="loginBtn" type="submit">Sign in to MX</button>
+        <button class="btn btn-primary" id="loginBtn" type="submit">Sign in</button>
         <div class="login-status" id="loginStatus"></div>
       </form>
     </div>
@@ -5175,12 +5308,700 @@
     color:#94a3b8 !important;
     background:#111827 !important;
   }
+
+  /* MX V9: responsive Records workspace */
+
+  .table-card.is-empty {
+    flex: 0 0 auto !important;
+    min-height: 0 !important;
+  }
+
+  .table-card.is-empty .table-wrap {
+    flex: 0 0 auto !important;
+    min-height: 150px;
+  }
+
+  .table-card.is-empty .empty-state {
+    min-height: 150px;
+    display: table-cell;
+    vertical-align: middle;
+  }
+
+  @media (max-width: 1100px) and (min-width: 821px) {
+    .universal-row {
+      grid-template-columns: minmax(140px, 180px) auto auto !important;
+      align-items: end;
+    }
+
+    .universal-row > label:first-child {
+      grid-column: 1 / -1;
+    }
+
+    .universal-row .clear-top {
+      grid-column: auto !important;
+    }
+
+    .advanced-grid {
+      grid-template-columns: repeat(2, minmax(180px, 1fr)) !important;
+    }
+  }
+
+  @media (max-width: 820px) {
+    :host {
+      overflow: auto !important;
+    }
+
+    .app-shell {
+      height: auto !important;
+      min-height: 100% !important;
+      overflow: visible !important;
+    }
+
+    .app-main {
+      height: auto !important;
+      min-height: 100% !important;
+      overflow: visible !important;
+      padding: 10px !important;
+      gap: 8px !important;
+    }
+
+    .search-panel {
+      gap: 8px;
+      padding: 10px;
+      border-radius: 12px;
+      box-shadow: 0 3px 12px rgba(16, 24, 40, .05);
+    }
+
+    .records-command-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      gap: 8px;
+      min-height: 0;
+    }
+
+    .records-command-row #columnsBtn,
+    .records-command-row #newEntryBtn {
+      width: 100%;
+      min-width: 0;
+      min-height: 40px;
+      justify-content: center;
+    }
+
+    .column-menu {
+      position: fixed;
+      left: 12px;
+      right: 12px;
+      top: auto;
+      bottom: 12px;
+      width: auto;
+      max-height: min(70vh, 520px);
+      z-index: 45;
+      border-radius: 14px;
+    }
+
+    .universal-row {
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) !important;
+      gap: 8px;
+      align-items: stretch;
+    }
+
+    .universal-row > label:first-child,
+    .universal-row > label:nth-child(2) {
+      grid-column: 1 / -1;
+    }
+
+    .universal-row #advancedToggleBtn,
+    .universal-row #clearSearchBtn {
+      width: 100%;
+      min-height: 40px;
+    }
+
+    .universal-row .clear-top {
+      grid-column: auto !important;
+    }
+
+    .search-help {
+      display: none;
+    }
+
+    .advanced-panel {
+      padding-top: 8px;
+    }
+
+    .advanced-grid {
+      grid-template-columns: 1fr !important;
+    }
+
+    .advanced-actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+    }
+
+    .advanced-actions .btn {
+      width: 100%;
+      min-height: 40px;
+    }
+
+    .status-strip {
+      min-height: 34px;
+      padding: 6px 9px;
+      border-radius: 10px;
+    }
+
+    .status-left,
+    .status-right {
+      font-size: 0.75rem;
+    }
+
+    .table-card,
+    .table-card.is-empty {
+      flex: 0 0 auto !important;
+      min-height: 0 !important;
+      overflow: visible;
+      border: 0;
+      border-radius: 0;
+      background: transparent;
+      box-shadow: none;
+    }
+
+    .table-loading-bar {
+      height: 3px;
+      flex-basis: 3px;
+      margin-bottom: 6px;
+      border-radius: 999px;
+    }
+
+    .table-wrap,
+    .table-card.is-empty .table-wrap {
+      flex: 0 0 auto !important;
+      min-height: 0 !important;
+      overflow: visible;
+      padding: 0;
+      background: transparent !important;
+      scrollbar-gutter: auto;
+    }
+
+    .table-wrap table,
+    .table-wrap thead,
+    .table-wrap tbody,
+    .table-wrap tr,
+    .table-wrap th,
+    .table-wrap td {
+      width: 100%;
+      min-width: 0 !important;
+      max-width: none !important;
+    }
+
+    .table-wrap table {
+      display: block;
+      table-layout: auto;
+      border-collapse: separate;
+      background: transparent;
+      font-size: 0.875rem;
+    }
+
+    .table-wrap thead {
+      display: none;
+    }
+
+    .table-wrap tbody {
+      display: grid;
+      gap: 10px;
+    }
+
+    .table-wrap tbody tr {
+      display: block;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 13px;
+      background: var(--panel);
+      box-shadow: 0 2px 8px rgba(16, 24, 40, .045);
+    }
+
+    .table-wrap tbody tr:hover {
+      background: var(--panel);
+    }
+
+    .table-wrap tbody td,
+    .table-wrap tbody td.dynamic-cell {
+      position: static;
+      display: grid;
+      grid-template-columns: minmax(108px, 34%) minmax(0, 1fr);
+      gap: 12px;
+      align-items: start;
+      width: 100% !important;
+      min-width: 0 !important;
+      max-width: none !important;
+      padding: 10px 12px;
+      border: 0;
+      border-bottom: 1px solid var(--line-soft);
+      background: var(--panel) !important;
+      white-space: normal;
+      overflow: visible;
+      text-overflow: clip;
+      line-height: 1.4;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }
+
+    .table-wrap tbody td::before {
+      content: attr(data-label);
+      min-width: 0;
+      color: var(--muted);
+      font-size: 0.6875rem;
+      font-weight: 850;
+      letter-spacing: .045em;
+      text-transform: uppercase;
+      line-height: 1.45;
+    }
+
+    .table-wrap tbody td:last-child {
+      border-bottom: 0;
+    }
+
+    .table-wrap tbody .row-num {
+      position: static;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      width: 100% !important;
+      max-width: none !important;
+      padding: 8px 12px;
+      text-align: left;
+      color: var(--muted);
+      background: var(--panel-soft) !important;
+      box-shadow: none;
+      font-size: 0.75rem;
+      font-weight: 800;
+    }
+
+    .table-wrap tbody .row-num::before {
+      content: attr(data-label);
+    }
+
+    .table-wrap tbody .dynamic-cell[data-field-type="long_text"] {
+      white-space: normal;
+    }
+
+    .long-text-preview {
+      -webkit-line-clamp: 4;
+      max-height: calc(1.38em * 4);
+    }
+
+    .attachment-count {
+      justify-self: start;
+      max-width: 100%;
+    }
+
+    .sticky-actions {
+      position: static !important;
+      display: block !important;
+      width: 100% !important;
+      min-width: 0 !important;
+      max-width: none !important;
+      padding: 10px 12px !important;
+      text-align: left;
+      background: var(--panel-soft) !important;
+      box-shadow: none !important;
+    }
+
+    .sticky-actions::before {
+      display: none;
+    }
+
+    .row-actions {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      width: 100%;
+      gap: 8px;
+    }
+
+    .row-actions .btn {
+      width: 100%;
+      min-width: 0;
+      min-height: 38px;
+      justify-content: center;
+    }
+
+    .row-actions .btn:only-child {
+      grid-column: 1 / -1;
+    }
+
+    .records-empty-row {
+      border: 1px solid var(--line) !important;
+      border-radius: 13px !important;
+      box-shadow: none !important;
+    }
+
+    .table-wrap tbody .empty-state,
+    .table-card.is-empty .empty-state {
+      display: block !important;
+      min-height: 0 !important;
+      padding: 34px 18px !important;
+      border: 0 !important;
+      text-align: center;
+      color: var(--muted);
+      background: var(--panel) !important;
+      font-size: 0.875rem;
+    }
+
+    .table-wrap tbody .empty-state::before {
+      display: none;
+      content: none;
+    }
+
+    .pagination {
+      grid-template-columns: 1fr;
+      gap: 8px;
+      margin-top: 8px;
+      padding: 9px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--panel);
+    }
+
+    .pagination-info {
+      text-align: center;
+      font-size: 0.75rem;
+    }
+
+    .pagination-center {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      align-items: center;
+      width: 100%;
+      gap: 8px;
+    }
+
+    .pagination-center #firstPageBtn {
+      display: none;
+    }
+
+    .pagination-center #prevPageBtn,
+    .pagination-center #nextPageBtn {
+      min-width: 92px;
+    }
+
+    .pagination-center #currentPageText {
+      text-align: center;
+      white-space: nowrap;
+    }
+
+    .pagination-jump {
+      display: none;
+    }
+  }
+
+  @media (max-width: 480px) {
+    .app-main {
+      padding: 8px !important;
+    }
+
+    .search-panel {
+      padding: 8px;
+    }
+
+    .records-command-row #columnsBtn,
+    .records-command-row #newEntryBtn,
+    .universal-row #advancedToggleBtn,
+    .universal-row #clearSearchBtn {
+      min-height: 38px;
+      padding-left: 8px;
+      padding-right: 8px;
+      font-size: 0.75rem;
+    }
+
+    .table-wrap tbody td,
+    .table-wrap tbody td.dynamic-cell {
+      grid-template-columns: 96px minmax(0, 1fr);
+      gap: 9px;
+      padding: 9px 10px;
+    }
+
+    .table-wrap tbody td::before {
+      font-size: 0.625rem;
+    }
+
+    .pagination-center #prevPageBtn,
+    .pagination-center #nextPageBtn {
+      min-width: 78px;
+      padding-left: 8px;
+      padding-right: 8px;
+    }
+  }
+
+  /* MX V9.1: compact Records search toolbar */
+  /* MX V9.2: keep Universal Search and Advanced Search explicit while compact */
+
+  .records-search-toolbar {
+    grid-template-columns: minmax(360px, 1fr) 132px auto auto auto;
+  }
+
+  .universal-search-group {
+    display: grid;
+    grid-template-columns: auto minmax(180px, 1fr);
+    align-items: center;
+    gap: 9px;
+    min-width: 0;
+  }
+
+  .universal-search-label {
+    margin: 0;
+    font-size: 0.67rem;
+    line-height: 1;
+    font-weight: 800;
+    letter-spacing: .055em;
+    white-space: nowrap;
+    color: var(--muted);
+  }
+
+  .universal-search-group #universalSearch {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .advanced-panel-head {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    margin-bottom: 9px;
+  }
+
+  .advanced-panel-head strong {
+    font-size: 0.7rem;
+    letter-spacing: .055em;
+    white-space: nowrap;
+  }
+
+  .advanced-panel-head span {
+    color: var(--muted);
+    font-size: 0.72rem;
+  }
+
+  @media (max-width: 1180px) {
+    .records-search-toolbar {
+      grid-template-columns: minmax(280px, 1fr) 124px auto auto;
+    }
+
+    .records-search-toolbar .records-command-row {
+      grid-column: 1 / -1;
+      justify-content: flex-end;
+    }
+  }
+
+  @media (max-width: 820px) {
+    .records-search-toolbar {
+      grid-template-columns: minmax(0, 1fr) 116px;
+    }
+
+    .universal-search-group {
+      grid-column: 1 / -1;
+      grid-template-columns: 1fr;
+      gap: 5px;
+    }
+
+    .records-search-toolbar #advancedToggleBtn,
+    .records-search-toolbar #clearSearchBtn {
+      width: 100%;
+    }
+
+    .advanced-panel-head {
+      display: block;
+    }
+
+    .advanced-panel-head span {
+      display: block;
+      margin-top: 4px;
+    }
+  }
+
+
+  .sr-only {
+    position: absolute !important;
+    width: 1px !important;
+    height: 1px !important;
+    padding: 0 !important;
+    margin: -1px !important;
+    overflow: hidden !important;
+    clip: rect(0, 0, 0, 0) !important;
+    white-space: nowrap !important;
+    border: 0 !important;
+  }
+
+  .compact-search-panel {
+    display: block;
+    padding: 7px 8px;
+  }
+
+  .records-search-toolbar {
+    display: grid;
+    grid-template-columns: minmax(180px, 1fr) 138px auto auto auto;
+    align-items: center;
+    gap: 7px;
+    min-height: 38px;
+  }
+
+  .records-search-toolbar > label {
+    display: block;
+    margin: 0;
+  }
+
+  .records-search-toolbar input,
+  .records-search-toolbar select,
+  .records-search-toolbar .btn {
+    min-height: 38px;
+    height: 38px;
+  }
+
+  .records-search-toolbar input,
+  .records-search-toolbar select {
+    padding-top: 6px;
+    padding-bottom: 6px;
+  }
+
+  .records-search-toolbar #advancedToggleBtn,
+  .records-search-toolbar #clearSearchBtn {
+    white-space: nowrap;
+  }
+
+  .records-search-toolbar .records-command-row {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 7px;
+    min-height: 0;
+  }
+
+  .records-search-toolbar .records-command-row #columnsBtn,
+  .records-search-toolbar .records-command-row #newEntryBtn {
+    min-height: 38px;
+    height: 38px;
+    min-width: 0;
+  }
+
+  .records-search-toolbar .column-menu {
+    top: calc(100% + 7px);
+    right: 0;
+  }
+
+  .compact-search-panel > .advanced-panel {
+    margin-top: 8px;
+  }
+
+  @media (max-width: 980px) {
+    .records-search-toolbar {
+      grid-template-columns: minmax(160px, 1fr) 126px auto auto;
+    }
+
+    .records-search-toolbar .records-command-row {
+      grid-column: 1 / -1;
+      justify-content: flex-end;
+      margin-top: 0;
+    }
+  }
+
+  @media (max-width: 820px) {
+    .compact-search-panel {
+      padding: 7px;
+    }
+
+    .records-search-toolbar {
+      grid-template-columns: minmax(0, 1fr) 118px auto auto;
+      gap: 6px;
+    }
+
+    .records-search-toolbar .compact-search-field {
+      grid-column: 1 / -1;
+    }
+
+    .records-search-toolbar .records-command-row {
+      display: flex;
+      grid-column: 1 / -1;
+      justify-content: stretch;
+      gap: 6px;
+    }
+
+    .records-search-toolbar .records-command-row #columnsBtn,
+    .records-search-toolbar .records-command-row #newEntryBtn {
+      flex: 1 1 0;
+      width: auto;
+      min-height: 38px;
+    }
+
+    .records-search-toolbar .column-menu {
+      position: fixed;
+      left: 12px;
+      right: 12px;
+      top: auto;
+      bottom: 12px;
+      width: auto;
+    }
+  }
+
+  @media (max-width: 560px) {
+    .records-search-toolbar {
+      grid-template-columns: minmax(0, 1fr) auto auto;
+    }
+
+    .records-search-toolbar .compact-match-field {
+      grid-column: 1 / -1;
+    }
+  }
+
+  :host([data-theme="dark"]) .table-wrap tbody tr,
+  :host([data-theme="dark"]) .pagination {
+    background: var(--panel) !important;
+    border-color: var(--line) !important;
+  }
+
+  :host([data-theme="dark"]) .table-wrap tbody .row-num,
+  :host([data-theme="dark"]) .sticky-actions {
+    background: var(--panel-soft) !important;
+  }
+
+  /* MX V9.2 final compact-search overrides */
+  .records-search-toolbar {
+    grid-template-columns: minmax(360px, 1fr) 132px auto auto auto;
+  }
+  .universal-search-group {
+    display: grid;
+    grid-template-columns: auto minmax(180px, 1fr);
+    align-items: center;
+    gap: 9px;
+    min-width: 0;
+  }
+  .universal-search-label {
+    margin: 0;
+    font-size: 0.67rem;
+    line-height: 1;
+    font-weight: 800;
+    letter-spacing: .055em;
+    white-space: nowrap;
+    color: var(--muted);
+  }
+  .universal-search-group #universalSearch { min-width: 0; width: 100%; }
+  .advanced-panel-head { display:flex; align-items:baseline; gap:10px; margin-bottom:9px; }
+  .advanced-panel-head strong { font-size:.7rem; letter-spacing:.055em; white-space:nowrap; }
+  .advanced-panel-head span { color:var(--muted); font-size:.72rem; }
+  @media (max-width: 1180px) {
+    .records-search-toolbar { grid-template-columns: minmax(280px, 1fr) 124px auto auto; }
+    .records-search-toolbar .records-command-row { grid-column:1 / -1; justify-content:flex-end; }
+  }
+  @media (max-width: 820px) {
+    .records-search-toolbar { grid-template-columns:minmax(0,1fr) 116px; }
+    .universal-search-group { grid-column:1 / -1; grid-template-columns:1fr; gap:5px; }
+    .records-search-toolbar #advancedToggleBtn, .records-search-toolbar #clearSearchBtn { width:100%; }
+    .advanced-panel-head { display:block; }
+    .advanced-panel-head span { display:block; margin-top:4px; }
+  }
+
 </style>
 
 <div class="app-shell">
 <header class="topbar">
 <div class="brand">
-<h1>Records</h1>
+<h1 id="recordsWorkspaceTitle">Records</h1>
 <p>Automatic yearly control numbers · 256 records per page · N1 attachment storage</p>
 </div>
 <div class="topbar-actions">
@@ -5193,48 +6014,44 @@
 </div>
 </header>
 <main class="app-main">
-<section class="search-panel">
-<div class="records-command-row">
-<button class="btn btn-light" id="columnsBtn" type="button" aria-expanded="false">
-  Columns
-</button>
-<div class="column-menu hidden" id="columnsMenu">
-  <div class="column-menu-title">Visible columns</div>
-  <div class="column-menu-list" id="columnsMenuList"></div>
-  <button class="btn btn-light column-menu-reset" id="columnsResetBtn" type="button">
-    Use Administrator Defaults
-  </button>
-  <div class="column-menu-note">Only your explicit overrides are saved. New fields, including File Attachment fields, follow the Administrator default automatically.</div>
-</div>
-<button class="btn btn-primary" id="newEntryBtn" type="button">
-  <span aria-hidden="true">＋</span>
-  Add Record
-</button>
-</div>
-<div class="universal-row">
-<label>
-          UNIVERSAL SEARCH
-          <input autocomplete="off" id="universalSearch" placeholder="Search configured fields and attachment filenames..." type="search"/>
-</label>
-<label>
-          MATCH MODE
-          <select id="matchMode">
+<section class="search-panel compact-search-panel">
+<div class="records-search-toolbar">
+  <div class="universal-search-group">
+    <label class="universal-search-label" for="universalSearch">UNIVERSAL SEARCH</label>
+    <input autocomplete="off" id="universalSearch" aria-describedby="recordsSearchHelp" title="Search fields marked Searchable in Record Structure plus attachment filenames" placeholder="Search configured fields and attachment filenames..." type="search"/>
+  </div>
+  <label class="compact-match-field">
+    <span class="sr-only">Match mode</span>
+    <select id="matchMode" aria-label="Match mode" title="Search match mode">
 <option value="contains">Contains</option>
 <option value="prefix">Starts with</option>
 <option value="exact">Exact</option>
 </select>
-</label>
-<button class="btn btn-soft" id="advancedToggleBtn" type="button">
-          Advanced Search
-        </button>
-<button class="btn btn-light clear-top" id="clearSearchBtn" type="button">
-          Clear
-        </button>
+  </label>
+  <button class="btn btn-soft" id="advancedToggleBtn" type="button">Advanced Search</button>
+  <button class="btn btn-light clear-top" id="clearSearchBtn" type="button">Clear</button>
+  <div class="records-command-row">
+    <button class="btn btn-light" id="columnsBtn" type="button" aria-expanded="false">Columns</button>
+    <div class="column-menu hidden" id="columnsMenu">
+      <div class="column-menu-title">Visible columns</div>
+      <div class="column-menu-list" id="columnsMenuList"></div>
+      <button class="btn btn-light column-menu-reset" id="columnsResetBtn" type="button">Use Administrator Defaults</button>
+      <div class="column-menu-note">Only your explicit overrides are saved. New fields, including File Attachment fields, follow the Administrator default automatically.</div>
+    </div>
+    <button class="btn btn-primary" id="newEntryBtn" type="button">
+      <span aria-hidden="true">＋</span>
+      <span id="newEntryBtnLabel">Add Record</span>
+    </button>
+  </div>
 </div>
-<div class="search-help">
-        Universal search uses fields marked Searchable in Record Structure plus attachment filenames. Search is server-side; the browser holds only one 256-row page.
-      </div>
+<div class="search-help sr-only" id="recordsSearchHelp">
+  Universal search uses fields marked Searchable in Record Structure plus attachment filenames. Search is server-side; the browser holds only one 256-row page.
+</div>
 <div class="advanced-panel hidden" id="advancedPanel">
+<div class="advanced-panel-head">
+  <strong>ADVANCED SEARCH</strong>
+  <span>Filter specific fields, attachments, and sorting without replacing Universal Search.</span>
+</div>
 <div class="advanced-grid" id="dynamicAdvancedFilters"></div>
 <div class="advanced-grid advanced-system-grid">
 <label>
@@ -5276,7 +6093,7 @@
 <span id="requestStatus">Ready</span>
 </div>
 </section>
-<section class="table-card">
+<section class="table-card" id="recordsTableCard">
 <div class="table-loading-bar" id="tableLoadingBar"></div>
 <div class="table-wrap" id="tableWrap">
 <table>
@@ -5844,6 +6661,21 @@
 </style>
 
   </template>
+
+<style id="mx-deployment-module-style">
+  :host([data-mx-radius="square"]) { --mx-module-radius:3px; }
+  :host([data-mx-radius="subtle"]) { --mx-module-radius:7px; }
+  :host([data-mx-radius="rounded"]) { --mx-module-radius:12px; }
+  :host([data-mx-radius="soft"]) { --mx-module-radius:18px; }
+  :host([data-mx-density="compact"]) { --mx-module-gap:8px; --mx-module-pad:10px; }
+  :host([data-mx-density="normal"]) { --mx-module-gap:12px; --mx-module-pad:14px; }
+  :host([data-mx-density="comfortable"]) { --mx-module-gap:16px; --mx-module-pad:18px; }
+  .card, .search-panel, .table-card, .modal-card, .form-section,
+  .admin-function-tabs, .deployment-config-section { border-radius:var(--mx-module-radius,12px) !important; }
+  .app-main, .card-body { gap:var(--mx-module-gap,12px); }
+  .btn-primary { background:var(--primary) !important; }
+  .btn-primary:hover:not(:disabled), .btn-primary:focus-visible { background:var(--primary-dark,var(--primary)) !important; border-color:var(--primary-dark,var(--primary)) !important; }
+</style>
   <script type="text/plain" id="recordsSystemScript">
 
 "use strict";
@@ -5930,6 +6762,24 @@ const ENDPOINTS = {
   preview: (entryUid, attachmentUid) =>
     `/mx/v1/records/${encodeURIComponent(entryUid)}/attachments/${encodeURIComponent(attachmentUid)}/preview`
 };
+
+function mxTerminology() {
+  const terms = window.MX_DEPLOYMENT_CONFIG?.terminology || {};
+  return {
+    singular: String(terms.record_singular || "Record"),
+    plural: String(terms.record_plural || "Records")
+  };
+}
+
+function recordTerm(lower = false) {
+  const value = mxTerminology().singular;
+  return lower ? value.toLowerCase() : value;
+}
+
+function recordsTerm(lower = false) {
+  const value = mxTerminology().plural;
+  return lower ? value.toLowerCase() : value;
+}
 
 /* -------------------------------------------------------------------------- */
 /* State                                                                      */
@@ -7197,7 +8047,7 @@ function recordDisplayLabel(row) {
     }
   }
 
-  return row?.uid || "record";
+  return row?.uid || recordTerm(true);
 }
 
 async function loadRecordSchema() {
@@ -7278,7 +8128,7 @@ function hasActiveSearch() {
 }
 
 function searchDescription() {
-  if (!hasActiveSearch()) return "All records";
+  if (!hasActiveSearch()) return `All ${recordsTerm(true)}`;
 
   const parts = [];
   const q = els.universalSearch.value.trim();
@@ -7397,8 +8247,10 @@ async function loadPage(page = 1) {
     state.rows = [];
     state.hasNext = false;
 
+    document.getElementById("recordsTableCard")?.classList.add("is-empty");
+
     els.tableBody.innerHTML = `
-      <tr>
+      <tr class="records-empty-row">
         <td colspan="${visibleTableFields().length + 2}" class="empty-state">
           ${escapeHtml(error.message)}
         </td>
@@ -7406,7 +8258,7 @@ async function loadPage(page = 1) {
     `;
 
     updatePagination();
-    els.statusText.textContent = "Unable to load records.";
+    els.statusText.textContent = `Unable to load ${recordsTerm(true)}.`;
 
     showToast(error.message, "error");
   } finally {
@@ -7425,11 +8277,14 @@ async function loadPage(page = 1) {
 function renderTable() {
   const rows = state.rows;
   const fields = visibleTableFields();
+  const tableCard = document.getElementById("recordsTableCard");
   renderTableHead();
+
+  tableCard?.classList.toggle("is-empty", rows.length === 0);
 
   if (!rows.length) {
     els.tableBody.innerHTML = `
-      <tr>
+      <tr class="records-empty-row">
         <td colspan="${fields.length + 2}" class="empty-state">
           No records found for this page/search.
         </td>
@@ -7444,8 +8299,8 @@ function renderTable() {
     const attachments = attachmentList(row);
 
     return `
-      <tr>
-        <td class="row-num">${startingRow + index}</td>
+      <tr data-record-row="${escapeHtml(row.uid)}">
+        <td class="row-num" data-label="Record">${startingRow + index}</td>
         ${fields.map(field => {
           if (field.field_type === "attachments") {
             const count = attachments.filter(file =>
@@ -7458,6 +8313,7 @@ function renderTable() {
                 class="dynamic-cell attachment-system-cell"
                 data-field-key="${escapeHtml(field.key)}"
                 data-field-type="attachments"
+                data-label="${escapeHtml(field.label)}"
                 title="${escapeHtml(label)}"
               >
                 <button
@@ -7482,6 +8338,7 @@ function renderTable() {
                 class="dynamic-cell"
                 data-field-key="${escapeHtml(field.key)}"
                 data-field-type="long_text"
+                data-label="${escapeHtml(field.label)}"
                 title="${escapeHtml(display)}"
               >
                 <div class="long-text-preview">
@@ -7491,9 +8348,9 @@ function renderTable() {
             `;
           }
 
-          return `<td class="dynamic-cell" data-field-key="${escapeHtml(field.key)}" data-field-type="${escapeHtml(field.field_type)}" title="${escapeHtml(display)}">${escapeHtml(display)}</td>`;
+          return `<td class="dynamic-cell" data-field-key="${escapeHtml(field.key)}" data-field-type="${escapeHtml(field.field_type)}" data-label="${escapeHtml(field.label)}" title="${escapeHtml(display)}">${escapeHtml(display)}</td>`;
         }).join("")}
-        <td class="sticky-actions">
+        <td class="sticky-actions" data-label="Actions">
           <div class="row-actions">
             <button
               class="btn btn-soft btn-small"
@@ -8108,14 +8965,14 @@ function resetEntryForm() {
 
 function newEntry() {
   if (!canWriteMx()) {
-    showToast("Your account cannot create records.", "error");
+    showToast(`Your account cannot create ${recordsTerm(true)}.`, "error");
     return;
   }
 
   resetEntryForm();
 
-  els.entryModalTitle.textContent = "New Record";
-  els.entryModalHint.textContent = "Create a new record.";
+  els.entryModalTitle.textContent = `New ${recordTerm()}`;
+  els.entryModalHint.textContent = `Create a new ${recordTerm(true)}.`;
   applyEntryPermissions();
   updateSaveButtonLabel();
 
@@ -8160,7 +9017,7 @@ function editEntry(uid) {
   renderCustomAttachmentFields();
   applyEntryPermissions();
 
-  els.entryModalTitle.textContent = canWriteMx() ? "Edit Record" : "View Record";
+  els.entryModalTitle.textContent = canWriteMx() ? `Edit ${recordTerm()}` : `View ${recordTerm()}`;
   els.entryModalHint.textContent = `${canWriteMx() ? "Editing" : "Viewing"} ${recordDisplayLabel(row)}`;
 
   updateSaveButtonLabel();
@@ -8323,7 +9180,7 @@ function updateSaveButtonLabel() {
   const customFileCount = [...state.pendingFieldFiles.values()]
     .reduce((sum, files) => sum + (Array.isArray(files) ? files.length : 0), 0);
   const fileCount = customFileCount;
-  const baseLabel = state.editing ? "Update Record" : "Save Record";
+  const baseLabel = state.editing ? `Update ${recordTerm()}` : `Save ${recordTerm()}`;
 
   els.saveBtn.textContent =
     fileCount > 0
@@ -8745,7 +9602,7 @@ async function saveEntry(event) {
 
   try {
     els.saveBtn.disabled = true;
-    els.saveBtn.textContent = isUpdate ? "Updating..." : "Saving...";
+    els.saveBtn.textContent = isUpdate ? `Updating ${recordTerm(true)}...` : `Saving ${recordTerm(true)}...`;
 
     let savedEntry;
 
@@ -8780,8 +9637,8 @@ async function saveEntry(event) {
 
     showToast(
       isUpdate
-        ? "Record updated."
-        : "Record created."
+        ? `${recordTerm()} updated.`
+        : `${recordTerm()} created.`
     );
 
     window.MX_DATA?.recordsChanged();
@@ -8807,7 +9664,7 @@ async function saveEntry(event) {
 
 async function deleteEntry(uid) {
   if (!canDeleteMx()) {
-    showToast("Your account cannot delete records.", "error");
+    showToast(`Your account cannot delete ${recordsTerm(true)}.`, "error");
     return;
   }
 
@@ -8837,7 +9694,7 @@ async function deleteEntry(uid) {
       throw new Error(readableError(text, response.status));
     }
 
-    showToast("Record deleted.");
+    showToast(`${recordTerm()} deleted.`);
 
     window.MX_DATA?.recordsChanged();
 
@@ -9277,7 +10134,7 @@ els.advancedToggleBtn.addEventListener("click", () => {
   els.advancedToggleBtn.textContent =
     hidden
       ? "Advanced Search"
-      : "Hide Advanced";
+      : "Hide Advanced Search";
 });
 
 els.applyAdvancedBtn.addEventListener("click", () => {
@@ -10264,10 +11121,17 @@ bootstrapSession();
       opacity: .78;
     }
 
+    .schema-order-help {
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: .6875rem;
+      line-height: 1.45;
+    }
+
     .schema-fields {
       display: grid;
       gap: 10px;
-      margin-top: 12px;
+      margin-top: 10px;
     }
 
     .schema-field-card {
@@ -10275,10 +11139,104 @@ bootstrapSession();
       border-radius: 11px;
       background: var(--panel);
       overflow: hidden;
+      transition: border-color .14s ease, box-shadow .14s ease, opacity .14s ease, transform .14s ease;
     }
 
     .schema-field-card.archived {
       opacity: .72;
+    }
+
+    .schema-field-card.schema-dragging {
+      opacity: .48;
+      transform: scale(.997);
+    }
+
+    .schema-field-card.schema-drop-before {
+      box-shadow: inset 0 3px 0 var(--primary);
+      border-color: color-mix(in srgb, var(--primary) 55%, var(--line));
+    }
+
+    .schema-field-card.schema-drop-after {
+      box-shadow: inset 0 -3px 0 var(--primary);
+      border-color: color-mix(in srgb, var(--primary) 55%, var(--line));
+    }
+
+    .schema-field-title-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+      flex: 1 1 auto;
+    }
+
+    .schema-drag-handle {
+      width: 34px;
+      height: 34px;
+      flex: 0 0 34px;
+      align-self: center;
+      display: grid;
+      place-items: center;
+      margin: 0;
+      padding: 0;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      color: var(--muted);
+      background: var(--panel);
+      cursor: grab;
+      user-select: none;
+      touch-action: none;
+      line-height: 1;
+    }
+
+    .schema-grip-dots {
+      width: 13px;
+      height: 19px;
+      display: grid;
+      grid-template-columns: repeat(2, 3px);
+      grid-template-rows: repeat(3, 3px);
+      gap: 3px 4px;
+      place-content: center;
+      pointer-events: none;
+    }
+
+    .schema-grip-dots > span {
+      width: 3px;
+      height: 3px;
+      border-radius: 999px;
+      background: currentColor;
+      display: block;
+    }
+
+    .schema-drag-handle:active { cursor: grabbing; }
+
+    .schema-drag-handle:disabled {
+      cursor: not-allowed;
+      opacity: .45;
+    }
+
+    .schema-field-heading-copy {
+      min-width: 0;
+      min-height: 34px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+    }
+
+    .schema-field-order-actions {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-left: auto;
+      flex: 0 0 auto;
+    }
+
+    .schema-order-button {
+      width: 32px;
+      min-width: 32px;
+      min-height: 32px;
+      padding: 0;
+      display: grid;
+      place-items: center;
     }
 
     .schema-field-head {
@@ -10298,12 +11256,14 @@ bootstrapSession();
     .schema-field-name strong {
       display: block;
       font-size: .875rem;
+      line-height: 1.15;
     }
 
     .schema-field-meta {
-      margin-top: 2px;
+      margin-top: 3px;
       color: var(--muted);
       font-size: .6875rem;
+      line-height: 1.2;
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     }
 
@@ -10334,6 +11294,23 @@ bootstrapSession();
       display: flex;
       justify-content: flex-end;
       gap: 8px;
+    }
+
+    @media (max-width: 720px) {
+      .schema-field-head {
+        align-items: center;
+        flex-wrap: wrap;
+      }
+
+      .schema-field-title-row {
+        width: 100%;
+      }
+
+      .schema-field-order-actions {
+        margin-left: 46px;
+        width: calc(100% - 46px);
+        justify-content: flex-end;
+      }
     }
 
     :host([data-theme="dark"]) .schema-note {
@@ -11052,6 +12029,65 @@ bootstrapSession();
     font-weight:500;
   }
 
+  .deployment-config-note {
+    margin-bottom:16px;
+    padding:12px 14px;
+    border:1px solid color-mix(in srgb, var(--primary) 28%, var(--line-soft));
+    border-radius:12px;
+    background:color-mix(in srgb, var(--primary) 7%, var(--panel));
+    color:var(--text);
+    line-height:1.55;
+  }
+
+  .deployment-config-form { display:grid; gap:16px; }
+  .deployment-config-section {
+    display:grid;
+    gap:14px;
+    padding:16px;
+    border:1px solid var(--line-soft);
+    border-radius:14px;
+    background:color-mix(in srgb, var(--panel) 96%, var(--bg));
+  }
+  .deployment-config-heading { display:grid; gap:3px; }
+  .deployment-config-heading strong { font-size:.9375rem; }
+  .deployment-config-heading span,
+  .deployment-field-hint { color:var(--muted); font-size:.75rem; line-height:1.45; }
+  .deployment-config-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+  .deployment-config-grid .span-all { grid-column:1/-1; }
+  .deployment-color-input { display:grid; grid-template-columns:52px minmax(0,1fr); gap:8px; }
+  .deployment-color-input input[type="color"] { min-height:42px; padding:3px; cursor:pointer; }
+  .deployment-navigation-options { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; }
+  .deployment-navigation-options > label {
+    display:flex; align-items:flex-start; gap:9px; min-height:74px; padding:12px;
+    border:1px solid var(--line-soft); border-radius:11px; background:var(--panel);
+    letter-spacing:0; text-transform:none;
+  }
+  .deployment-navigation-options input[type="checkbox"] { width:auto; min-width:0; flex:0 0 auto; margin:3px 0 0; }
+  .deployment-navigation-options span { display:grid; gap:3px; }
+  .deployment-navigation-options strong { color:var(--text); font-size:.8125rem; }
+  .deployment-navigation-options small { color:var(--muted); font-size:.72rem; line-height:1.4; font-weight:650; }
+  .deployment-default-workspace { max-width:420px; }
+  .deployment-config-actions { display:flex; justify-content:flex-end; gap:10px; flex-wrap:wrap; }
+
+  .deployment-preview {
+    min-height:260px; display:grid; grid-template-columns:minmax(180px,240px) minmax(0,1fr);
+    overflow:hidden; border:1px solid var(--line-soft); border-radius:16px; background:#f8fafc;
+  }
+  .deployment-preview-sidebar { padding:16px 12px; background:#0f172a; color:#fff; }
+  .deployment-preview-brand { display:flex; align-items:center; gap:10px; margin-bottom:20px; }
+  .deployment-preview-brand > div { min-width:0; display:grid; gap:2px; }
+  .deployment-preview-brand strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:.85rem; }
+  .deployment-preview-brand small { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#cbd5e1; font-size:.64rem; }
+  .deployment-preview-logo { display:grid; place-items:center; width:34px; height:34px; flex:0 0 auto; border-radius:9px; background:rgba(255,255,255,.1); font-size:.68rem; font-weight:950; }
+  .deployment-preview-nav { margin:5px 0; padding:8px 10px; border-radius:8px; color:#cbd5e1; font-size:.72rem; font-weight:800; }
+  .deployment-preview-nav.active { background:rgba(255,255,255,.12); color:#fff; box-shadow:inset 3px 0 0 var(--preview-primary,#1d4ed8); }
+  .deployment-preview-main { padding:16px; background:#f8fafc; color:#0f172a; }
+  .deployment-preview-top { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+  .deployment-preview-top button { border:0; border-radius:8px; padding:8px 11px; background:var(--preview-primary,#1d4ed8); color:#fff; font-weight:800; }
+  .deployment-preview-cards { display:grid; grid-template-columns:repeat(3,1fr); gap:9px; margin-top:18px; }
+  .deployment-preview-cards div { height:62px; border:1px solid #e2e8f0; border-radius:10px; background:#fff; }
+  .deployment-preview-panel { height:100px; margin-top:10px; border:1px solid #e2e8f0; border-radius:10px; background:#fff; }
+
   @media (max-width:900px) {
     .admin-function-tabs { top: 6px; border-radius: 12px; }
     .admin-function-tab { min-height: 38px; padding: 8px 11px; }
@@ -11066,7 +12102,7 @@ bootstrapSession();
 <div class="shell">
 <header class="topbar">
 <div class="brand">
-<h1>Administration</h1>
+<h1 id="adminWorkspaceHeading">Administration</h1>
 <p>Administrator-only configuration. Select a function below to manage one area at a time.</p>
 </div>
 <div class="topbar-actions">
@@ -11082,6 +12118,7 @@ bootstrapSession();
 <button class="admin-function-tab" id="adminTabStructure" type="button" role="tab" aria-selected="false" aria-controls="recordStructureCard" data-admin-tab="structure">Record Structure</button>
 <button class="admin-function-tab" id="adminTabStorage" type="button" role="tab" aria-selected="false" aria-controls="n1StorageLayoutCard" data-admin-tab="storage">N1 Storage</button>
 <button class="admin-function-tab" id="adminTabDashboard" type="button" role="tab" aria-selected="false" aria-controls="reportCustomizationCard" data-admin-tab="dashboard">Dashboard</button>
+<button class="admin-function-tab" id="adminTabAppearance" type="button" role="tab" aria-selected="false" aria-controls="deploymentAppearanceCard" data-admin-tab="appearance">Appearance & Identity</button>
 <button class="admin-function-tab" id="adminTabBackups" type="button" role="tab" aria-selected="false" aria-controls="backupCard" data-admin-tab="backups">Backups</button>
 <button class="admin-function-tab" id="adminTabAudit" type="button" role="tab" aria-selected="false" aria-controls="auditLogCard" data-admin-tab="audit">Audit Log</button>
 </nav>
@@ -11193,6 +12230,7 @@ bootstrapSession();
 <button class="btn btn-primary" id="createFieldBtn" type="submit">Add Field</button>
 </form>
 <div class="status" id="schemaStatus">Loading record structure...</div>
+<div class="schema-order-help">Drag <b>⋮⋮</b> or use <b>↑ / ↓</b> to reorder active fields. This order drives generated record forms and field presentation.</div>
 <div class="schema-fields" id="schemaFields"></div>
 </div>
 </section>
@@ -11351,6 +12389,77 @@ FILENAME PREFIX FIELD
 <div class="dashboard-save-row">
 <button class="btn btn-primary" id="saveDashboardConfigBtn" type="button">Save Dashboard</button>
 </div>
+</div>
+</section>
+
+<section class="card admin-function-panel" id="deploymentAppearanceCard" role="tabpanel" aria-labelledby="adminTabAppearance" data-admin-panel="appearance" hidden>
+<div class="card-header">
+<h2>Appearance & Deployment Identity</h2>
+<p>Make this MX deployment look and read like the information system it represents. These settings are stored server-side and apply to every user.</p>
+</div>
+<div class="card-body">
+<div class="deployment-config-note">
+<b>MX is the engine; this is the deployment.</b> Branding, terminology, navigation, density, and colors can change without modifying or recompiling the application.
+</div>
+
+<form id="deploymentConfigForm" class="deployment-config-form">
+<section class="deployment-config-section">
+<div class="deployment-config-heading"><strong>Identity</strong><span>What users should see instead of a generic MX installation.</span></div>
+<div class="deployment-config-grid">
+<label>DEPLOYMENT NAME<input id="deploymentDisplayName" autocomplete="off" maxlength="80" placeholder="e.g. MCH Operations Hub"></label>
+<label>ORGANIZATION<input id="deploymentOrganization" autocomplete="off" maxlength="120" placeholder="Optional organization name"></label>
+<label class="span-all">SUBTITLE<input id="deploymentSubtitle" autocomplete="off" maxlength="160" placeholder="General-Purpose Information System"></label>
+<label class="span-all">LOGO URL OR STATIC PATH<input id="deploymentLogoUrl" autocomplete="off" maxlength="512" placeholder="images/system-icon.png or https://..."><span class="deployment-field-hint">Use a deployment-hosted image path or an HTTP(S) URL. Leave blank for no logo override.</span></label>
+</div>
+</section>
+
+<section class="deployment-config-section">
+<div class="deployment-config-heading"><strong>Theme</strong><span>Choose a preset or use your own deployment colors.</span></div>
+<div class="deployment-config-grid">
+<label>COLOR PRESET<select id="deploymentPreset"><option value="blue">Blue</option><option value="emerald">Emerald</option><option value="violet">Violet</option><option value="amber">Amber</option><option value="rose">Rose</option><option value="slate">Slate / Neutral</option><option value="custom">Custom</option></select></label>
+<label>DEFAULT THEME<select id="deploymentDefaultTheme"><option value="light">Light</option><option value="dark">Dark</option><option value="system">Follow device</option></select></label>
+<label>PRIMARY COLOR<div class="deployment-color-input"><input id="deploymentPrimaryColor" type="color" value="#1d4ed8"><input id="deploymentPrimaryHex" autocomplete="off" value="#1d4ed8" maxlength="7"></div></label>
+<label>SIDEBAR COLOR<div class="deployment-color-input"><input id="deploymentSidebarColor" type="color" value="#0f172a"><input id="deploymentSidebarHex" autocomplete="off" value="#0f172a" maxlength="7"></div></label>
+<label>CORNER STYLE<select id="deploymentRadius"><option value="square">Square</option><option value="subtle">Subtle</option><option value="rounded">Rounded</option><option value="soft">Soft</option></select></label>
+<label>UI DENSITY<select id="deploymentDensity"><option value="compact">Compact</option><option value="normal">Normal</option><option value="comfortable">Comfortable</option></select></label>
+<label>CONTENT WIDTH<select id="deploymentContentWidth"><option value="standard">Standard</option><option value="wide">Wide</option><option value="full">Full width</option></select></label>
+</div>
+</section>
+
+<section class="deployment-config-section">
+<div class="deployment-config-heading"><strong>Terminology</strong><span>Use language that fits the deployment instead of forcing every system to call its data “records”.</span></div>
+<div class="deployment-config-grid">
+<label>SINGULAR ITEM<input id="deploymentRecordSingular" maxlength="48" placeholder="Record"></label>
+<label>PLURAL ITEMS<input id="deploymentRecordPlural" maxlength="48" placeholder="Records"></label>
+<label>DASHBOARD LABEL<input id="deploymentDashboardLabel" maxlength="48" placeholder="Dashboard"></label>
+<label>ADMINISTRATION LABEL<input id="deploymentAdministrationLabel" maxlength="48" placeholder="Administration"></label>
+</div>
+</section>
+
+<section class="deployment-config-section">
+<div class="deployment-config-heading"><strong>Navigation</strong><span>Choose which ordinary workspaces appear to users. Administration remains role-protected.</span></div>
+<div class="deployment-navigation-options">
+<label><input id="deploymentShowDashboard" type="checkbox" checked><span><strong>Show dashboard</strong><small>Expose the configured statistics workspace.</small></span></label>
+<label><input id="deploymentShowRecords" type="checkbox" checked><span><strong>Show item workspace</strong><small>Expose the dynamic record/item workspace.</small></span></label>
+<label><input id="deploymentShowQuickActions" type="checkbox" checked><span><strong>Show quick actions</strong><small>Keep sidebar shortcuts for opening items and exporting data.</small></span></label>
+</div>
+<label class="deployment-default-workspace">DEFAULT WORKSPACE<select id="deploymentDefaultWorkspace"><option value="dashboard">Dashboard</option><option value="records">Items</option></select></label>
+</section>
+
+<section class="deployment-config-section">
+<div class="deployment-config-heading"><strong>Live preview</strong><span>This is a compact preview; Save publishes the configuration to every browser.</span></div>
+<div class="deployment-preview" id="deploymentPreview">
+<div class="deployment-preview-sidebar" id="deploymentPreviewSidebar"><div class="deployment-preview-brand"><span class="deployment-preview-logo" id="deploymentPreviewLogo">MX</span><div><strong id="deploymentPreviewName">MX</strong><small id="deploymentPreviewSubtitle">General-Purpose Information System</small></div></div><div class="deployment-preview-nav active" id="deploymentPreviewDashboard">Dashboard</div><div class="deployment-preview-nav" id="deploymentPreviewRecords">Records</div></div>
+<div class="deployment-preview-main"><div class="deployment-preview-top"><strong id="deploymentPreviewHeading">Dashboard</strong><button type="button" tabindex="-1">Primary action</button></div><div class="deployment-preview-cards"><div></div><div></div><div></div></div><div class="deployment-preview-panel"></div></div>
+</div>
+</section>
+
+<div class="deployment-config-actions">
+<button class="btn btn-light" id="resetDeploymentConfigBtn" type="button">Reset MX Defaults</button>
+<button class="btn btn-primary" id="saveDeploymentConfigBtn" type="submit">Save Appearance & Identity</button>
+</div>
+<div class="status" id="deploymentConfigStatus">Loading deployment configuration...</div>
+</form>
 </div>
 </section>
 <section class="card admin-function-panel" id="backupCard" role="tabpanel" aria-labelledby="adminTabBackups" data-admin-panel="backups" hidden>
@@ -11894,6 +13003,21 @@ Database restoration should place the application into maintenance mode and be p
 </style>
 
   </template>
+
+<style id="mx-deployment-module-style">
+  :host([data-mx-radius="square"]) { --mx-module-radius:3px; }
+  :host([data-mx-radius="subtle"]) { --mx-module-radius:7px; }
+  :host([data-mx-radius="rounded"]) { --mx-module-radius:12px; }
+  :host([data-mx-radius="soft"]) { --mx-module-radius:18px; }
+  :host([data-mx-density="compact"]) { --mx-module-gap:8px; --mx-module-pad:10px; }
+  :host([data-mx-density="normal"]) { --mx-module-gap:12px; --mx-module-pad:14px; }
+  :host([data-mx-density="comfortable"]) { --mx-module-gap:16px; --mx-module-pad:18px; }
+  .card, .search-panel, .table-card, .modal-card, .form-section,
+  .admin-function-tabs, .deployment-config-section { border-radius:var(--mx-module-radius,12px) !important; }
+  .app-main, .card-body { gap:var(--mx-module-gap,12px); }
+  .btn-primary { background:var(--primary) !important; }
+  .btn-primary:hover:not(:disabled), .btn-primary:focus-visible { background:var(--primary-dark,var(--primary)) !important; border-color:var(--primary-dark,var(--primary)) !important; }
+</style>
   <script type="text/plain" id="adminSystemScript">
 
 const API_BASE =
@@ -11919,10 +13043,13 @@ const ENDPOINTS = {
   schema: {
     get: "/mx/v1/admin/schema",
     create: "/mx/v1/admin/schema/fields",
-    update: uid => `/mx/v1/admin/schema/fields/${encodeURIComponent(uid)}`
+    update: uid => `/mx/v1/admin/schema/fields/${encodeURIComponent(uid)}`,
+    order: "/mx/v1/admin/schema/order"
   },
 
   storageLayout: "/mx/v1/admin/storage-layout",
+  deploymentConfig: "/mx/v1/deployment/config",
+  deploymentConfigAdmin: "/mx/v1/admin/deployment-config",
 
 
   dashboardConfig: "/mx/v1/admin/dashboard-config",
@@ -11953,6 +13080,9 @@ const state = {
   backups: [],
   schemaRevision: 0,
   schemaFields: [],
+  schemaSystemFields: [],
+  schemaOrderSaving: false,
+  schemaOrderDragUid: null,
   storageLayout: null,
   storageFolderUids: [],
   storagePrefixFieldUid: null,
@@ -11961,6 +13091,8 @@ const state = {
   dashboardWidgets: [],
   showUserPerformance: false,
   editingDashboardWidgetIndex: null,
+  deploymentConfigRevision: 0,
+  deploymentConfig: null,
   activeAdminTab: "accounts"
 };
 
@@ -12065,6 +13197,40 @@ const els = {
   dashboardConfigStatus: document.getElementById("dashboardConfigStatus"),
   saveDashboardConfigBtn: document.getElementById("saveDashboardConfigBtn"),
 
+  deploymentConfigForm: document.getElementById("deploymentConfigForm"),
+  deploymentDisplayName: document.getElementById("deploymentDisplayName"),
+  deploymentOrganization: document.getElementById("deploymentOrganization"),
+  deploymentSubtitle: document.getElementById("deploymentSubtitle"),
+  deploymentLogoUrl: document.getElementById("deploymentLogoUrl"),
+  deploymentPreset: document.getElementById("deploymentPreset"),
+  deploymentDefaultTheme: document.getElementById("deploymentDefaultTheme"),
+  deploymentPrimaryColor: document.getElementById("deploymentPrimaryColor"),
+  deploymentPrimaryHex: document.getElementById("deploymentPrimaryHex"),
+  deploymentSidebarColor: document.getElementById("deploymentSidebarColor"),
+  deploymentSidebarHex: document.getElementById("deploymentSidebarHex"),
+  deploymentRadius: document.getElementById("deploymentRadius"),
+  deploymentDensity: document.getElementById("deploymentDensity"),
+  deploymentContentWidth: document.getElementById("deploymentContentWidth"),
+  deploymentRecordSingular: document.getElementById("deploymentRecordSingular"),
+  deploymentRecordPlural: document.getElementById("deploymentRecordPlural"),
+  deploymentDashboardLabel: document.getElementById("deploymentDashboardLabel"),
+  deploymentAdministrationLabel: document.getElementById("deploymentAdministrationLabel"),
+  deploymentShowDashboard: document.getElementById("deploymentShowDashboard"),
+  deploymentShowRecords: document.getElementById("deploymentShowRecords"),
+  deploymentShowQuickActions: document.getElementById("deploymentShowQuickActions"),
+  deploymentDefaultWorkspace: document.getElementById("deploymentDefaultWorkspace"),
+  deploymentPreview: document.getElementById("deploymentPreview"),
+  deploymentPreviewSidebar: document.getElementById("deploymentPreviewSidebar"),
+  deploymentPreviewName: document.getElementById("deploymentPreviewName"),
+  deploymentPreviewSubtitle: document.getElementById("deploymentPreviewSubtitle"),
+  deploymentPreviewLogo: document.getElementById("deploymentPreviewLogo"),
+  deploymentPreviewDashboard: document.getElementById("deploymentPreviewDashboard"),
+  deploymentPreviewRecords: document.getElementById("deploymentPreviewRecords"),
+  deploymentPreviewHeading: document.getElementById("deploymentPreviewHeading"),
+  resetDeploymentConfigBtn: document.getElementById("resetDeploymentConfigBtn"),
+  saveDeploymentConfigBtn: document.getElementById("saveDeploymentConfigBtn"),
+  deploymentConfigStatus: document.getElementById("deploymentConfigStatus"),
+
   auditFilterForm: document.getElementById("auditFilterForm"),
   auditUserFilter: document.getElementById("auditUserFilter"),
   auditActionFilter: document.getElementById("auditActionFilter"),
@@ -12091,7 +13257,7 @@ const els = {
 els.serverPill.textContent = API_BASE;
 
 const ADMIN_TAB_STORAGE_KEY = "mx.admin.active_tab.v1";
-const ADMIN_TAB_ORDER = ["accounts", "structure", "storage", "dashboard", "backups", "audit"];
+const ADMIN_TAB_ORDER = ["accounts", "structure", "storage", "dashboard", "appearance", "backups", "audit"];
 
 function setAdminTab(tab, { focus = false, persist = true } = {}) {
   const nextTab = ADMIN_TAB_ORDER.includes(tab) ? tab : "accounts";
@@ -12501,6 +13667,7 @@ async function bootstrapAdministrator(event) {
       loadAccounts(),
       loadRecordStructure(),
       loadDashboardConfigAdmin(),
+      loadDeploymentConfigAdmin(),
       loadBackups(),
       loadAudit(1)
     ]);
@@ -12548,6 +13715,7 @@ async function login(event) {
       loadAccounts(),
       loadRecordStructure(),
       loadDashboardConfigAdmin(),
+      loadDeploymentConfigAdmin(),
       loadBackups(),
       loadAudit(1)
     ]);
@@ -12840,30 +14008,192 @@ function schemaFieldConfigEditor(field) {
   return "";
 }
 
-function renderSchemaFields() {
-  const fields = [...state.schemaFields].sort((a, b) =>
-    Number(a.position || 0) - Number(b.position || 0) ||
+function activeSchemaFieldsInOrder() {
+  return [...state.schemaFields]
+    .filter(field => field.active)
+    .sort((a, b) =>
+      Number(a.position || 0) - Number(b.position || 0) ||
+      String(a.label || "").localeCompare(String(b.label || ""))
+    );
+}
+
+function schemaOrderAllItems() {
+  return [
+    ...activeSchemaFieldsInOrder().map(field => ({
+      kind: "field",
+      id: field.uid,
+      label: field.label,
+      position: Number(field.position || 0)
+    })),
+    ...state.schemaSystemFields.map(field => ({
+      kind: "system",
+      id: field.key,
+      label: field.label,
+      position: Number(field.position || 0)
+    }))
+  ].sort((a, b) =>
+    a.position - b.position ||
     String(a.label || "").localeCompare(String(b.label || ""))
   );
+}
+
+function schemaOrderPayloadForFieldUids(fieldUids) {
+  const orderedFields = fieldUids.map(uid => ({ kind: "field", id: uid }));
+  let fieldIndex = 0;
+
+  return schemaOrderAllItems().map(item => {
+    if (item.kind !== "field") {
+      return { kind: item.kind, id: item.id };
+    }
+
+    return orderedFields[fieldIndex++] || { kind: "field", id: item.id };
+  });
+}
+
+function applySchemaOrderLocally(items) {
+  items.forEach((item, index) => {
+    const position = index * 10;
+
+    if (item.kind === "field") {
+      const field = state.schemaFields.find(value => value.uid === item.id);
+      if (field) field.position = position;
+      return;
+    }
+
+    if (item.kind === "system") {
+      const field = state.schemaSystemFields.find(value => value.key === item.id);
+      if (field) field.position = position;
+    }
+  });
+}
+
+function clearSchemaDropMarkers() {
+  els.schemaFields
+    .querySelectorAll(".schema-drop-before, .schema-drop-after")
+    .forEach(element => {
+      element.classList.remove("schema-drop-before", "schema-drop-after");
+    });
+}
+
+async function saveSchemaOrder(items) {
+  if (state.schemaOrderSaving) return;
+
+  state.schemaOrderSaving = true;
+  applySchemaOrderLocally(items);
+  renderSchemaFields();
+  els.schemaStatus.textContent = "Saving field order...";
+
+  try {
+    const data = await requestJson(ENDPOINTS.schema.order, {
+      method: "PUT",
+      body: { items }
+    });
+
+    await loadRecordStructure();
+    window.MX_DATA?.schemaChanged?.();
+
+    els.schemaStatus.textContent =
+      `Field order saved · schema revision ${Number(data?.revision || state.schemaRevision || 0)}`;
+    showToast("Field order saved.");
+  } catch (error) {
+    els.schemaStatus.textContent = error.message;
+    showToast(error.message, "error");
+    await loadRecordStructure();
+  } finally {
+    state.schemaOrderSaving = false;
+    renderSchemaFields();
+  }
+}
+
+function moveSchemaField(uid, direction) {
+  if (state.schemaOrderSaving) return;
+
+  const fields = activeSchemaFieldsInOrder();
+  const index = fields.findIndex(field => field.uid === uid);
+  const targetIndex = index + direction;
+
+  if (index < 0 || targetIndex < 0 || targetIndex >= fields.length) {
+    return;
+  }
+
+  [fields[index], fields[targetIndex]] = [fields[targetIndex], fields[index]];
+  saveSchemaOrder(schemaOrderPayloadForFieldUids(fields.map(field => field.uid)));
+}
+
+function renderSchemaFields() {
+  const activeFields = activeSchemaFieldsInOrder();
+  const archivedFields = [...state.schemaFields]
+    .filter(field => !field.active)
+    .sort((a, b) =>
+      Number(a.position || 0) - Number(b.position || 0) ||
+      String(a.label || "").localeCompare(String(b.label || ""))
+    );
+  const fields = [...activeFields, ...archivedFields];
 
   if (!fields.length) {
     els.schemaFields.innerHTML = `<div class="schema-empty"><strong>No fields yet.</strong><span>Add the first field above. The record form and table will be generated from your structure.</span></div>`;
     return;
   }
 
-  els.schemaFields.innerHTML = fields.map(field => `
-    <article class="schema-field-card ${field.active ? "" : "archived"}" data-schema-field="${escapeHtml(field.uid)}">
+  const activeIndex = new Map(activeFields.map((field, index) => [field.uid, index]));
+
+  els.schemaFields.innerHTML = fields.map(field => {
+    const index = activeIndex.get(field.uid);
+    const canReorder = field.active && !state.schemaOrderSaving;
+    const isFirst = index === 0;
+    const isLast = index === activeFields.length - 1;
+
+    return `
+    <article
+      class="schema-field-card ${field.active ? "" : "archived"}"
+      data-schema-field="${escapeHtml(field.uid)}"
+      data-schema-reorderable="${field.active ? "true" : "false"}"
+    >
       <div class="schema-field-head">
-        <div class="schema-field-name">
-          <strong>${escapeHtml(field.label)}</strong>
-          <div class="schema-field-meta">${escapeHtml(field.key)} · ${escapeHtml(fieldTypeLabel(field.field_type))}${field.active ? "" : " · ARCHIVED"}</div>
+        <div class="schema-field-title-row">
+          ${field.active ? `
+            <button
+              class="schema-drag-handle"
+              type="button"
+              draggable="${canReorder ? "true" : "false"}"
+              data-schema-drag="${escapeHtml(field.uid)}"
+              aria-label="Drag ${escapeHtml(field.label)} to reorder"
+              title="Drag to reorder field"
+              ${canReorder ? "" : "disabled"}
+            ><span class="schema-grip-dots" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span><span></span></span></button>
+          ` : ""}
+
+          <div class="schema-field-name schema-field-heading-copy">
+            <strong>${escapeHtml(field.label)}</strong>
+            <div class="schema-field-meta">${escapeHtml(field.key)} · ${escapeHtml(fieldTypeLabel(field.field_type))}${field.active ? "" : " · ARCHIVED"}</div>
+          </div>
         </div>
-        <span class="pill">Priority ${Number(field.table_priority || 0)}</span>
+
+        <div class="schema-field-order-actions">
+          ${field.active ? `
+            <button
+              class="btn btn-light btn-small schema-order-button"
+              type="button"
+              data-schema-move-up="${escapeHtml(field.uid)}"
+              title="Move field up"
+              aria-label="Move ${escapeHtml(field.label)} up"
+              ${isFirst || state.schemaOrderSaving ? "disabled" : ""}
+            >↑</button>
+            <button
+              class="btn btn-light btn-small schema-order-button"
+              type="button"
+              data-schema-move-down="${escapeHtml(field.uid)}"
+              title="Move field down"
+              aria-label="Move ${escapeHtml(field.label)} down"
+              ${isLast || state.schemaOrderSaving ? "disabled" : ""}
+            >↓</button>
+          ` : ""}
+          <span class="pill">Priority ${Number(field.table_priority || 0)}</span>
+        </div>
       </div>
       <div class="schema-field-editor">
         <label>LABEL<input data-schema-label="${escapeHtml(field.uid)}" value="${escapeHtml(field.label)}"></label>
         <label>PRIORITY<input type="number" data-schema-priority="${escapeHtml(field.uid)}" value="${Number(field.table_priority || 0)}"></label>
-        <label>POSITION<input type="number" min="0" data-schema-position="${escapeHtml(field.uid)}" value="${Number(field.position || 0)}"></label>
         <div class="schema-field-flags">
           <label class="schema-inline-check"><input type="checkbox" data-schema-required="${escapeHtml(field.uid)}" ${field.required ? "checked" : ""}> Required</label>
           <label class="schema-inline-check"><input type="checkbox" data-schema-unique="${escapeHtml(field.uid)}" ${field.unique_value ? "checked" : ""} ${["auto_number", "attachments"].includes(field.field_type) ? "disabled" : ""}> Unique</label>
@@ -12878,7 +14208,8 @@ function renderSchemaFields() {
         </div>
       </div>
     </article>
-  `).join("");
+  `;
+  }).join("");
 }
 
 function activeStorageFields() {
@@ -13034,6 +14365,7 @@ async function loadRecordStructure() {
     const data = await requestJson(ENDPOINTS.schema.get, { method: "GET" });
     state.schemaRevision = Number(data?.revision || 0);
     state.schemaFields = Array.isArray(data?.fields) ? data.fields : [];
+    state.schemaSystemFields = Array.isArray(data?.system_fields) ? data.system_fields : [];
     state.attachmentFields = state.schemaFields
       .filter(field => field.field_type === "attachments")
       .map(field => ({
@@ -13591,7 +14923,7 @@ async function saveRecordField(uid) {
     sortable: ["long_text", "attachments"].includes(field.field_type) ? false : Boolean(query("sortable")?.checked),
     table_visible: Boolean(query("table-visible")?.checked),
     table_priority: Number(query("priority")?.value || 0),
-    position: Math.max(0, Number(query("position")?.value || 0)),
+    position: Math.max(0, Number(field.position || 0)),
     config: fieldConfigFromEditor(field)
   };
 
@@ -13645,7 +14977,8 @@ const AUDIT_ACTION_LABELS = {
   "backup.verify": "Verified database backup",
   "backup.download": "Downloaded database backup",
   "schema.field.create": "Created record field",
-  "schema.field.update": "Changed record field"
+  "schema.field.update": "Changed record field",
+  "schema.order.update": "Reordered record fields"
 };
 
 function auditActionLabel(action) {
@@ -14050,6 +15383,225 @@ async function downloadDatabaseBackup(
   }
 }
 
+
+const DEFAULT_DEPLOYMENT_CONFIG = Object.freeze({
+  branding: {
+    display_name: "MX",
+    subtitle: "General-Purpose Information System",
+    organization_name: "",
+    logo_url: "images/system-icon.png"
+  },
+  appearance: {
+    preset: "blue",
+    primary_color: "#1d4ed8",
+    sidebar_color: "#0f172a",
+    radius: "rounded",
+    density: "normal",
+    default_theme: "light",
+    content_width: "wide"
+  },
+  terminology: {
+    record_singular: "Record",
+    record_plural: "Records",
+    dashboard_label: "Dashboard",
+    administration_label: "Administration"
+  },
+  navigation: {
+    show_dashboard: true,
+    show_records: true,
+    show_quick_actions: true,
+    default_workspace: "dashboard"
+  }
+});
+
+function copyDeploymentDefaults() {
+  return JSON.parse(JSON.stringify(DEFAULT_DEPLOYMENT_CONFIG));
+}
+
+function deploymentPresetColors(preset) {
+  return ({
+    blue: { primary: "#1d4ed8", sidebar: "#0f172a" },
+    emerald: { primary: "#047857", sidebar: "#064e3b" },
+    violet: { primary: "#6d28d9", sidebar: "#2e1065" },
+    amber: { primary: "#b45309", sidebar: "#451a03" },
+    rose: { primary: "#be123c", sidebar: "#4c0519" },
+    slate: { primary: "#475569", sidebar: "#0f172a" }
+  })[preset] || null;
+}
+
+function deploymentConfigFromForm() {
+  const preset = els.deploymentPreset.value || "blue";
+  const presetColors = deploymentPresetColors(preset);
+  const primary = preset === "custom"
+    ? (els.deploymentPrimaryHex.value.trim() || els.deploymentPrimaryColor.value)
+    : (presetColors?.primary || "#1d4ed8");
+  const sidebar = preset === "custom"
+    ? (els.deploymentSidebarHex.value.trim() || els.deploymentSidebarColor.value)
+    : (presetColors?.sidebar || "#0f172a");
+
+  return {
+    branding: {
+      display_name: els.deploymentDisplayName.value.trim() || "MX",
+      subtitle: els.deploymentSubtitle.value.trim() || "General-Purpose Information System",
+      organization_name: els.deploymentOrganization.value.trim(),
+      logo_url: els.deploymentLogoUrl.value.trim()
+    },
+    appearance: {
+      preset,
+      primary_color: primary,
+      sidebar_color: sidebar,
+      radius: els.deploymentRadius.value,
+      density: els.deploymentDensity.value,
+      default_theme: els.deploymentDefaultTheme.value,
+      content_width: els.deploymentContentWidth.value
+    },
+    terminology: {
+      record_singular: els.deploymentRecordSingular.value.trim() || "Record",
+      record_plural: els.deploymentRecordPlural.value.trim() || "Records",
+      dashboard_label: els.deploymentDashboardLabel.value.trim() || "Dashboard",
+      administration_label: els.deploymentAdministrationLabel.value.trim() || "Administration"
+    },
+    navigation: {
+      show_dashboard: els.deploymentShowDashboard.checked,
+      show_records: els.deploymentShowRecords.checked,
+      show_quick_actions: els.deploymentShowQuickActions.checked,
+      default_workspace: els.deploymentDefaultWorkspace.value
+    }
+  };
+}
+
+function renderDeploymentPreview() {
+  if (!els.deploymentPreview) return;
+  const config = deploymentConfigFromForm();
+  const preset = deploymentPresetColors(config.appearance.preset);
+  const primary = config.appearance.preset === "custom"
+    ? config.appearance.primary_color
+    : (preset?.primary || config.appearance.primary_color);
+  const sidebar = config.appearance.preset === "custom"
+    ? config.appearance.sidebar_color
+    : (preset?.sidebar || config.appearance.sidebar_color);
+
+  els.deploymentPreview.style.setProperty("--preview-primary", primary);
+  els.deploymentPreviewSidebar.style.background = sidebar;
+  els.deploymentPreviewName.textContent = config.branding.display_name;
+  els.deploymentPreviewSubtitle.textContent = config.branding.subtitle;
+  els.deploymentPreviewLogo.textContent = config.branding.display_name.slice(0, 2).toUpperCase();
+  els.deploymentPreviewDashboard.textContent = config.terminology.dashboard_label;
+  els.deploymentPreviewRecords.textContent = config.terminology.record_plural;
+  els.deploymentPreviewHeading.textContent = config.terminology.dashboard_label;
+  els.deploymentPreviewDashboard.classList.toggle("hidden", !config.navigation.show_dashboard);
+  els.deploymentPreviewRecords.classList.toggle("hidden", !config.navigation.show_records);
+
+  const radius = ({ square: "3px", subtle: "7px", rounded: "12px", soft: "18px" })[config.appearance.radius] || "12px";
+  els.deploymentPreview.style.borderRadius = radius;
+  els.deploymentPreview.querySelectorAll("button,.deployment-preview-nav,.deployment-preview-cards div,.deployment-preview-panel,.deployment-preview-logo")
+    .forEach(node => node.style.borderRadius = radius);
+}
+
+function populateDeploymentConfigForm(config) {
+  config = config || copyDeploymentDefaults();
+  const branding = config.branding || {};
+  const appearance = config.appearance || {};
+  const terminology = config.terminology || {};
+  const navigation = config.navigation || {};
+
+  els.deploymentDisplayName.value = branding.display_name || "MX";
+  els.deploymentOrganization.value = branding.organization_name || "";
+  els.deploymentSubtitle.value = branding.subtitle || "General-Purpose Information System";
+  els.deploymentLogoUrl.value = branding.logo_url || "";
+  els.deploymentPreset.value = appearance.preset || "blue";
+  els.deploymentDefaultTheme.value = appearance.default_theme || "light";
+  els.deploymentPrimaryColor.value = appearance.primary_color || "#1d4ed8";
+  els.deploymentPrimaryHex.value = appearance.primary_color || "#1d4ed8";
+  els.deploymentSidebarColor.value = appearance.sidebar_color || "#0f172a";
+  els.deploymentSidebarHex.value = appearance.sidebar_color || "#0f172a";
+  els.deploymentRadius.value = appearance.radius || "rounded";
+  els.deploymentDensity.value = appearance.density || "normal";
+  els.deploymentContentWidth.value = appearance.content_width || "wide";
+  els.deploymentRecordSingular.value = terminology.record_singular || "Record";
+  els.deploymentRecordPlural.value = terminology.record_plural || "Records";
+  els.deploymentDashboardLabel.value = terminology.dashboard_label || "Dashboard";
+  els.deploymentAdministrationLabel.value = terminology.administration_label || "Administration";
+  els.deploymentShowDashboard.checked = navigation.show_dashboard !== false;
+  els.deploymentShowRecords.checked = navigation.show_records !== false;
+  els.deploymentShowQuickActions.checked = navigation.show_quick_actions !== false;
+  els.deploymentDefaultWorkspace.value = navigation.default_workspace === "records" ? "records" : "dashboard";
+
+  syncDeploymentThemeInputs();
+  renderDeploymentPreview();
+}
+
+function syncDeploymentThemeInputs() {
+  const preset = els.deploymentPreset.value || "blue";
+  const colors = deploymentPresetColors(preset);
+  const custom = preset === "custom";
+
+  if (colors && !custom) {
+    els.deploymentPrimaryColor.value = colors.primary;
+    els.deploymentPrimaryHex.value = colors.primary;
+    els.deploymentSidebarColor.value = colors.sidebar;
+    els.deploymentSidebarHex.value = colors.sidebar;
+  }
+
+  els.deploymentPrimaryColor.disabled = !custom;
+  els.deploymentPrimaryHex.disabled = !custom;
+  els.deploymentSidebarColor.disabled = !custom;
+  els.deploymentSidebarHex.disabled = !custom;
+  renderDeploymentPreview();
+}
+
+async function loadDeploymentConfigAdmin() {
+  if (!els.deploymentConfigStatus) return;
+  els.deploymentConfigStatus.textContent = "Loading deployment configuration...";
+  try {
+    const data = await requestJson(ENDPOINTS.deploymentConfig, { method: "GET" });
+    state.deploymentConfigRevision = Number(data?.revision || 0);
+    state.deploymentConfig = data?.config || copyDeploymentDefaults();
+    populateDeploymentConfigForm(state.deploymentConfig);
+    els.deploymentConfigStatus.textContent = `Configuration revision ${state.deploymentConfigRevision}`;
+  } catch (error) {
+    els.deploymentConfigStatus.textContent = error.message;
+  }
+}
+
+async function saveDeploymentConfigAdmin(event) {
+  event?.preventDefault();
+  const config = deploymentConfigFromForm();
+
+  if (!config.navigation.show_dashboard && !config.navigation.show_records) {
+    showToast("At least Dashboard or the item workspace must remain visible.", "error");
+    return;
+  }
+
+  els.saveDeploymentConfigBtn.disabled = true;
+  els.deploymentConfigStatus.textContent = "Saving deployment configuration...";
+
+  try {
+    const data = await requestJson(ENDPOINTS.deploymentConfigAdmin, {
+      method: "PUT",
+      body: { config }
+    });
+    state.deploymentConfigRevision = Number(data?.revision || state.deploymentConfigRevision + 1);
+    state.deploymentConfig = data?.config || config;
+    populateDeploymentConfigForm(state.deploymentConfig);
+    els.deploymentConfigStatus.textContent = `Saved · configuration revision ${state.deploymentConfigRevision}`;
+
+    try {
+      localStorage.setItem("mx_deployment_config_cache_v1", JSON.stringify({ config: state.deploymentConfig }));
+    } catch (_) {}
+
+    window.dispatchEvent(new CustomEvent("mx:deployment-config-updated", {
+      detail: { config: state.deploymentConfig }
+    }));
+    showToast("Appearance and deployment identity saved.");
+  } catch (error) {
+    els.deploymentConfigStatus.textContent = error.message;
+    showToast(error.message, "error");
+  } finally {
+    els.saveDeploymentConfigBtn.disabled = false;
+  }
+}
+
 async function loadAudit(page = 1) {
   els.auditStatus.textContent = "Loading audit log...";
 
@@ -14113,6 +15665,7 @@ async function refreshAdminData() {
     loadAccounts(),
     loadRecordStructure(),
     loadDashboardConfigAdmin(),
+    loadDeploymentConfigAdmin(),
     loadBackups(),
     loadAudit(state.auditPage)
   ]);
@@ -14130,6 +15683,7 @@ async function initialize() {
         loadAccounts(),
         loadRecordStructure(),
           loadDashboardConfigAdmin(),
+          loadDeploymentConfigAdmin(),
         loadBackups(),
         loadAudit(1)
       ]);
@@ -14168,6 +15722,7 @@ async function initialize() {
       loadAccounts(),
       loadRecordStructure(),
       loadDashboardConfigAdmin(),
+      loadDeploymentConfigAdmin(),
       loadBackups(),
       loadAudit(1)
     ]);
@@ -14255,15 +15810,164 @@ els.dashboardShowUserPerformance?.addEventListener("change", () => {
   state.showUserPerformance = els.dashboardShowUserPerformance.checked;
 });
 
+
+els.deploymentConfigForm?.addEventListener("submit", saveDeploymentConfigAdmin);
+els.resetDeploymentConfigBtn?.addEventListener("click", () => {
+  state.deploymentConfig = copyDeploymentDefaults();
+  populateDeploymentConfigForm(state.deploymentConfig);
+  els.deploymentConfigStatus.textContent = "MX defaults loaded in the editor. Save to publish them.";
+});
+els.deploymentPreset?.addEventListener("change", syncDeploymentThemeInputs);
+els.deploymentPrimaryColor?.addEventListener("input", () => {
+  els.deploymentPrimaryHex.value = els.deploymentPrimaryColor.value;
+  renderDeploymentPreview();
+});
+els.deploymentPrimaryHex?.addEventListener("input", () => {
+  if (/^#[0-9a-fA-F]{6}$/.test(els.deploymentPrimaryHex.value.trim())) {
+    els.deploymentPrimaryColor.value = els.deploymentPrimaryHex.value.trim();
+  }
+  renderDeploymentPreview();
+});
+els.deploymentSidebarColor?.addEventListener("input", () => {
+  els.deploymentSidebarHex.value = els.deploymentSidebarColor.value;
+  renderDeploymentPreview();
+});
+els.deploymentSidebarHex?.addEventListener("input", () => {
+  if (/^#[0-9a-fA-F]{6}$/.test(els.deploymentSidebarHex.value.trim())) {
+    els.deploymentSidebarColor.value = els.deploymentSidebarHex.value.trim();
+  }
+  renderDeploymentPreview();
+});
+[
+  els.deploymentDisplayName, els.deploymentOrganization, els.deploymentSubtitle,
+  els.deploymentLogoUrl, els.deploymentDefaultTheme, els.deploymentRadius,
+  els.deploymentDensity, els.deploymentContentWidth, els.deploymentRecordSingular,
+  els.deploymentRecordPlural, els.deploymentDashboardLabel,
+  els.deploymentAdministrationLabel, els.deploymentShowDashboard,
+  els.deploymentShowRecords, els.deploymentShowQuickActions,
+  els.deploymentDefaultWorkspace
+].filter(Boolean).forEach(node => {
+  node.addEventListener(node.type === "checkbox" ? "change" : "input", renderDeploymentPreview);
+  if (node.tagName === "SELECT") node.addEventListener("change", renderDeploymentPreview);
+});
+
 els.schemaFields.addEventListener("click", event => {
+  const moveUp = event.target.closest("[data-schema-move-up]");
+  const moveDown = event.target.closest("[data-schema-move-down]");
+
+  if (moveUp) {
+    moveSchemaField(moveUp.dataset.schemaMoveUp, -1);
+    return;
+  }
+
+  if (moveDown) {
+    moveSchemaField(moveDown.dataset.schemaMoveDown, 1);
+    return;
+  }
+
   const save = event.target.closest("[data-save-schema-field]");
   if (save) {
     saveRecordField(save.dataset.saveSchemaField);
     return;
   }
+
   const toggle = event.target.closest("[data-toggle-schema-field]");
   if (toggle) toggleRecordField(toggle.dataset.toggleSchemaField);
 });
+
+els.schemaFields.addEventListener("dragstart", event => {
+  const handle = event.target.closest("[data-schema-drag]");
+
+  if (!handle || state.schemaOrderSaving) {
+    event.preventDefault();
+    return;
+  }
+
+  const card = handle.closest('.schema-field-card[data-schema-reorderable="true"]');
+  const uid = card?.dataset.schemaField;
+
+  if (!uid) {
+    event.preventDefault();
+    return;
+  }
+
+  state.schemaOrderDragUid = uid;
+  card.classList.add("schema-dragging");
+
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", uid);
+  }
+});
+
+els.schemaFields.addEventListener("dragover", event => {
+  if (!state.schemaOrderDragUid || state.schemaOrderSaving) return;
+
+  const target = event.target.closest('.schema-field-card[data-schema-reorderable="true"]');
+
+  if (!target || target.dataset.schemaField === state.schemaOrderDragUid) {
+    return;
+  }
+
+  event.preventDefault();
+  clearSchemaDropMarkers();
+
+  const rect = target.getBoundingClientRect();
+  const after = event.clientY >= rect.top + rect.height / 2;
+  target.classList.add(after ? "schema-drop-after" : "schema-drop-before");
+
+  if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+});
+
+els.schemaFields.addEventListener("drop", event => {
+  if (!state.schemaOrderDragUid || state.schemaOrderSaving) return;
+
+  const target = event.target.closest('.schema-field-card[data-schema-reorderable="true"]');
+
+  if (!target) return;
+  event.preventDefault();
+
+  const sourceUid = state.schemaOrderDragUid;
+  const targetUid = target.dataset.schemaField;
+
+  if (!targetUid || sourceUid === targetUid) {
+    clearSchemaDropMarkers();
+    return;
+  }
+
+  const fields = activeSchemaFieldsInOrder();
+  const sourceIndex = fields.findIndex(field => field.uid === sourceUid);
+
+  if (sourceIndex < 0) {
+    clearSchemaDropMarkers();
+    return;
+  }
+
+  const [moved] = fields.splice(sourceIndex, 1);
+  let targetIndex = fields.findIndex(field => field.uid === targetUid);
+
+  if (targetIndex < 0) {
+    clearSchemaDropMarkers();
+    return;
+  }
+
+  const rect = target.getBoundingClientRect();
+  const after = event.clientY >= rect.top + rect.height / 2;
+  if (after) targetIndex += 1;
+
+  fields.splice(targetIndex, 0, moved);
+  state.schemaOrderDragUid = null;
+  clearSchemaDropMarkers();
+
+  saveSchemaOrder(schemaOrderPayloadForFieldUids(fields.map(field => field.uid)));
+});
+
+els.schemaFields.addEventListener("dragend", event => {
+  state.schemaOrderDragUid = null;
+  clearSchemaDropMarkers();
+  event.target.closest(".schema-field-card")?.classList.remove("schema-dragging");
+});
+
 syncNewFieldConfig();
 
 els.storageAddFolderBtn.addEventListener("click", () => {
@@ -14411,6 +16115,7 @@ initialize();
       bootstrapCreate: "/mx/v1/auth/create",
       authenticate: "/mx/v1/auth/authenticate",
       refresh: "/mx/v1/auth/refresh",
+      deploymentConfig: "/mx/v1/deployment/config",
       session: "/mx/v1/auth/session",
       records: "/mx/v1/records",
       dashboardConfig: "/mx/v1/dashboard/config",
@@ -14436,6 +16141,7 @@ initialize();
 
     const state = {
       session: null,
+      deploymentConfig: null,
       dashboard: null,
       dashboardEtags: new Map(),
       dashboardQueryKey: "",
@@ -14488,6 +16194,25 @@ initialize();
       loginOtp: document.getElementById("loginOtp"),
       loginBtn: document.getElementById("loginBtn"),
       loginStatus: document.getElementById("loginStatus"),
+
+      deploymentBrandLogo: document.getElementById("deploymentBrandLogo"),
+      deploymentBrandName: document.getElementById("deploymentBrandName"),
+      deploymentBrandSubtitle: document.getElementById("deploymentBrandSubtitle"),
+      dashboardNavLabel: document.getElementById("dashboardNavLabel"),
+      recordsNavLabel: document.getElementById("recordsNavLabel"),
+      adminNavLabel: document.getElementById("adminNavLabel"),
+      quickActionsSection: document.getElementById("quickActionsSection"),
+      openRecordWorkspaceLabel: document.getElementById("openRecordWorkspaceLabel"),
+      exportDetailedRecordsLabel: document.getElementById("exportDetailedRecordsLabel"),
+      breadcrumbProduct: document.getElementById("breadcrumbProduct"),
+      breadcrumbWorkspace: document.getElementById("breadcrumbWorkspace"),
+      workspaceTopbarTitle: document.getElementById("workspaceTopbarTitle"),
+      dashboardWorkspaceLabel: document.getElementById("dashboardWorkspaceLabel"),
+      recordsWorkspaceLabel: document.getElementById("recordsWorkspaceLabel"),
+      adminWorkspaceLabel: document.getElementById("adminWorkspaceLabel"),
+      dashboardHeroTitle: document.getElementById("dashboardHeroTitle"),
+      loginBrandLogo: document.getElementById("loginBrandLogo"),
+      loginBrandTitle: document.getElementById("loginBrandTitle"),
 
       sidebarAvatar: document.getElementById("sidebarAvatar"),
       sidebarUserName: document.getElementById("sidebarUserName"),
@@ -14843,6 +16568,225 @@ initialize();
       els.settingsOverlay.setAttribute("aria-hidden", "true");
     }
 
+
+    const DEPLOYMENT_CONFIG_CACHE_KEY = "mx_deployment_config_cache_v1";
+    const DEPLOYMENT_DEFAULTS = {
+      branding: {
+        display_name: "MX",
+        subtitle: "General-Purpose Information System",
+        organization_name: "",
+        logo_url: "images/system-icon.png"
+      },
+      appearance: {
+        preset: "blue",
+        primary_color: "#1d4ed8",
+        sidebar_color: "#0f172a",
+        radius: "rounded",
+        density: "normal",
+        default_theme: "light",
+        content_width: "wide"
+      },
+      terminology: {
+        record_singular: "Record",
+        record_plural: "Records",
+        dashboard_label: "Dashboard",
+        administration_label: "Administration"
+      },
+      navigation: {
+        show_dashboard: true,
+        show_records: true,
+        show_quick_actions: true,
+        default_workspace: "dashboard"
+      }
+    };
+
+    function deploymentPresetColors(preset) {
+      return ({
+        blue: { primary: "#1d4ed8", sidebar: "#0f172a" },
+        emerald: { primary: "#047857", sidebar: "#064e3b" },
+        violet: { primary: "#6d28d9", sidebar: "#2e1065" },
+        amber: { primary: "#b45309", sidebar: "#451a03" },
+        rose: { primary: "#be123c", sidebar: "#4c0519" },
+        slate: { primary: "#475569", sidebar: "#0f172a" }
+      })[preset] || { primary: "#1d4ed8", sidebar: "#0f172a" };
+    }
+
+    function hexToRgb(hex) {
+      const match = /^#([0-9a-f]{6})$/i.exec(String(hex || ""));
+      if (!match) return null;
+      const value = Number.parseInt(match[1], 16);
+      return { r: (value >> 16) & 255, g: (value >> 8) & 255, b: value & 255 };
+    }
+
+    function mixHex(hex, target, amount) {
+      const rgb = hexToRgb(hex);
+      if (!rgb) return hex;
+      const t = target === "white" ? 255 : 0;
+      const mix = channel => Math.round(channel + (t - channel) * amount);
+      return `#${[mix(rgb.r), mix(rgb.g), mix(rgb.b)].map(v => v.toString(16).padStart(2, "0")).join("")}`;
+    }
+
+    function deploymentConfig(value) {
+      value = value && typeof value === "object" ? value : {};
+      return {
+        branding: { ...DEPLOYMENT_DEFAULTS.branding, ...(value.branding || {}) },
+        appearance: { ...DEPLOYMENT_DEFAULTS.appearance, ...(value.appearance || {}) },
+        terminology: { ...DEPLOYMENT_DEFAULTS.terminology, ...(value.terminology || {}) },
+        navigation: { ...DEPLOYMENT_DEFAULTS.navigation, ...(value.navigation || {}) }
+      };
+    }
+
+    function applyDeploymentVariables(target, config) {
+      if (!target?.style) return;
+      const appearance = config.appearance;
+      const preset = deploymentPresetColors(appearance.preset);
+      const primary = appearance.preset === "custom"
+        ? (appearance.primary_color || preset.primary)
+        : preset.primary;
+      const sidebar = appearance.preset === "custom"
+        ? (appearance.sidebar_color || preset.sidebar)
+        : preset.sidebar;
+      const dark = document.documentElement.dataset.theme === "dark";
+      const primaryDisplay = dark ? mixHex(primary, "white", .24) : primary;
+      const primaryDark = dark ? mixHex(primary, "white", .08) : mixHex(primary, "black", .16);
+      const primarySoft = dark ? mixHex(primary, "black", .60) : mixHex(primary, "white", .88);
+      const primarySoft2 = dark ? mixHex(primary, "black", .45) : mixHex(primary, "white", .72);
+
+      target.style.setProperty("--primary", primaryDisplay);
+      target.style.setProperty("--primary-2", primaryDark);
+      target.style.setProperty("--primary-dark", primaryDark);
+      target.style.setProperty("--primary-soft", primarySoft);
+      target.style.setProperty("--primary-soft-2", primarySoft2);
+      target.style.setProperty("--blue", primaryDisplay);
+      target.style.setProperty("--blue-soft", primarySoft);
+      target.style.setProperty("--accent", primaryDisplay);
+      target.style.setProperty("--accent-soft", primarySoft);
+      target.style.setProperty("--accent-line", primarySoft2);
+      target.style.setProperty("--sidebar", sidebar);
+      target.style.setProperty("--sidebar-2", mixHex(sidebar, "white", .08));
+      target.dataset.mxRadius = appearance.radius || "rounded";
+      target.dataset.mxDensity = appearance.density || "normal";
+      target.dataset.mxContentWidth = appearance.content_width || "wide";
+    }
+
+    function applyDeploymentToModuleHost(host, config) {
+      if (!host) return;
+      applyDeploymentVariables(host, config);
+      host.dataset.mxRadius = config.appearance.radius || "rounded";
+      host.dataset.mxDensity = config.appearance.density || "normal";
+      host.dataset.mxContentWidth = config.appearance.content_width || "wide";
+    }
+
+    function applyDeploymentConfig(rawConfig, { cache = true } = {}) {
+      const config = deploymentConfig(rawConfig);
+      state.deploymentConfig = config;
+      window.MX_DEPLOYMENT_CONFIG = config;
+
+      applyDeploymentVariables(document.documentElement, config);
+      applyDeploymentToModuleHost(els.recordsHost, config);
+      applyDeploymentToModuleHost(els.adminHost, config);
+
+      const branding = config.branding;
+      const terms = config.terminology;
+      const nav = config.navigation;
+      const logo = branding.logo_url || "images/system-icon.png";
+
+      document.title = `${branding.display_name} · Workspace`;
+      if (els.deploymentBrandName) els.deploymentBrandName.textContent = branding.display_name;
+      if (els.deploymentBrandSubtitle) els.deploymentBrandSubtitle.textContent = branding.organization_name || branding.subtitle;
+      if (els.deploymentBrandLogo && logo) { els.deploymentBrandLogo.src = logo; els.deploymentBrandLogo.alt = branding.display_name; }
+      if (els.loginBrandLogo && logo) { els.loginBrandLogo.src = logo; els.loginBrandLogo.alt = branding.display_name; }
+      if (els.loginBrandTitle) els.loginBrandTitle.textContent = `${branding.display_name} · ${terms.dashboard_label}`;
+      if (els.breadcrumbProduct) els.breadcrumbProduct.textContent = branding.display_name;
+
+      if (els.dashboardNavLabel) els.dashboardNavLabel.textContent = terms.dashboard_label;
+      if (els.recordsNavLabel) els.recordsNavLabel.textContent = terms.record_plural;
+      if (els.adminNavLabel) els.adminNavLabel.textContent = terms.administration_label;
+      if (els.dashboardWorkspaceLabel) els.dashboardWorkspaceLabel.textContent = terms.dashboard_label;
+      if (els.recordsWorkspaceLabel) els.recordsWorkspaceLabel.textContent = terms.record_plural;
+      if (els.adminWorkspaceLabel) els.adminWorkspaceLabel.textContent = terms.administration_label;
+      if (els.dashboardHeroTitle) els.dashboardHeroTitle.textContent = terms.dashboard_label;
+      if (els.openRecordWorkspaceLabel) els.openRecordWorkspaceLabel.textContent = `Open ${terms.record_plural.toLowerCase()} workspace`;
+      if (els.exportDetailedRecordsLabel) els.exportDetailedRecordsLabel.textContent = `Export detailed ${terms.record_plural.toLowerCase()}`;
+
+      WORKSPACE_META.dashboard.breadcrumb = terms.dashboard_label;
+      WORKSPACE_META.dashboard.title = terms.dashboard_label;
+      WORKSPACE_META.records.breadcrumb = terms.record_plural;
+      WORKSPACE_META.records.title = `${terms.record_singular} Workspace`;
+      WORKSPACE_META.admin.breadcrumb = terms.administration_label;
+      WORKSPACE_META.admin.title = terms.administration_label;
+
+      document.querySelectorAll('[data-workspace-tab="dashboard"]').forEach(node => {
+        if (node.closest("#quickActionsSection")) return;
+        node.classList.toggle("deployment-hidden", nav.show_dashboard === false);
+      });
+      document.querySelectorAll('[data-workspace-tab="records"]').forEach(node => {
+        if (node.closest("#quickActionsSection")) return;
+        node.classList.toggle("deployment-hidden", nav.show_records === false);
+      });
+      if (els.quickActionsSection) els.quickActionsSection.classList.toggle("hidden", nav.show_quick_actions === false);
+
+      if (cache) {
+        try {
+          localStorage.setItem(DEPLOYMENT_CONFIG_CACHE_KEY, JSON.stringify({ config }));
+        } catch (_) {}
+      }
+
+      updateWorkspaceChrome(state.workspace || nav.default_workspace || "dashboard");
+      if (state.recordsMounted) applyDeploymentToRecordsModule();
+      if (state.adminMounted) applyDeploymentToAdminModule();
+      if (state.dashboard) requestAnimationFrame(renderDashboard);
+    }
+
+    function applyDeploymentToRecordsModule() {
+      const root = els.recordsHost?.shadowRoot;
+      if (!root || !state.deploymentConfig) return;
+      const terms = state.deploymentConfig.terminology;
+      const singular = terms.record_singular;
+      const plural = terms.record_plural;
+      const mappings = [
+        ["#recordsWorkspaceTitle", plural],
+        ["#newEntryBtnLabel", `Add ${singular}`],
+        ["#entryModalTitle", `New ${singular}`],
+        ["#entryModalHint", `Create a new ${singular.toLowerCase()}.`],
+        ["#saveBtn", `Save ${singular}`]
+      ];
+      for (const [selector, value] of mappings) {
+        const node = root.querySelector(selector);
+        if (node) node.textContent = value;
+      }
+    }
+
+    function applyDeploymentToAdminModule() {
+      const root = els.adminHost?.shadowRoot;
+      if (!root || !state.deploymentConfig) return;
+      const terms = state.deploymentConfig.terminology;
+      const heading = root.querySelector("#adminWorkspaceHeading");
+      if (heading) heading.textContent = terms.administration_label;
+    }
+
+    async function loadDeploymentConfigShell() {
+      let cached = null;
+      try {
+        cached = JSON.parse(localStorage.getItem(DEPLOYMENT_CONFIG_CACHE_KEY) || "null");
+      } catch (_) {}
+      if (cached?.config) applyDeploymentConfig(cached.config, { cache: false });
+
+      try {
+        const response = await fetch(ENDPOINTS.deploymentConfig, {
+          method: "GET",
+          headers: { "Accept": "application/json" },
+          cache: "no-store"
+        });
+        const data = await readJsonSafe(response);
+        if (!response.ok) throw new Error(data?.response || `HTTP ${response.status}`);
+        applyDeploymentConfig(data?.config || DEPLOYMENT_DEFAULTS);
+      } catch (error) {
+        console.warn("Deployment configuration unavailable:", error);
+        if (!state.deploymentConfig) applyDeploymentConfig(DEPLOYMENT_DEFAULTS, { cache: false });
+      }
+    }
+
     const THEME_STORAGE_KEY = "mx_theme";
 
     function getStoredTheme() {
@@ -14937,6 +16881,11 @@ initialize();
       }
 
       syncThemeButton(resolved);
+      if (state.deploymentConfig) {
+        applyDeploymentVariables(document.documentElement, state.deploymentConfig);
+        applyDeploymentToModuleHost(els.recordsHost, state.deploymentConfig);
+        applyDeploymentToModuleHost(els.adminHost, state.deploymentConfig);
+      }
 
       if (
         redraw &&
@@ -14975,24 +16924,27 @@ initialize();
       const dark =
         document.documentElement.dataset.theme === "dark";
 
+      const css = getComputedStyle(document.documentElement);
+      const primary = css.getPropertyValue("--primary").trim() || (dark ? "#60a5fa" : "#1d4ed8");
+      const rgb = hexToRgb(primary) || (dark ? { r:96, g:165, b:250 } : { r:29, g:78, b:216 });
       return dark
         ? {
             grid: "#26364a",
             axis: "#94a3b8",
             text: "#cbd5e1",
-            line: "#60a5fa",
-            bar: "#3b82f6",
-            fillTop: "rgba(96, 165, 250, .24)",
-            fillBottom: "rgba(59, 130, 246, 0)"
+            line: primary,
+            bar: primary,
+            fillTop: `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, .24)`,
+            fillBottom: `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0)`
           }
         : {
             grid: "#e9edf2",
             axis: "#98a2b3",
             text: "#667085",
-            line: "#1d4ed8",
-            bar: "#1d4ed8",
-            fillTop: "rgba(29, 78, 216, .20)",
-            fillBottom: "rgba(29, 78, 216, 0)"
+            line: primary,
+            bar: primary,
+            fillTop: `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, .20)`,
+            fillBottom: `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0)`
           };
     }
 
@@ -15469,14 +17421,28 @@ initialize();
       }
     }
 
-    function setWorkspace(name, { updateHash = true } = {}) {
+    function setWorkspace(
+      name,
+      { updateHash = true, notifyDenied = true } = {}
+    ) {
       if (!WORKSPACE_META[name]) {
         name = "dashboard";
       }
 
+      const nav = state.deploymentConfig?.navigation || DEPLOYMENT_DEFAULTS.navigation;
+      if (name === "dashboard" && nav.show_dashboard === false) {
+        name = nav.show_records !== false ? "records" : "dashboard";
+      }
+      if (name === "records" && nav.show_records === false) {
+        name = nav.show_dashboard !== false ? "dashboard" : "records";
+      }
       if (name === "admin" && !canOpenAdmin()) {
-        name = "dashboard";
-        showToast("Administrator access is required.", "error");
+        const deniedWhileAuthenticated = Boolean(state.session);
+        name = nav.show_dashboard !== false ? "dashboard" : "records";
+
+        if (notifyDenied && deniedWhileAuthenticated) {
+          showToast("Administrator access is required.", "error");
+        }
       }
 
       const wasMounted =
@@ -15596,6 +17562,9 @@ initialize();
 
       host.dataset.theme =
         document.documentElement.dataset.theme || getStoredTheme();
+      if (state.deploymentConfig) {
+        applyDeploymentToModuleHost(host, state.deploymentConfig);
+      }
 
       const template = document.getElementById(templateId);
       const scriptNode = document.getElementById(scriptId);
@@ -15647,6 +17616,9 @@ initialize();
         `;
       }
 
+      if (state.deploymentConfig) {
+        applyDeploymentToModuleHost(host, state.deploymentConfig);
+      }
       return root;
     }
 
@@ -15659,6 +17631,7 @@ initialize();
         );
 
         state.recordsMounted = true;
+        applyDeploymentToRecordsModule();
       }
 
       if (name === "admin" && !state.adminMounted) {
@@ -15669,6 +17642,7 @@ initialize();
         );
 
         state.adminMounted = true;
+        applyDeploymentToAdminModule();
       }
     }
 
@@ -15980,6 +17954,14 @@ initialize();
       state.recordsRevision = null;
       state.schemaRevision = null;
       state.dashboardEtags.clear();
+
+      const nav = state.deploymentConfig?.navigation || DEPLOYMENT_DEFAULTS.navigation;
+      const safeWorkspace =
+        nav.default_workspace === "records" && nav.show_records !== false
+          ? "records"
+          : (nav.show_dashboard !== false ? "dashboard" : "records");
+
+      history.replaceState(null, "", `#${safeWorkspace}`);
       location.reload();
     }
 
@@ -17584,6 +19566,15 @@ initialize();
 
         if (requestedWorkspace === "admin" && canOpenAdmin()) {
           setWorkspace("admin", { updateHash: false });
+        } else if (requestedWorkspace === "admin") {
+          const nav = state.deploymentConfig?.navigation || DEPLOYMENT_DEFAULTS.navigation;
+          const fallbackWorkspace =
+            nav.show_dashboard !== false ? "dashboard" : "records";
+
+          setWorkspace(
+            fallbackWorkspace,
+            { updateHash: true, notifyDenied: false }
+          );
         } else if (requestedWorkspace === "records") {
           setWorkspace("records", { updateHash: false });
         }
@@ -17650,6 +19641,10 @@ initialize();
 
       els.logoutBtn.addEventListener("click", logout);
       els.themeToggleBtn.addEventListener("click", toggleTheme);
+
+      window.addEventListener("mx:deployment-config-updated", event => {
+        if (event.detail?.config) applyDeploymentConfig(event.detail.config);
+      });
 
       els.settingsBtn.addEventListener(
         "click",
@@ -17864,32 +19859,42 @@ initialize();
       });
     }
 
-    applyTheme(
-      document.documentElement.dataset.theme || getStoredTheme(),
-      {
-        persist: false,
-        redraw: false
+    async function startMxShell() {
+      await loadDeploymentConfigShell();
+
+      applyTheme(
+        document.documentElement.dataset.theme || getStoredTheme(),
+        {
+          persist: false,
+          redraw: false
+        }
+      );
+
+      applyUiScale();
+      syncSettingsUi();
+
+      attachEvents();
+      scheduleAutoRefresh();
+      updateCustomRangeVisibility();
+
+      const requested = location.hash.replace(/^#/, "");
+      const defaultWorkspace = state.deploymentConfig?.navigation?.default_workspace || "dashboard";
+      setWorkspace(
+        WORKSPACE_META[requested] ? requested : defaultWorkspace,
+        { updateHash: false, notifyDenied: false }
+      );
+
+      if (getAccessToken() || getRefreshToken()) {
+        initializeAuthenticated();
+      } else {
+        initializeAuthEntry();
       }
-    );
-
-    applyUiScale();
-    syncSettingsUi();
-
-    attachEvents();
-    scheduleAutoRefresh();
-    updateCustomRangeVisibility();
-
-    // Do not mount Records/Admin before the single shell session is valid.
-    setWorkspace(
-      "dashboard",
-      { updateHash: false }
-    );
-
-    if (getAccessToken() || getRefreshToken()) {
-      initializeAuthenticated();
-    } else {
-      initializeAuthEntry();
     }
+
+    startMxShell().catch(error => {
+      console.error("MX shell startup failed:", error);
+      initializeAuthEntry(error.message);
+    });
   </script>
 </body>
 </html>
