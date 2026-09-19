@@ -56,6 +56,11 @@
         root.style.setProperty("--primary", primary);
         root.style.setProperty("--primary-2", primary);
         root.style.setProperty("--sidebar", sidebar);
+        root.style.setProperty("--mx-primary", primary);
+        root.style.setProperty("--mx-primary-dark", primary);
+        root.style.setProperty("--mx-primary-soft", `color-mix(in srgb, ${primary} 12%, white)`);
+        root.style.setProperty("--mx-primary-soft-2", `color-mix(in srgb, ${primary} 28%, white)`);
+        root.style.setProperty("--mx-sidebar", sidebar);
         root.dataset.mxRadius = appearance.radius || "rounded";
         root.dataset.mxDensity = appearance.density || "normal";
         root.dataset.mxContentWidth = appearance.content_width || "wide";
@@ -3021,9 +3026,67 @@
       width: min(var(--mx-content-max, 1600px), 100%) !important;
     }
     .deployment-hidden { display:none !important; }
-    .workspace-tab.active { color:var(--primary) !important; }
-    .workspace-tab.active::after { background:var(--primary) !important; }
-    .nav-link.active { box-shadow:inset 3px 0 0 var(--primary) !important; }
+
+    /*
+     * Use the same deployment accent everywhere in the shell. Semantic
+     * success/warning/danger colors remain independent.
+     */
+    .btn-primary {
+      background:var(--mx-primary, var(--primary)) !important;
+      border-color:var(--mx-primary, var(--primary)) !important;
+      box-shadow:0 5px 14px color-mix(in srgb, var(--mx-primary, var(--primary)) 22%, transparent) !important;
+    }
+    .btn-primary:hover:not(:disabled),
+    .btn-primary:focus-visible {
+      background:var(--mx-primary-dark, var(--primary-2, var(--primary))) !important;
+      border-color:var(--mx-primary-dark, var(--primary-2, var(--primary))) !important;
+    }
+    .btn-soft {
+      color:var(--mx-primary, var(--primary)) !important;
+      background:var(--mx-primary-soft, var(--primary-soft)) !important;
+      border-color:var(--mx-primary-soft-2, var(--primary-soft-2, var(--line))) !important;
+    }
+    .workspace-tab.active { color:var(--mx-primary, var(--primary)) !important; }
+    .workspace-tab.active::after { background:var(--mx-primary, var(--primary)) !important; }
+    .nav-link.active { box-shadow:inset 3px 0 0 var(--mx-primary, var(--primary)) !important; }
+    .bar-fill {
+      background:linear-gradient(
+        90deg,
+        var(--mx-primary, var(--primary)),
+        color-mix(in srgb, var(--mx-primary, var(--primary)) 58%, white)
+      ) !important;
+    }
+
+    input:focus,
+    select:focus,
+    textarea:focus {
+      border-color:var(--mx-primary, var(--primary)) !important;
+      box-shadow:0 0 0 3px color-mix(in srgb, var(--mx-primary, var(--primary)) 14%, transparent) !important;
+    }
+
+    input[type="checkbox"],
+    input[type="radio"] {
+      accent-color:var(--mx-primary, var(--primary));
+    }
+
+    .login-brand {
+      background:
+        radial-gradient(
+          circle at 92% 0%,
+          color-mix(in srgb, var(--mx-primary, var(--primary)) 34%, transparent),
+          transparent 15rem
+        ),
+        linear-gradient(
+          135deg,
+          var(--mx-sidebar, var(--sidebar, #0f172a)),
+          color-mix(in srgb, var(--mx-sidebar, var(--sidebar, #0f172a)) 82%, var(--mx-primary, var(--primary)))
+        ) !important;
+    }
+
+    .login-brand-mark {
+      color:var(--mx-primary-dark, var(--primary-2, var(--primary))) !important;
+      background:var(--mx-primary-soft, var(--primary-soft)) !important;
+    }
 
     :root[data-mx-density="compact"] .card-body,
     :root[data-mx-density="compact"] .hero,
@@ -6660,22 +6723,199 @@
   }
 </style>
 
+<style id="mx-deployment-theme-bridge">
+  /*
+   * Deployment theme bridge
+   *
+   * MX workspaces are Shadow DOM modules. Theme variables set on the host
+   * are exposed through --mx-* tokens and mapped back to each module's
+   * legacy local variables here. This block must live INSIDE the template.
+   */
+  :host {
+    --primary: var(--mx-primary, #2563eb) !important;
+    --primary-2: var(--mx-primary-dark, #1d4ed8) !important;
+    --primary-dark: var(--mx-primary-dark, #1d4ed8) !important;
+    --primary-soft: var(--mx-primary-soft, #eff6ff) !important;
+    --primary-soft-2: var(--mx-primary-soft-2, #dbeafe) !important;
+    --blue: var(--mx-primary, #2563eb) !important;
+    --blue-soft: var(--mx-primary-soft, #eff6ff) !important;
+    --accent: var(--mx-primary, #2563eb) !important;
+    --accent-soft: var(--mx-primary-soft, #eff6ff) !important;
+    --accent-line: var(--mx-primary-soft-2, #dbeafe) !important;
+  }
+
+  .btn-primary,
+  :host([data-theme="dark"]) .btn-primary {
+    color: #fff !important;
+    background: var(--mx-primary, var(--primary)) !important;
+    border-color: var(--mx-primary, var(--primary)) !important;
+    box-shadow:
+      0 1px 2px rgba(16,24,40,.05),
+      0 5px 14px color-mix(in srgb, var(--mx-primary, var(--primary)) 22%, transparent) !important;
+  }
+
+  .btn-primary:hover:not(:disabled),
+  .btn-primary:focus-visible,
+  :host([data-theme="dark"]) .btn-primary:hover:not(:disabled),
+  :host([data-theme="dark"]) .btn-primary:focus-visible {
+    color: #fff !important;
+    background: var(--mx-primary-dark, var(--primary-dark, var(--primary))) !important;
+    border-color: var(--mx-primary-dark, var(--primary-dark, var(--primary))) !important;
+    box-shadow:
+      0 8px 20px color-mix(in srgb, var(--mx-primary, var(--primary)) 26%, transparent) !important;
+  }
+
+  .btn-soft,
+  :host([data-theme="dark"]) .btn-soft {
+    color: var(--mx-primary, var(--primary)) !important;
+    background: var(--mx-primary-soft, var(--primary-soft)) !important;
+    border-color: var(--mx-primary-soft-2, var(--primary-soft-2, var(--line))) !important;
+  }
+
+  .btn-soft:hover:not(:disabled),
+  .btn-soft:focus-visible,
+  :host([data-theme="dark"]) .btn-soft:hover:not(:disabled),
+  :host([data-theme="dark"]) .btn-soft:focus-visible {
+    color: var(--mx-primary-dark, var(--primary-dark, var(--primary))) !important;
+    background: color-mix(
+      in srgb,
+      var(--mx-primary-soft, var(--primary-soft)) 76%,
+      var(--mx-primary, var(--primary)) 24%
+    ) !important;
+    border-color: color-mix(
+      in srgb,
+      var(--mx-primary, var(--primary)) 42%,
+      var(--line)
+    ) !important;
+  }
+
+  input:focus,
+  select:focus,
+  textarea:focus,
+  button:focus-visible {
+    border-color: var(--mx-primary, var(--primary)) !important;
+  }
+
+  input:focus,
+  select:focus,
+  textarea:focus {
+    box-shadow:
+      0 0 0 3px color-mix(
+        in srgb,
+        var(--mx-primary, var(--primary)) 14%,
+        transparent
+      ) !important;
+  }
+
+  input[type="checkbox"],
+  input[type="radio"] {
+    accent-color: var(--mx-primary, var(--primary));
+  }
+
+  .loading-dot.active,
+  .upload-progress-bar,
+  .dashboard-progress-fill {
+    background: var(--mx-primary, var(--primary)) !important;
+  }
+
+  .table-loading-bar::before,
+  .bar-fill {
+    background: linear-gradient(
+      90deg,
+      var(--mx-primary, var(--primary)),
+      color-mix(in srgb, var(--mx-primary, var(--primary)) 58%, white)
+    ) !important;
+  }
+
+  .entry-form-drop-target.drag-active {
+    outline-color: color-mix(
+      in srgb,
+      var(--mx-primary, var(--primary)) 45%,
+      transparent
+    ) !important;
+  }
+
+  .drop-anywhere-overlay {
+    border-color: var(--mx-primary, var(--primary)) !important;
+    color: var(--mx-primary-dark, var(--primary-dark, var(--primary))) !important;
+    background: color-mix(
+      in srgb,
+      var(--mx-primary-soft, var(--primary-soft)) 94%,
+      white
+    ) !important;
+  }
+
+  .upload-progress-panel,
+  .storage-folder-index,
+  .dashboard-rule-preview {
+    border-color: var(--mx-primary-soft-2, var(--primary-soft-2, var(--line))) !important;
+    background: var(--mx-primary-soft, var(--primary-soft)) !important;
+  }
+
+  .upload-progress-head,
+  .storage-folder-index {
+    color: var(--mx-primary-dark, var(--primary-dark, var(--primary))) !important;
+  }
+
+  .upload-progress-track {
+    background: var(--mx-primary-soft-2, var(--primary-soft-2, var(--line-soft))) !important;
+  }
+
+  .admin-function-tab.active,
+  .admin-function-tab[aria-selected="true"] {
+    color: #fff !important;
+    background: var(--mx-primary, var(--primary)) !important;
+    border-color: var(--mx-primary, var(--primary)) !important;
+    box-shadow:
+      0 5px 14px color-mix(
+        in srgb,
+        var(--mx-primary, var(--primary)) 24%,
+        transparent
+      ) !important;
+  }
+
+  .admin-function-tab:focus-visible {
+    outline-color: color-mix(
+      in srgb,
+      var(--mx-primary, var(--primary)) 26%,
+      transparent
+    ) !important;
+  }
+
+  .schema-field-card.schema-drop-before,
+  .schema-field-card.schema-drop-after {
+    border-color: color-mix(
+      in srgb,
+      var(--mx-primary, var(--primary)) 55%,
+      var(--line)
+    ) !important;
+  }
+
+  .schema-field-card.schema-drop-before {
+    box-shadow: inset 0 3px 0 var(--mx-primary, var(--primary)) !important;
+  }
+
+  .schema-field-card.schema-drop-after {
+    box-shadow: inset 0 -3px 0 var(--mx-primary, var(--primary)) !important;
+  }
+
+  .deployment-config-note {
+    border-color: color-mix(
+      in srgb,
+      var(--mx-primary, var(--primary)) 28%,
+      var(--line-soft)
+    ) !important;
+    background: color-mix(
+      in srgb,
+      var(--mx-primary, var(--primary)) 7%,
+      var(--panel)
+    ) !important;
+  }
+</style>
+
+
   </template>
 
-<style id="mx-deployment-module-style">
-  :host([data-mx-radius="square"]) { --mx-module-radius:3px; }
-  :host([data-mx-radius="subtle"]) { --mx-module-radius:7px; }
-  :host([data-mx-radius="rounded"]) { --mx-module-radius:12px; }
-  :host([data-mx-radius="soft"]) { --mx-module-radius:18px; }
-  :host([data-mx-density="compact"]) { --mx-module-gap:8px; --mx-module-pad:10px; }
-  :host([data-mx-density="normal"]) { --mx-module-gap:12px; --mx-module-pad:14px; }
-  :host([data-mx-density="comfortable"]) { --mx-module-gap:16px; --mx-module-pad:18px; }
-  .card, .search-panel, .table-card, .modal-card, .form-section,
-  .admin-function-tabs, .deployment-config-section { border-radius:var(--mx-module-radius,12px) !important; }
-  .app-main, .card-body { gap:var(--mx-module-gap,12px); }
-  .btn-primary { background:var(--primary) !important; }
-  .btn-primary:hover:not(:disabled), .btn-primary:focus-visible { background:var(--primary-dark,var(--primary)) !important; border-color:var(--primary-dark,var(--primary)) !important; }
-</style>
   <script type="text/plain" id="recordsSystemScript">
 
 "use strict";
@@ -13002,22 +13242,199 @@ Database restoration should place the application into maintenance mode and be p
   }
 </style>
 
+<style id="mx-deployment-theme-bridge">
+  /*
+   * Deployment theme bridge
+   *
+   * MX workspaces are Shadow DOM modules. Theme variables set on the host
+   * are exposed through --mx-* tokens and mapped back to each module's
+   * legacy local variables here. This block must live INSIDE the template.
+   */
+  :host {
+    --primary: var(--mx-primary, #2563eb) !important;
+    --primary-2: var(--mx-primary-dark, #1d4ed8) !important;
+    --primary-dark: var(--mx-primary-dark, #1d4ed8) !important;
+    --primary-soft: var(--mx-primary-soft, #eff6ff) !important;
+    --primary-soft-2: var(--mx-primary-soft-2, #dbeafe) !important;
+    --blue: var(--mx-primary, #2563eb) !important;
+    --blue-soft: var(--mx-primary-soft, #eff6ff) !important;
+    --accent: var(--mx-primary, #2563eb) !important;
+    --accent-soft: var(--mx-primary-soft, #eff6ff) !important;
+    --accent-line: var(--mx-primary-soft-2, #dbeafe) !important;
+  }
+
+  .btn-primary,
+  :host([data-theme="dark"]) .btn-primary {
+    color: #fff !important;
+    background: var(--mx-primary, var(--primary)) !important;
+    border-color: var(--mx-primary, var(--primary)) !important;
+    box-shadow:
+      0 1px 2px rgba(16,24,40,.05),
+      0 5px 14px color-mix(in srgb, var(--mx-primary, var(--primary)) 22%, transparent) !important;
+  }
+
+  .btn-primary:hover:not(:disabled),
+  .btn-primary:focus-visible,
+  :host([data-theme="dark"]) .btn-primary:hover:not(:disabled),
+  :host([data-theme="dark"]) .btn-primary:focus-visible {
+    color: #fff !important;
+    background: var(--mx-primary-dark, var(--primary-dark, var(--primary))) !important;
+    border-color: var(--mx-primary-dark, var(--primary-dark, var(--primary))) !important;
+    box-shadow:
+      0 8px 20px color-mix(in srgb, var(--mx-primary, var(--primary)) 26%, transparent) !important;
+  }
+
+  .btn-soft,
+  :host([data-theme="dark"]) .btn-soft {
+    color: var(--mx-primary, var(--primary)) !important;
+    background: var(--mx-primary-soft, var(--primary-soft)) !important;
+    border-color: var(--mx-primary-soft-2, var(--primary-soft-2, var(--line))) !important;
+  }
+
+  .btn-soft:hover:not(:disabled),
+  .btn-soft:focus-visible,
+  :host([data-theme="dark"]) .btn-soft:hover:not(:disabled),
+  :host([data-theme="dark"]) .btn-soft:focus-visible {
+    color: var(--mx-primary-dark, var(--primary-dark, var(--primary))) !important;
+    background: color-mix(
+      in srgb,
+      var(--mx-primary-soft, var(--primary-soft)) 76%,
+      var(--mx-primary, var(--primary)) 24%
+    ) !important;
+    border-color: color-mix(
+      in srgb,
+      var(--mx-primary, var(--primary)) 42%,
+      var(--line)
+    ) !important;
+  }
+
+  input:focus,
+  select:focus,
+  textarea:focus,
+  button:focus-visible {
+    border-color: var(--mx-primary, var(--primary)) !important;
+  }
+
+  input:focus,
+  select:focus,
+  textarea:focus {
+    box-shadow:
+      0 0 0 3px color-mix(
+        in srgb,
+        var(--mx-primary, var(--primary)) 14%,
+        transparent
+      ) !important;
+  }
+
+  input[type="checkbox"],
+  input[type="radio"] {
+    accent-color: var(--mx-primary, var(--primary));
+  }
+
+  .loading-dot.active,
+  .upload-progress-bar,
+  .dashboard-progress-fill {
+    background: var(--mx-primary, var(--primary)) !important;
+  }
+
+  .table-loading-bar::before,
+  .bar-fill {
+    background: linear-gradient(
+      90deg,
+      var(--mx-primary, var(--primary)),
+      color-mix(in srgb, var(--mx-primary, var(--primary)) 58%, white)
+    ) !important;
+  }
+
+  .entry-form-drop-target.drag-active {
+    outline-color: color-mix(
+      in srgb,
+      var(--mx-primary, var(--primary)) 45%,
+      transparent
+    ) !important;
+  }
+
+  .drop-anywhere-overlay {
+    border-color: var(--mx-primary, var(--primary)) !important;
+    color: var(--mx-primary-dark, var(--primary-dark, var(--primary))) !important;
+    background: color-mix(
+      in srgb,
+      var(--mx-primary-soft, var(--primary-soft)) 94%,
+      white
+    ) !important;
+  }
+
+  .upload-progress-panel,
+  .storage-folder-index,
+  .dashboard-rule-preview {
+    border-color: var(--mx-primary-soft-2, var(--primary-soft-2, var(--line))) !important;
+    background: var(--mx-primary-soft, var(--primary-soft)) !important;
+  }
+
+  .upload-progress-head,
+  .storage-folder-index {
+    color: var(--mx-primary-dark, var(--primary-dark, var(--primary))) !important;
+  }
+
+  .upload-progress-track {
+    background: var(--mx-primary-soft-2, var(--primary-soft-2, var(--line-soft))) !important;
+  }
+
+  .admin-function-tab.active,
+  .admin-function-tab[aria-selected="true"] {
+    color: #fff !important;
+    background: var(--mx-primary, var(--primary)) !important;
+    border-color: var(--mx-primary, var(--primary)) !important;
+    box-shadow:
+      0 5px 14px color-mix(
+        in srgb,
+        var(--mx-primary, var(--primary)) 24%,
+        transparent
+      ) !important;
+  }
+
+  .admin-function-tab:focus-visible {
+    outline-color: color-mix(
+      in srgb,
+      var(--mx-primary, var(--primary)) 26%,
+      transparent
+    ) !important;
+  }
+
+  .schema-field-card.schema-drop-before,
+  .schema-field-card.schema-drop-after {
+    border-color: color-mix(
+      in srgb,
+      var(--mx-primary, var(--primary)) 55%,
+      var(--line)
+    ) !important;
+  }
+
+  .schema-field-card.schema-drop-before {
+    box-shadow: inset 0 3px 0 var(--mx-primary, var(--primary)) !important;
+  }
+
+  .schema-field-card.schema-drop-after {
+    box-shadow: inset 0 -3px 0 var(--mx-primary, var(--primary)) !important;
+  }
+
+  .deployment-config-note {
+    border-color: color-mix(
+      in srgb,
+      var(--mx-primary, var(--primary)) 28%,
+      var(--line-soft)
+    ) !important;
+    background: color-mix(
+      in srgb,
+      var(--mx-primary, var(--primary)) 7%,
+      var(--panel)
+    ) !important;
+  }
+</style>
+
+
   </template>
 
-<style id="mx-deployment-module-style">
-  :host([data-mx-radius="square"]) { --mx-module-radius:3px; }
-  :host([data-mx-radius="subtle"]) { --mx-module-radius:7px; }
-  :host([data-mx-radius="rounded"]) { --mx-module-radius:12px; }
-  :host([data-mx-radius="soft"]) { --mx-module-radius:18px; }
-  :host([data-mx-density="compact"]) { --mx-module-gap:8px; --mx-module-pad:10px; }
-  :host([data-mx-density="normal"]) { --mx-module-gap:12px; --mx-module-pad:14px; }
-  :host([data-mx-density="comfortable"]) { --mx-module-gap:16px; --mx-module-pad:18px; }
-  .card, .search-panel, .table-card, .modal-card, .form-section,
-  .admin-function-tabs, .deployment-config-section { border-radius:var(--mx-module-radius,12px) !important; }
-  .app-main, .card-body { gap:var(--mx-module-gap,12px); }
-  .btn-primary { background:var(--primary) !important; }
-  .btn-primary:hover:not(:disabled), .btn-primary:focus-visible { background:var(--primary-dark,var(--primary)) !important; border-color:var(--primary-dark,var(--primary)) !important; }
-</style>
   <script type="text/plain" id="adminSystemScript">
 
 const API_BASE =
@@ -16664,6 +17081,15 @@ initialize();
       target.style.setProperty("--accent-line", primarySoft2);
       target.style.setProperty("--sidebar", sidebar);
       target.style.setProperty("--sidebar-2", mixHex(sidebar, "white", .08));
+
+      // Stable deployment tokens deliberately use a separate namespace.
+      // Shadow modules map their local design variables to these values.
+      target.style.setProperty("--mx-primary", primaryDisplay);
+      target.style.setProperty("--mx-primary-dark", primaryDark);
+      target.style.setProperty("--mx-primary-soft", primarySoft);
+      target.style.setProperty("--mx-primary-soft-2", primarySoft2);
+      target.style.setProperty("--mx-sidebar", sidebar);
+      target.style.setProperty("--mx-sidebar-2", mixHex(sidebar, "white", .08));
       target.dataset.mxRadius = appearance.radius || "rounded";
       target.dataset.mxDensity = appearance.density || "normal";
       target.dataset.mxContentWidth = appearance.content_width || "wide";
@@ -18614,6 +19040,12 @@ initialize();
     ];
 
     function dashboardChartColor(index) {
+      if (index === 0) {
+        const css = getComputedStyle(document.documentElement);
+        return css.getPropertyValue("--mx-primary").trim()
+          || css.getPropertyValue("--primary").trim()
+          || DASHBOARD_CHART_PALETTE[0];
+      }
       return DASHBOARD_CHART_PALETTE[index % DASHBOARD_CHART_PALETTE.length];
     }
 
