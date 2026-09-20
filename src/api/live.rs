@@ -17,7 +17,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use futures::{SinkExt, StreamExt};
-use rusqlite::params;
+use rusqlite::{OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::sync::broadcast;
@@ -39,6 +39,7 @@ struct LiveTicket {
     uid: String,
     name: String,
     access_level: i64,
+    auth_version: i64,
     expires_at: i64,
 }
 
@@ -140,19 +141,44 @@ fn prune_expired_tickets(tickets: &mut HashMap<String, LiveTicket>, now: i64) {
     tickets.retain(|_, ticket| ticket.expires_at > now);
 }
 
-async fn load_ticket_identity(uid: String) -> Result<(String, i64), String> {
-    tokio::task::spawn_blocking(move || -> Result<(String, i64), SqliteDatabaseError> {
+async fn load_ticket_identity(uid: String) -> Result<(String, i64, i64), String> {
+    tokio::task::spawn_blocking(move || -> Result<(String, i64, i64), SqliteDatabaseError> {
         with_sql_connection(|connection| {
             connection.query_row(
-                "SELECT name, access_level FROM users WHERE uid = ?1 LIMIT 1",
+                "SELECT name, access_level, auth_version FROM users WHERE uid = ?1 LIMIT 1",
                 params![uid],
-                |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, i64>(2)?,
+                    ))
+                },
             )
         })
     })
     .await
     .map_err(|error| format!("live ticket task failed: {error}"))?
     .map_err(|error| format!("live ticket account lookup failed: {error}"))
+}
+
+async fn live_credentials_current(uid: String, expected_auth_version: i64) -> Result<bool, String> {
+    tokio::task::spawn_blocking(move || -> Result<bool, SqliteDatabaseError> {
+        with_sql_connection(|connection| {
+            let auth_version = connection
+                .query_row(
+                    "SELECT auth_version FROM users WHERE uid = ?1 LIMIT 1",
+                    params![uid],
+                    |row| row.get::<_, i64>(0),
+                )
+                .optional()?;
+
+            Ok(auth_version == Some(expected_auth_version))
+        })
+    })
+    .await
+    .map_err(|error| format!("live credential check task failed: {error}"))?
+    .map_err(|error| format!("live credential check failed: {error}"))
 }
 
 /// Authenticated REST endpoint used to mint a one-time, short-lived ticket.
@@ -166,7 +192,7 @@ pub async fn issue_live_ticket(claims: Claims) -> Response {
         );
     }
 
-    let (name, access_level) = match load_ticket_identity(claims.uid.clone()).await {
+    let (name, access_level, auth_version) = match load_ticket_identity(claims.uid.clone()).await {
         Ok(identity) => identity,
         Err(error) => {
             crate::report_error!(error, "live", "issue_live_ticket()");
@@ -176,6 +202,16 @@ pub async fn issue_live_ticket(claims: Claims) -> Response {
             );
         }
     };
+
+    // The normal auth middleware already validates this value. Check it again
+    // here to close the small race between middleware validation and ticket
+    // creation when credentials are changed concurrently.
+    if auth_version != claims.auth_version {
+        return api_json(
+            StatusCode::UNAUTHORIZED,
+            json!({"response":"session credentials have changed; sign in again"}),
+        );
+    }
 
     let now = now_millis();
     let expires_at = now.saturating_add(LIVE_TICKET_TTL_MS);
@@ -193,6 +229,7 @@ pub async fn issue_live_ticket(claims: Claims) -> Response {
                 uid: claims.uid,
                 name,
                 access_level,
+                auth_version,
                 expires_at,
             },
         );
@@ -231,6 +268,23 @@ pub async fn live_socket(ws: WebSocketUpgrade, Query(query): Query<LiveSocketQue
             json!({"response":"invalid or expired MX live ticket"}),
         );
     };
+
+    match live_credentials_current(ticket.uid.clone(), ticket.auth_version).await {
+        Ok(true) => {}
+        Ok(false) => {
+            return api_json(
+                StatusCode::UNAUTHORIZED,
+                json!({"response":"session credentials have changed; sign in again"}),
+            );
+        }
+        Err(error) => {
+            crate::report_error!(error, "live", "live_socket()");
+            return api_json(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                json!({"response":"failed to validate MX live session"}),
+            );
+        }
+    }
 
     ws.on_upgrade(move |socket| run_live_socket(socket, ticket))
 }
@@ -370,6 +424,8 @@ async fn run_live_socket(socket: WebSocket, ticket: LiveTicket) {
     }
 
     let outbound_activity = last_activity.clone();
+    let credential_uid = ticket.uid.clone();
+    let credential_auth_version = ticket.auth_version;
     let mut outbound = tokio::spawn(async move {
         let mut heartbeat = tokio::time::interval(Duration::from_millis(SOCKET_HEARTBEAT_MS));
         heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -399,6 +455,22 @@ async fn run_live_socket(socket: WebSocket, ticket: LiveTicket) {
                     }
                 }
                 _ = heartbeat.tick() => {
+                    match live_credentials_current(
+                        credential_uid.clone(),
+                        credential_auth_version,
+                    ).await {
+                        Ok(true) => {}
+                        Ok(false) => {
+                            let _ = sender.send(Message::Close(None)).await;
+                            break;
+                        }
+                        Err(error) => {
+                            crate::report_error!(error, "live", "run_live_socket()");
+                            let _ = sender.send(Message::Close(None)).await;
+                            break;
+                        }
+                    }
+
                     let now = now_millis().max(0) as u64;
                     let last = outbound_activity.load(Ordering::Relaxed);
                     if now.saturating_sub(last) > SOCKET_STALE_MS {

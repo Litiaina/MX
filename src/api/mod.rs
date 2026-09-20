@@ -1,3 +1,4 @@
+pub mod account;
 pub mod admin;
 pub mod api_error;
 pub mod audit;

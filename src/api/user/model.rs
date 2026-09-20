@@ -5,6 +5,7 @@ pub struct AuthModifyUserRequest {
     pub email: String,
     pub password: String,
     pub otp: Option<String>,
+    pub recovery_code: Option<String>,
     pub new_email: Option<String>,
     pub new_password: Option<String>,
     pub new_name: Option<String>,
@@ -34,4 +35,5 @@ pub struct DeleteUserRequest {
     pub email: String,
     pub password: String,
     pub otp: Option<String>,
+    pub recovery_code: Option<String>,
 }

@@ -15,6 +15,7 @@ use crate::{
         user::model::{AuthModifyUserRequest, DeleteUserRequest, NewUserData, QueryFilter},
     },
     middleware::auth::{ACCESS_EDITOR, Claims, valid_access_level},
+    util::password::{hash_password, validate_new_password},
 };
 
 pub async fn create_user(
@@ -51,13 +52,27 @@ pub async fn create_user(
         ));
     }
 
+    if let Err(message) = validate_new_password(&request.password) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "response": message })),
+        ));
+    }
+
     let created_uid = Uuid::new_v4().to_string();
     let created_at = chrono::Utc::now().timestamp();
+
+    let password_hash = hash_password(&request.password).map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": "internal server error" })),
+        )
+    })?;
 
     let new_user = User {
         uid: created_uid,
         email: request.email.trim().to_string(),
-        password: request.password,
+        password_hash,
         name: request.name.trim().to_string(),
         created_at,
         access_level,
@@ -99,6 +114,14 @@ pub async fn modify_user(
     claims: Claims,
     Json(request): Json<AuthModifyUserRequest>,
 ) -> Result<impl IntoResponse, impl IntoResponse> {
+    if let Some(password) = request.new_password.as_deref()
+        && let Err(message) = validate_new_password(password)
+    {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "response": message })),
+        ));
+    }
     let uid = Arc::new(claims.uid);
     let uid_clone = Arc::clone(&uid);
 
@@ -123,6 +146,7 @@ pub async fn modify_user(
         request.email,
         request.password,
         request.otp,
+        request.recovery_code,
         "function",
         "modify_user()",
     )
@@ -197,6 +221,7 @@ pub async fn delete_user(
         request.email,
         request.password,
         request.otp,
+        request.recovery_code,
         "function",
         "delete_user()",
     )

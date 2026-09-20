@@ -1,4 +1,6 @@
-use crate::{config::load_config::CONFIG, db::connector::with_sql_connection};
+use crate::{
+    config::load_config::CONFIG, db::connector::with_sql_connection, util::password::hash_password,
+};
 
 pub async fn initialize_sql_db() {
     let initialization_result = tokio::task::spawn_blocking(|| {
@@ -8,18 +10,135 @@ pub async fn initialize_sql_db() {
                 CREATE TABLE IF NOT EXISTS users (
                     uid          TEXT PRIMARY KEY NOT NULL,
                     email        TEXT NOT NULL UNIQUE,
-                    password     TEXT NOT NULL,
+                    password     TEXT NOT NULL DEFAULT '' CHECK(password = ''),
+                    password_hash TEXT NOT NULL CHECK(password_hash GLOB '$argon2id$*'),
                     name         TEXT NOT NULL,
                     created_at   INTEGER NOT NULL,
                     access_level INTEGER NOT NULL,
-                    totp_secret  TEXT
+                    totp_secret  TEXT,
+                    totp_pending_secret TEXT,
+                    totp_pending_created_at INTEGER,
+                    auth_version INTEGER NOT NULL DEFAULT 1
                 );
                 "#,
             )?;
 
+            // MX 1.0 account-security migration. The legacy `password` column
+            // is retained only for SQLite compatibility and is always blanked.
+            let user_columns = {
+                let mut statement = connection.prepare("PRAGMA table_info(users)")?;
+                let rows = statement.query_map([], |row| row.get::<_, String>(1))?;
+                rows.collect::<Result<Vec<_>, _>>()?
+            };
+
+            if !user_columns.iter().any(|column| column == "password_hash") {
+                connection.execute("ALTER TABLE users ADD COLUMN password_hash TEXT", [])?;
+            }
+
+            if !user_columns.iter().any(|column| column == "auth_version") {
+                connection.execute(
+                    "ALTER TABLE users ADD COLUMN auth_version INTEGER NOT NULL DEFAULT 1",
+                    [],
+                )?;
+            }
+
+            if !user_columns
+                .iter()
+                .any(|column| column == "totp_pending_secret")
+            {
+                connection.execute("ALTER TABLE users ADD COLUMN totp_pending_secret TEXT", [])?;
+            }
+
+            if !user_columns
+                .iter()
+                .any(|column| column == "totp_pending_created_at")
+            {
+                connection.execute(
+                    "ALTER TABLE users ADD COLUMN totp_pending_created_at INTEGER",
+                    [],
+                )?;
+            }
+
+            // Eagerly remove plaintext credentials left by pre-release builds.
+            // New and migrated accounts therefore only persist Argon2id hashes.
+            let legacy_users = {
+                let mut statement = connection.prepare(
+                    r#"
+                        SELECT uid, password, password_hash
+                        FROM users
+                        WHERE password <> ''
+                    "#,
+                )?;
+                let rows = statement.query_map([], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                    ))
+                })?;
+                rows.collect::<Result<Vec<_>, _>>()?
+            };
+
+            for (uid, password, existing_hash) in legacy_users {
+                let password_hash =
+                    match existing_hash.filter(|hash| hash.starts_with("$argon2id$")) {
+                        Some(password_hash) => password_hash,
+                        None => hash_password(&password).map_err(|error| {
+                            rusqlite::Error::ToSqlConversionFailure(Box::new(error))
+                        })?,
+                    };
+                connection.execute(
+                    "UPDATE users SET password_hash = ?1, password = '' WHERE uid = ?2",
+                    rusqlite::params![password_hash, uid],
+                )?;
+            }
+
             connection.execute_batch(
                 r#"
                 PRAGMA foreign_keys = ON;
+
+                CREATE TABLE IF NOT EXISTS user_recovery_codes (
+                    user_uid    TEXT NOT NULL,
+                    code_digest TEXT NOT NULL UNIQUE,
+                    created_at  INTEGER NOT NULL,
+                    PRIMARY KEY (user_uid, code_digest),
+                    FOREIGN KEY (user_uid)
+                        REFERENCES users(uid)
+                        ON DELETE CASCADE
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_user_recovery_codes_user
+                    ON user_recovery_codes(user_uid);
+
+                CREATE TRIGGER IF NOT EXISTS users_reject_plaintext_password_insert
+                BEFORE INSERT ON users
+                WHEN NEW.password <> ''
+                BEGIN
+                    SELECT RAISE(ABORT, 'plaintext passwords are not permitted');
+                END;
+
+                CREATE TRIGGER IF NOT EXISTS users_reject_plaintext_password_update
+                BEFORE UPDATE OF password ON users
+                WHEN NEW.password <> ''
+                BEGIN
+                    SELECT RAISE(ABORT, 'plaintext passwords are not permitted');
+                END;
+
+                CREATE TRIGGER IF NOT EXISTS users_require_password_hash_insert
+                BEFORE INSERT ON users
+                WHEN NEW.password_hash IS NULL
+                    OR NEW.password_hash NOT GLOB '$argon2id$*'
+                BEGIN
+                    SELECT RAISE(ABORT, 'an Argon2id password_hash is required');
+                END;
+
+                CREATE TRIGGER IF NOT EXISTS users_require_password_hash_update
+                BEFORE UPDATE OF password_hash ON users
+                WHEN NEW.password_hash IS NULL
+                    OR NEW.password_hash NOT GLOB '$argon2id$*'
+                BEGIN
+                    SELECT RAISE(ABORT, 'an Argon2id password_hash is required');
+                END;
 
                 CREATE TABLE IF NOT EXISTS dgs_control_sequence (
                     year        INTEGER PRIMARY KEY NOT NULL,

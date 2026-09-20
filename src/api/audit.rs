@@ -661,19 +661,58 @@ fn classify_action(method: &Method, path: &str) -> Option<AuditClassification> {
         });
     }
 
-    if path == "/mx/v1/auth/enable_2fa" && method == Method::POST {
+    if path == "/mx/v1/account/profile" && method == Method::PATCH {
         return Some(AuditClassification {
-            action: "account.2fa.enable",
+            action: "account.self.profile",
             target_type: Some("account"),
             target_uid: None,
         });
     }
 
-    if path == "/mx/v1/auth/disable_2fa" && method == Method::POST {
+    if path == "/mx/v1/account/password" && method == Method::POST {
         return Some(AuditClassification {
-            action: "account.2fa.disable",
+            action: "account.self.password",
             target_type: Some("account"),
             target_uid: None,
+        });
+    }
+
+    if path.starts_with("/mx/v1/account/totp") {
+        return Some(AuditClassification {
+            action: if method == Method::DELETE {
+                "account.self.2fa.disable"
+            } else {
+                "account.self.2fa.enroll"
+            },
+            target_type: Some("account"),
+            target_uid: None,
+        });
+    }
+
+    if path == "/mx/v1/account/recovery-codes/regenerate" && method == Method::POST {
+        return Some(AuditClassification {
+            action: "account.self.recovery-codes.regenerate",
+            target_type: Some("account"),
+            target_uid: None,
+        });
+    }
+
+    if segments.len() == 6
+        && segments[0] == "mx"
+        && segments[1] == "v1"
+        && segments[2] == "admin"
+        && segments[3] == "accounts"
+        && method == Method::POST
+    {
+        let action = match segments[5] {
+            "password-reset" => "account.admin.password-reset",
+            "security-reset" => "account.admin.security-reset",
+            _ => return None,
+        };
+        return Some(AuditClassification {
+            action,
+            target_type: Some("account"),
+            target_uid: Some(segments[4].to_string()),
         });
     }
 

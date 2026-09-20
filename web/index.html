@@ -439,7 +439,7 @@
 
     .sidebar-user {
       display: grid;
-      grid-template-columns: 36px 1fr auto;
+      grid-template-columns: 36px 1fr auto auto;
       gap: 10px;
       align-items: center;
       margin-top: 12px;
@@ -1619,6 +1619,136 @@
     }
 
     /* ------------------------------------------------------------------ */
+    /* My Account                                                         */
+    /* ------------------------------------------------------------------ */
+
+    .account-security-card {
+      width: min(860px, 100%);
+      max-height: min(900px, calc(100vh - 44px));
+      overflow: auto;
+    }
+
+    .account-security-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+    }
+
+    .account-security-grid .settings-section-wide { grid-column: 1 / -1; }
+
+    .account-form-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 11px;
+    }
+
+    .account-form-grid .span-all { grid-column: 1 / -1; }
+
+    .account-form-grid .field { min-width: 0; }
+
+    .account-form-grid input {
+      width: 100%;
+      min-height: 40px;
+      padding: 0 11px;
+      border: 1px solid var(--line-strong);
+      border-radius: 9px;
+      color: var(--text);
+      background: var(--surface);
+      outline: none;
+    }
+
+    .account-form-grid input:focus {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px var(--primary-soft);
+    }
+
+    .account-form-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      grid-column: 1 / -1;
+    }
+
+    .account-security-status {
+      margin: 0 0 12px;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      color: var(--text-2);
+      background: var(--surface);
+      font-size: .6875rem;
+      line-height: 1.5;
+    }
+
+    .totp-enrollment {
+      display: grid;
+      grid-template-columns: 164px 1fr;
+      gap: 16px;
+      align-items: start;
+      margin-top: 13px;
+      padding-top: 13px;
+      border-top: 1px solid var(--line);
+    }
+
+    .totp-enrollment img {
+      width: 164px;
+      height: 164px;
+      padding: 7px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #fff;
+    }
+
+    .totp-secret {
+      display: block;
+      margin: 7px 0 12px;
+      padding: 9px 10px;
+      overflow-wrap: anywhere;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: .6875rem;
+    }
+
+    .recovery-code-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 7px;
+      margin: 12px 0;
+    }
+
+    .recovery-code-grid code {
+      padding: 8px 9px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      color: var(--text);
+      background: var(--surface);
+      text-align: center;
+      font-size: .6875rem;
+    }
+
+    :root[data-theme="dark"] .account-form-grid input,
+    :root[data-theme="dark"] .account-security-status,
+    :root[data-theme="dark"] .totp-secret,
+    :root[data-theme="dark"] .recovery-code-grid code {
+      color: var(--text);
+      background: var(--surface);
+      border-color: var(--line);
+    }
+
+    @media (max-width: 720px) {
+      .account-security-grid,
+      .account-form-grid,
+      .totp-enrollment { grid-template-columns: 1fr; }
+      .account-security-grid .settings-section-wide,
+      .account-form-grid .span-all,
+      .account-form-actions { grid-column: auto; }
+      .totp-enrollment img { margin-inline: auto; }
+      .account-form-actions { flex-direction: column; }
+    }
+
+    /* ------------------------------------------------------------------ */
     /* Login                                                               */
     /* ------------------------------------------------------------------ */
 
@@ -2266,7 +2396,7 @@
     }
 
     .sidebar-user {
-      grid-template-columns: 34px 1fr auto;
+      grid-template-columns: 34px 1fr auto auto;
       margin-top: 10px;
       padding: 11px 6px 1px;
     }
@@ -3448,6 +3578,13 @@
           <span id="sidebarUserRole">Authenticated session</span>
         </div>
 
+        <button class="icon-button-dark" type="button" id="myAccountBtn" title="My Account" aria-label="Open My Account">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+            <circle cx="12" cy="8" r="3.5"/>
+            <path d="M5.5 20c.8-4 3-6 6.5-6s5.7 2 6.5 6"/>
+          </svg>
+        </button>
+
         <button class="icon-button-dark" type="button" id="logoutBtn" title="Sign out">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
             <path d="M10 5H5v14h5"/>
@@ -4125,12 +4262,12 @@
 
         <div class="field">
           <label for="shellBootstrapPassword">Password</label>
-          <input id="shellBootstrapPassword" type="password" autocomplete="new-password" required>
+          <input id="shellBootstrapPassword" type="password" minlength="12" autocomplete="new-password" required>
         </div>
 
         <div class="field">
           <label for="shellBootstrapPasswordConfirm">Confirm password</label>
-          <input id="shellBootstrapPasswordConfirm" type="password" autocomplete="new-password" required>
+          <input id="shellBootstrapPasswordConfirm" type="password" minlength="12" autocomplete="new-password" required>
         </div>
 
         <button class="btn btn-primary" id="shellBootstrapBtn" type="submit">
@@ -4154,8 +4291,8 @@
         </div>
 
         <div class="field">
-          <label for="loginOtp">2FA code <span style="text-transform:none;font-weight:600;">(if enabled)</span></label>
-          <input id="loginOtp" inputmode="numeric" autocomplete="one-time-code" maxlength="8" placeholder="Optional">
+          <label for="loginOtp">Authenticator or recovery code <span style="text-transform:none;font-weight:600;">(if enabled)</span></label>
+          <input id="loginOtp" autocomplete="one-time-code" maxlength="29" placeholder="6-digit code or recovery code">
         </div>
 
         <button class="btn btn-primary" id="loginBtn" type="submit">Sign in</button>
@@ -4247,6 +4384,94 @@
         <div class="settings-actions">
           <button class="btn" id="settingsResetBtn" type="button">Reset defaults</button>
           <button class="btn btn-primary" id="settingsDoneBtn" type="button">Done</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="settings-overlay hidden" id="accountOverlay" aria-hidden="true">
+    <div class="settings-card account-security-card" role="dialog" aria-modal="true" aria-labelledby="accountTitle">
+      <div class="settings-head">
+        <div>
+          <h2 id="accountTitle">My Account</h2>
+          <p>Manage your profile, password, authenticator, and one-time recovery codes.</p>
+        </div>
+        <button class="settings-close" id="accountCloseBtn" type="button" aria-label="Close My Account">×</button>
+      </div>
+
+      <div class="settings-body">
+        <div class="account-security-status" id="accountSecuritySummary">Loading account security…</div>
+
+        <div class="account-security-grid">
+          <section class="settings-section">
+            <div class="settings-section-title">Profile</div>
+            <div class="settings-section-copy">Update the name and email shown throughout MX. Re-enter your credentials to save.</div>
+            <form class="account-form-grid" id="profileForm">
+              <div class="field"><label for="profileName">Name</label><input id="profileName" autocomplete="name" required></div>
+              <div class="field"><label for="profileEmail">Email</label><input id="profileEmail" type="email" autocomplete="username" required></div>
+              <div class="field"><label for="profilePassword">Current password</label><input id="profilePassword" type="password" autocomplete="current-password" required></div>
+              <div class="field"><label for="profileFactor">Authenticator or recovery code</label><input id="profileFactor" autocomplete="one-time-code" placeholder="Required when 2FA is enabled"></div>
+              <div class="account-form-actions"><button class="btn btn-primary" id="profileSaveBtn" type="submit">Save profile</button></div>
+            </form>
+          </section>
+
+          <section class="settings-section">
+            <div class="settings-section-title">Password</div>
+            <div class="settings-section-copy">Use at least 12 characters. Changing it immediately revokes every existing access and refresh token.</div>
+            <form class="account-form-grid" id="passwordForm">
+              <div class="field span-all"><label for="passwordCurrent">Current password</label><input id="passwordCurrent" type="password" autocomplete="current-password" required></div>
+              <div class="field"><label for="passwordNew">New password</label><input id="passwordNew" type="password" minlength="12" autocomplete="new-password" required></div>
+              <div class="field"><label for="passwordConfirm">Confirm new password</label><input id="passwordConfirm" type="password" minlength="12" autocomplete="new-password" required></div>
+              <div class="field span-all"><label for="passwordFactor">Authenticator or recovery code</label><input id="passwordFactor" autocomplete="one-time-code" placeholder="Required when 2FA is enabled"></div>
+              <div class="account-form-actions"><button class="btn btn-primary" id="passwordSaveBtn" type="submit">Change password</button></div>
+            </form>
+          </section>
+
+          <section class="settings-section settings-section-wide">
+            <div class="settings-section-title">Two-factor authentication</div>
+            <div class="settings-section-copy" id="totpStatusCopy">Checking authenticator status…</div>
+
+            <form class="account-form-grid" id="totpBeginForm">
+              <div class="field span-all"><label for="totpBeginPassword">Current password</label><input id="totpBeginPassword" type="password" autocomplete="current-password" required></div>
+              <div class="account-form-actions"><button class="btn btn-primary" id="totpBeginBtn" type="submit">Set up authenticator</button></div>
+            </form>
+
+            <div class="totp-enrollment hidden" id="totpEnrollmentPanel">
+              <img id="totpQrImage" alt="Authenticator enrollment QR code">
+              <div>
+                <div class="settings-section-title">Scan, then confirm</div>
+                <div class="settings-section-copy">The secret is pending and cannot be used to sign in until you confirm a valid code. Enrollment expires after 10 minutes.</div>
+                <span class="totp-secret" id="totpSecret"></span>
+                <form class="account-form-grid" id="totpConfirmForm">
+                  <div class="field"><label for="totpConfirmPassword">Current password</label><input id="totpConfirmPassword" type="password" autocomplete="current-password" required></div>
+                  <div class="field"><label for="totpConfirmCode">6-digit code</label><input id="totpConfirmCode" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required></div>
+                  <div class="account-form-actions"><button class="btn btn-primary" id="totpConfirmBtn" type="submit">Confirm and enable</button></div>
+                </form>
+              </div>
+            </div>
+
+            <div class="hidden" id="totpEnabledPanel">
+              <form class="account-form-grid" id="totpManageForm">
+                <div class="field"><label for="totpManagePassword">Current password</label><input id="totpManagePassword" type="password" autocomplete="current-password" required></div>
+                <div class="field"><label for="totpManageFactor">Authenticator or recovery code</label><input id="totpManageFactor" autocomplete="one-time-code" required></div>
+                <div class="account-form-actions">
+                  <button class="btn" id="recoveryRegenerateBtn" type="button">Generate new recovery codes</button>
+                  <button class="btn btn-danger" id="totpDisableBtn" type="button">Disable 2FA</button>
+                </div>
+              </form>
+            </div>
+          </section>
+
+          <section class="settings-section settings-section-wide hidden" id="recoveryCodesPanel">
+            <div class="settings-section-title">Save your recovery codes now</div>
+            <div class="settings-section-copy">Each code works once. Store them outside MX; they will not be shown again.</div>
+            <div class="recovery-code-grid" id="recoveryCodeGrid"></div>
+            <div class="account-form-actions">
+              <button class="btn" id="recoveryCopyBtn" type="button">Copy codes</button>
+              <button class="btn" id="recoveryDownloadBtn" type="button">Download</button>
+              <button class="btn btn-primary" id="recoveryDoneBtn" type="button">I saved them — sign in again</button>
+            </div>
+          </section>
         </div>
       </div>
     </div>
@@ -6510,11 +6735,11 @@
 </label>
 <label>
             PASSWORD
-            <input autocomplete="new-password" id="bootstrapPassword" required="" type="password"/>
+            <input autocomplete="new-password" id="bootstrapPassword" minlength="12" required="" type="password"/>
 </label>
 <label>
             CONFIRM PASSWORD
-            <input autocomplete="new-password" id="bootstrapPasswordConfirm" required="" type="password"/>
+            <input autocomplete="new-password" id="bootstrapPasswordConfirm" minlength="12" required="" type="password"/>
 </label>
 <button class="btn btn-primary" id="bootstrapBtn" type="submit">
             Create Administrator
@@ -6575,7 +6800,7 @@
 </label>
 <label>
           PASSWORD
-          <input autocomplete="new-password" id="accountPassword" required="" type="password"/>
+          <input autocomplete="new-password" id="accountPassword" minlength="12" required="" type="password"/>
 </label>
 <label>
           ACCESS
@@ -11908,7 +12133,7 @@ bootstrapSession();
 
     .account-row {
       display: grid;
-      grid-template-columns: minmax(180px, 1.5fr) minmax(120px, .8fr) minmax(160px, .8fr) auto auto;
+      grid-template-columns: minmax(180px, 1.5fr) minmax(120px, .8fr) minmax(160px, .8fr) minmax(260px, auto);
       gap: 10px;
       align-items: center;
       padding: 12px;
@@ -11920,6 +12145,32 @@ bootstrapSession();
     .account-name {
       font-weight: 900;
     }
+
+    .account-security-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+
+    .admin-recovery-panel {
+      margin: 16px 0;
+      padding: 15px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--panel, #f8fafc);
+    }
+
+    .admin-recovery-panel h3 { margin: 0 0 5px; font-size: .875rem; }
+    .admin-recovery-panel p { margin: 0 0 12px; color: var(--muted); font-size: .71875rem; }
+    .admin-recovery-form {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+      align-items: end;
+    }
+    .admin-recovery-form .span-all { grid-column: 1 / -1; }
+    .admin-recovery-actions { display:flex; justify-content:flex-end; gap:7px; grid-column:1 / -1; }
 
     .account-email,
     .muted {
@@ -12670,6 +12921,7 @@ bootstrapSession();
 
       .account-toolbar,
       .account-row,
+      .admin-recovery-form,
       .audit-toolbar,
       .backup-summary-grid {
         grid-template-columns: 1fr;
@@ -12768,6 +13020,7 @@ bootstrapSession();
 
   :host([data-theme="dark"]) .card,
   :host([data-theme="dark"]) .account-row,
+  :host([data-theme="dark"]) .admin-recovery-panel,
   :host([data-theme="dark"]) .audit-table-wrap {
     color:var(--text) !important;
     background:var(--panel) !important;
@@ -13291,7 +13544,7 @@ bootstrapSession();
 <section class="card admin-function-panel" id="adminAccountsPanel" role="tabpanel" aria-labelledby="adminTabAccounts" data-admin-panel="accounts">
 <div class="card-header">
 <h2>Account Management</h2>
-<p>Create accounts and control their access level. Changes take effect on the user's next refreshed access token.</p>
+<p>Create accounts, control access, and recover credentials. Access and security changes revoke the user's existing sessions immediately.</p>
 </div>
 <div class="card-body">
 <div class="role-legend">
@@ -13311,7 +13564,7 @@ bootstrapSession();
 </label>
 <label>
             PASSWORD
-            <input autocomplete="new-password" id="accountPassword" required="" type="password"/>
+            <input autocomplete="new-password" id="accountPassword" minlength="12" required="" type="password"/>
 </label>
 <label>
             ACCESS
@@ -13325,6 +13578,19 @@ bootstrapSession();
 <button class="btn btn-primary" id="createAccountBtn" type="submit">Create Account</button>
 </form>
 <div class="status" id="accountStatus">Loading accounts...</div>
+<section class="admin-recovery-panel hidden" id="adminRecoveryPanel">
+<h3 id="adminRecoveryTitle">Account recovery</h3>
+<p id="adminRecoveryCopy">Re-authenticate as an Administrator to continue.</p>
+<form class="admin-recovery-form" id="adminRecoveryForm">
+<input id="adminRecoveryTargetUid" type="hidden">
+<input id="adminRecoveryMode" type="hidden">
+<label class="hidden" id="adminRecoveryNewPasswordWrap">NEW USER PASSWORD<input id="adminRecoveryNewPassword" type="password" minlength="12" autocomplete="new-password"></label>
+<label class="hidden" id="adminRecoveryConfirmPasswordWrap">CONFIRM NEW PASSWORD<input id="adminRecoveryConfirmPassword" type="password" minlength="12" autocomplete="new-password"></label>
+<label>YOUR ADMINISTRATOR PASSWORD<input id="adminRecoveryPassword" type="password" autocomplete="current-password" required></label>
+<label>YOUR AUTHENTICATOR OR RECOVERY CODE<input id="adminRecoveryFactor" autocomplete="one-time-code" placeholder="Required when your 2FA is enabled"></label>
+<div class="admin-recovery-actions"><button class="btn btn-light" id="adminRecoveryCancelBtn" type="button">Cancel</button><button class="btn btn-primary" id="adminRecoverySubmitBtn" type="submit">Reset password</button></div>
+</form>
+</section>
 <div class="account-list" id="accountList"></div>
 </div>
 </section>
@@ -13793,11 +14059,11 @@ Database restoration should place the application into maintenance mode and be p
 </label>
 <label>
               PASSWORD
-              <input autocomplete="new-password" id="bootstrapPassword" required="" type="password"/>
+              <input autocomplete="new-password" id="bootstrapPassword" minlength="12" required="" type="password"/>
 </label>
 <label>
               CONFIRM PASSWORD
-              <input autocomplete="new-password" id="bootstrapPasswordConfirm" required="" type="password"/>
+              <input autocomplete="new-password" id="bootstrapPasswordConfirm" minlength="12" required="" type="password"/>
 </label>
 <button class="btn btn-primary" id="bootstrapBtn" type="submit">Create Administrator</button>
 <div class="status" id="bootstrapStatus"></div>
@@ -14553,7 +14819,9 @@ const ENDPOINTS = {
     list: "/mx/v1/auth/get",
     create: "/mx/v1/user/create",
     modify: "/mx/v1/auth/modify",
-    delete: "/mx/v1/auth/delete"
+    delete: "/mx/v1/auth/delete",
+    passwordReset: uid => `/mx/v1/admin/accounts/${encodeURIComponent(uid)}/password-reset`,
+    securityReset: uid => `/mx/v1/admin/accounts/${encodeURIComponent(uid)}/security-reset`
   },
 
   audit: "/mx/v1/admin/audit",
@@ -14650,6 +14918,20 @@ const els = {
   createAccountBtn: document.getElementById("createAccountBtn"),
   accountStatus: document.getElementById("accountStatus"),
   accountList: document.getElementById("accountList"),
+  adminRecoveryPanel: document.getElementById("adminRecoveryPanel"),
+  adminRecoveryTitle: document.getElementById("adminRecoveryTitle"),
+  adminRecoveryCopy: document.getElementById("adminRecoveryCopy"),
+  adminRecoveryForm: document.getElementById("adminRecoveryForm"),
+  adminRecoveryTargetUid: document.getElementById("adminRecoveryTargetUid"),
+  adminRecoveryMode: document.getElementById("adminRecoveryMode"),
+  adminRecoveryNewPasswordWrap: document.getElementById("adminRecoveryNewPasswordWrap"),
+  adminRecoveryNewPassword: document.getElementById("adminRecoveryNewPassword"),
+  adminRecoveryConfirmPasswordWrap: document.getElementById("adminRecoveryConfirmPasswordWrap"),
+  adminRecoveryConfirmPassword: document.getElementById("adminRecoveryConfirmPassword"),
+  adminRecoveryPassword: document.getElementById("adminRecoveryPassword"),
+  adminRecoveryFactor: document.getElementById("adminRecoveryFactor"),
+  adminRecoveryCancelBtn: document.getElementById("adminRecoveryCancelBtn"),
+  adminRecoverySubmitBtn: document.getElementById("adminRecoverySubmitBtn"),
 
   recordStructureForm: document.getElementById("recordStructureForm"),
   fieldLabel: document.getElementById("fieldLabel"),
@@ -15307,23 +15589,12 @@ async function loadAccounts() {
             ${accessOptions(user.access_level)}
           </select>
 
-          <button
-            class="btn btn-soft btn-small"
-            type="button"
-            data-save-account="${escapeHtml(user.uid)}"
-            ${isSelf ? "disabled" : ""}
-          >
-            Save Access
-          </button>
-
-          <button
-            class="btn btn-danger btn-small"
-            type="button"
-            data-delete-account="${escapeHtml(user.uid)}"
-            ${isSelf ? "disabled" : ""}
-          >
-            Delete
-          </button>
+          <div class="account-security-actions">
+            <button class="btn btn-soft btn-small" type="button" data-save-account="${escapeHtml(user.uid)}" ${isSelf ? "disabled" : ""}>Save Access</button>
+            <button class="btn btn-light btn-small" type="button" data-reset-password="${escapeHtml(user.uid)}" data-account-name="${escapeHtml(user.name)}" ${isSelf ? "disabled" : ""}>Reset Password</button>
+            <button class="btn btn-light btn-small" type="button" data-reset-security="${escapeHtml(user.uid)}" data-account-name="${escapeHtml(user.name)}" ${isSelf ? "disabled" : ""}>Reset 2FA</button>
+            <button class="btn btn-danger btn-small" type="button" data-delete-account="${escapeHtml(user.uid)}" ${isSelf ? "disabled" : ""}>Delete</button>
+          </div>
         </div>
       `;
     }).join("");
@@ -15415,6 +15686,80 @@ async function deleteAccount(uid) {
     await loadAccounts();
   } catch (error) {
     showToast(error.message, "error");
+  }
+}
+
+function adminSecondFactor(value) {
+  const factor = String(value || "").trim();
+  if (!factor) return { admin_otp: null, admin_recovery_code: null };
+  return /^\d{6}$/.test(factor)
+    ? { admin_otp: factor, admin_recovery_code: null }
+    : { admin_otp: null, admin_recovery_code: factor };
+}
+
+function openAdminRecovery(mode, uid, accountName) {
+  const passwordReset = mode === "password";
+  els.adminRecoveryForm.reset();
+  els.adminRecoveryMode.value = mode;
+  els.adminRecoveryTargetUid.value = uid;
+  els.adminRecoveryTitle.textContent = passwordReset
+    ? `Reset password · ${accountName}`
+    : `Reset authenticator · ${accountName}`;
+  els.adminRecoveryCopy.textContent = passwordReset
+    ? "Set a new password for this account. The user's existing sessions will be revoked. Re-enter your own Administrator credentials to authorize the reset."
+    : "Clear this user's authenticator and recovery codes. Their existing sessions will be revoked. Re-enter your own Administrator credentials to authorize the reset.";
+  els.adminRecoveryNewPasswordWrap.classList.toggle("hidden", !passwordReset);
+  els.adminRecoveryConfirmPasswordWrap.classList.toggle("hidden", !passwordReset);
+  els.adminRecoveryNewPassword.required = passwordReset;
+  els.adminRecoveryConfirmPassword.required = passwordReset;
+  els.adminRecoverySubmitBtn.textContent = passwordReset ? "Reset password" : "Reset authenticator";
+  els.adminRecoveryPanel.classList.remove("hidden");
+  els.adminRecoveryPanel.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  requestAnimationFrame(() => {
+    (passwordReset ? els.adminRecoveryNewPassword : els.adminRecoveryPassword).focus();
+  });
+}
+
+function closeAdminRecovery() {
+  els.adminRecoveryForm.reset();
+  els.adminRecoveryPanel.classList.add("hidden");
+}
+
+async function submitAdminRecovery(event) {
+  event.preventDefault();
+  const mode = els.adminRecoveryMode.value;
+  const uid = els.adminRecoveryTargetUid.value;
+  if (!uid || !["password", "security"].includes(mode)) return;
+
+  if (
+    mode === "password" &&
+    els.adminRecoveryNewPassword.value !== els.adminRecoveryConfirmPassword.value
+  ) {
+    showToast("New passwords do not match.", "error");
+    return;
+  }
+
+  els.adminRecoverySubmitBtn.disabled = true;
+  try {
+    const body = {
+      admin_password: els.adminRecoveryPassword.value,
+      ...adminSecondFactor(els.adminRecoveryFactor.value)
+    };
+    if (mode === "password") body.new_password = els.adminRecoveryNewPassword.value;
+
+    await requestJson(
+      mode === "password"
+        ? ENDPOINTS.accounts.passwordReset(uid)
+        : ENDPOINTS.accounts.securityReset(uid),
+      { method: "POST", body }
+    );
+    closeAdminRecovery();
+    showToast(mode === "password" ? "Password reset and sessions revoked." : "Authenticator reset and sessions revoked.");
+    await loadAccounts();
+  } catch (error) {
+    showToast(error.message, "error");
+  } finally {
+    els.adminRecoverySubmitBtn.disabled = false;
   }
 }
 
@@ -16487,8 +16832,13 @@ const AUDIT_ACTION_LABELS = {
   "account.delete": "Deleted account",
   "account.self.modify": "Changed own account",
   "account.self.delete": "Deleted own account",
-  "account.2fa.enable": "Enabled 2FA",
-  "account.2fa.disable": "Disabled 2FA",
+  "account.self.profile": "Updated own profile",
+  "account.self.password": "Changed own password",
+  "account.self.2fa.enroll": "Changed own 2FA enrollment",
+  "account.self.2fa.disable": "Disabled own 2FA",
+  "account.self.recovery-codes.regenerate": "Regenerated recovery codes",
+  "account.admin.password-reset": "Reset account password",
+  "account.admin.security-reset": "Reset account authenticator",
   "database.query": "Ran database query",
   "audit.view": "Viewed audit log",
   "backup.create": "Created database backup",
@@ -17610,12 +17960,35 @@ els.accountList.addEventListener("click", event => {
     return;
   }
 
+  const passwordResetButton = event.target.closest("[data-reset-password]");
+  if (passwordResetButton) {
+    openAdminRecovery(
+      "password",
+      passwordResetButton.dataset.resetPassword,
+      passwordResetButton.dataset.accountName || "account"
+    );
+    return;
+  }
+
+  const securityResetButton = event.target.closest("[data-reset-security]");
+  if (securityResetButton) {
+    openAdminRecovery(
+      "security",
+      securityResetButton.dataset.resetSecurity,
+      securityResetButton.dataset.accountName || "account"
+    );
+    return;
+  }
+
   const deleteButton = event.target.closest("[data-delete-account]");
 
   if (deleteButton) {
     deleteAccount(deleteButton.dataset.deleteAccount);
   }
 });
+
+els.adminRecoveryForm.addEventListener("submit", submitAdminRecovery);
+els.adminRecoveryCancelBtn.addEventListener("click", closeAdminRecovery);
 
 window.MX_ADMIN = Object.freeze({
   refresh: refreshAdminData
@@ -17645,7 +18018,15 @@ initialize();
       live: "/mx/v1/live",
       presence: "/mx/v1/presence",
       audit: "/mx/v1/admin/audit",
-      backups: "/mx/v1/admin/backups"
+      backups: "/mx/v1/admin/backups",
+      account: {
+        profile: "/mx/v1/account/profile",
+        password: "/mx/v1/account/password",
+        totpEnroll: "/mx/v1/account/totp/enroll",
+        totpConfirm: "/mx/v1/account/totp/confirm",
+        totp: "/mx/v1/account/totp",
+        recoveryCodes: "/mx/v1/account/recovery-codes/regenerate"
+      }
     };
 
     const STORAGE_KEYS = {
@@ -17682,6 +18063,7 @@ initialize();
       workspace: "dashboard",
       recordsMounted: false,
       adminMounted: false,
+      accountRecoveryCodes: [],
 
       workspaceFreshAt: {
         dashboard: 0,
@@ -17757,6 +18139,7 @@ initialize();
       adminHost: document.getElementById("adminHost"),
 
       mobileMenuBtn: document.getElementById("mobileMenuBtn"),
+      myAccountBtn: document.getElementById("myAccountBtn"),
       logoutBtn: document.getElementById("logoutBtn"),
       refreshBtn: document.getElementById("refreshBtn"),
       themeToggleBtn: document.getElementById("themeToggleBtn"),
@@ -17774,6 +18157,44 @@ initialize();
       effectiveScaleValue: document.getElementById("effectiveScaleValue"),
       scaleHint: document.getElementById("scaleHint"),
       autoRefreshSelect: document.getElementById("autoRefreshSelect"),
+
+      accountOverlay: document.getElementById("accountOverlay"),
+      accountCloseBtn: document.getElementById("accountCloseBtn"),
+      accountSecuritySummary: document.getElementById("accountSecuritySummary"),
+      profileForm: document.getElementById("profileForm"),
+      profileName: document.getElementById("profileName"),
+      profileEmail: document.getElementById("profileEmail"),
+      profilePassword: document.getElementById("profilePassword"),
+      profileFactor: document.getElementById("profileFactor"),
+      profileSaveBtn: document.getElementById("profileSaveBtn"),
+      passwordForm: document.getElementById("passwordForm"),
+      passwordCurrent: document.getElementById("passwordCurrent"),
+      passwordNew: document.getElementById("passwordNew"),
+      passwordConfirm: document.getElementById("passwordConfirm"),
+      passwordFactor: document.getElementById("passwordFactor"),
+      passwordSaveBtn: document.getElementById("passwordSaveBtn"),
+      totpStatusCopy: document.getElementById("totpStatusCopy"),
+      totpBeginForm: document.getElementById("totpBeginForm"),
+      totpBeginPassword: document.getElementById("totpBeginPassword"),
+      totpBeginBtn: document.getElementById("totpBeginBtn"),
+      totpEnrollmentPanel: document.getElementById("totpEnrollmentPanel"),
+      totpQrImage: document.getElementById("totpQrImage"),
+      totpSecret: document.getElementById("totpSecret"),
+      totpConfirmForm: document.getElementById("totpConfirmForm"),
+      totpConfirmPassword: document.getElementById("totpConfirmPassword"),
+      totpConfirmCode: document.getElementById("totpConfirmCode"),
+      totpConfirmBtn: document.getElementById("totpConfirmBtn"),
+      totpEnabledPanel: document.getElementById("totpEnabledPanel"),
+      totpManageForm: document.getElementById("totpManageForm"),
+      totpManagePassword: document.getElementById("totpManagePassword"),
+      totpManageFactor: document.getElementById("totpManageFactor"),
+      recoveryRegenerateBtn: document.getElementById("recoveryRegenerateBtn"),
+      totpDisableBtn: document.getElementById("totpDisableBtn"),
+      recoveryCodesPanel: document.getElementById("recoveryCodesPanel"),
+      recoveryCodeGrid: document.getElementById("recoveryCodeGrid"),
+      recoveryCopyBtn: document.getElementById("recoveryCopyBtn"),
+      recoveryDownloadBtn: document.getElementById("recoveryDownloadBtn"),
+      recoveryDoneBtn: document.getElementById("recoveryDoneBtn"),
 
       exportBtn: document.getElementById("exportBtn"),
       sidebarExportBtn: document.getElementById("sidebarExportBtn"),
@@ -19329,6 +19750,251 @@ initialize();
       return loadSession();
     }
 
+    function secondFactorFields(value) {
+      const factor = String(value || "").trim();
+      if (!factor) return { otp: null, recovery_code: null };
+      return /^\d{6}$/.test(factor)
+        ? { otp: factor, recovery_code: null }
+        : { otp: null, recovery_code: factor };
+    }
+
+    async function accountJson(url, method, body) {
+      return apiJson(url, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      });
+    }
+
+    function renderAccountSecurity() {
+      const session = state.session;
+      if (!session) return;
+
+      els.profileName.value = session.name || "";
+      els.profileEmail.value = session.email || "";
+      const enabled = session.totp_enabled === true;
+      const remaining = Number(session.recovery_codes_remaining || 0);
+
+      els.accountSecuritySummary.textContent = enabled
+        ? `Two-factor authentication is enabled · ${remaining} recovery code${remaining === 1 ? "" : "s"} remaining · ${session.access_name}`
+        : `Two-factor authentication is not enabled · ${session.access_name}`;
+      els.totpStatusCopy.textContent = enabled
+        ? `Your authenticator is active. ${remaining} one-time recovery code${remaining === 1 ? "" : "s"} remain.`
+        : "Add an authenticator to protect sign-in with a second factor. It is not activated until a valid code is confirmed.";
+      els.totpBeginForm.classList.toggle("hidden", enabled);
+      els.totpEnabledPanel.classList.toggle("hidden", !enabled);
+      if (enabled) els.totpEnrollmentPanel.classList.add("hidden");
+    }
+
+    async function openMyAccount() {
+      try {
+        await loadSession();
+        state.accountRecoveryCodes = [];
+        els.recoveryCodesPanel.classList.add("hidden");
+        renderAccountSecurity();
+        els.accountOverlay.classList.remove("hidden");
+        els.accountOverlay.setAttribute("aria-hidden", "false");
+        requestAnimationFrame(() => els.profileName.focus());
+      } catch (error) {
+        showToast(error.message, "error");
+      }
+    }
+
+    function closeMyAccount() {
+      els.accountOverlay.classList.add("hidden");
+      els.accountOverlay.setAttribute("aria-hidden", "true");
+      if (state.accountRecoveryCodes.length) {
+        state.accountRecoveryCodes = [];
+        requireSharedLogin("Security settings changed. Sign in again with your updated credentials.");
+      }
+    }
+
+    function showRecoveryCodes(codes) {
+      // Enabling 2FA and regenerating recovery codes both increment the
+      // credential version. Stop authenticated background work immediately so
+      // its expected 401 cannot replace this one-time code handoff with the
+      // sign-in screen before the user has saved the codes.
+      window.MX_LIVE?.stop();
+      if (state.autoRefreshTimer) {
+        clearTimeout(state.autoRefreshTimer);
+        state.autoRefreshTimer = null;
+      }
+      clearTokens();
+
+      state.accountRecoveryCodes = Array.isArray(codes) ? codes.slice() : [];
+      els.recoveryCodeGrid.replaceChildren(
+        ...state.accountRecoveryCodes.map(code => {
+          const node = document.createElement("code");
+          node.textContent = code;
+          return node;
+        })
+      );
+      els.recoveryCodesPanel.classList.remove("hidden");
+      els.recoveryCodesPanel.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+
+    function invalidateCurrentSession(message) {
+      closeMyAccount();
+      requireSharedLogin(message);
+    }
+
+    async function saveProfile(event) {
+      event.preventDefault();
+      const nameValue = els.profileName.value.trim();
+      const emailValue = els.profileEmail.value.trim();
+      const name = nameValue === (state.session?.name || "") ? null : nameValue;
+      const email = emailValue === (state.session?.email || "") ? null : emailValue;
+      if (!name && !email) {
+        showToast("No profile changes to save.");
+        return;
+      }
+
+      els.profileSaveBtn.disabled = true;
+      try {
+        const data = await accountJson(ENDPOINTS.account.profile, "PATCH", {
+          current_password: els.profilePassword.value,
+          ...secondFactorFields(els.profileFactor.value),
+          name,
+          email
+        });
+        els.profilePassword.value = "";
+        els.profileFactor.value = "";
+        if (data?.session_invalidated) {
+          invalidateCurrentSession("Profile credentials changed. Sign in again.");
+          return;
+        }
+        await loadSession();
+        showToast("Profile updated.");
+      } catch (error) {
+        showToast(error.message, "error");
+      } finally {
+        els.profileSaveBtn.disabled = false;
+      }
+    }
+
+    async function savePassword(event) {
+      event.preventDefault();
+      if (els.passwordNew.value !== els.passwordConfirm.value) {
+        showToast("New passwords do not match.", "error");
+        return;
+      }
+      els.passwordSaveBtn.disabled = true;
+      try {
+        await accountJson(ENDPOINTS.account.password, "POST", {
+          current_password: els.passwordCurrent.value,
+          new_password: els.passwordNew.value,
+          ...secondFactorFields(els.passwordFactor.value)
+        });
+        els.passwordForm.reset();
+        invalidateCurrentSession("Password changed. All previous sessions were revoked; sign in again.");
+      } catch (error) {
+        showToast(error.message, "error");
+      } finally {
+        els.passwordSaveBtn.disabled = false;
+      }
+    }
+
+    async function beginTotpEnrollment(event) {
+      event.preventDefault();
+      els.totpBeginBtn.disabled = true;
+      try {
+        const data = await accountJson(ENDPOINTS.account.totpEnroll, "POST", {
+          password: els.totpBeginPassword.value
+        });
+        els.totpQrImage.src = data.qr_code_data_url;
+        els.totpSecret.textContent = data.secret;
+        els.totpConfirmPassword.value = els.totpBeginPassword.value;
+        els.totpBeginPassword.value = "";
+        els.totpEnrollmentPanel.classList.remove("hidden");
+        els.totpConfirmCode.focus();
+      } catch (error) {
+        showToast(error.message, "error");
+      } finally {
+        els.totpBeginBtn.disabled = false;
+      }
+    }
+
+    async function confirmTotpEnrollment(event) {
+      event.preventDefault();
+      els.totpConfirmBtn.disabled = true;
+      try {
+        const data = await accountJson(ENDPOINTS.account.totpConfirm, "POST", {
+          password: els.totpConfirmPassword.value,
+          otp: els.totpConfirmCode.value.trim()
+        });
+        els.totpConfirmForm.reset();
+        els.totpEnrollmentPanel.classList.add("hidden");
+        showRecoveryCodes(data.recovery_codes);
+        showToast("Two-factor authentication enabled. Save your recovery codes.");
+      } catch (error) {
+        showToast(error.message, "error");
+      } finally {
+        els.totpConfirmBtn.disabled = false;
+      }
+    }
+
+    function totpManagementBody() {
+      return {
+        password: els.totpManagePassword.value,
+        ...secondFactorFields(els.totpManageFactor.value)
+      };
+    }
+
+    async function disableTotp() {
+      if (!confirm("Disable two-factor authentication and revoke all recovery codes?")) return;
+      els.totpDisableBtn.disabled = true;
+      try {
+        await accountJson(ENDPOINTS.account.totp, "DELETE", totpManagementBody());
+        els.totpManageForm.reset();
+        invalidateCurrentSession("Two-factor authentication was disabled. Sign in again.");
+      } catch (error) {
+        showToast(error.message, "error");
+      } finally {
+        els.totpDisableBtn.disabled = false;
+      }
+    }
+
+    async function regenerateRecoveryCodes() {
+      if (!confirm("Replace every existing recovery code? Old codes will stop working immediately.")) return;
+      els.recoveryRegenerateBtn.disabled = true;
+      try {
+        const data = await accountJson(
+          ENDPOINTS.account.recoveryCodes,
+          "POST",
+          totpManagementBody()
+        );
+        els.totpManageForm.reset();
+        showRecoveryCodes(data.recovery_codes);
+        showToast("New recovery codes generated. Save them now.");
+      } catch (error) {
+        showToast(error.message, "error");
+      } finally {
+        els.recoveryRegenerateBtn.disabled = false;
+      }
+    }
+
+    async function copyRecoveryCodes() {
+      try {
+        await navigator.clipboard.writeText(state.accountRecoveryCodes.join("\n"));
+        showToast("Recovery codes copied.");
+      } catch (_) {
+        showToast("Clipboard access is unavailable. Download the codes instead.", "error");
+      }
+    }
+
+    function downloadRecoveryCodes() {
+      const blob = new Blob(
+        [`MX recovery codes\nGenerated: ${new Date().toISOString()}\n\n${state.accountRecoveryCodes.join("\n")}\n`],
+        { type: "text/plain;charset=utf-8" }
+      );
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = "mx-recovery-codes.txt";
+      anchor.click();
+      URL.revokeObjectURL(url);
+    }
+
     function requireSharedLogin(message = "Sign in to continue.") {
       window.MX_LIVE?.stop();
       clearTokens();
@@ -19918,8 +20584,7 @@ initialize();
           password: els.loginPassword.value
         };
 
-        const otp = els.loginOtp.value.trim();
-        if (otp) payload.otp = otp;
+        Object.assign(payload, secondFactorFields(els.loginOtp.value));
 
         const response = await fetch(ENDPOINTS.authenticate, {
           method: "POST",
@@ -21648,6 +22313,23 @@ initialize();
       });
 
       els.logoutBtn.addEventListener("click", logout);
+      els.myAccountBtn.addEventListener("click", openMyAccount);
+      els.accountCloseBtn.addEventListener("click", closeMyAccount);
+      els.accountOverlay.addEventListener("click", event => {
+        if (event.target === els.accountOverlay) closeMyAccount();
+      });
+      els.profileForm.addEventListener("submit", saveProfile);
+      els.passwordForm.addEventListener("submit", savePassword);
+      els.totpBeginForm.addEventListener("submit", beginTotpEnrollment);
+      els.totpConfirmForm.addEventListener("submit", confirmTotpEnrollment);
+      els.totpDisableBtn.addEventListener("click", disableTotp);
+      els.recoveryRegenerateBtn.addEventListener("click", regenerateRecoveryCodes);
+      els.recoveryCopyBtn.addEventListener("click", copyRecoveryCodes);
+      els.recoveryDownloadBtn.addEventListener("click", downloadRecoveryCodes);
+      els.recoveryDoneBtn.addEventListener("click", () => {
+        state.accountRecoveryCodes = [];
+        invalidateCurrentSession("Security settings changed. Sign in again.");
+      });
       els.themeToggleBtn.addEventListener("click", toggleTheme);
 
       window.addEventListener("mx:deployment-config-updated", event => {
@@ -21846,6 +22528,11 @@ initialize();
             !els.settingsOverlay.classList.contains("hidden")
           ) {
             closeSettings();
+          } else if (
+            event.key === "Escape" &&
+            !els.accountOverlay.classList.contains("hidden")
+          ) {
+            closeMyAccount();
           }
         }
       );

@@ -1,13 +1,13 @@
 <div align="center">
 
   <img
-    src="https://github.com/Litiaina/litiaina-admin-webpage/blob/master/images/litiaina_icon.png?raw=true"
+    src="./assets/litiaina_icon.png"
     alt="Litiaina"
     width="150"
     height="150"
   />
 
-  <h1>MX</h1>
+  <h1>Litiaina MX</h1>
 
   <p>
     <b>Self-hosted, fully customizable general-purpose information system</b><br>
@@ -16,6 +16,10 @@
   </p>
 
 </div>
+
+<p align="center">
+  <strong>Current release: MX 1.0.0</strong>
+</p>
 
 ---
 
@@ -117,6 +121,9 @@ The browser provides the unified MX interface:
 - account management
 - schema configuration
 - reporting and exports
+- real-time synchronization
+- online/offline account presence
+- parallel multi-user record editing
 
 ### MX Server
 
@@ -132,7 +139,11 @@ The Rust server owns:
 - search construction;
 - dashboard/report queries;
 - audit events;
-- database backup operations.
+- database backup operations;
+- authenticated WebSocket sessions;
+- live change broadcasting;
+- account presence tracking;
+- field-level concurrency checks.
 
 ### SQLite
 
@@ -149,6 +160,102 @@ N1 stores:
 - verified SQLite backup objects.
 
 The N1 object is authoritative for file content. Preview files are derived data and may be regenerated.
+
+---
+
+
+## Real-Time Collaboration
+
+MX 1.0 includes authenticated real-time synchronization for multi-user deployments.
+
+Connected browsers maintain a WebSocket session with the MX server. When records,
+attachments, schema configuration, dashboard configuration, deployment settings,
+or account presence change, MX can notify connected clients immediately instead
+of waiting for manual refreshes.
+
+### Reliable live connection
+
+The browser reconnects indefinitely if the WebSocket is interrupted.
+
+Reconnect behavior uses bounded exponential backoff: the delay can increase during
+an outage, but MX does not permanently give up after an arbitrary retry count.
+After a successful reconnect, the client resynchronizes authoritative state from
+the normal HTTP API so events missed during the outage do not leave the interface
+stale.
+
+MX also uses heartbeat/liveness handling so long-running browser sessions can
+detect dead connections and recover.
+
+### Account presence
+
+Authenticated sessions contribute to deployment-wide presence information.
+
+MX can show whether an account is currently:
+
+```text
+Online
+Offline
+```
+
+Multiple browser tabs for the same account are treated as one online account for
+presence display.
+
+Presence is informational. It is **not** a record lock.
+
+### Parallel editing without record locks
+
+MX deliberately does not lock an entire record when somebody opens or edits it.
+
+For example, these operations can happen at the same time:
+
+```text
+User A -> changes Status
+User B -> changes Routed To
+User C -> uploads a supporting document
+```
+
+Independent changes can be committed without forcing the users to wait for one
+another.
+
+Record editing uses partial field updates and field-level revision checks. A
+conflict is raised only when two users concurrently modify the same logical
+field from incompatible base revisions.
+
+This prevents silent lost updates while preserving parallel work on unrelated
+fields and attachments.
+
+### Live events
+
+The real-time layer can publish compact events such as:
+
+```text
+record.created
+record.fields.updated
+record.deleted
+
+attachment.created
+attachment.deleted
+
+schema.updated
+storage.updated
+dashboard.updated
+deployment.updated
+
+presence.user.online
+presence.user.offline
+sync.required
+```
+
+WebSocket events are notifications, not the durable source of truth.
+
+```text
+WebSocket -> something changed
+HTTP API  -> fetch authoritative state
+SQLite    -> authoritative structured state
+N1        -> authoritative attachment bytes
+```
+
+This keeps reconnection and recovery deterministic.
 
 ---
 
@@ -642,10 +749,17 @@ MX supports:
 JWT access tokens
 Refresh tokens
 Optional TOTP two-factor authentication
+Single-use recovery codes
 First-run Administrator bootstrap
 ```
 
 A fresh deployment can create its first Administrator only while the user table is empty and the bootstrap authorization requirement is satisfied.
+
+Passwords are stored as salted Argon2id hashes. TOTP secrets remain pending until
+the user confirms a valid authenticator code. Password, email, authenticator, and
+recovery-code changes revoke existing access and refresh tokens. Administrator
+password and authenticator resets require the Administrator to re-enter their own
+password and second factor.
 
 ---
 
@@ -672,8 +786,13 @@ schema.order.update
 account.create
 account.modify
 account.delete
-account.2fa.enable
-account.2fa.disable
+account.self.profile
+account.self.password
+account.self.2fa.enroll
+account.self.2fa.disable
+account.self.recovery-codes.regenerate
+account.admin.password-reset
+account.admin.security-reset
 
 database.query
 audit.view
@@ -769,13 +888,23 @@ POST   /mx/v1/auth/get
 PATCH  /mx/v1/auth/modify
 DELETE /mx/v1/auth/delete
 
-POST /mx/v1/auth/enable_2fa
-POST /mx/v1/auth/disable_2fa
-POST /mx/v1/auth/check_2fa
-
 POST   /mx/v1/user/create
 PATCH  /mx/v1/user/modify
 DELETE /mx/v1/user/delete
+
+POST /mx/v1/admin/accounts/{uid}/password-reset
+POST /mx/v1/admin/accounts/{uid}/security-reset
+```
+
+### My Account and security
+
+```http
+PATCH  /mx/v1/account/profile
+POST   /mx/v1/account/password
+POST   /mx/v1/account/totp/enroll
+POST   /mx/v1/account/totp/confirm
+DELETE /mx/v1/account/totp
+POST   /mx/v1/account/recovery-codes/regenerate
 ```
 
 ### Schema
@@ -819,9 +948,15 @@ The `action-rate` endpoint is schema-driven: its action/group/date fields are su
 GET    /mx/v1/records
 POST   /mx/v1/records
 
+GET    /mx/v1/records/{uid}
+PATCH  /mx/v1/records/{uid}
 PUT    /mx/v1/records/{uid}
 DELETE /mx/v1/records/{uid}
 ```
+
+`PATCH` is the preferred path for collaborative editing because it sends only
+the fields actually changed by the client and participates in field-level
+revision checks. `PUT` remains available for full-record update behavior.
 
 ### File Attachment fields
 
@@ -842,7 +977,22 @@ The upload route includes the File Attachment field UID so a record can contain 
 GET /mx/v1/status/revision
 ```
 
-The frontend can use the lightweight revision value to decide when record state needs to be refreshed.
+The lightweight revision endpoint remains useful for refresh/fallback logic.
+
+### Real-time synchronization and presence
+
+```http
+POST /mx/v1/live/ticket
+GET  /mx/v1/presence
+
+WebSocket /mx/v1/live
+```
+
+The live ticket is short-lived and is used to establish an authenticated
+WebSocket without placing the long-lived JWT directly in the WebSocket URL.
+
+The WebSocket endpoint supports the HTTP/1.1 upgrade path and HTTP/2 extended
+CONNECT when the server negotiates HTTP/2.
 
 ### Audit and backups
 
@@ -861,6 +1011,10 @@ GET  /mx/v1/admin/backups/{uid}/download
 ```http
 POST /mx/v1/db/query
 ```
+
+The database query endpoint is read-only and cannot access authentication tables.
+Credential recovery and security changes must use their dedicated re-authenticated
+workflows.
 
 Administrator-only endpoints require Administrator authorization on the backend.
 
@@ -1003,6 +1157,7 @@ mx/
     │   ├── audit.rs
     │   ├── backup.rs
     │   ├── dashboard.rs
+    │   ├── live.rs
     │   ├── reports.rs
     │   ├── query_handler.rs
     │   └── route.rs
@@ -1025,6 +1180,7 @@ storage.rs            configurable and frozen N1 namespaces
 handler.rs            record/attachment operations and N1 coordination
 reports.rs            statistics, dashboard reporting, CSV export
 dashboard.rs          dashboard support
+live.rs               WebSocket sessions, live events, and presence
 audit.rs              accountability history
 backup.rs             verified SQLite snapshots stored in N1
 ```
@@ -1085,7 +1241,54 @@ MX follows these principles:
 - allow dashboard/statistics behavior to be built from the same schema;
 - keep operational audit history separate from business completion semantics;
 - verify database backups before treating them as valid;
+- keep the WebSocket layer as live invalidation/notification rather than durable state;
+- reconnect live clients indefinitely and resynchronize after outages;
+- allow parallel record work without whole-record locks;
+- protect same-field concurrent edits with field-level revision checks;
 - avoid recompilation when a deployment changes its business record structure.
+
+---
+
+
+## MX 1.0
+
+MX 1.0 is the first public stable release of the MX general-purpose information
+system platform.
+
+The 1.0 line establishes the current platform contract around:
+
+```text
+dynamic Record Structure
+File Attachment fields
+configurable N1 storage layout
+Universal and Advanced Search
+server-side pagination and filtering
+custom dashboard/statistics builder
+CSV reporting and exports
+deployment Appearance & Identity
+role-based access
+audit logging
+verified SQLite backups to N1
+real-time WebSocket synchronization
+online/offline account presence
+parallel field-level collaboration
+responsive light/dark interface
+```
+
+Cargo package version:
+
+```text
+1.0.0
+```
+
+Product/release name:
+
+```text
+MX 1.0
+```
+
+Future additions can evolve the platform without redefining the 1.0 identity:
+MX remains a schema-driven, self-hosted general-purpose information system.
 
 ---
 

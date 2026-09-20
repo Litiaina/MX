@@ -19,10 +19,22 @@ use std::time::SystemTime;
 
 use crate::config::load_config::CONFIG;
 use crate::db::connector::{SqliteDatabaseError, with_sql_connection};
-use crate::middleware::totp::verify_totp;
+use crate::util::authentication::{CredentialStatus, verify_user_credentials};
 
 const ACCESS_TOKEN_KIND: &str = "access";
 const REFRESH_TOKEN_KIND: &str = "refresh";
+const AUTH_ACCOUNT_QUERY: &str = r#"
+    SELECT uid, email, access_level, auth_version
+    FROM users
+    WHERE email = ?1
+    LIMIT 1
+"#;
+const REFRESH_ACCOUNT_QUERY: &str = r#"
+    SELECT uid, email, access_level, auth_version
+    FROM users
+    WHERE uid = ?1
+    LIMIT 1
+"#;
 
 pub const ACCESS_ADMINISTRATOR: i64 = 0;
 pub const ACCESS_MANAGER: i64 = 1;
@@ -50,6 +62,7 @@ pub fn access_level_name(access_level: i64) -> &'static str {
 pub enum AuthError {
     WrongCredentials,
     MissingCredentials,
+    SecondFactorRequired,
     TokenCreation,
     InvalidToken,
     InternalError,
@@ -60,6 +73,7 @@ pub struct Claims {
     pub uid: String,
     pub email: String,
     pub access_level: i64,
+    pub auth_version: i64,
     pub token_kind: String,
     pub exp: usize,
 }
@@ -105,13 +119,14 @@ pub struct AuthenticateRequest {
     pub email: String,
     pub password: String,
     pub otp: Option<String>,
+    pub recovery_code: Option<String>,
 }
 
 pub struct RetrievedAuthData {
     pub uid: String,
     pub email: String,
     pub access_level: i64,
-    pub totp_secret: Option<String>,
+    pub auth_version: i64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -132,6 +147,8 @@ pub struct SessionBody {
     pub access_level: i64,
     pub access_name: String,
     pub totp_enabled: bool,
+    pub totp_enrollment_pending: bool,
+    pub recovery_codes_remaining: i64,
 }
 
 static JWT_KEYS: LazyLock<Keys> = LazyLock::new(|| {
@@ -223,6 +240,30 @@ pub async fn auth(request: Request, next: Next) -> Result<Response, AuthError> {
         return Err(AuthError::InvalidToken);
     }
 
+    let uid = token_data.claims.uid.clone();
+    let token_auth_version = token_data.claims.auth_version;
+    let current_auth_version = tokio::task::spawn_blocking(move || {
+        with_sql_connection(|connection| {
+            connection.query_row(
+                "SELECT auth_version FROM users WHERE uid = ?1 LIMIT 1",
+                params![uid],
+                |row| row.get::<_, i64>(0),
+            )
+        })
+    })
+    .await
+    .map_err(|_| AuthError::InternalError)?
+    .map_err(|error| match error {
+        SqliteDatabaseError::Sqlite(rusqlite::Error::QueryReturnedNoRows) => {
+            AuthError::InvalidToken
+        }
+        _ => AuthError::InternalError,
+    })?;
+
+    if current_auth_version != token_auth_version {
+        return Err(AuthError::InvalidToken);
+    }
+
     Ok(next.run(request).await)
 }
 
@@ -280,51 +321,40 @@ pub async fn authorize(
 
     let database_result = tokio::task::spawn_blocking(move || {
         with_sql_connection(|connection| {
-            connection.query_row(
-                r#"
-                                SELECT
-                                    uid,
-                                    email,
-                                    access_level,
-                                    totp_secret
-                                FROM users
-                                WHERE
-                                    email = ?1
-                                    AND password = ?2
-                                LIMIT 1
-                                "#,
-                params![email, password],
-                |row| {
-                    Ok(RetrievedAuthData {
-                        uid: row.get("uid")?,
-                        email: row.get("email")?,
-                        access_level: row.get("access_level")?,
-                        totp_secret: row.get("totp_secret")?,
-                    })
-                },
-            )
+            let data = connection.query_row(AUTH_ACCOUNT_QUERY, params![email], |row| {
+                Ok(RetrievedAuthData {
+                    uid: row.get("uid")?,
+                    email: row.get("email")?,
+                    access_level: row.get("access_level")?,
+                    auth_version: row.get("auth_version")?,
+                })
+            })?;
+
+            let status = verify_user_credentials(
+                connection,
+                &data.uid,
+                &password,
+                otp.as_deref(),
+                payload.recovery_code.as_deref(),
+            )?;
+
+            Ok((data, status))
         })
     })
     .await;
 
     match database_result {
-        Ok(Ok(data)) => {
+        Ok(Ok((data, CredentialStatus::Valid))) => {
             if !valid_access_level(data.access_level) {
                 return Err(AuthError::InvalidToken);
             }
 
-            if let Some(totp_secret) = data.totp_secret {
-                let Some(otp) = otp else {
-                    return Err(AuthError::MissingCredentials);
-                };
-
-                if !verify_totp(&totp_secret, &otp, 1) {
-                    return Err(AuthError::WrongCredentials);
-                }
-            }
-
-            issue_auth_body(data.uid, data.email, data.access_level)
+            issue_auth_body(data.uid, data.email, data.access_level, data.auth_version)
         }
+
+        Ok(Ok((_, CredentialStatus::SecondFactorRequired))) => Err(AuthError::SecondFactorRequired),
+
+        Ok(Ok((_, CredentialStatus::Invalid))) => Err(AuthError::WrongCredentials),
 
         Ok(Err(SqliteDatabaseError::Sqlite(rusqlite::Error::QueryReturnedNoRows))) => {
             Err(AuthError::WrongCredentials)
@@ -378,7 +408,7 @@ pub async fn refresh_access_token(
         return Err(AuthError::InvalidToken);
     }
 
-    let uid = refresh_claims.uid;
+    let uid = refresh_claims.uid.clone();
 
     /*
      * Reload the account from SQLite.
@@ -391,27 +421,14 @@ pub async fn refresh_access_token(
      */
     let database_result = tokio::task::spawn_blocking(move || {
         with_sql_connection(|connection| {
-            connection.query_row(
-                r#"
-                                SELECT
-                                    uid,
-                                    email,
-                                    access_level,
-                                    totp_secret
-                                FROM users
-                                WHERE uid = ?1
-                                LIMIT 1
-                                "#,
-                params![uid],
-                |row| {
-                    Ok(RetrievedAuthData {
-                        uid: row.get("uid")?,
-                        email: row.get("email")?,
-                        access_level: row.get("access_level")?,
-                        totp_secret: row.get("totp_secret")?,
-                    })
-                },
-            )
+            connection.query_row(REFRESH_ACCOUNT_QUERY, params![uid], |row| {
+                Ok(RetrievedAuthData {
+                    uid: row.get("uid")?,
+                    email: row.get("email")?,
+                    access_level: row.get("access_level")?,
+                    auth_version: row.get("auth_version")?,
+                })
+            })
         })
     })
     .await;
@@ -422,7 +439,11 @@ pub async fn refresh_access_token(
                 return Err(AuthError::InvalidToken);
             }
 
-            issue_auth_body(data.uid, data.email, data.access_level)
+            if data.auth_version != refresh_claims.auth_version {
+                return Err(AuthError::InvalidToken);
+            }
+
+            issue_auth_body(data.uid, data.email, data.access_level, data.auth_version)
         }
 
         Ok(Err(SqliteDatabaseError::Sqlite(rusqlite::Error::QueryReturnedNoRows))) => {
@@ -463,7 +484,9 @@ pub async fn session_info(claims: Claims) -> Result<Json<SessionBody>, AuthError
                                     email,
                                     name,
                                     access_level,
-                                    totp_secret
+                                    totp_secret,
+                                    totp_pending_secret,
+                                    (SELECT COUNT(*) FROM user_recovery_codes codes WHERE codes.user_uid = users.uid)
                                 FROM users
                                 WHERE uid = ?1
                                 LIMIT 1
@@ -480,6 +503,10 @@ pub async fn session_info(claims: Claims) -> Result<Json<SessionBody>, AuthError
 
                     let totp_secret: Option<String> = row.get("totp_secret")?;
 
+                    let totp_pending_secret: Option<String> = row.get("totp_pending_secret")?;
+
+                    let recovery_codes_remaining: i64 = row.get(6)?;
+
                     Ok(SessionBody {
                         uid,
                         email,
@@ -487,6 +514,8 @@ pub async fn session_info(claims: Claims) -> Result<Json<SessionBody>, AuthError
                         access_level,
                         access_name: access_level_name(access_level).to_string(),
                         totp_enabled: totp_secret.is_some(),
+                        totp_enrollment_pending: totp_pending_secret.is_some(),
+                        recovery_codes_remaining,
                     })
                 },
             )
@@ -527,11 +556,13 @@ fn issue_auth_body(
     uid: String,
     email: String,
     access_level: i64,
+    auth_version: i64,
 ) -> Result<Json<AuthBody>, AuthError> {
     let access_token = create_token(
         uid.clone(),
         email.clone(),
         access_level,
+        auth_version,
         ACCESS_TOKEN_KIND,
         CONFIG.jwt_token_config.login_token_expiration,
     )?;
@@ -540,6 +571,7 @@ fn issue_auth_body(
         uid.clone(),
         email.clone(),
         access_level,
+        auth_version,
         REFRESH_TOKEN_KIND,
         CONFIG.jwt_token_config.refresh_token_expiration,
     )?;
@@ -557,6 +589,7 @@ fn create_token(
     uid: String,
     email: String,
     access_level: i64,
+    auth_version: i64,
     token_kind: &str,
     expiration: u64,
 ) -> Result<String, AuthError> {
@@ -577,6 +610,7 @@ fn create_token(
         uid,
         email,
         access_level,
+        auth_version,
         token_kind: token_kind.to_string(),
         exp: (current_time + expiration) as usize,
     };
@@ -672,6 +706,11 @@ impl IntoResponse for AuthError {
 
             AuthError::MissingCredentials => (StatusCode::BAD_REQUEST, "missing credentials"),
 
+            AuthError::SecondFactorRequired => (
+                StatusCode::BAD_REQUEST,
+                "authenticator or recovery code is required",
+            ),
+
             AuthError::TokenCreation => (StatusCode::INTERNAL_SERVER_ERROR, "token creation error"),
 
             AuthError::InvalidToken => (StatusCode::UNAUTHORIZED, "invalid or expired token"),
@@ -715,4 +754,29 @@ fn unauthorized_response() -> Response {
         })),
     )
         .into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AUTH_ACCOUNT_QUERY, REFRESH_ACCOUNT_QUERY};
+    use rusqlite::Connection;
+
+    #[test]
+    fn authentication_account_queries_are_valid_sql() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(
+                r#"
+                    CREATE TABLE users (
+                        uid TEXT PRIMARY KEY,
+                        email TEXT NOT NULL,
+                        access_level INTEGER NOT NULL,
+                        auth_version INTEGER NOT NULL
+                    );
+                "#,
+            )
+            .unwrap();
+        connection.prepare(AUTH_ACCOUNT_QUERY).unwrap();
+        connection.prepare(REFRESH_ACCOUNT_QUERY).unwrap();
+    }
 }

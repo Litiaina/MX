@@ -11,7 +11,10 @@ use crate::{
         user::model::{NewUserData, QueryFilter},
     },
     db::connector::{SqliteDatabaseError, with_sql_connection},
-    middleware::totp::verify_totp,
+    util::{
+        authentication::{CredentialStatus, verify_user_credentials},
+        password::hash_password,
+    },
 };
 
 pub async fn execute_create_user(
@@ -21,11 +24,11 @@ pub async fn execute_create_user(
 ) -> Result<(), SqliteError> {
     let new_user = user;
 
-    let query = format!(
-        r#"INSERT INTO users (
+    let query = r#"INSERT INTO users (
         uid,
         email,
         password,
+        password_hash,
         name,
         created_at,
         access_level,
@@ -37,18 +40,19 @@ pub async fn execute_create_user(
         ?4,
         ?5,
         ?6,
-        ?7)"#
-    );
+        ?7,
+        ?8)"#;
 
     let database_result =
         tokio::task::spawn_blocking(move || -> Result<(), SqliteDatabaseError> {
             with_sql_connection(|connection| {
                 connection.execute(
-                    &query,
+                    query,
                     params![
                         new_user.uid,
                         new_user.email,
-                        new_user.password,
+                        "",
+                        new_user.password_hash,
                         new_user.name,
                         new_user.created_at,
                         new_user.access_level,
@@ -102,14 +106,26 @@ pub async fn execute_modify_user(
     let database_result =
         tokio::task::spawn_blocking(move || -> Result<usize, SqliteDatabaseError> {
             with_sql_connection(|connection| {
+                let password_hash = user
+                    .new_password
+                    .as_deref()
+                    .map(hash_password)
+                    .transpose()
+                    .map_err(|_| rusqlite::Error::InvalidQuery)?;
+                let security_changed = password_hash.is_some()
+                    || user.new_email.is_some()
+                    || user.access_level.is_some();
+
                 let query = format!(
                     r#"
             UPDATE users
                 SET
                     email = COALESCE(?1, email),
-                    password = COALESCE(?2, password),
+                    password_hash = COALESCE(?2, password_hash),
+                    password = CASE WHEN ?2 IS NULL THEN password ELSE '' END,
                     name = COALESCE(?3, name),
-                    access_level = COALESCE(?4, access_level)
+                    access_level = COALESCE(?4, access_level),
+                    auth_version = auth_version + CASE WHEN ?6 THEN 1 ELSE 0 END
                 WHERE {filter} = ?5
             "#
                 );
@@ -118,10 +134,11 @@ pub async fn execute_modify_user(
                     &query,
                     params![
                         user.new_email,
-                        user.new_password,
+                        password_hash,
                         user.new_name,
                         user.access_level,
                         query_filter.value,
+                        security_changed,
                     ],
                 )?;
 
@@ -164,6 +181,10 @@ pub async fn execute_sql_qeury(query: String) -> SqliteQueryError {
         tokio::task::spawn_blocking(move || -> Result<Value, SqliteDatabaseError> {
             with_sql_connection(|connection| {
                 let mut statement = connection.prepare(&query)?;
+
+                if !statement.readonly() {
+                    return Err(rusqlite::Error::InvalidQuery);
+                }
 
                 let column_count = statement.column_count();
 
@@ -235,9 +256,8 @@ pub async fn execute_delete_user(
     let database_result =
         tokio::task::spawn_blocking(move || -> Result<usize, SqliteDatabaseError> {
             with_sql_connection(|connection| {
-                let query = format!(r#"DELETE FROM users WHERE uid = ?1"#);
-
-                let updated_rows = connection.execute(&query, params![uid])?;
+                let updated_rows =
+                    connection.execute("DELETE FROM users WHERE uid = ?1", params![uid])?;
 
                 Ok(updated_rows)
             })
@@ -268,43 +288,39 @@ pub async fn verify_authentication(
     email: String,
     password: String,
     otp: Option<String>,
+    recovery_code: Option<String>,
     content_type: &str,
     function_name: &str,
 ) -> AuthError {
     let database_result =
-        tokio::task::spawn_blocking(move || -> Result<Option<String>, SqliteDatabaseError> {
+        tokio::task::spawn_blocking(move || -> Result<CredentialStatus, SqliteDatabaseError> {
             with_sql_connection(|connection| {
-                let mut statement = connection.prepare(
-                    "SELECT totp_secret FROM users WHERE uid = ?1 AND email = ?2 AND password = ?3",
+                let email_matches: bool = connection.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM users WHERE uid = ?1 AND email = ?2)",
+                    params![uid.as_str(), email],
+                    |row| row.get(0),
                 )?;
+                if !email_matches {
+                    return Ok(CredentialStatus::Invalid);
+                }
 
-                let row = statement.query_row(params![uid, email, password], |row| {
-                    let totp_secret: Option<String> = row.get("totp_secret")?;
-
-                    Ok(totp_secret)
-                })?;
-
-                Ok(row)
+                verify_user_credentials(
+                    connection,
+                    uid.as_str(),
+                    &password,
+                    otp.as_deref(),
+                    recovery_code.as_deref(),
+                )
             })
         })
         .await;
 
     match database_result {
-        Ok(Ok(totp_secret)) => match totp_secret {
-            Some(value) => {
-                if let Some(otp) = otp {
-                    let valid = verify_totp(&value, otp.as_str(), 1);
-                    if !valid {
-                        AuthError::Unauthorized
-                    } else {
-                        AuthError::Ok
-                    }
-                } else {
-                    return AuthError::MissingTotp;
-                }
-            }
-            None => AuthError::Ok,
-        },
+        Ok(Ok(CredentialStatus::Valid)) => AuthError::Ok,
+
+        Ok(Ok(CredentialStatus::SecondFactorRequired)) => AuthError::MissingTotp,
+
+        Ok(Ok(CredentialStatus::Invalid)) => AuthError::Unauthorized,
 
         Ok(Err(SqliteDatabaseError::Sqlite(rusqlite::Error::QueryReturnedNoRows))) => {
             AuthError::Unauthorized

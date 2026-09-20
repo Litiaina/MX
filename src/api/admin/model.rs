@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 pub struct User {
     pub uid: String,
     pub email: String,
-    pub password: String,
+    pub password_hash: String,
     pub name: String,
     pub created_at: i64,
     pub access_level: i64,
@@ -37,6 +37,21 @@ pub struct ModifySuperUserRequest {
     pub new_password: Option<String>,
     pub new_name: Option<String>,
     pub access_level: Option<i64>,
+}
+
+#[derive(Deserialize)]
+pub struct AdminPasswordResetRequest {
+    pub new_password: String,
+    pub admin_password: String,
+    pub admin_otp: Option<String>,
+    pub admin_recovery_code: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct AdminSecurityResetRequest {
+    pub admin_password: String,
+    pub admin_otp: Option<String>,
+    pub admin_recovery_code: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]

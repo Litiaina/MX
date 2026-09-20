@@ -1,7 +1,4 @@
-use std::{io::Cursor, sync::Arc};
-
-use axum::{Json, response::IntoResponse};
-use image::ImageFormat;
+use axum::{Json, extract::Path, response::IntoResponse};
 use reqwest::StatusCode;
 use rusqlite::params;
 use serde_json::json;
@@ -10,21 +7,18 @@ use uuid::Uuid;
 use crate::{
     api::{
         admin::model::{
-            CreateUserRequest, ExecuteQueryRequest, FilterRequest, ModifySuperUserRequest,
-            UserSummary,
+            AdminPasswordResetRequest, AdminSecurityResetRequest, CreateUserRequest,
+            ExecuteQueryRequest, FilterRequest, ModifySuperUserRequest, UserSummary,
         },
         api_error::SqliteQueryError,
         query_handler::execute_sql_qeury,
     },
     db::connector::{SqliteDatabaseError, with_sql_connection},
-    middleware::{
-        auth::{
-            ACCESS_ADMINISTRATOR, AuthenticateRequest, Claims, access_level_name,
-            valid_access_level,
-        },
-        totp::verify_totp,
+    middleware::auth::{ACCESS_ADMINISTRATOR, Claims, access_level_name, valid_access_level},
+    util::{
+        authentication::{CredentialStatus, verify_user_credentials},
+        password::{hash_password, validate_new_password},
     },
-    util::{qr::generate_qr_image, randomizer::generate_random_base32},
 };
 
 /*
@@ -34,13 +28,6 @@ ACCESS LEVEL
 2 = Editor
 3 = Viewer
 */
-
-#[derive(Debug)]
-enum TotpSecretUpdateError {
-    UserNotFound,
-    QrGeneration(String),
-    Internal(String),
-}
 
 pub async fn create_super_user(
     Json(request): Json<CreateUserRequest>,
@@ -57,11 +44,23 @@ pub async fn create_super_user(
         ));
     }
 
+    if let Err(message) = validate_new_password(&request.password) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "response": message })),
+        ));
+    }
+
     let created_uid = Uuid::new_v4().to_string();
     let created_at = chrono::Utc::now().timestamp();
 
     let email = request.email.trim().to_string();
-    let password = request.password;
+    let password_hash = hash_password(&request.password).map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "response": "internal server error" })),
+        )
+    })?;
     let name = request.name.trim().to_string();
 
     /*
@@ -88,18 +87,19 @@ pub async fn create_super_user(
                             uid,
                             email,
                             password,
+                            password_hash,
                             name,
                             created_at,
                             access_level,
                             totp_secret
                         ) VALUES (
-                            ?1, ?2, ?3, ?4, ?5, ?6, NULL
+                            ?1, ?2, '', ?3, ?4, ?5, ?6, NULL
                         )
                         "#,
                     params![
                         created_uid,
                         email,
-                        password,
+                        password_hash,
                         name,
                         created_at,
                         ACCESS_ADMINISTRATOR,
@@ -315,7 +315,6 @@ pub async fn get_user(
     }
 }
 
-//TODO: to be modified for administrator use
 pub async fn modify_super_user(
     claims: Claims,
     Json(request): Json<ModifySuperUserRequest>,
@@ -324,6 +323,15 @@ pub async fn modify_super_user(
         return Err((
             StatusCode::FORBIDDEN,
             Json(json!({ "response": "access denied" })),
+        ));
+    }
+
+    if request.new_password.is_some() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "response": "use the dedicated administrator password-reset workflow"
+            })),
         ));
     }
 
@@ -366,6 +374,8 @@ pub async fn modify_super_user(
         }
     };
 
+    let security_changed = request.new_email.is_some() || request.access_level.is_some();
+
     let database_result =
         tokio::task::spawn_blocking(move || -> Result<usize, SqliteDatabaseError> {
             with_sql_connection(|connection| {
@@ -374,10 +384,10 @@ pub async fn modify_super_user(
             UPDATE users
                 SET
                     email = COALESCE(?1, email),
-                    password = COALESCE(?2, password),
-                    name = COALESCE(?3, name),
-                    access_level = COALESCE(?4, access_level)
-                WHERE {filter} = ?5
+                    name = COALESCE(?2, name),
+                    access_level = COALESCE(?3, access_level),
+                    auth_version = auth_version + CASE WHEN ?5 THEN 1 ELSE 0 END
+                WHERE {filter} = ?4
             "#
                 );
 
@@ -385,10 +395,10 @@ pub async fn modify_super_user(
                     &query,
                     params![
                         request.new_email,
-                        request.new_password,
                         request.new_name,
                         request.access_level,
                         request.value,
+                        security_changed,
                     ],
                 )?;
 
@@ -439,6 +449,202 @@ pub async fn modify_super_user(
                 Json(json!({
                     "error": "internal server error"
                 })),
+            ))
+        }
+    }
+}
+
+pub async fn admin_reset_user_password(
+    claims: Claims,
+    Path(target_uid): Path<String>,
+    Json(request): Json<AdminPasswordResetRequest>,
+) -> Result<impl IntoResponse, impl IntoResponse> {
+    if !claims.can_manage_accounts() {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(json!({ "response": "access denied" })),
+        ));
+    }
+    if let Err(message) = validate_new_password(&request.new_password) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "response": message })),
+        ));
+    }
+
+    let password_hash = match hash_password(&request.new_password) {
+        Ok(hash) => hash,
+        Err(_) => {
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "response": "internal server error" })),
+            ));
+        }
+    };
+    let admin_uid = claims.uid;
+    let database_result = tokio::task::spawn_blocking(move || {
+        with_sql_connection(|connection| {
+            let transaction = connection.unchecked_transaction()?;
+            let status = verify_user_credentials(
+                &transaction,
+                &admin_uid,
+                &request.admin_password,
+                request.admin_otp.as_deref(),
+                request.admin_recovery_code.as_deref(),
+            )?;
+            if status != CredentialStatus::Valid {
+                return Ok((0usize, status));
+            }
+
+            let updated = transaction.execute(
+                r#"
+                    UPDATE users
+                    SET password_hash = ?1,
+                        password = '',
+                        auth_version = auth_version + 1
+                    WHERE uid = ?2
+                "#,
+                params![password_hash, target_uid],
+            )?;
+            transaction.commit()?;
+            Ok((updated, CredentialStatus::Valid))
+        })
+    })
+    .await;
+
+    match database_result {
+        Ok(Ok((1, CredentialStatus::Valid))) => Ok((
+            StatusCode::OK,
+            Json(json!({
+                "response": "password reset; all existing sessions were revoked"
+            })),
+        )),
+        Ok(Ok((0, CredentialStatus::Valid))) => Err((
+            StatusCode::NOT_FOUND,
+            Json(json!({ "response": "user not found" })),
+        )),
+        Ok(Ok((_, CredentialStatus::SecondFactorRequired))) => Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "response": "administrator authenticator or recovery code is required" })),
+        )),
+        Ok(Ok(_)) => Err((
+            StatusCode::UNAUTHORIZED,
+            Json(json!({ "response": "administrator re-authentication failed" })),
+        )),
+        Ok(Err(error)) => {
+            crate::report_error!(
+                format!("{error}"),
+                "function",
+                "admin_reset_user_password()"
+            );
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "response": "internal server error" })),
+            ))
+        }
+        Err(error) => {
+            crate::report_error!(
+                format!("{error}"),
+                "function",
+                "admin_reset_user_password()"
+            );
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "response": "internal server error" })),
+            ))
+        }
+    }
+}
+
+pub async fn admin_reset_user_security(
+    claims: Claims,
+    Path(target_uid): Path<String>,
+    Json(request): Json<AdminSecurityResetRequest>,
+) -> Result<impl IntoResponse, impl IntoResponse> {
+    if !claims.can_manage_accounts() {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(json!({ "response": "access denied" })),
+        ));
+    }
+
+    let admin_uid = claims.uid;
+    let database_result = tokio::task::spawn_blocking(move || {
+        with_sql_connection(|connection| {
+            let transaction = connection.unchecked_transaction()?;
+            let status = verify_user_credentials(
+                &transaction,
+                &admin_uid,
+                &request.admin_password,
+                request.admin_otp.as_deref(),
+                request.admin_recovery_code.as_deref(),
+            )?;
+            if status != CredentialStatus::Valid {
+                return Ok((0usize, status));
+            }
+
+            let updated = transaction.execute(
+                r#"
+                    UPDATE users
+                    SET totp_secret = NULL,
+                        totp_pending_secret = NULL,
+                        totp_pending_created_at = NULL,
+                        auth_version = auth_version + 1
+                    WHERE uid = ?1
+                "#,
+                params![target_uid],
+            )?;
+            if updated == 1 {
+                transaction.execute(
+                    "DELETE FROM user_recovery_codes WHERE user_uid = ?1",
+                    params![target_uid],
+                )?;
+            }
+            transaction.commit()?;
+            Ok((updated, CredentialStatus::Valid))
+        })
+    })
+    .await;
+
+    match database_result {
+        Ok(Ok((1, CredentialStatus::Valid))) => Ok((
+            StatusCode::OK,
+            Json(json!({
+                "response": "authenticator reset; all existing sessions were revoked"
+            })),
+        )),
+        Ok(Ok((0, CredentialStatus::Valid))) => Err((
+            StatusCode::NOT_FOUND,
+            Json(json!({ "response": "user not found" })),
+        )),
+        Ok(Ok((_, CredentialStatus::SecondFactorRequired))) => Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "response": "administrator authenticator or recovery code is required" })),
+        )),
+        Ok(Ok(_)) => Err((
+            StatusCode::UNAUTHORIZED,
+            Json(json!({ "response": "administrator re-authentication failed" })),
+        )),
+        Ok(Err(error)) => {
+            crate::report_error!(
+                format!("{error}"),
+                "function",
+                "admin_reset_user_security()"
+            );
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "response": "internal server error" })),
+            ))
+        }
+        Err(error) => {
+            crate::report_error!(
+                format!("{error}"),
+                "function",
+                "admin_reset_user_security()"
+            );
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "response": "internal server error" })),
             ))
         }
     }
@@ -542,445 +748,6 @@ pub async fn delete_super_user(
     }
 }
 
-pub async fn enable_2fa_user(
-    claims: Claims,
-    Json(request): Json<AuthenticateRequest>,
-) -> Result<impl IntoResponse, impl IntoResponse> {
-    if !claims.can_manage_accounts() {
-        return Err((
-            StatusCode::FORBIDDEN,
-            Json(json!({ "response": "access denied" })),
-        ));
-    }
-
-    if request.email.is_empty() || request.password.is_empty() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(json!({ "response": "email and password are required" })),
-        ));
-    }
-
-    let email = Arc::new(request.email);
-    let email_clone = Arc::clone(&email);
-    let database_result = tokio::task::spawn_blocking(
-        move || -> Result<(String, Option<String>), SqliteDatabaseError> {
-            with_sql_connection(|connection| {
-                let query = format!(
-                    r#"SELECT uid, totp_secret FROM users WHERE email = ?1 AND password = ?2"#
-                );
-
-                let mut statement = connection.prepare(&query)?;
-
-                let row = statement.query_row(
-                    params![Arc::clone(&email_clone), &request.password],
-                    |row| {
-                        let uid: String = row.get("uid")?;
-                        let totp_secret: Option<String> = row.get("totp_secret")?;
-
-                        Ok((uid, totp_secret))
-                    },
-                )?;
-
-                Ok(row)
-            })
-        },
-    )
-    .await;
-
-    match database_result {
-        Ok(Ok((uid, totp_secret))) => match totp_secret {
-            Some(value) => {
-                if let Some(otp) = request.otp {
-                    let valid = verify_totp(&value, otp.as_str(), 1);
-                    if !valid {
-                        Err((
-                            StatusCode::UNAUTHORIZED,
-                            Json(json!({ "response": "invalid credentials" })),
-                        ))
-                    } else {
-                        match update_totp_secret_by_uid(email.as_ref().to_string(), uid).await {
-                            Ok(image) => Ok((
-                                StatusCode::OK,
-                                ([(axum::http::header::CONTENT_TYPE, "image/png")], image),
-                            )),
-                            Err(err) => match err {
-                                TotpSecretUpdateError::UserNotFound => Err((
-                                    StatusCode::NOT_FOUND,
-                                    Json(json!({ "response": "user not found" })),
-                                )),
-                                TotpSecretUpdateError::QrGeneration(error) => {
-                                    crate::report_error!(
-                                        format!("{error}"),
-                                        "function",
-                                        "enable_2fa_user()"
-                                    );
-
-                                    Err((
-                                        StatusCode::INTERNAL_SERVER_ERROR,
-                                        Json(json!({ "response": "internal server error" })),
-                                    ))
-                                }
-                                TotpSecretUpdateError::Internal(error) => {
-                                    crate::report_error!(
-                                        format!("{error}"),
-                                        "function",
-                                        "enable_2fa_user()"
-                                    );
-
-                                    Err((
-                                        StatusCode::INTERNAL_SERVER_ERROR,
-                                        Json(json!({ "response": "internal server error" })),
-                                    ))
-                                }
-                            },
-                        }
-                    }
-                } else {
-                    return Err((
-                        StatusCode::BAD_REQUEST,
-                        Json(json!({ "response": "otp is required" })),
-                    ));
-                }
-            }
-            None => match update_totp_secret_by_uid(email.as_ref().to_string(), uid).await {
-                Ok(image) => Ok((
-                    StatusCode::OK,
-                    ([(axum::http::header::CONTENT_TYPE, "image/png")], image),
-                )),
-                Err(err) => match err {
-                    TotpSecretUpdateError::UserNotFound => Err((
-                        StatusCode::NOT_FOUND,
-                        Json(json!({ "response": "user not found" })),
-                    )),
-                    TotpSecretUpdateError::QrGeneration(error) => {
-                        crate::report_error!(format!("{error}"), "function", "enable_2fa_user()");
-
-                        Err((
-                            StatusCode::INTERNAL_SERVER_ERROR,
-                            Json(json!({ "response": "internal server error" })),
-                        ))
-                    }
-                    TotpSecretUpdateError::Internal(error) => {
-                        crate::report_error!(format!("{error}"), "function", "enable_2fa_user()");
-
-                        Err((
-                            StatusCode::INTERNAL_SERVER_ERROR,
-                            Json(json!({ "response": "internal server error" })),
-                        ))
-                    }
-                },
-            },
-        },
-
-        Ok(Err(SqliteDatabaseError::Sqlite(rusqlite::Error::QueryReturnedNoRows))) => Err((
-            StatusCode::UNAUTHORIZED,
-            Json(json!({ "response": "invalid credentials" })),
-        )),
-
-        Ok(Err(error)) => {
-            crate::report_error!(format!("{error}"), "function", "enable_2fa_user");
-
-            Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "response": "internal server error" })),
-            ))
-        }
-
-        Err(error) => {
-            crate::report_error!(format!("{error}"), "function", "enable_2fa_user()");
-
-            Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "response": "internal server error" })),
-            ))
-        }
-    }
-}
-
-pub async fn disable_2fa_user(
-    claims: Claims,
-    Json(request): Json<AuthenticateRequest>,
-) -> Result<impl IntoResponse, impl IntoResponse> {
-    if !claims.can_manage_accounts() {
-        return Err((
-            StatusCode::FORBIDDEN,
-            Json(json!({ "response": "access denied" })),
-        ));
-    }
-
-    if request.email.is_empty() || request.password.is_empty() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(json!({ "response": "email and password are required" })),
-        ));
-    }
-
-    let email = Arc::new(request.email);
-    let email_clone = Arc::clone(&email);
-    let database_result = tokio::task::spawn_blocking(
-        move || -> Result<(String, Option<String>), SqliteDatabaseError> {
-            with_sql_connection(|connection| {
-                let query = format!(
-                    r#"SELECT uid, totp_secret FROM users WHERE email = ?1 AND password = ?2"#
-                );
-
-                let mut statement = connection.prepare(&query)?;
-
-                let row = statement.query_row(
-                    params![Arc::clone(&email_clone), &request.password],
-                    |row| {
-                        let uid: String = row.get("uid")?;
-                        let totp_secret: Option<String> = row.get("totp_secret")?;
-
-                        Ok((uid, totp_secret))
-                    },
-                )?;
-
-                Ok(row)
-            })
-        },
-    )
-    .await;
-
-    match database_result {
-        Ok(Ok((uid, totp_secret))) => match totp_secret {
-            Some(value) => {
-                if let Some(otp) = request.otp {
-                    let valid = verify_totp(&value, otp.as_str(), 1);
-                    if !valid {
-                        Err((
-                            StatusCode::UNAUTHORIZED,
-                            Json(json!({ "response": "invalid credentials" })),
-                        ))
-                    } else {
-                        let database_result = tokio::task::spawn_blocking(
-                            move || -> Result<usize, SqliteDatabaseError> {
-                                with_sql_connection(|connection| {
-                                    let query = format!(
-                                        r#"
-                            UPDATE users SET
-                                totp_secret = COALESCE(?1, totp_secret)
-                            WHERE uid = ?2
-                        "#
-                                    );
-                                    let remove_totp: Option<String> = None;
-                                    let updated_rows =
-                                        connection.execute(&query, params![&remove_totp, &uid])?;
-
-                                    Ok(updated_rows)
-                                })
-                            },
-                        )
-                        .await;
-
-                        match database_result {
-                            Ok(Ok(updated_rows)) if updated_rows > 0 => Ok((
-                                StatusCode::OK,
-                                Json(json!({ "response": "2fa disabled successfully" })),
-                            )),
-                            Ok(Ok(_)) => Err((
-                                StatusCode::NOT_FOUND,
-                                Json(json!({ "response": "user not found" })),
-                            )),
-                            Ok(Err(error)) => {
-                                crate::report_error!(
-                                    format!("{}", error),
-                                    "function",
-                                    "disable_2fa_user()"
-                                );
-
-                                Err((
-                                    StatusCode::INTERNAL_SERVER_ERROR,
-                                    Json(json!({ "response": "internal server error" })),
-                                ))
-                            }
-                            Err(error) => {
-                                crate::report_error!(
-                                    format!("{}", error),
-                                    "function",
-                                    "update_totp_secret_by_uid()"
-                                );
-
-                                Err((
-                                    StatusCode::INTERNAL_SERVER_ERROR,
-                                    Json(json!({ "response": "internal server error" })),
-                                ))
-                            }
-                        }
-                    }
-                } else {
-                    return Err((
-                        StatusCode::BAD_REQUEST,
-                        Json(json!({ "response": "otp is required" })),
-                    ));
-                }
-            }
-            None => Ok((
-                StatusCode::OK,
-                Json(json!({ "response": "2fa already disabled" })),
-            )),
-        },
-
-        Ok(Err(SqliteDatabaseError::Sqlite(rusqlite::Error::QueryReturnedNoRows))) => Err((
-            StatusCode::UNAUTHORIZED,
-            Json(json!({ "response": "invalid credentials" })),
-        )),
-
-        Ok(Err(error)) => {
-            crate::report_error!(format!("{error}"), "function", "disable_2fa_user");
-
-            Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "response": "internal server error" })),
-            ))
-        }
-
-        Err(error) => {
-            crate::report_error!(format!("{error}"), "function", "disable_2fa_user()");
-
-            Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "response": "internal server error" })),
-            ))
-        }
-    }
-}
-
-pub async fn check_2fa_status(
-    claims: Claims,
-    Json(request): Json<FilterRequest>,
-) -> Result<impl IntoResponse, impl IntoResponse> {
-    if !claims.can_manage_accounts() {
-        return Err((
-            StatusCode::FORBIDDEN,
-            Json(json!({ "response": "access denied" })),
-        ));
-    }
-
-    let filter = match request.filter.as_str() {
-        "uid" => "uid",
-        "email" => "email",
-        _ => {
-            return Err((
-                StatusCode::BAD_REQUEST,
-                Json(json!({
-                    "response": format!("'{}' is a invalid filter please use allowed filter such as 'uid' or 'email'", &request.filter)
-                })),
-            ));
-        }
-    };
-
-    let database_result =
-        tokio::task::spawn_blocking(move || -> Result<Option<String>, SqliteDatabaseError> {
-            with_sql_connection(|connection| {
-                let query = format!(r#"SELECT totp_secret FROM users WHERE {filter} = ?1"#);
-
-                let mut statement = connection.prepare(&query)?;
-
-                let row = statement.query_row(params![request.value], |row| {
-                    let totp_secret: Option<String> = row.get("totp_secret")?;
-
-                    Ok(totp_secret)
-                })?;
-
-                Ok(row)
-            })
-        })
-        .await;
-
-    match database_result {
-        Ok(Ok(totp_secret)) => match totp_secret {
-            Some(_) => Ok((StatusCode::OK, Json(json!({ "response": "2fa available" })))),
-            None => Ok((
-                StatusCode::OK,
-                Json(json!({ "response": "2fa not available" })),
-            )),
-        },
-
-        Ok(Err(SqliteDatabaseError::Sqlite(rusqlite::Error::QueryReturnedNoRows))) => Err((
-            StatusCode::UNAUTHORIZED,
-            Json(json!({ "response": "invalid credentials" })),
-        )),
-
-        Ok(Err(error)) => {
-            crate::report_error!(format!("{error}"), "function", "check_2fa_status()");
-
-            Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "response": "internal server error" })),
-            ))
-        }
-
-        Err(error) => {
-            crate::report_error!(format!("{error}"), "function", "check_2fa_status()");
-
-            Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "response": "internal server error" })),
-            ))
-        }
-    }
-}
-
-async fn update_totp_secret_by_uid(
-    email: String,
-    uid: String,
-) -> Result<Vec<u8>, TotpSecretUpdateError> {
-    let secret = generate_random_base32(20);
-    let label = format!("MX:{}", email);
-    let issuer = "MX";
-    let totp_uri = format!(
-        "otpauth://totp/{}?secret={}&issuer={}",
-        label, secret, issuer
-    );
-    let database_result =
-        tokio::task::spawn_blocking(move || -> Result<usize, SqliteDatabaseError> {
-            with_sql_connection(|connection| {
-                let query = format!(
-                    r#"
-                            UPDATE users SET
-                                totp_secret = COALESCE(?1, totp_secret)
-                            WHERE uid = ?2
-                        "#
-                );
-
-                let updated_rows = connection.execute(&query, params![&secret, &uid])?;
-
-                Ok(updated_rows)
-            })
-        })
-        .await;
-
-    match database_result {
-        Ok(Ok(updated_rows)) if updated_rows > 0 => match generate_qr_image(totp_uri).await {
-            Ok(image) => {
-                let mut buffer = Cursor::new(Vec::new());
-                if let Err(error) = image.write_to(&mut buffer, ImageFormat::Png) {
-                    crate::report_error!(
-                        format!("{}", error),
-                        "function",
-                        "update_totp_secret_by_uid()"
-                    );
-                }
-
-                Ok(buffer.into_inner())
-            }
-            Err(error) => {
-                crate::report_error!(
-                    format!("{}", error),
-                    "function",
-                    "update_totp_secret_by_uid()"
-                );
-
-                Err(TotpSecretUpdateError::QrGeneration(format!("{error}")))
-            }
-        },
-        Ok(Ok(_)) => Err(TotpSecretUpdateError::UserNotFound),
-        Ok(Err(error)) => Err(TotpSecretUpdateError::Internal(format!("{error}"))),
-        Err(error) => Err(TotpSecretUpdateError::Internal(format!("{error}"))),
-    }
-}
-
 pub async fn execute_query(
     claims: Claims,
     Json(request): Json<ExecuteQueryRequest>,
@@ -994,12 +761,42 @@ pub async fn execute_query(
 
     let query = request.query;
 
+    let command = query
+        .split_whitespace()
+        .next()
+        .unwrap_or_default()
+        .to_ascii_uppercase();
+    if !matches!(command.as_str(), "SELECT" | "EXPLAIN") {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "response": "the administrator query endpoint is read-only"
+            })),
+        ));
+    }
+
+    let identifiers = query
+        .split(|character: char| !character.is_ascii_alphanumeric() && character != '_')
+        .map(str::to_ascii_lowercase)
+        .collect::<Vec<_>>();
+    if identifiers
+        .iter()
+        .any(|identifier| matches!(identifier.as_str(), "users" | "user_recovery_codes"))
+    {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(json!({
+                "response": "authentication tables are unavailable through the query endpoint"
+            })),
+        ));
+    }
+
     match execute_sql_qeury(query).await {
         SqliteQueryError::Result(result) => Ok((StatusCode::OK, Json(result))),
         SqliteQueryError::Error(err_value) => Err((StatusCode::BAD_REQUEST, Json(err_value))),
         SqliteQueryError::BadRequest(message) => Err((
             StatusCode::BAD_REQUEST,
-            Json(json!({ "response":  format!("{message}")})),
+            Json(json!({ "response": message.to_string() })),
         )),
         SqliteQueryError::InternalError => Err((
             StatusCode::INTERNAL_SERVER_ERROR,

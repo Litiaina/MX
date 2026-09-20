@@ -5,8 +5,12 @@ use axum::response::{Html, IntoResponse};
 use axum::routing::{any, delete, get, patch, post, put};
 use tower_http::cors::{Any, CorsLayer};
 
+use crate::api::account::handler::{
+    begin_totp_enrollment, change_password, confirm_totp_enrollment, disable_totp,
+    regenerate_recovery_codes, update_profile,
+};
 use crate::api::admin::handler::{
-    check_2fa_status, create_super_user, delete_super_user, disable_2fa_user, enable_2fa_user,
+    admin_reset_user_password, admin_reset_user_security, create_super_user, delete_super_user,
     execute_query, get_user, modify_super_user,
 };
 
@@ -96,9 +100,14 @@ fn admin_routes() -> Router {
         .route("/mx/v1/auth/get", post(get_user))
         .route("/mx/v1/auth/modify", patch(modify_super_user))
         .route("/mx/v1/auth/delete", delete(delete_super_user))
-        .route("/mx/v1/auth/enable_2fa", post(enable_2fa_user))
-        .route("/mx/v1/auth/disable_2fa", post(disable_2fa_user))
-        .route("/mx/v1/auth/check_2fa", post(check_2fa_status))
+        .route(
+            "/mx/v1/admin/accounts/{uid}/password-reset",
+            post(admin_reset_user_password),
+        )
+        .route(
+            "/mx/v1/admin/accounts/{uid}/security-reset",
+            post(admin_reset_user_security),
+        )
         .route("/mx/v1/db/query", post(execute_query))
         .layer(axum::middleware::from_fn(auth))
 }
@@ -106,6 +115,15 @@ fn admin_routes() -> Router {
 fn user_routes() -> Router {
     Router::new()
         .route("/mx/v1/auth/session", get(session_info))
+        .route("/mx/v1/account/profile", patch(update_profile))
+        .route("/mx/v1/account/password", post(change_password))
+        .route("/mx/v1/account/totp/enroll", post(begin_totp_enrollment))
+        .route("/mx/v1/account/totp/confirm", post(confirm_totp_enrollment))
+        .route("/mx/v1/account/totp", delete(disable_totp))
+        .route(
+            "/mx/v1/account/recovery-codes/regenerate",
+            post(regenerate_recovery_codes),
+        )
         .route("/mx/v1/user/create", post(create_user))
         .route("/mx/v1/user/modify", patch(modify_user))
         .route("/mx/v1/user/delete", delete(delete_user))
