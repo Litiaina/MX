@@ -1,6 +1,6 @@
 [package]
 name = "litiaina-mx"
-version = "1.0.0"
+version = "1.0.1"
 edition = "2024"
 
 [profile.release]
@@ -34,6 +34,7 @@ data-encoding = "2.9.0"
 image = "0.25.6"
 qrcode = "0.14.1"
 rand = "0.10"
+argon2 = "0.5.3"
 anyhow = "1"
 rust-ini = "0.21.3"
 regex = "1.12.4"
