@@ -2,7 +2,7 @@ use axum::Router;
 use axum::extract::DefaultBodyLimit;
 use axum::http::{HeaderName, Method, StatusCode};
 use axum::response::{Html, IntoResponse};
-use axum::routing::{delete, get, patch, post, put};
+use axum::routing::{any, delete, get, patch, post, put};
 use tower_http::cors::{Any, CorsLayer};
 
 use crate::api::admin::handler::{
@@ -14,7 +14,9 @@ use crate::api::mx::handler::{
     delete_mx_attachment, delete_mx_record, download_mx_attachment, preview_mx_attachment,
     upload_mx_attachment_field,
 };
-use crate::api::mx::records::{create_mx_record, list_mx_records, update_mx_record};
+use crate::api::mx::records::{
+    create_mx_record, get_mx_record, list_mx_records, patch_mx_record, update_mx_record,
+};
 use crate::api::mx::schema::{
     create_schema_field, get_admin_record_schema, get_record_schema, update_schema_field,
     update_schema_order, update_system_schema_field,
@@ -26,6 +28,7 @@ use crate::api::audit::{audit_request, get_audit_log};
 use crate::api::backup::{create_backup, download_backup, list_backups, verify_backup};
 use crate::api::dashboard::get_records_revision;
 use crate::api::deployment::{get_deployment_config, save_deployment_config};
+use crate::api::live::{get_presence, issue_live_ticket, live_socket};
 use crate::api::reports::{
     export_report_csv, get_action_rate_report, get_dashboard_config, get_user_performance_report,
     save_dashboard_config,
@@ -55,6 +58,7 @@ fn public_routes() -> Router {
         .route("/mx/v1/auth/authenticate", post(authorize))
         .route("/mx/v1/auth/refresh", post(refresh_access_token))
         .route("/mx/v1/deployment/config", get(get_deployment_config))
+        .route("/mx/v1/live", any(live_socket))
 }
 
 fn bootstrap_routes() -> Router {
@@ -125,13 +129,18 @@ fn mx_routes() -> Router {
         )
         .route("/mx/v1/reports/export.csv", get(export_report_csv))
         .route("/mx/v1/status/revision", get(get_records_revision))
+        .route("/mx/v1/live/ticket", post(issue_live_ticket))
+        .route("/mx/v1/presence", get(get_presence))
         .route(
             "/mx/v1/records",
             get(list_mx_records).post(create_mx_record),
         )
         .route(
             "/mx/v1/records/{uid}",
-            put(update_mx_record).delete(delete_mx_record),
+            get(get_mx_record)
+                .patch(patch_mx_record)
+                .put(update_mx_record)
+                .delete(delete_mx_record),
         )
         .route(
             "/mx/v1/records/{uid}/attachments/fields/{field_uid}",

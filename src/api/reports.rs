@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::{
+    api::live::publish_live_event,
     api::mx::{
         attachment_fields::{ensure_attachment_fields_schema, load_attachment_field_db},
         schema::{FieldDefinition, ensure_dynamic_schema, load_fields_db},
@@ -750,10 +751,17 @@ pub async fn save_dashboard_config(
     .await;
 
     match result {
-        Ok(Ok(revision)) => api_json(
-            StatusCode::OK,
-            json!({"response":"dashboard configuration saved","revision":revision}),
-        ),
+        Ok(Ok(revision)) => {
+            publish_live_event(
+                "dashboard.updated",
+                Some(&claims.uid),
+                json!({"revision": revision}),
+            );
+            api_json(
+                StatusCode::OK,
+                json!({"response":"dashboard configuration saved","revision":revision}),
+            )
+        }
         _ => api_json(
             StatusCode::INTERNAL_SERVER_ERROR,
             json!({"response":"failed to save dashboard configuration"}),

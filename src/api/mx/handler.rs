@@ -27,9 +27,11 @@ use uuid::Uuid;
 use crate::{
     api::{
         api_error::SqliteError,
+        live::publish_live_event,
         mx::{
             attachment_fields::{ensure_attachment_fields_schema, load_attachment_field_db},
             model::{CreateEntryRequest, Entry, FileAttachment, UpdateEntryRequest},
+            records::ensure_record_collaboration_schema,
             storage::{ResolvedRecordStorage, StorageResolutionError, resolve_record_storage},
         },
     },
@@ -2207,12 +2209,21 @@ async fn execute_delete_entry_metadata(entry_uid: String) -> Result<(), SqliteEr
         tokio::task::spawn_blocking(move || -> Result<(), SqliteDatabaseError> {
             with_sql_connection(|connection| {
                 ensure_mx_record_schema(connection)?;
+                ensure_record_collaboration_schema(connection)?;
                 let transaction = connection.unchecked_transaction()?;
 
                 transaction.execute(
                     r#"
                         DELETE FROM mx_attachments
                         WHERE entry_uid = ?1
+                        "#,
+                    params![&entry_uid],
+                )?;
+
+                transaction.execute(
+                    r#"
+                        DELETE FROM mx_record_field_revisions
+                        WHERE record_uid = ?1
                         "#,
                     params![&entry_uid],
                 )?;
@@ -2671,8 +2682,16 @@ pub async fn delete_mx_record(claims: Claims, Path(uid): Path<String>) -> Respon
         return mx_access_denied();
     }
 
+    let deleted_uid = uid.clone();
     match execute_delete_mx_record_with_attachments(uid).await {
-        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Ok(()) => {
+            publish_live_event(
+                "record.deleted",
+                Some(&claims.uid),
+                json!({"record_uid": deleted_uid}),
+            );
+            StatusCode::NO_CONTENT.into_response()
+        }
 
         Err(error) => map_mx_error(error),
     }
@@ -2681,6 +2700,7 @@ pub async fn delete_mx_record(claims: Claims, Path(uid): Path<String>) -> Respon
 async fn upload_mx_attachments_inner(
     entry_uid: String,
     attachment_field_uid: String,
+    actor_uid: String,
     mut multipart: Multipart,
 ) -> Response {
     let mut uploaded: Vec<FileAttachment> = Vec::new();
@@ -2740,6 +2760,20 @@ async fn upload_mx_attachments_inner(
         );
     }
 
+    for attachment in &uploaded {
+        publish_live_event(
+            "attachment.created",
+            Some(&actor_uid),
+            json!({
+                "record_uid": entry_uid,
+                "attachment_field_uid": attachment.attachment_field_uid,
+                "attachment_uid": attachment.uid,
+                "file_name": attachment.file_name,
+                "size": attachment.size,
+            }),
+        );
+    }
+
     api_json(StatusCode::CREATED, json!({"attachments":uploaded}))
 }
 
@@ -2751,7 +2785,7 @@ pub async fn upload_mx_attachment_field(
     if !claims.can_write_records() {
         return mx_access_denied();
     }
-    upload_mx_attachments_inner(entry_uid, attachment_field_uid, multipart).await
+    upload_mx_attachments_inner(entry_uid, attachment_field_uid, claims.uid, multipart).await
 }
 
 pub async fn delete_mx_attachment(
@@ -2762,8 +2796,21 @@ pub async fn delete_mx_attachment(
         return mx_access_denied();
     }
 
+    let record_uid = entry_uid.clone();
+    let deleted_attachment_uid = attachment_uid.clone();
+
     match execute_delete_mx_attachment(entry_uid, attachment_uid).await {
-        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Ok(()) => {
+            publish_live_event(
+                "attachment.deleted",
+                Some(&claims.uid),
+                json!({
+                    "record_uid": record_uid,
+                    "attachment_uid": deleted_attachment_uid,
+                }),
+            );
+            StatusCode::NO_CONTENT.into_response()
+        }
 
         Err(error) => map_mx_error(error),
     }

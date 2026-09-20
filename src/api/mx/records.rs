@@ -12,12 +12,15 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use crate::{
-    api::mx::{
-        attachment_fields::ensure_attachment_fields_schema,
-        model::FileAttachment,
-        schema::{
-            FieldDefinition, ensure_dynamic_schema, field_map_by_key, load_active_schema,
-            load_fields_db,
+    api::{
+        live::publish_live_event,
+        mx::{
+            attachment_fields::ensure_attachment_fields_schema,
+            model::FileAttachment,
+            schema::{
+                FieldDefinition, ensure_dynamic_schema, field_map_by_key, load_active_schema,
+                load_fields_db,
+            },
         },
     },
     db::connector::{SqliteDatabaseError, with_sql_connection},
@@ -50,10 +53,44 @@ pub struct DynamicRecordRequest {
     pub values: BTreeMap<String, Value>,
 }
 
+#[derive(Debug, Deserialize, Clone, Default)]
+pub struct DynamicPatchRequest {
+    #[serde(default)]
+    pub changes: BTreeMap<String, Value>,
+
+    #[serde(default)]
+    pub base_revisions: BTreeMap<String, i64>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct FieldConflict {
+    pub field_uid: String,
+    pub field_key: String,
+    pub label: String,
+    pub base_revision: i64,
+    pub current_revision: i64,
+    pub current_value: Value,
+    pub your_value: Value,
+}
+
+#[derive(Debug, Serialize, Clone)]
+struct PatchOutcome {
+    changed_values: BTreeMap<String, Value>,
+    field_revisions: BTreeMap<String, i64>,
+}
+
+#[derive(Debug)]
+enum PatchDbResult {
+    Applied(PatchOutcome),
+    Conflict(Vec<FieldConflict>),
+    NotFound,
+}
+
 #[derive(Debug, Serialize, Clone)]
 pub struct DynamicRecord {
     pub uid: String,
     pub values: BTreeMap<String, Value>,
+    pub field_revisions: BTreeMap<String, i64>,
     pub attached_files: Vec<FileAttachment>,
 }
 
@@ -328,6 +365,54 @@ fn validate_payload(
     Ok(normalized)
 }
 
+fn validate_patch_payload(
+    fields: &[FieldDefinition],
+    raw_changes: &BTreeMap<String, Value>,
+    base_revisions: &BTreeMap<String, i64>,
+) -> Result<BTreeMap<String, Option<NormalizedValue>>, String> {
+    if raw_changes.is_empty() {
+        return Ok(BTreeMap::new());
+    }
+
+    let field_map = field_map_by_key(fields);
+    let mut normalized = BTreeMap::new();
+
+    for (key, raw_value) in raw_changes {
+        let Some(field) = field_map.get(key) else {
+            return Err(format!(
+                "'{key}' is not an active MX record field. Refresh the page and try again."
+            ));
+        };
+
+        if matches!(field.field_type.as_str(), "auto_number" | "attachments") {
+            return Err(format!(
+                "{} cannot be modified through the record field PATCH API.",
+                field.label
+            ));
+        }
+
+        let Some(base_revision) = base_revisions.get(key) else {
+            return Err(format!(
+                "Missing base revision for {}. Refresh this record and try again.",
+                field.label
+            ));
+        };
+
+        if *base_revision < 0 {
+            return Err(format!("Invalid base revision for {}.", field.label));
+        }
+
+        let value = normalize_field_value(field, raw_value)?;
+        if field.required && value.is_none() {
+            return Err(format!("{} is required.", field.label));
+        }
+
+        normalized.insert(key.clone(), value);
+    }
+
+    Ok(normalized)
+}
+
 fn scope_key_for_auto_number(
     transaction: &rusqlite::Transaction<'_>,
     field: &FieldDefinition,
@@ -518,6 +603,412 @@ fn write_dynamic_values(
     Ok(())
 }
 
+pub(crate) fn ensure_record_collaboration_schema(
+    connection: &rusqlite::Connection,
+) -> rusqlite::Result<()> {
+    connection.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS mx_record_field_revisions (
+            record_uid   TEXT NOT NULL,
+            field_uid    TEXT NOT NULL,
+            revision     INTEGER NOT NULL DEFAULT 1 CHECK(revision >= 0),
+            updated_at   INTEGER NOT NULL DEFAULT 0,
+            updated_by   TEXT,
+            PRIMARY KEY (record_uid, field_uid)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_mx_record_field_revisions_record
+        ON mx_record_field_revisions(record_uid);
+        "#,
+    )
+}
+
+fn normalized_to_json(value: &NormalizedValue) -> Value {
+    match value {
+        NormalizedValue::Text(value) => json!(value),
+        NormalizedValue::Integer(value) => json!(value),
+        NormalizedValue::Real(value) => json!(value),
+        NormalizedValue::Boolean(value) => json!(value),
+    }
+}
+
+fn normalized_to_legacy_text(value: Option<&NormalizedValue>) -> String {
+    match value {
+        Some(NormalizedValue::Text(value)) => value.clone(),
+        Some(NormalizedValue::Integer(value)) => value.to_string(),
+        Some(NormalizedValue::Real(value)) => value.to_string(),
+        Some(NormalizedValue::Boolean(value)) => value.to_string(),
+        None => String::new(),
+    }
+}
+
+fn current_field_revision(
+    transaction: &rusqlite::Transaction<'_>,
+    record_uid: &str,
+    field_uid: &str,
+) -> rusqlite::Result<i64> {
+    if let Some(revision) = transaction
+        .query_row(
+            r#"
+            SELECT revision
+            FROM mx_record_field_revisions
+            WHERE record_uid = ?1 AND field_uid = ?2
+            "#,
+            params![record_uid, field_uid],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()?
+    {
+        return Ok(revision.max(0));
+    }
+
+    let has_value = transaction.query_row(
+        r#"
+        SELECT EXISTS(
+            SELECT 1
+            FROM mx_record_values
+            WHERE record_uid = ?1 AND field_uid = ?2
+        )
+        "#,
+        params![record_uid, field_uid],
+        |row| row.get::<_, i64>(0),
+    )? != 0;
+
+    // Legacy values pre-date per-field revisions. Treat an existing legacy
+    // value as revision 1 so the first modern PATCH cannot silently overwrite
+    // a value opened by another user.
+    Ok(if has_value { 1 } else { 0 })
+}
+
+fn current_field_value(
+    transaction: &rusqlite::Transaction<'_>,
+    record_uid: &str,
+    field: &FieldDefinition,
+) -> rusqlite::Result<Value> {
+    let row = transaction
+        .query_row(
+            r#"
+            SELECT value_text, value_integer, value_real, value_boolean
+            FROM mx_record_values
+            WHERE record_uid = ?1 AND field_uid = ?2
+            LIMIT 1
+            "#,
+            params![record_uid, &field.uid],
+            |row| {
+                Ok((
+                    row.get::<_, Option<String>>(0)?,
+                    row.get::<_, Option<i64>>(1)?,
+                    row.get::<_, Option<f64>>(2)?,
+                    row.get::<_, Option<i64>>(3)?,
+                ))
+            },
+        )
+        .optional()?;
+
+    Ok(match row {
+        Some((text, integer, real, boolean)) => {
+            value_from_row(&field.field_type, text, integer, real, boolean)
+        }
+        None => Value::Null,
+    })
+}
+
+fn set_field_revision(
+    transaction: &rusqlite::Transaction<'_>,
+    record_uid: &str,
+    field_uid: &str,
+    revision: i64,
+    actor_uid: &str,
+) -> rusqlite::Result<()> {
+    transaction.execute(
+        r#"
+        INSERT INTO mx_record_field_revisions (
+            record_uid,
+            field_uid,
+            revision,
+            updated_at,
+            updated_by
+        ) VALUES (
+            ?1, ?2, ?3,
+            CAST(STRFTIME('%s','now') AS INTEGER) * 1000,
+            ?4
+        )
+        ON CONFLICT(record_uid, field_uid) DO UPDATE SET
+            revision = excluded.revision,
+            updated_at = excluded.updated_at,
+            updated_by = excluded.updated_by
+        "#,
+        params![record_uid, field_uid, revision.max(0), actor_uid],
+    )?;
+
+    Ok(())
+}
+
+fn initialize_field_revisions(
+    transaction: &rusqlite::Transaction<'_>,
+    record_uid: &str,
+    fields: &[FieldDefinition],
+    values: &BTreeMap<String, NormalizedValue>,
+    actor_uid: &str,
+) -> rusqlite::Result<()> {
+    for field in fields {
+        if values.contains_key(&field.key) {
+            set_field_revision(transaction, record_uid, &field.uid, 1, actor_uid)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn bump_all_field_revisions(
+    transaction: &rusqlite::Transaction<'_>,
+    record_uid: &str,
+    fields: &[FieldDefinition],
+    actor_uid: &str,
+) -> rusqlite::Result<()> {
+    for field in fields
+        .iter()
+        .filter(|field| field.field_type != "attachments")
+    {
+        let current = current_field_revision(transaction, record_uid, &field.uid)?;
+        set_field_revision(
+            transaction,
+            record_uid,
+            &field.uid,
+            current.saturating_add(1),
+            actor_uid,
+        )?;
+    }
+
+    Ok(())
+}
+
+fn write_single_dynamic_value(
+    transaction: &rusqlite::Transaction<'_>,
+    record_uid: &str,
+    field: &FieldDefinition,
+    value: Option<&NormalizedValue>,
+) -> rusqlite::Result<()> {
+    transaction.execute(
+        r#"
+        DELETE FROM mx_unique_values
+        WHERE record_uid = ?1 AND field_uid = ?2
+        "#,
+        params![record_uid, &field.uid],
+    )?;
+
+    transaction.execute(
+        r#"
+        DELETE FROM mx_record_values
+        WHERE record_uid = ?1 AND field_uid = ?2
+        "#,
+        params![record_uid, &field.uid],
+    )?;
+
+    let Some(value) = value else {
+        return Ok(());
+    };
+
+    insert_record_value(transaction, record_uid, field, value)?;
+
+    if field.unique_value && field.field_type != "auto_number" {
+        let normalized = value.normalized_unique();
+        if !normalized.is_empty() {
+            transaction.execute(
+                r#"
+                INSERT INTO mx_unique_values (
+                    field_uid,
+                    normalized_value,
+                    record_uid
+                ) VALUES (?1, ?2, ?3)
+                "#,
+                params![&field.uid, normalized, record_uid],
+            )?;
+        }
+    }
+
+    Ok(())
+}
+
+fn update_legacy_mirror_field(
+    transaction: &rusqlite::Transaction<'_>,
+    record_uid: &str,
+    field_key: &str,
+    value: Option<&NormalizedValue>,
+) -> rusqlite::Result<()> {
+    let value = normalized_to_legacy_text(value);
+    let column = match field_key {
+        "date" => Some("date"),
+        "office" => Some("office"),
+        "requestor" => Some("requestor"),
+        "subject" => Some("subject"),
+        "routed_to_div" => Some("routed_to_div"),
+        "remarks" => Some("remarks"),
+        _ => None,
+    };
+
+    if let Some(column) = column {
+        let sql = format!("UPDATE mx_records SET {column} = ?2 WHERE uid = ?1");
+        transaction.execute(&sql, params![record_uid, value])?;
+    }
+
+    Ok(())
+}
+
+fn load_field_revisions(
+    connection: &rusqlite::Connection,
+    record_uids: &[String],
+) -> rusqlite::Result<HashMap<String, BTreeMap<String, i64>>> {
+    ensure_record_collaboration_schema(connection)?;
+
+    if record_uids.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    let placeholders = std::iter::repeat("?")
+        .take(record_uids.len())
+        .collect::<Vec<_>>()
+        .join(",");
+    let params = record_uids
+        .iter()
+        .cloned()
+        .map(SqlValue::Text)
+        .collect::<Vec<_>>();
+
+    // First seed legacy values with revision 1.
+    let mut revisions: HashMap<String, BTreeMap<String, i64>> = HashMap::new();
+    let sql = format!(
+        r#"
+        SELECT rv.record_uid, f.field_key
+        FROM mx_record_values rv
+        JOIN mx_fields f ON f.uid = rv.field_uid
+        WHERE rv.record_uid IN ({placeholders})
+        "#
+    );
+    let mut statement = connection.prepare(&sql)?;
+    let mut rows = statement.query(params_from_iter(params.iter()))?;
+    while let Some(row) = rows.next()? {
+        let record_uid: String = row.get(0)?;
+        let key: String = row.get(1)?;
+        revisions.entry(record_uid).or_default().insert(key, 1);
+    }
+
+    // Modern revision rows override the legacy seed and remain present even if
+    // the field value was cleared.
+    let sql = format!(
+        r#"
+        SELECT r.record_uid, f.field_key, r.revision
+        FROM mx_record_field_revisions r
+        JOIN mx_fields f ON f.uid = r.field_uid
+        WHERE r.record_uid IN ({placeholders})
+        "#
+    );
+    let mut statement = connection.prepare(&sql)?;
+    let mut rows = statement.query(params_from_iter(params.iter()))?;
+    while let Some(row) = rows.next()? {
+        let record_uid: String = row.get(0)?;
+        let key: String = row.get(1)?;
+        let revision: i64 = row.get(2)?;
+        revisions
+            .entry(record_uid)
+            .or_default()
+            .insert(key, revision.max(0));
+    }
+
+    Ok(revisions)
+}
+
+fn patch_record_db(
+    uid: String,
+    changes: BTreeMap<String, Option<NormalizedValue>>,
+    raw_changes: BTreeMap<String, Value>,
+    base_revisions: BTreeMap<String, i64>,
+    actor_uid: String,
+) -> Result<PatchDbResult, SqliteDatabaseError> {
+    with_sql_connection(|connection| {
+        ensure_dynamic_schema(connection)?;
+        ensure_record_collaboration_schema(connection)?;
+
+        let fields = load_fields_db(connection, false)?;
+        let field_map = field_map_by_key(&fields);
+        let transaction = connection.unchecked_transaction()?;
+
+        let exists = transaction.query_row(
+            "SELECT EXISTS(SELECT 1 FROM mx_records WHERE uid = ?1)",
+            params![&uid],
+            |row| row.get::<_, i64>(0),
+        )? != 0;
+
+        if !exists {
+            return Ok(PatchDbResult::NotFound);
+        }
+
+        let mut conflicts = Vec::new();
+        let mut current_revisions = BTreeMap::new();
+
+        for key in changes.keys() {
+            let Some(field) = field_map.get(key) else {
+                continue;
+            };
+
+            let current_revision = current_field_revision(&transaction, &uid, &field.uid)?;
+            current_revisions.insert(key.clone(), current_revision);
+
+            let base_revision = base_revisions.get(key).copied().unwrap_or(-1);
+            if base_revision != current_revision {
+                conflicts.push(FieldConflict {
+                    field_uid: field.uid.clone(),
+                    field_key: field.key.clone(),
+                    label: field.label.clone(),
+                    base_revision,
+                    current_revision,
+                    current_value: current_field_value(&transaction, &uid, field)?,
+                    your_value: raw_changes.get(key).cloned().unwrap_or(Value::Null),
+                });
+            }
+        }
+
+        if !conflicts.is_empty() {
+            return Ok(PatchDbResult::Conflict(conflicts));
+        }
+
+        let mut changed_values = BTreeMap::new();
+        let mut new_revisions = BTreeMap::new();
+
+        for (key, value) in &changes {
+            let Some(field) = field_map.get(key) else {
+                continue;
+            };
+
+            write_single_dynamic_value(&transaction, &uid, field, value.as_ref())?;
+            update_legacy_mirror_field(&transaction, &uid, key, value.as_ref())?;
+
+            let next_revision = current_revisions
+                .get(key)
+                .copied()
+                .unwrap_or(0)
+                .saturating_add(1);
+            set_field_revision(&transaction, &uid, &field.uid, next_revision, &actor_uid)?;
+
+            changed_values.insert(
+                key.clone(),
+                value
+                    .as_ref()
+                    .map(normalized_to_json)
+                    .unwrap_or(Value::Null),
+            );
+            new_revisions.insert(key.clone(), next_revision);
+        }
+
+        transaction.commit()?;
+
+        Ok(PatchDbResult::Applied(PatchOutcome {
+            changed_values,
+            field_revisions: new_revisions,
+        }))
+    })
+}
+
 fn value_as_text(values: &BTreeMap<String, NormalizedValue>, key: &str, fallback: &str) -> String {
     match values.get(key) {
         Some(NormalizedValue::Text(value)) => value.clone(),
@@ -579,9 +1070,11 @@ fn next_hidden_legacy_number(transaction: &rusqlite::Transaction<'_>) -> rusqlit
 
 fn create_record_db(
     request_values: BTreeMap<String, NormalizedValue>,
+    actor_uid: String,
 ) -> Result<String, SqliteDatabaseError> {
     with_sql_connection(|connection| {
         ensure_dynamic_schema(connection)?;
+        ensure_record_collaboration_schema(connection)?;
         let fields = load_fields_db(connection, false)?;
         let transaction = connection.unchecked_transaction()?;
         let uid = Uuid::new_v4().to_string();
@@ -638,6 +1131,7 @@ fn create_record_db(
         )?;
 
         write_dynamic_values(&transaction, &uid, &fields, &values)?;
+        initialize_field_revisions(&transaction, &uid, &fields, &values, &actor_uid)?;
         transaction.commit()?;
 
         Ok(uid)
@@ -647,9 +1141,11 @@ fn create_record_db(
 fn update_record_db(
     uid: String,
     request_values: BTreeMap<String, NormalizedValue>,
+    actor_uid: String,
 ) -> Result<(), SqliteDatabaseError> {
     with_sql_connection(|connection| {
         ensure_dynamic_schema(connection)?;
+        ensure_record_collaboration_schema(connection)?;
         let fields = load_fields_db(connection, false)?;
         let transaction = connection.unchecked_transaction()?;
 
@@ -755,6 +1251,7 @@ fn update_record_db(
         }
 
         write_dynamic_values(&transaction, &uid, &fields, &values)?;
+        bump_all_field_revisions(&transaction, &uid, &fields, &actor_uid)?;
         transaction.commit()?;
 
         Ok(())
@@ -1144,12 +1641,14 @@ fn list_records_db(query: DynamicListQuery) -> Result<DynamicPage, SqliteDatabas
             .collect::<Result<Vec<_>, _>>()?;
 
         let mut values = load_record_values(connection, &record_uids)?;
+        let mut revisions = load_field_revisions(connection, &record_uids)?;
         let mut attachments = load_attachments(connection, &record_uids)?;
 
         let data = record_uids
             .into_iter()
             .map(|uid| DynamicRecord {
                 values: values.remove(&uid).unwrap_or_default(),
+                field_revisions: revisions.remove(&uid).unwrap_or_default(),
                 attached_files: attachments.remove(&uid).unwrap_or_default(),
                 uid,
             })
@@ -1176,6 +1675,7 @@ fn list_records_db(query: DynamicListQuery) -> Result<DynamicPage, SqliteDatabas
 fn get_record_db(uid: String) -> Result<DynamicRecord, SqliteDatabaseError> {
     with_sql_connection(|connection| {
         ensure_dynamic_schema(connection)?;
+        ensure_record_collaboration_schema(connection)?;
 
         let exists = connection
             .query_row(
@@ -1191,10 +1691,12 @@ fn get_record_db(uid: String) -> Result<DynamicRecord, SqliteDatabaseError> {
 
         let record_uids = vec![uid.clone()];
         let mut values = load_record_values(connection, &record_uids)?;
+        let mut revisions = load_field_revisions(connection, &record_uids)?;
         let mut attachments = load_attachments(connection, &record_uids)?;
 
         Ok(DynamicRecord {
             values: values.remove(&uid).unwrap_or_default(),
+            field_revisions: revisions.remove(&uid).unwrap_or_default(),
             attached_files: attachments.remove(&uid).unwrap_or_default(),
             uid,
         })
@@ -1265,7 +1767,9 @@ pub async fn create_mx_record(
         }
     };
 
-    let database_result = tokio::task::spawn_blocking(move || create_record_db(normalized)).await;
+    let actor_uid = claims.uid.clone();
+    let database_result =
+        tokio::task::spawn_blocking(move || create_record_db(normalized, actor_uid)).await;
 
     let uid = match database_result {
         Ok(Ok(uid)) => uid,
@@ -1283,7 +1787,14 @@ pub async fn create_mx_record(
     let record_result = tokio::task::spawn_blocking(move || get_record_db(uid)).await;
 
     match record_result {
-        Ok(Ok(record)) => api_json(StatusCode::CREATED, json!(record)),
+        Ok(Ok(record)) => {
+            publish_live_event(
+                "record.created",
+                Some(&claims.uid),
+                json!({"record_uid": record.uid}),
+            );
+            api_json(StatusCode::CREATED, json!(record))
+        }
         Ok(Err(error)) => database_error_response(error),
         Err(error) => {
             crate::report_error!(format!("{error}"), "function", "create_mx_record()");
@@ -1325,8 +1836,11 @@ pub async fn update_mx_record(
     };
 
     let uid_for_update = uid.clone();
-    let database_result =
-        tokio::task::spawn_blocking(move || update_record_db(uid_for_update, normalized)).await;
+    let actor_uid = claims.uid.clone();
+    let database_result = tokio::task::spawn_blocking(move || {
+        update_record_db(uid_for_update, normalized, actor_uid)
+    })
+    .await;
 
     match database_result {
         Ok(Ok(())) => {}
@@ -1344,7 +1858,17 @@ pub async fn update_mx_record(
     let record_result = tokio::task::spawn_blocking(move || get_record_db(uid)).await;
 
     match record_result {
-        Ok(Ok(record)) => api_json(StatusCode::OK, json!(record)),
+        Ok(Ok(record)) => {
+            publish_live_event(
+                "record.updated",
+                Some(&claims.uid),
+                json!({
+                    "record_uid": record.uid,
+                    "mode": "legacy_full_update"
+                }),
+            );
+            api_json(StatusCode::OK, json!(record))
+        }
         Ok(Err(error)) => database_error_response(error),
         Err(error) => {
             crate::report_error!(format!("{error}"), "function", "update_mx_record()");
@@ -1352,6 +1876,137 @@ pub async fn update_mx_record(
             api_json(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 json!({ "response": "record was updated but could not be reloaded" }),
+            )
+        }
+    }
+}
+
+pub async fn get_mx_record(claims: Claims, Path(uid): Path<String>) -> Response {
+    if !claims.can_read_records() {
+        return access_denied();
+    }
+
+    let result = tokio::task::spawn_blocking(move || get_record_db(uid)).await;
+    match result {
+        Ok(Ok(record)) => api_json(StatusCode::OK, json!(record)),
+        Ok(Err(error)) => database_error_response(error),
+        Err(error) => {
+            crate::report_error!(format!("{error}"), "function", "get_mx_record()");
+            api_json(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                json!({"response":"record lookup task failed"}),
+            )
+        }
+    }
+}
+
+pub async fn patch_mx_record(
+    claims: Claims,
+    Path(uid): Path<String>,
+    Json(request): Json<DynamicPatchRequest>,
+) -> Response {
+    if !claims.can_write_records() {
+        return access_denied();
+    }
+
+    let schema = match load_active_schema().await {
+        Ok(schema) => schema,
+        Err(error) => {
+            crate::report_error!(error, "function", "patch_mx_record()");
+            return api_json(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                json!({"response":"failed to load MX record structure"}),
+            );
+        }
+    };
+
+    let normalized =
+        match validate_patch_payload(&schema.fields, &request.changes, &request.base_revisions) {
+            Ok(values) => values,
+            Err(error) => {
+                return api_json(StatusCode::BAD_REQUEST, json!({"response": error}));
+            }
+        };
+
+    if normalized.is_empty() {
+        let uid_for_load = uid.clone();
+        return match tokio::task::spawn_blocking(move || get_record_db(uid_for_load)).await {
+            Ok(Ok(record)) => api_json(StatusCode::OK, json!(record)),
+            Ok(Err(error)) => database_error_response(error),
+            Err(error) => {
+                crate::report_error!(format!("{error}"), "function", "patch_mx_record()");
+                api_json(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    json!({"response":"record lookup task failed"}),
+                )
+            }
+        };
+    }
+
+    let raw_changes = request.changes.clone();
+    let base_revisions = request.base_revisions.clone();
+    let actor_uid = claims.uid.clone();
+    let uid_for_patch = uid.clone();
+
+    let result = tokio::task::spawn_blocking(move || {
+        patch_record_db(
+            uid_for_patch,
+            normalized,
+            raw_changes,
+            base_revisions,
+            actor_uid,
+        )
+    })
+    .await;
+
+    let outcome = match result {
+        Ok(Ok(PatchDbResult::Applied(outcome))) => outcome,
+        Ok(Ok(PatchDbResult::Conflict(conflicts))) => {
+            return api_json(
+                StatusCode::CONFLICT,
+                json!({
+                    "error":"field_conflict",
+                    "response":"One or more fields changed after you opened this record.",
+                    "record_uid": uid,
+                    "conflicts": conflicts,
+                }),
+            );
+        }
+        Ok(Ok(PatchDbResult::NotFound)) => {
+            return api_json(
+                StatusCode::NOT_FOUND,
+                json!({"response":"MX record was not found."}),
+            );
+        }
+        Ok(Err(error)) => return database_error_response(error),
+        Err(error) => {
+            crate::report_error!(format!("{error}"), "function", "patch_mx_record()");
+            return api_json(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                json!({"response":"record patch task failed"}),
+            );
+        }
+    };
+
+    publish_live_event(
+        "record.fields.updated",
+        Some(&claims.uid),
+        json!({
+            "record_uid": uid,
+            "changes": outcome.changed_values,
+            "field_revisions": outcome.field_revisions,
+        }),
+    );
+
+    let uid_for_load = uid.clone();
+    match tokio::task::spawn_blocking(move || get_record_db(uid_for_load)).await {
+        Ok(Ok(record)) => api_json(StatusCode::OK, json!(record)),
+        Ok(Err(error)) => database_error_response(error),
+        Err(error) => {
+            crate::report_error!(format!("{error}"), "function", "patch_mx_record()");
+            api_json(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                json!({"response":"record was updated but could not be reloaded"}),
             )
         }
     }

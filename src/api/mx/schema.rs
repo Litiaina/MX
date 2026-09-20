@@ -12,9 +12,12 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use crate::{
-    api::mx::{
-        handler::ensure_mx_record_schema,
-        storage::{ensure_storage_layout_schema, field_used_by_storage_layout_db},
+    api::{
+        live::publish_live_event,
+        mx::{
+            handler::ensure_mx_record_schema,
+            storage::{ensure_storage_layout_schema, field_used_by_storage_layout_db},
+        },
     },
     db::connector::{SqliteDatabaseError, with_sql_connection},
     middleware::auth::Claims,
@@ -1426,7 +1429,14 @@ pub async fn create_schema_field(
         .await;
 
     match database_result {
-        Ok(Ok(field)) => api_json(StatusCode::CREATED, json!(field)),
+        Ok(Ok(field)) => {
+            publish_live_event(
+                "schema.updated",
+                Some(&claims.uid),
+                json!({"reason":"field.created","field_uid":field.uid}),
+            );
+            api_json(StatusCode::CREATED, json!(field))
+        }
 
         Ok(Err(SqliteDatabaseError::Sqlite(rusqlite::Error::SqliteFailure(error, _))))
             if error.code == rusqlite::ErrorCode::ConstraintViolation =>
@@ -1626,13 +1636,20 @@ pub async fn update_system_schema_field(
     .await;
 
     match database_result {
-        Ok(Ok(field)) => api_json(
-            StatusCode::OK,
-            json!({
-                "response": "MX system field updated",
-                "field": field
-            }),
-        ),
+        Ok(Ok(field)) => {
+            publish_live_event(
+                "schema.updated",
+                Some(&claims.uid),
+                json!({"reason":"system_field.updated","field_key":field.key}),
+            );
+            api_json(
+                StatusCode::OK,
+                json!({
+                    "response": "MX system field updated",
+                    "field": field
+                }),
+            )
+        }
 
         Ok(Err(SqliteDatabaseError::Sqlite(rusqlite::Error::QueryReturnedNoRows))) => api_json(
             StatusCode::NOT_FOUND,
@@ -1799,13 +1816,20 @@ pub async fn update_schema_order(
         .await;
 
     match database_result {
-        Ok(Ok(revision)) => api_json(
-            StatusCode::OK,
-            json!({
-                "response": "field order updated",
-                "revision": revision
-            }),
-        ),
+        Ok(Ok(revision)) => {
+            publish_live_event(
+                "schema.updated",
+                Some(&claims.uid),
+                json!({"reason":"field_order.updated","revision":revision}),
+            );
+            api_json(
+                StatusCode::OK,
+                json!({
+                    "response": "field order updated",
+                    "revision": revision
+                }),
+            )
+        }
 
         Ok(Err(SqliteDatabaseError::Sqlite(rusqlite::Error::InvalidParameterName(message))))
             if message == "SCHEMA_ORDER_MISMATCH" =>
@@ -2097,7 +2121,14 @@ pub async fn update_schema_field(
         .await;
 
     match database_result {
-        Ok(Ok(field)) => api_json(StatusCode::OK, json!(field)),
+        Ok(Ok(field)) => {
+            publish_live_event(
+                "schema.updated",
+                Some(&claims.uid),
+                json!({"reason":"field.updated","field_uid":field.uid}),
+            );
+            api_json(StatusCode::OK, json!(field))
+        }
 
         Ok(Err(SqliteDatabaseError::Sqlite(rusqlite::Error::QueryReturnedNoRows))) => api_json(
             StatusCode::NOT_FOUND,

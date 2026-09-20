@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::{
+    api::live::publish_live_event,
     api::mx::schema::ensure_dynamic_schema,
     db::connector::{SqliteDatabaseError, with_sql_connection},
     middleware::auth::Claims,
@@ -400,13 +401,20 @@ pub async fn update_storage_layout(
     .await;
 
     match database_result {
-        Ok(Ok(layout)) => api_json(
-            StatusCode::OK,
-            json!({
-                "response": "N1 storage layout updated",
-                "layout": layout
-            }),
-        ),
+        Ok(Ok(layout)) => {
+            publish_live_event(
+                "storage.updated",
+                Some(&claims.uid),
+                json!({"revision": layout.revision}),
+            );
+            api_json(
+                StatusCode::OK,
+                json!({
+                    "response": "N1 storage layout updated",
+                    "layout": layout
+                }),
+            )
+        }
 
         Ok(Err(SqliteDatabaseError::Sqlite(rusqlite::Error::InvalidParameterName(message))))
             if message == "MX_STORAGE_FIELD_NOT_FOUND" =>

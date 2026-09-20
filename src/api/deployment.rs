@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::{
+    api::live::publish_live_event,
     db::connector::{SqliteDatabaseError, with_sql_connection},
     middleware::auth::Claims,
 };
@@ -372,14 +373,21 @@ pub async fn save_deployment_config(
     .await;
 
     match result {
-        Ok(Ok(revision)) => api_json(
-            StatusCode::OK,
-            json!({
-                "response":"deployment configuration saved",
-                "revision":revision,
-                "config":parsed
-            }),
-        ),
+        Ok(Ok(revision)) => {
+            publish_live_event(
+                "deployment.updated",
+                Some(&claims.uid),
+                json!({"revision": revision}),
+            );
+            api_json(
+                StatusCode::OK,
+                json!({
+                    "response":"deployment configuration saved",
+                    "revision":revision,
+                    "config":parsed
+                }),
+            )
+        }
         _ => api_json(
             StatusCode::INTERNAL_SERVER_ERROR,
             json!({"response":"failed to save deployment configuration"}),

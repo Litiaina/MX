@@ -242,6 +242,26 @@
       cursor: pointer;
     }
 
+    /* -------------------------------------------------------------- */
+    /* Consistent select / dropdown control styling                   */
+    /* -------------------------------------------------------------- */
+    select {
+      appearance: none;
+      -webkit-appearance: none;
+      -moz-appearance: none;
+      line-height: 1.25;
+      min-height: 40px;
+      padding-right: 2.5rem !important;
+      background-repeat: no-repeat;
+      background-position: right .85rem center;
+      background-size: 14px 14px;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='%2364758b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 8l4 4 4-4'/%3E%3C/svg%3E");
+    }
+
+    :root[data-theme="dark"] select {
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='%2394a3b8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 8l4 4 4-4'/%3E%3C/svg%3E");
+    }
+
     a {
       color: inherit;
       text-decoration: none;
@@ -1539,6 +1559,7 @@
     }
 
     .settings-select {
+      min-height: 40px;
       min-width: 150px;
       height: 38px;
       padding: 0 10px;
@@ -3103,6 +3124,238 @@
     }
   </style>
 
+
+  <style id="mx-live-presence-style">
+    .presence-card { margin-top: 14px; }
+    .presence-summary {
+      font-size: .78rem;
+      font-weight: 800;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+    .presence-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+      gap: 10px;
+    }
+    .presence-user {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+      padding: 10px 12px;
+      border: 1px solid var(--line-soft, var(--line));
+      border-radius: var(--radius, 10px);
+      background: var(--panel, #fff);
+    }
+    .presence-dot {
+      width: 9px;
+      height: 9px;
+      flex: 0 0 9px;
+      border-radius: 999px;
+      background: #98a2b3;
+      box-shadow: 0 0 0 3px rgba(152,162,179,.12);
+    }
+    .presence-user.online .presence-dot {
+      background: #12b76a;
+      box-shadow: 0 0 0 3px rgba(18,183,106,.13);
+    }
+    .presence-user-copy { min-width: 0; }
+    .presence-user-copy strong {
+      display: block;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: .82rem;
+    }
+    .presence-user-copy span {
+      display: block;
+      margin-top: 2px;
+      color: var(--muted);
+      font-size: .7rem;
+    }
+    .presence-state {
+      margin-left: auto;
+      font-size: .68rem;
+      font-weight: 850;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+      color: #667085;
+    }
+    .presence-user.online .presence-state { color: #067647; }
+
+    #liveSyncCard[data-live-state="connected"] .system-dot { background: #12b76a; }
+    #liveSyncCard[data-live-state="reconnecting"] .system-dot,
+    #liveSyncCard[data-live-state="connecting"] .system-dot { background: #f79009; }
+    #liveSyncCard[data-live-state="offline"] .system-dot,
+    #liveSyncCard[data-live-state="disconnected"] .system-dot { background: #98a2b3; }
+
+    .record-live-notice {
+      margin: 0 0 12px;
+      padding: 10px 12px;
+      border: 1px solid color-mix(in srgb, #f79009 42%, var(--line));
+      border-radius: 10px;
+      background: color-mix(in srgb, #f79009 9%, var(--panel));
+      color: var(--text);
+      font-size: .78rem;
+    }
+    .record-live-notice.hidden { display: none !important; }
+    .record-live-conflict-row {
+      display: grid;
+      grid-template-columns: minmax(120px, .8fr) minmax(0, 1fr) auto;
+      gap: 8px;
+      align-items: center;
+      margin-top: 8px;
+      padding-top: 8px;
+      border-top: 1px solid color-mix(in srgb, #f79009 24%, var(--line));
+    }
+    .record-live-conflict-values { min-width: 0; color: var(--muted); }
+    .record-live-conflict-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+    @media (max-width: 720px) {
+      .record-live-conflict-row { grid-template-columns: 1fr; }
+      .record-live-conflict-actions { justify-content: flex-start; }
+    }
+  </style>
+
+
+<style id="mx-darkmode-final-global">
+  /* MX V10.1.4: final dark-mode normalization layer. */
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+  }
+
+  :root[data-theme="dark"] body,
+  :root[data-theme="dark"] .main-content,
+  :root[data-theme="dark"] .workspace-panel {
+    background-color: #090f1a !important;
+    color: #f2f4f7 !important;
+  }
+
+  :root[data-theme="dark"] .topbar,
+  :root[data-theme="dark"] .workspace-tabs {
+    background: rgba(17,24,39,.94) !important;
+    border-color: #263244 !important;
+  }
+
+  :root[data-theme="dark"] .btn:not(.btn-primary):not(.btn-soft):not(.btn-danger),
+  :root[data-theme="dark"] .settings-close {
+    background: #151e2e !important;
+    color: #e4e7ec !important;
+    border-color: #344054 !important;
+  }
+
+  :root[data-theme="dark"] .filter-strip,
+  :root[data-theme="dark"] .kpi,
+  :root[data-theme="dark"] .card,
+  :root[data-theme="dark"] .insight,
+  :root[data-theme="dark"] .section-tag,
+  :root[data-theme="dark"] .quality-item,
+  :root[data-theme="dark"] .audit-kpi,
+  :root[data-theme="dark"] .settings-card,
+  :root[data-theme="dark"] .settings-section,
+  :root[data-theme="dark"] .settings-value {
+    background: #111827 !important;
+    color: #f2f4f7 !important;
+    border-color: #263244 !important;
+  }
+
+  :root[data-theme="dark"] .card-head,
+  :root[data-theme="dark"] .data-table th,
+  :root[data-theme="dark"] .quality-icon,
+  :root[data-theme="dark"] .audit-action {
+    background: #151e2e !important;
+    color: #d0d5dd !important;
+    border-color: #263244 !important;
+  }
+
+  :root[data-theme="dark"] .card-head h3,
+  :root[data-theme="dark"] .insight-value,
+  :root[data-theme="dark"] .kpi-meta strong {
+    color: #f2f4f7 !important;
+  }
+
+  :root[data-theme="dark"] .data-table td {
+    color: #d0d5dd !important;
+    border-color: #263244 !important;
+  }
+
+  :root[data-theme="dark"] .data-table tbody tr:hover {
+    background: #151e2e !important;
+  }
+
+  :root[data-theme="dark"] .field input,
+  :root[data-theme="dark"] .field select,
+  :root[data-theme="dark"] .settings-select {
+    color: #f2f4f7 !important;
+    background-color: #151e2e !important;
+    border-color: #344054 !important;
+  }
+
+  :root[data-theme="dark"] select {
+    color: #f2f4f7 !important;
+    background-color: #151e2e !important;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='%23cbd5e1' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 8l4 4 4-4'/%3E%3C/svg%3E") !important;
+    background-repeat: no-repeat !important;
+    background-position: right .85rem center !important;
+    background-size: 14px 14px !important;
+  }
+
+  :root[data-theme="dark"] select option,
+  :root[data-theme="dark"] select optgroup {
+    color: #f2f4f7;
+    background: #111827;
+  }
+
+  :root[data-theme="dark"] .load-status {
+    color: #bfdbfe !important;
+    background: #0f1b34 !important;
+    border-color: #1e3a8a !important;
+  }
+
+  :root[data-theme="dark"] .donut {
+    background: conic-gradient(var(--mx-primary, var(--primary)) calc(var(--value) * 1%), #263244 0) !important;
+  }
+
+  :root[data-theme="dark"] .donut::before {
+    background: #111827 !important;
+  }
+
+  :root[data-theme="dark"] .btn-soft {
+    color: color-mix(in srgb, var(--mx-primary, var(--primary)) 62%, white) !important;
+    background: color-mix(in srgb, var(--mx-primary, var(--primary)) 18%, #111827) !important;
+    border-color: color-mix(in srgb, var(--mx-primary, var(--primary)) 36%, #344054) !important;
+  }
+
+  /* Presence is in the light DOM, outside the Records/Admin shadow roots. */
+  :root[data-theme="dark"] .presence-card {
+    background: #111827 !important;
+    border-color: #263244 !important;
+  }
+
+  :root[data-theme="dark"] .presence-user {
+    background: #151e2e !important;
+    color: #f2f4f7 !important;
+    border-color: #344054 !important;
+  }
+
+  :root[data-theme="dark"] .presence-user-copy strong { color: #f2f4f7 !important; }
+  :root[data-theme="dark"] .presence-user-copy span,
+  :root[data-theme="dark"] .presence-summary { color: #98a2b3 !important; }
+  :root[data-theme="dark"] .presence-state { color: #98a2b3; }
+  :root[data-theme="dark"] .presence-user.online .presence-state { color: #6ee7b7 !important; }
+
+  /* Consistent dark native scrollbars for the shell. */
+  :root[data-theme="dark"] * { scrollbar-color: #475467 #0b1220; }
+  :root[data-theme="dark"] *::-webkit-scrollbar { width: 12px; height: 12px; }
+  :root[data-theme="dark"] *::-webkit-scrollbar-track { background: #0b1220; }
+  :root[data-theme="dark"] *::-webkit-scrollbar-thumb {
+    background: #475467;
+    border: 2px solid #0b1220;
+    border-radius: 999px;
+  }
+  :root[data-theme="dark"] *::-webkit-scrollbar-corner { background: #0b1220; }
+</style>
+
 </head>
 
 <body>
@@ -3178,13 +3431,13 @@
 
       <div class="sidebar-spacer"></div>
 
-      <div class="sidebar-system">
+      <div class="sidebar-system" id="liveSyncCard">
         <div class="system-line">
-          <span class="system-dot"></span>
-          Dashboard connected
+          <span class="system-dot" id="liveSyncDot"></span>
+          <span id="liveSyncLabel">Live sync connecting…</span>
         </div>
-        <div class="system-copy">
-          Statistics are calculated from record metadata. Attachment bytes remain in N1 and are never downloaded for dashboard analytics.
+        <div class="system-copy" id="liveSyncCopy">
+          MX reconnects automatically if the real-time connection is interrupted.
         </div>
       </div>
 
@@ -3361,6 +3614,21 @@
           <div class="spinner"></div>
           <span id="loadStatusText">Loading records…</span>
         </div>
+
+        <section class="card presence-card" id="presenceSection">
+          <div class="card-head">
+            <div>
+              <h3>Account Presence</h3>
+              <p>Live online/offline status from authenticated MX WebSocket sessions. Multiple tabs count as one online account.</p>
+            </div>
+            <div class="presence-summary" id="presenceSummary">Connecting…</div>
+          </div>
+          <div class="card-body">
+            <div class="presence-grid" id="presenceGrid">
+              <div class="muted">Waiting for live presence…</div>
+            </div>
+          </div>
+        </section>
 
         <section class="kpi-grid hidden">
           <article class="kpi">
@@ -5210,6 +5478,23 @@
     font-family:inherit !important;
   }
 
+  select {
+    appearance:none !important;
+    -webkit-appearance:none !important;
+    -moz-appearance:none !important;
+    line-height:1.25 !important;
+    min-height:40px !important;
+    padding-right:2.5rem !important;
+    background-repeat:no-repeat !important;
+    background-position:right .85rem center !important;
+    background-size:14px 14px !important;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='%2364758b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 8l4 4 4-4'/%3E%3C/svg%3E") !important;
+  }
+
+  :host([data-theme="dark"]) select {
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='%2394a3b8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 8l4 4 4-4'/%3E%3C/svg%3E") !important;
+  }
+
   .btn-primary:hover:not(:disabled),
   .btn-primary:focus-visible {
     color:#ffffff !important;
@@ -6322,6 +6607,7 @@
 <button aria-label="Close" class="icon-btn" id="closeModalBtn" type="button">×</button>
 </div>
 <div class="modal-body">
+<div class="record-live-notice hidden" id="recordLiveNotice" role="status" aria-live="polite"></div>
 <form class="form-grid entry-form-drop-target" id="entryForm">
 <div class="drop-anywhere-overlay hidden" id="dropAnywhereOverlay">
 <div>
@@ -6911,10 +7197,203 @@
       var(--panel)
     ) !important;
   }
+
+  .record-live-notice {
+    margin: 0 0 12px;
+    padding: 10px 12px;
+    border: 1px solid color-mix(in srgb, #f79009 42%, var(--line));
+    border-radius: 10px;
+    background: color-mix(in srgb, #f79009 9%, var(--panel));
+    color: var(--text);
+    font-size: .78rem;
+  }
+  .record-live-notice.hidden { display: none !important; }
+  .record-live-conflict-row {
+    display: grid;
+    grid-template-columns: minmax(120px, .8fr) minmax(0, 1fr) auto;
+    gap: 8px;
+    align-items: center;
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid color-mix(in srgb, #f79009 24%, var(--line));
+  }
+  .record-live-conflict-values { min-width: 0; color: var(--muted); }
+  .record-live-conflict-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+  @media (max-width: 720px) {
+    .record-live-conflict-row { grid-template-columns: 1fr; }
+  }
 </style>
 
 
-  </template>
+  
+
+<style id="mx-darkmode-final-records">
+  :host([data-theme="dark"]) {
+    --bg: #090f1a !important;
+    --panel: #111827 !important;
+    --panel-soft: #151e2e !important;
+    --header: #0b1220 !important;
+    --header-2: #111827 !important;
+    --text: #f2f4f7 !important;
+    --muted: #98a2b3 !important;
+    --line: #344054 !important;
+    --line-soft: #263244 !important;
+    color-scheme: dark;
+    background: #090f1a !important;
+    color: #f2f4f7 !important;
+  }
+
+  :host([data-theme="dark"]) .app-shell,
+  :host([data-theme="dark"]) .app-main {
+    background: #090f1a !important;
+    color: #f2f4f7 !important;
+  }
+
+  :host([data-theme="dark"]) .search-panel,
+  :host([data-theme="dark"]) .status-strip,
+  :host([data-theme="dark"]) .table-card,
+  :host([data-theme="dark"]) .column-menu,
+  :host([data-theme="dark"]) .modal-card,
+  :host([data-theme="dark"]) .form-section,
+  :host([data-theme="dark"]) .preview-card,
+  :host([data-theme="dark"]) .preview-fallback,
+  :host([data-theme="dark"]) .attachment-row,
+  :host([data-theme="dark"]) .account-row,
+  :host([data-theme="dark"]) .login-card {
+    background: #111827 !important;
+    color: #f2f4f7 !important;
+    border-color: #263244 !important;
+  }
+
+  :host([data-theme="dark"]) .advanced-panel,
+  :host([data-theme="dark"]) .pagination,
+  :host([data-theme="dark"]) .modal-header,
+  :host([data-theme="dark"]) .auth-note,
+  :host([data-theme="dark"]) .account-toolbar,
+  :host([data-theme="dark"]) .role-legend,
+  :host([data-theme="dark"]) .file-drop,
+  :host([data-theme="dark"]) .column-option,
+  :host([data-theme="dark"]) .readonly-field,
+  :host([data-theme="dark"]) .sticky-actions,
+  :host([data-theme="dark"]) .row-num {
+    background: #151e2e !important;
+    color: #d0d5dd !important;
+    border-color: #263244 !important;
+  }
+
+  :host([data-theme="dark"]) label,
+  :host([data-theme="dark"]) .dynamic-field > span,
+  :host([data-theme="dark"]) .column-menu-title { color: #d0d5dd !important; }
+
+  :host([data-theme="dark"]) input,
+  :host([data-theme="dark"]) textarea,
+  :host([data-theme="dark"]) select,
+  :host([data-theme="dark"]) .page-input {
+    color: #f2f4f7 !important;
+    background-color: #151e2e !important;
+    border-color: #344054 !important;
+  }
+
+  :host([data-theme="dark"]) select {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='%23cbd5e1' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 8l4 4 4-4'/%3E%3C/svg%3E") !important;
+    background-repeat: no-repeat !important;
+    background-position: right .85rem center !important;
+    background-size: 14px 14px !important;
+    padding-right: 2.5rem !important;
+  }
+
+  :host([data-theme="dark"]) select option,
+  :host([data-theme="dark"]) select optgroup {
+    color: #f2f4f7;
+    background: #111827;
+  }
+
+  :host([data-theme="dark"]) input::placeholder,
+  :host([data-theme="dark"]) textarea::placeholder { color: #667085 !important; }
+
+  :host([data-theme="dark"]) .btn-light,
+  :host([data-theme="dark"]) .icon-btn {
+    color: #e4e7ec !important;
+    background: #151e2e !important;
+    border-color: #344054 !important;
+  }
+
+  :host([data-theme="dark"]) .btn-soft {
+    color: color-mix(in srgb, var(--mx-primary, var(--primary)) 62%, white) !important;
+    background: color-mix(in srgb, var(--mx-primary, var(--primary)) 18%, #111827) !important;
+    border-color: color-mix(in srgb, var(--mx-primary, var(--primary)) 36%, #344054) !important;
+  }
+
+  :host([data-theme="dark"]) .drop-anywhere-overlay,
+  :host([data-theme="dark"]) .upload-progress-panel {
+    color: #dbeafe !important;
+    background: color-mix(in srgb, var(--mx-primary, var(--primary)) 12%, #0b1220) !important;
+    border-color: color-mix(in srgb, var(--mx-primary, var(--primary)) 38%, #344054) !important;
+  }
+
+  /* Fix the inactive loading strip that appeared as a white stripe. */
+  :host([data-theme="dark"]) .table-loading-bar { background: #263244 !important; }
+
+  :host([data-theme="dark"]) .table-wrap,
+  :host([data-theme="dark"]) .table-card.is-empty .table-wrap {
+    background: #0b1220 !important;
+    scrollbar-color: #475467 #0b1220;
+  }
+
+  :host([data-theme="dark"]) .table-wrap::-webkit-scrollbar { width: 12px; height: 12px; }
+  :host([data-theme="dark"]) .table-wrap::-webkit-scrollbar-track { background: #0b1220; }
+  :host([data-theme="dark"]) .table-wrap::-webkit-scrollbar-thumb {
+    background: #475467;
+    border: 2px solid #0b1220;
+    border-radius: 999px;
+  }
+  :host([data-theme="dark"]) .table-wrap::-webkit-scrollbar-corner { background: #0b1220; }
+
+  :host([data-theme="dark"]) thead th,
+  :host([data-theme="dark"]) thead .sticky-actions,
+  :host([data-theme="dark"]) thead .row-num {
+    color: #d0d5dd !important;
+    background: #172033 !important;
+    border-color: #344054 !important;
+  }
+
+  :host([data-theme="dark"]) tbody td {
+    color: #d0d5dd !important;
+    background: #111827 !important;
+    border-color: #263244 !important;
+  }
+
+  :host([data-theme="dark"]) tbody tr:hover td { background: #151e2e !important; }
+
+  :host([data-theme="dark"]) .table-wrap tbody tr {
+    background: #111827 !important;
+    border-color: #344054 !important;
+  }
+
+  :host([data-theme="dark"]) .table-wrap tbody td,
+  :host([data-theme="dark"]) .table-wrap tbody td.dynamic-cell { background: #111827 !important; }
+
+  :host([data-theme="dark"]) .empty-state,
+  :host([data-theme="dark"]) .table-wrap tbody .empty-state {
+    color: #98a2b3 !important;
+    background: #111827 !important;
+  }
+
+  :host([data-theme="dark"]) .preview-body { background: #020617 !important; }
+  :host([data-theme="dark"]) .preview-text { color: #e4e7ec !important; background: #0b1220 !important; }
+  :host([data-theme="dark"]) .attachment-count {
+    color: #bfdbfe !important;
+    background: #172554 !important;
+    border-color: #1e3a8a !important;
+  }
+
+  :host([data-theme="dark"]) .upload-progress-panel { background:#0c1b36 !important; border-color:#1e3a8a !important; }
+  :host([data-theme="dark"]) .upload-progress-track { background:#263244 !important; }
+
+  :host([data-theme="dark"]) * { scrollbar-color: #475467 #0b1220; }
+</style>
+
+</template>
 
   <script type="text/plain" id="recordsSystemScript">
 
@@ -7058,7 +7537,10 @@ const state = {
   refreshTimer: null,
   refreshPromise: null,
 
-  searchTimer: null
+  searchTimer: null,
+  liveRefreshTimer: null,
+  liveConflicts: new Map(),
+  liveNoticeMessage: ""
 };
 
 /* -------------------------------------------------------------------------- */
@@ -7140,6 +7622,7 @@ const els = {
   entryModal: document.getElementById("entryModal"),
   entryModalTitle: document.getElementById("entryModalTitle"),
   entryModalHint: document.getElementById("entryModalHint"),
+  recordLiveNotice: document.getElementById("recordLiveNotice"),
   closeModalBtn: document.getElementById("closeModalBtn"),
   cancelBtn: document.getElementById("cancelBtn"),
   resetFormBtn: document.getElementById("resetFormBtn"),
@@ -9189,6 +9672,7 @@ function resetEntryForm() {
   state.editing = null;
   state.pendingFiles = [];
   state.pendingFieldFiles.clear();
+  clearRecordLiveState();
   clearUploadProgress();
 
   els.entryForm.reset();
@@ -9245,6 +9729,7 @@ function editEntry(uid) {
     return;
   }
 
+  clearRecordLiveState();
   state.editing = row;
   state.pendingFiles = [];
   state.pendingFieldFiles.clear();
@@ -9426,6 +9911,159 @@ function updateSaveButtonLabel() {
     fileCount > 0
       ? `${baseLabel} & Upload (${fileCount})`
       : baseLabel;
+}
+
+function comparableFieldValue(field, value) {
+  if (value === null || value === undefined || value === "") {
+    if (field?.field_type === "boolean") return false;
+    return "";
+  }
+
+  if (field?.field_type === "boolean") return Boolean(value);
+  if (field?.field_type === "integer") return Number.parseInt(value, 10);
+  if (field?.field_type === "decimal") return Number(value);
+  return String(value);
+}
+
+function fieldBaseRevision(record, field) {
+  const explicit = Number(record?.field_revisions?.[field.key]);
+  if (Number.isFinite(explicit) && explicit >= 0) return explicit;
+
+  return Object.prototype.hasOwnProperty.call(record?.values || {}, field.key)
+    ? 1
+    : 0;
+}
+
+function fieldIsDirty(field) {
+  if (!state.editing || ["auto_number", "attachments"].includes(field.field_type)) {
+    return false;
+  }
+
+  const current = comparableFieldValue(field, dynamicInputValue(field));
+  const original = comparableFieldValue(
+    field,
+    Object.prototype.hasOwnProperty.call(state.editing.values || {}, field.key)
+      ? state.editing.values[field.key]
+      : ""
+  );
+
+  return current !== original;
+}
+
+function buildEntryPatchPayload() {
+  const changes = {};
+  const base_revisions = {};
+
+  if (!state.editing) return { changes, base_revisions };
+
+  for (const field of orderedFields().filter(field =>
+    field.active && !["auto_number", "attachments"].includes(field.field_type)
+  )) {
+    if (!fieldIsDirty(field)) continue;
+
+    changes[field.key] = dynamicInputValue(field);
+    base_revisions[field.key] = fieldBaseRevision(state.editing, field);
+  }
+
+  return { changes, base_revisions };
+}
+
+function setDynamicInputValue(field, value) {
+  const input = els.dynamicFields.querySelector(
+    `[data-record-field="${CSS.escape(field.key)}"]`
+  );
+  if (!input) return;
+
+  if (field.field_type === "boolean") {
+    input.checked = Boolean(value);
+    return;
+  }
+
+  if (field.field_type === "auto_number") {
+    input.value = value === null || value === undefined || value === ""
+      ? "Assigned automatically when saved"
+      : formatAutoNumber(field, value);
+    return;
+  }
+
+  input.value = value === null || value === undefined ? "" : String(value);
+}
+
+function liveValueText(value) {
+  if (value === null || value === undefined || value === "") return "(empty)";
+  if (typeof value === "boolean") return value ? "Yes" : "No";
+  if (typeof value === "object") return JSON.stringify(value);
+  return String(value);
+}
+
+function renderRecordLiveNotice() {
+  if (!els.recordLiveNotice) return;
+
+  const conflicts = [...state.liveConflicts.values()];
+  const message = state.liveNoticeMessage;
+
+  if (!state.editing || (!message && !conflicts.length)) {
+    els.recordLiveNotice.classList.add("hidden");
+    els.recordLiveNotice.innerHTML = "";
+    return;
+  }
+
+  els.recordLiveNotice.classList.remove("hidden");
+  els.recordLiveNotice.innerHTML = `
+    <strong>${conflicts.length ? "Concurrent edit detected" : "Live update"}</strong>
+    ${message ? `<div style="margin-top:3px;">${escapeHtml(message)}</div>` : ""}
+    ${conflicts.map(conflict => `
+      <div class="record-live-conflict-row">
+        <strong>${escapeHtml(conflict.label || conflict.field_key)}</strong>
+        <div class="record-live-conflict-values">
+          Current: <b>${escapeHtml(liveValueText(conflict.current_value))}</b><br>
+          Yours: <b>${escapeHtml(liveValueText(conflict.your_value))}</b>
+        </div>
+        <div class="record-live-conflict-actions">
+          <button class="btn btn-soft btn-small" type="button" data-live-use-latest="${escapeHtml(conflict.field_key)}">Use latest</button>
+          <button class="btn btn-primary btn-small" type="button" data-live-keep-mine="${escapeHtml(conflict.field_key)}">Keep mine</button>
+        </div>
+      </div>
+    `).join("")}
+  `;
+}
+
+function clearRecordLiveState() {
+  state.liveConflicts.clear();
+  state.liveNoticeMessage = "";
+  renderRecordLiveNotice();
+}
+
+function acceptLiveLatest(fieldKey) {
+  const conflict = state.liveConflicts.get(fieldKey);
+  const field = fieldByKey(fieldKey);
+  if (!conflict || !field || !state.editing) return;
+
+  setDynamicInputValue(field, conflict.current_value);
+  if (conflict.current_value === null || conflict.current_value === undefined || conflict.current_value === "") {
+    delete state.editing.values[fieldKey];
+  } else {
+    state.editing.values[fieldKey] = conflict.current_value;
+  }
+  state.editing.field_revisions = state.editing.field_revisions || {};
+  state.editing.field_revisions[fieldKey] = Number(conflict.current_revision || 0);
+  state.liveConflicts.delete(fieldKey);
+  state.liveNoticeMessage = "Latest server value applied.";
+  renderRecordLiveNotice();
+}
+
+function acceptLiveMine(fieldKey) {
+  const conflict = state.liveConflicts.get(fieldKey);
+  if (!conflict || !state.editing) return;
+
+  // Keep the local input, but acknowledge the current server revision. The
+  // next PATCH is therefore an explicit user decision to replace that one
+  // field only; unrelated fields remain untouched.
+  state.editing.field_revisions = state.editing.field_revisions || {};
+  state.editing.field_revisions[fieldKey] = Number(conflict.current_revision || 0);
+  state.liveConflicts.delete(fieldKey);
+  state.liveNoticeMessage = "Your value is kept. Save again to apply it over the latest value for this field.";
+  renderRecordLiveNotice();
 }
 
 function buildEntryPayload() {
@@ -9821,6 +10459,43 @@ async function uploadPendingFieldFiles(entryUid) {
   }
 }
 
+async function patchEntryWithConcurrency(entryUid, patchPayload) {
+  const response = await authenticatedFetch(
+    ENDPOINTS.entry(entryUid),
+    {
+      method: "PATCH",
+      headers: {
+        "Accept": "application/json",
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(patchPayload)
+    }
+  );
+
+  const text = await response.text().catch(() => "");
+  let data = null;
+  if (text) {
+    try { data = JSON.parse(text); } catch (_) {}
+  }
+
+  if (response.status === 409 && data?.error === "field_conflict") {
+    const error = new Error(
+      data?.response || "One or more fields changed after you opened this record."
+    );
+    error.code = "field_conflict";
+    error.conflicts = Array.isArray(data?.conflicts) ? data.conflicts : [];
+    throw error;
+  }
+
+  if (!response.ok) {
+    throw new Error(readableError(text, response.status));
+  }
+
+  if (!text) return null;
+  if (data) return data;
+  throw new Error("Server returned invalid JSON.");
+}
+
 async function saveEntry(event) {
   event.preventDefault();
 
@@ -9847,13 +10522,28 @@ async function saveEntry(event) {
     let savedEntry;
 
     if (isUpdate) {
-      savedEntry = await requestJson(
-        ENDPOINTS.entry(entryUidBeingEdited),
-        {
-          method: "PUT",
-          body: payload
-        }
-      );
+      const patchPayload = buildEntryPatchPayload();
+      const changedKeys = Object.keys(patchPayload.changes);
+      const hasPendingAttachments = [...state.pendingFieldFiles.values()]
+        .some(files => Array.isArray(files) && files.length);
+
+      if (!changedKeys.length && !hasPendingAttachments) {
+        showToast("No changes to save.");
+        return;
+      }
+
+      if (changedKeys.length) {
+        savedEntry = await patchEntryWithConcurrency(
+          entryUidBeingEdited,
+          patchPayload
+        );
+        state.editing = savedEntry;
+        clearRecordLiveState();
+      } else {
+        // Attachment-only work must not rewrite record fields. This allows one
+        // user to upload files while another edits Status, Routing, etc.
+        savedEntry = state.editing;
+      }
     } else {
       savedEntry = await requestJson(
         ENDPOINTS.entries,
@@ -9891,6 +10581,13 @@ async function saveEntry(event) {
     */
     await loadPage(state.page);
   } catch (error) {
+    if (error?.code === "field_conflict") {
+      for (const conflict of error.conflicts || []) {
+        state.liveConflicts.set(conflict.field_key, conflict);
+      }
+      state.liveNoticeMessage = "Another user changed the same field while this form was open. Nothing was silently overwritten.";
+      renderRecordLiveNotice();
+    }
     showToast(error.message, "error");
   } finally {
     els.saveBtn.disabled = false;
@@ -10270,6 +10967,206 @@ async function deleteAccount(uid) {
   }
 }
 
+function scheduleLivePageRefresh() {
+  clearTimeout(state.liveRefreshTimer);
+  state.liveRefreshTimer = setTimeout(() => {
+    if (!state.session) return;
+    loadPage(state.page).catch(error => {
+      console.warn("Live records refresh failed:", error);
+    });
+  }, 180);
+}
+
+async function fetchRecordByUid(uid) {
+  return requestJson(ENDPOINTS.entry(uid), { method: "GET" });
+}
+
+async function refreshOpenRecordFromServer() {
+  const editingUid = state.editing?.uid;
+  if (!editingUid) return;
+
+  const latest = await fetchRecordByUid(editingUid);
+  if (!state.editing || state.editing.uid !== editingUid) return;
+
+  const oldEditing = state.editing;
+  const nextEditing = {
+    ...latest,
+    values: { ...(latest.values || {}) },
+    field_revisions: { ...(latest.field_revisions || {}) }
+  };
+
+  for (const field of orderedFields().filter(field =>
+    field.active && !["attachments"].includes(field.field_type)
+  )) {
+    const dirty = fieldIsDirty(field);
+    const latestValue = Object.prototype.hasOwnProperty.call(latest.values || {}, field.key)
+      ? latest.values[field.key]
+      : "";
+    const latestRevision = Number(latest.field_revisions?.[field.key] ?? 0);
+    const oldRevision = fieldBaseRevision(oldEditing, field);
+
+    if (dirty && latestRevision !== oldRevision) {
+      state.liveConflicts.set(field.key, {
+        field_uid: field.uid,
+        field_key: field.key,
+        label: field.label,
+        base_revision: oldRevision,
+        current_revision: latestRevision,
+        current_value: latestValue,
+        your_value: dynamicInputValue(field)
+      });
+      // Keep the old baseline for this dirty field so a save still conflicts
+      // unless the user explicitly chooses Use latest or Keep mine.
+      if (Object.prototype.hasOwnProperty.call(oldEditing.values || {}, field.key)) {
+        nextEditing.values[field.key] = oldEditing.values[field.key];
+      } else {
+        delete nextEditing.values[field.key];
+      }
+      nextEditing.field_revisions[field.key] = oldRevision;
+      continue;
+    }
+
+    if (!dirty) {
+      setDynamicInputValue(field, latestValue);
+    }
+  }
+
+  nextEditing.attached_files = Array.isArray(latest.attached_files)
+    ? latest.attached_files
+    : [];
+  state.editing = nextEditing;
+  renderCustomAttachmentFields();
+
+  if (state.liveConflicts.size) {
+    state.liveNoticeMessage = "This record changed on another connected MX client while your form was open.";
+  } else {
+    state.liveNoticeMessage = "This record was refreshed from a live update.";
+  }
+  renderRecordLiveNotice();
+}
+
+function applyLiveFieldUpdate(message) {
+  const payload = message?.payload || {};
+  const recordUid = String(payload.record_uid || "");
+  const changes = payload.changes || {};
+  const revisions = payload.field_revisions || {};
+
+  if (!state.editing || String(state.editing.uid) !== recordUid) return;
+  if (String(message.actor_uid || "") === String(state.session?.uid || "")) return;
+
+  state.editing.field_revisions = state.editing.field_revisions || {};
+  state.editing.values = state.editing.values || {};
+
+  let refreshedCount = 0;
+  let conflictCount = 0;
+
+  for (const [key, latestValue] of Object.entries(changes)) {
+    const field = fieldByKey(key);
+    if (!field) continue;
+
+    const latestRevision = Number(revisions[key] ?? 0);
+    if (fieldIsDirty(field)) {
+      state.liveConflicts.set(key, {
+        field_uid: field.uid,
+        field_key: key,
+        label: field.label,
+        base_revision: fieldBaseRevision(state.editing, field),
+        current_revision: latestRevision,
+        current_value: latestValue,
+        your_value: dynamicInputValue(field)
+      });
+      conflictCount++;
+      continue;
+    }
+
+    setDynamicInputValue(field, latestValue);
+    if (latestValue === null || latestValue === undefined || latestValue === "") {
+      delete state.editing.values[key];
+    } else {
+      state.editing.values[key] = latestValue;
+    }
+    state.editing.field_revisions[key] = latestRevision;
+    refreshedCount++;
+  }
+
+  if (conflictCount) {
+    state.liveNoticeMessage = `${conflictCount} field${conflictCount === 1 ? "" : "s"} changed elsewhere while you were editing. Your local input was preserved.`;
+  } else if (refreshedCount) {
+    state.liveNoticeMessage = `${refreshedCount} field${refreshedCount === 1 ? "" : "s"} refreshed live from another user.`;
+  }
+
+  renderRecordLiveNotice();
+}
+
+async function handleMxLiveEvent(event) {
+  const message = event?.detail || {};
+  const type = String(message.type || "");
+  const payload = message.payload || {};
+
+  if (type === "record.fields.updated") {
+    applyLiveFieldUpdate(message);
+    scheduleLivePageRefresh();
+    return;
+  }
+
+  if (type === "record.updated") {
+    if (state.editing && String(state.editing.uid) === String(payload.record_uid || "")) {
+      refreshOpenRecordFromServer().catch(error => {
+        console.warn("Unable to refresh open record after live update:", error);
+      });
+    }
+    scheduleLivePageRefresh();
+    return;
+  }
+
+  if (type === "attachment.created" || type === "attachment.deleted") {
+    if (state.editing && String(state.editing.uid) === String(payload.record_uid || "")) {
+      refreshOpenRecordFromServer().catch(error => {
+        console.warn("Unable to refresh live attachments:", error);
+      });
+    }
+    scheduleLivePageRefresh();
+    return;
+  }
+
+  if (type === "record.created") {
+    scheduleLivePageRefresh();
+    return;
+  }
+
+  if (type === "record.deleted") {
+    if (state.editing && String(state.editing.uid) === String(payload.record_uid || "")) {
+      showToast("This record was deleted by another user.", "error");
+      closeEntryModal();
+      resetEntryForm();
+    }
+    scheduleLivePageRefresh();
+    return;
+  }
+
+  if (type === "schema.updated") {
+    try {
+      await loadRecordSchema();
+      await loadPage(state.page);
+    } catch (error) {
+      console.warn("Live schema refresh failed:", error);
+    }
+    return;
+  }
+
+  if (type === "sync.required") {
+    try {
+      await loadRecordSchema();
+      await loadPage(state.page);
+      if (state.editing) await refreshOpenRecordFromServer();
+    } catch (error) {
+      console.warn("Live resynchronization failed:", error);
+    }
+  }
+}
+
+window.addEventListener("mx:live", handleMxLiveEvent);
+
 /* -------------------------------------------------------------------------- */
 /* -------------------------------------------------------------------------- */
 /* Event listeners                                                            */
@@ -10471,6 +11368,18 @@ els.resetFormBtn.addEventListener("click", () => {
 });
 
 els.entryModal.addEventListener("click", event => {
+  const useLatest = event.target.closest("[data-live-use-latest]");
+  if (useLatest) {
+    acceptLiveLatest(useLatest.dataset.liveUseLatest);
+    return;
+  }
+
+  const keepMine = event.target.closest("[data-live-keep-mine]");
+  if (keepMine) {
+    acceptLiveMine(keepMine.dataset.liveKeepMine);
+    return;
+  }
+
   if (event.target === els.entryModal) {
     closeEntryModal();
   }
@@ -11809,6 +12718,23 @@ bootstrapSession();
   input,
   select {
     font-family:inherit !important;
+  }
+
+  select {
+    appearance:none !important;
+    -webkit-appearance:none !important;
+    -moz-appearance:none !important;
+    line-height:1.25 !important;
+    min-height:40px !important;
+    padding-right:2.5rem !important;
+    background-repeat:no-repeat !important;
+    background-position:right .85rem center !important;
+    background-size:14px 14px !important;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='%2364758b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 8l4 4 4-4'/%3E%3C/svg%3E") !important;
+  }
+
+  :host([data-theme="dark"]) select {
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='%2394a3b8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 8l4 4 4-4'/%3E%3C/svg%3E") !important;
   }
 
   .btn-primary:hover:not(:disabled),
@@ -13433,7 +14359,182 @@ Database restoration should place the application into maintenance mode and be p
 </style>
 
 
-  </template>
+  
+
+<style id="mx-darkmode-final-admin">
+  :host([data-theme="dark"]) {
+    --bg: #090f1a !important;
+    --panel: #111827 !important;
+    --surface-1: #111827 !important;
+    --surface-2: #151e2e !important;
+    --text: #f2f4f7 !important;
+    --text-1: #f2f4f7 !important;
+    --text-2: #d0d5dd !important;
+    --muted: #98a2b3 !important;
+    --line: #344054 !important;
+    --line-soft: #263244 !important;
+    --line-strong: #475467 !important;
+    color-scheme: dark;
+    background: #090f1a !important;
+    color: #f2f4f7 !important;
+  }
+
+  :host([data-theme="dark"]) .shell { background: #090f1a !important; color:#f2f4f7 !important; }
+
+  :host([data-theme="dark"]) .card,
+  :host([data-theme="dark"]) .account-row,
+  :host([data-theme="dark"]) .audit-table-wrap,
+  :host([data-theme="dark"]) .schema-field-card,
+  :host([data-theme="dark"]) .schema-empty,
+  :host([data-theme="dark"]) .feature-item,
+  :host([data-theme="dark"]) .dashboard-builder-section,
+  :host([data-theme="dark"]) .dashboard-widget-admin-item,
+  :host([data-theme="dark"]) .deployment-config-section,
+  :host([data-theme="dark"]) .deployment-navigation-options > label {
+    background: #111827 !important;
+    color: #f2f4f7 !important;
+    border-color: #263244 !important;
+  }
+
+  :host([data-theme="dark"]) .card-header,
+  :host([data-theme="dark"]) .schema-checks,
+  :host([data-theme="dark"]) .schema-advanced,
+  :host([data-theme="dark"]) .schema-field-head,
+  :host([data-theme="dark"]) .storage-folder-row,
+  :host([data-theme="dark"]) .storage-layout-preview,
+  :host([data-theme="dark"]) .role-legend,
+  :host([data-theme="dark"]) .backup-summary,
+  :host([data-theme="dark"]) .backup-note,
+  :host([data-theme="dark"]) .auth-note,
+  :host([data-theme="dark"]) .feature-list,
+  :host([data-theme="dark"]) .dashboard-builder-guide,
+  :host([data-theme="dark"]) .dashboard-admin-option,
+  :host([data-theme="dark"]) .dashboard-widget-preview,
+  :host([data-theme="dark"]) .dashboard-chart-toggle {
+    background: #151e2e !important;
+    color: #d0d5dd !important;
+    border-color: #263244 !important;
+  }
+
+  :host([data-theme="dark"]) .schema-note,
+  :host([data-theme="dark"]) .storage-layout-note {
+    color: #bfdbfe !important;
+    background: #0f1b34 !important;
+    border-color: #1e3a8a !important;
+  }
+
+  :host([data-theme="dark"]) input,
+  :host([data-theme="dark"]) textarea,
+  :host([data-theme="dark"]) select,
+  :host([data-theme="dark"]) .schema-create-grid input,
+  :host([data-theme="dark"]) .schema-field-editor input,
+  :host([data-theme="dark"]) .schema-field-editor textarea {
+    color: #f2f4f7 !important;
+    background-color: #151e2e !important;
+    border-color: #344054 !important;
+  }
+
+  :host([data-theme="dark"]) select {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='%23cbd5e1' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 8l4 4 4-4'/%3E%3C/svg%3E") !important;
+    background-repeat: no-repeat !important;
+    background-position: right .85rem center !important;
+    background-size: 14px 14px !important;
+    padding-right: 2.5rem !important;
+  }
+
+  :host([data-theme="dark"]) select option,
+  :host([data-theme="dark"]) select optgroup {
+    color: #f2f4f7;
+    background: #111827;
+  }
+
+  :host([data-theme="dark"]) input::placeholder,
+  :host([data-theme="dark"]) textarea::placeholder { color: #667085 !important; }
+
+  :host([data-theme="dark"]) .btn-light,
+  :host([data-theme="dark"]) .schema-drag-handle {
+    color: #e4e7ec !important;
+    background: #151e2e !important;
+    border-color: #344054 !important;
+  }
+
+  :host([data-theme="dark"]) .storage-folder-name strong,
+  :host([data-theme="dark"]) .schema-field-name strong,
+  :host([data-theme="dark"]) .schema-system-heading strong,
+  :host([data-theme="dark"]) .deployment-navigation-options strong,
+  :host([data-theme="dark"]) .card-header h2,
+  :host([data-theme="dark"]) .backup-summary strong { color: #f2f4f7 !important; }
+
+  :host([data-theme="dark"]) .storage-layout-preview span,
+  :host([data-theme="dark"]) .storage-prefix-field span,
+  :host([data-theme="dark"]) .storage-folder-name span,
+  :host([data-theme="dark"]) .schema-field-meta,
+  :host([data-theme="dark"]) .schema-order-help,
+  :host([data-theme="dark"]) .schema-system-description,
+  :host([data-theme="dark"]) .deployment-field-hint,
+  :host([data-theme="dark"]) .deployment-navigation-options small { color: #98a2b3 !important; }
+
+  :host([data-theme="dark"]) .storage-layout-preview code { color: #f2f4f7 !important; }
+  :host([data-theme="dark"]) .storage-layout-warning { color: #fbbf24 !important; }
+
+  :host([data-theme="dark"]) .audit-table th {
+    color: #d0d5dd !important;
+    background: #151e2e !important;
+    border-color: #263244 !important;
+  }
+  :host([data-theme="dark"]) .audit-table td { color:#d0d5dd !important; border-color:#263244 !important; }
+  :host([data-theme="dark"]) .audit-table tbody tr:hover { background:#151e2e !important; }
+
+  :host([data-theme="dark"]) .admin-function-tabs {
+    background: rgba(17,24,39,.96) !important;
+    border-color: #263244 !important;
+  }
+
+  :host([data-theme="dark"]) .btn-soft {
+    color: color-mix(in srgb, var(--mx-primary, var(--primary)) 62%, white) !important;
+    background: color-mix(in srgb, var(--mx-primary, var(--primary)) 18%, #111827) !important;
+    border-color: color-mix(in srgb, var(--mx-primary, var(--primary)) 36%, #344054) !important;
+  }
+
+  :host([data-theme="dark"]) .storage-folder-index,
+  :host([data-theme="dark"]) .dashboard-rule-preview,
+  :host([data-theme="dark"]) .dashboard-builder-guide-icon,
+  :host([data-theme="dark"]) .dashboard-builder-step > span {
+    color: color-mix(in srgb, var(--mx-primary, var(--primary)) 62%, white) !important;
+    background: color-mix(in srgb, var(--mx-primary, var(--primary)) 16%, #111827) !important;
+    border-color: color-mix(in srgb, var(--mx-primary, var(--primary)) 34%, #344054) !important;
+  }
+
+  /* Appearance live preview should not turn into a bright island in dark mode. */
+  :host([data-theme="dark"]) .deployment-preview {
+    background:#0b1220 !important;
+    border-color:#344054 !important;
+  }
+  :host([data-theme="dark"]) .deployment-preview-main { background:#111827 !important; color:#f2f4f7 !important; }
+  :host([data-theme="dark"]) .deployment-preview-cards div,
+  :host([data-theme="dark"]) .deployment-preview-panel { background:#151e2e !important; border-color:#344054 !important; }
+
+  /* Deterministic Record Structure ordering icons: no font-glyph alignment. */
+  .schema-order-button {
+    width: 32px !important;
+    height: 32px !important;
+    min-width: 32px !important;
+    min-height: 32px !important;
+    padding: 0 !important;
+    display: inline-grid !important;
+    place-items: center !important;
+    line-height: 1 !important;
+  }
+  .schema-order-icon { width:14px; height:14px; display:block; pointer-events:none; }
+
+  :host([data-theme="dark"]) * { scrollbar-color: #475467 #0b1220; }
+  :host([data-theme="dark"]) *::-webkit-scrollbar { width:12px; height:12px; }
+  :host([data-theme="dark"]) *::-webkit-scrollbar-track { background:#0b1220; }
+  :host([data-theme="dark"]) *::-webkit-scrollbar-thumb { background:#475467; border:2px solid #0b1220; border-radius:999px; }
+  :host([data-theme="dark"]) *::-webkit-scrollbar-corner { background:#0b1220; }
+</style>
+
+</template>
 
   <script type="text/plain" id="adminSystemScript">
 
@@ -14595,7 +15696,7 @@ function renderSchemaFields() {
               title="Move field up"
               aria-label="Move ${escapeHtml(field.label)} up"
               ${isFirst || state.schemaOrderSaving ? "disabled" : ""}
-            >↑</button>
+            ><svg class="schema-order-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 15V5M6 9l4-4 4 4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
             <button
               class="btn btn-light btn-small schema-order-button"
               type="button"
@@ -14603,7 +15704,7 @@ function renderSchemaFields() {
               title="Move field down"
               aria-label="Move ${escapeHtml(field.label)} down"
               ${isLast || state.schemaOrderSaving ? "disabled" : ""}
-            >↓</button>
+            ><svg class="schema-order-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 5v10M6 11l4 4 4-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
           ` : ""}
           <span class="pill">Priority ${Number(field.table_priority || 0)}</span>
         </div>
@@ -16540,6 +17641,9 @@ initialize();
       userPerformanceReport: "/mx/v1/reports/user-performance",
       reportExport: "/mx/v1/reports/export.csv",
       revision: "/mx/v1/status/revision",
+      liveTicket: "/mx/v1/live/ticket",
+      live: "/mx/v1/live",
+      presence: "/mx/v1/presence",
       audit: "/mx/v1/admin/audit",
       backups: "/mx/v1/admin/backups"
     };
@@ -16570,6 +17674,9 @@ initialize();
       dashboardConfig: null,
       configuredReports: [],
       userPerformance: [],
+      presenceAccounts: [],
+      presenceLoadedAt: 0,
+      liveState: "disconnected",
       refreshPromise: null,
       loadedAt: null,
       workspace: "dashboard",
@@ -16634,6 +17741,13 @@ initialize();
       sidebarAvatar: document.getElementById("sidebarAvatar"),
       sidebarUserName: document.getElementById("sidebarUserName"),
       sidebarUserRole: document.getElementById("sidebarUserRole"),
+      liveSyncCard: document.getElementById("liveSyncCard"),
+      liveSyncDot: document.getElementById("liveSyncDot"),
+      liveSyncLabel: document.getElementById("liveSyncLabel"),
+      liveSyncCopy: document.getElementById("liveSyncCopy"),
+      presenceSection: document.getElementById("presenceSection"),
+      presenceSummary: document.getElementById("presenceSummary"),
+      presenceGrid: document.getElementById("presenceGrid"),
       adminNavLink: document.getElementById("adminNavLink"),
       adminWorkspaceTab: document.getElementById("adminWorkspaceTab"),
       dashboardWorkspace: document.getElementById("dashboardWorkspace"),
@@ -17585,6 +18699,101 @@ initialize();
     }
 
 
+    function setLiveSyncUi(status, detail = "") {
+      state.liveState = status;
+
+      if (els.liveSyncCard) {
+        els.liveSyncCard.dataset.liveState = status;
+      }
+
+      const label = {
+        connected: "Live sync connected",
+        connecting: "Live sync connecting…",
+        reconnecting: "Live sync reconnecting…",
+        offline: "Network offline",
+        disconnected: "Live sync disconnected"
+      }[status] || "Live sync";
+
+      if (els.liveSyncLabel) els.liveSyncLabel.textContent = label;
+      if (els.liveSyncCopy) {
+        els.liveSyncCopy.textContent = detail || (
+          status === "connected"
+            ? "Changes from other MX users appear automatically."
+            : "MX retries the real-time connection indefinitely until it is restored."
+        );
+      }
+    }
+
+    function renderPresence() {
+      if (!els.presenceGrid || !els.presenceSummary) return;
+
+      const accounts = Array.isArray(state.presenceAccounts)
+        ? [...state.presenceAccounts]
+        : [];
+
+      accounts.sort((a, b) => {
+        if (Boolean(a.online) !== Boolean(b.online)) return a.online ? -1 : 1;
+        return String(a.name || "").localeCompare(String(b.name || ""));
+      });
+
+      const online = accounts.filter(account => account.online).length;
+      els.presenceSummary.textContent = `${online} online · ${accounts.length} account${accounts.length === 1 ? "" : "s"}`;
+
+      if (!accounts.length) {
+        els.presenceGrid.innerHTML = `<div class="muted">No user accounts are available.</div>`;
+        return;
+      }
+
+      els.presenceGrid.innerHTML = accounts.map(account => `
+        <div class="presence-user ${account.online ? "online" : "offline"}" data-presence-uid="${escapeHtml(account.uid)}">
+          <span class="presence-dot" aria-hidden="true"></span>
+          <div class="presence-user-copy">
+            <strong>${escapeHtml(account.name || "Unnamed account")}</strong>
+            <span>${escapeHtml(account.access_name || roleName(account.access_level))}</span>
+          </div>
+          <span class="presence-state">${account.online ? "Online" : "Offline"}</span>
+        </div>
+      `).join("");
+    }
+
+    async function loadPresence() {
+      if (!state.session) return;
+
+      try {
+        const data = await apiJson(ENDPOINTS.presence, { method: "GET" });
+        state.presenceAccounts = Array.isArray(data?.accounts) ? data.accounts : [];
+        state.presenceLoadedAt = Date.now();
+        renderPresence();
+      } catch (error) {
+        console.warn("Presence refresh failed:", error);
+        if (!state.presenceAccounts.length && els.presenceGrid) {
+          els.presenceGrid.innerHTML = `<div class="muted">Presence is temporarily unavailable.</div>`;
+        }
+      }
+    }
+
+    function applyPresenceEvent(message) {
+      const payload = message?.payload || {};
+      const uid = String(payload.uid || "");
+      if (!uid) return;
+
+      const index = state.presenceAccounts.findIndex(account => String(account.uid) === uid);
+      const next = {
+        uid,
+        name: payload.name || state.presenceAccounts[index]?.name || uid,
+        access_level: Number(payload.access_level ?? state.presenceAccounts[index]?.access_level ?? 3),
+        access_name: payload.access_name || state.presenceAccounts[index]?.access_name || "User",
+        online: Boolean(payload.online),
+        last_seen_at: Number(message?.at || Date.now())
+      };
+
+      if (index >= 0) state.presenceAccounts[index] = { ...state.presenceAccounts[index], ...next };
+      else state.presenceAccounts.push(next);
+
+      renderPresence();
+    }
+
+
     const WORKSPACE_META = {
       dashboard: {
         breadcrumb: "Dashboard",
@@ -18121,6 +19330,7 @@ initialize();
     }
 
     function requireSharedLogin(message = "Sign in to continue.") {
+      window.MX_LIVE?.stop();
       clearTokens();
       state.session = null;
 
@@ -18141,6 +19351,369 @@ initialize();
       requireLogin: requireSharedLogin,
       session: () => state.session
     });
+
+
+    function processLiveMessage(message) {
+      const type = String(message?.type || "");
+      if (!type || type === "live.heartbeat" || type === "live.ready") return;
+
+      if (type === "presence.user.online" || type === "presence.user.offline") {
+        applyPresenceEvent(message);
+      }
+
+      if (
+        type === "record.created" ||
+        type === "record.updated" ||
+        type === "record.fields.updated" ||
+        type === "record.deleted" ||
+        type === "attachment.created" ||
+        type === "attachment.deleted"
+      ) {
+        recordsChanged();
+
+        if (state.workspace === "dashboard") {
+          clearTimeout(processLiveMessage.dashboardTimer);
+          processLiveMessage.dashboardTimer = setTimeout(() => {
+            refreshConfiguredDashboard({ notify: false }).catch(error => {
+              console.warn("Live dashboard refresh failed:", error);
+            });
+          }, 220);
+        }
+      }
+
+      if (type === "schema.updated") {
+        schemaChanged();
+      }
+
+      if (type === "dashboard.updated") {
+        markWorkspaceDirty("dashboard");
+        if (state.workspace === "dashboard") {
+          clearTimeout(processLiveMessage.dashboardTimer);
+          processLiveMessage.dashboardTimer = setTimeout(() => {
+            refreshConfiguredDashboard({ notify: false }).catch(error => {
+              console.warn("Live dashboard configuration refresh failed:", error);
+            });
+          }, 220);
+        }
+      }
+
+      if (type === "storage.updated") {
+        markWorkspaceDirty("admin");
+      }
+
+      if (type === "deployment.updated") {
+        loadDeploymentConfigShell().catch(error => {
+          console.warn("Live deployment configuration refresh failed:", error);
+        });
+      }
+
+      if (type === "sync.required") {
+        recordsChanged();
+        schemaChanged();
+        loadPresence();
+        refreshActiveWorkspace({ force: true, notify: false }).catch(error => {
+          console.warn("Live full resynchronization failed:", error);
+        });
+      }
+
+      window.dispatchEvent(new CustomEvent("mx:live", { detail: message }));
+    }
+
+    function createMxLiveClient() {
+      let socket = null;
+      let reconnectTimer = null;
+      let stableTimer = null;
+      let watchdogTimer = null;
+      let clientHeartbeatTimer = null;
+      let presenceTimer = null;
+      let stopped = true;
+      let connecting = false;
+      let attempt = 0;
+      let lastMessageAt = 0;
+      let lastSequence = null;
+      let connectionSerial = 0;
+
+      const clearSocketTimers = () => {
+        if (stableTimer) clearTimeout(stableTimer);
+        if (watchdogTimer) clearInterval(watchdogTimer);
+        if (clientHeartbeatTimer) clearInterval(clientHeartbeatTimer);
+        if (presenceTimer) clearInterval(presenceTimer);
+        stableTimer = null;
+        watchdogTimer = null;
+        clientHeartbeatTimer = null;
+        presenceTimer = null;
+      };
+
+      const clearReconnectTimer = () => {
+        if (reconnectTimer) clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+      };
+
+      const scheduleReconnect = reason => {
+        if (stopped || reconnectTimer) return;
+
+        if (!navigator.onLine) {
+          setLiveSyncUi(
+            "offline",
+            "The browser is offline. MX will reconnect automatically when network access returns."
+          );
+          return;
+        }
+
+        attempt += 1;
+        const exponential = Math.min(30_000, 500 * (2 ** Math.min(attempt - 1, 6)));
+        const jitter = (attempt * 173) % 401;
+        const delay = exponential + jitter;
+
+        setLiveSyncUi(
+          "reconnecting",
+          `Connection interrupted${reason ? ` (${reason})` : ""}. Retrying in ${(delay / 1000).toFixed(1)}s · attempt ${attempt} · retries never stop.`
+        );
+
+        reconnectTimer = setTimeout(() => {
+          reconnectTimer = null;
+          connect();
+        }, delay);
+      };
+
+      const connect = async () => {
+        if (stopped || !state.session || connecting) return;
+        if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) return;
+
+        if (!navigator.onLine) {
+          scheduleReconnect("offline");
+          return;
+        }
+
+        connecting = true;
+        setLiveSyncUi(attempt ? "reconnecting" : "connecting");
+
+        let ticketData;
+        try {
+          ticketData = await apiJson(ENDPOINTS.liveTicket, { method: "POST" });
+        } catch (error) {
+          connecting = false;
+
+          // Network/server outages retry forever. Authentication failures are
+          // different: once both session tokens are gone, stop the reconnect
+          // loop and return to the sign-in flow instead of hammering the
+          // ticket endpoint every 30 seconds.
+          if (!getAccessToken() && !getRefreshToken()) {
+            requireSharedLogin(error.message || "Your session has expired.");
+            return;
+          }
+
+          scheduleReconnect(error.message || "ticket failed");
+          return;
+        }
+
+        if (stopped || !state.session) {
+          connecting = false;
+          return;
+        }
+
+        const scheme = location.protocol === "https:" ? "wss:" : "ws:";
+        const url = `${scheme}//${location.host}${ENDPOINTS.live}?ticket=${encodeURIComponent(ticketData.ticket)}`;
+        const ws = new WebSocket(url);
+        socket = ws;
+        let opened = false;
+
+        ws.onopen = () => {
+          opened = true;
+          if (socket !== ws || stopped) {
+            ws.close(1000, "stopped");
+            return;
+          }
+
+          connecting = false;
+          lastMessageAt = Date.now();
+          connectionSerial += 1;
+          setLiveSyncUi("connected");
+          loadPresence();
+
+          clearSocketTimers();
+          stableTimer = setTimeout(() => {
+            if (socket === ws && ws.readyState === WebSocket.OPEN) attempt = 0;
+          }, 10_000);
+
+          watchdogTimer = setInterval(() => {
+            if (socket !== ws || ws.readyState !== WebSocket.OPEN) return;
+            if (Date.now() - lastMessageAt > 75_000) {
+              try { ws.close(4000, "heartbeat timeout"); } catch (_) {}
+            }
+          }, 10_000);
+
+          // Application-level heartbeat. Browsers handle protocol Ping/Pong
+          // internally and intermediaries vary in how they treat control
+          // frames. Sending a tiny normal WebSocket message gives the MX
+          // server an explicit inbound liveness signal as well.
+          clientHeartbeatTimer = setInterval(() => {
+            if (socket !== ws || ws.readyState !== WebSocket.OPEN) return;
+            try {
+              ws.send(JSON.stringify({
+                type: "live.ping",
+                at: Date.now()
+              }));
+            } catch (_) {}
+          }, 15_000);
+
+          // Presence is primarily event-driven. This low-frequency snapshot is
+          // a recovery path for missed account changes or a previously lagged
+          // connection; it is not the real-time transport.
+          presenceTimer = setInterval(() => {
+            if (socket === ws && ws.readyState === WebSocket.OPEN) loadPresence();
+          }, 60_000);
+        };
+
+        ws.onmessage = event => {
+          if (socket !== ws) return;
+          lastMessageAt = Date.now();
+
+          let message;
+          try {
+            message = JSON.parse(String(event.data || "{}"));
+          } catch (_) {
+            return;
+          }
+
+          if (message?.type === "live.heartbeat") return;
+
+          const sequence = Number(message?.sequence);
+          const hasSequence = Number.isFinite(sequence) && sequence >= 0;
+
+          if (message?.type === "live.ready") {
+            const previousSequence = lastSequence;
+            if (hasSequence) lastSequence = sequence;
+
+            setLiveSyncUi("connected");
+
+            // A socket is only a notification channel; it has no replay log.
+            // Resynchronize after EVERY successful handshake so a laptop sleep,
+            // Wi-Fi outage, server restart, proxy reset, or missed broadcast
+            // can never leave the UI silently stale. The sequence reason helps
+            // diagnostics but correctness does not depend on it.
+            processLiveMessage({
+              type: "sync.required",
+              sequence: hasSequence ? sequence : 0,
+              at: Date.now(),
+              actor_uid: null,
+              payload: {
+                reason:
+                  previousSequence === null
+                    ? "live_initial_sync"
+                    : sequence < previousSequence
+                      ? "live_server_restart"
+                      : sequence > previousSequence
+                        ? "live_reconnect_gap_check"
+                        : "live_reconnect_sync",
+                connection_serial: connectionSerial,
+                previous_sequence: previousSequence,
+                current_sequence: hasSequence ? sequence : null
+              }
+            });
+            return;
+          }
+
+          if (hasSequence) {
+            if (lastSequence !== null) {
+              if (sequence > lastSequence + 1 || sequence < lastSequence) {
+                processLiveMessage({
+                  type: "sync.required",
+                  sequence,
+                  at: Date.now(),
+                  actor_uid: null,
+                  payload: {
+                    reason:
+                      sequence < lastSequence
+                        ? "live_sequence_reset"
+                        : "live_sequence_gap",
+                    previous_sequence: lastSequence,
+                    current_sequence: sequence
+                  }
+                });
+              }
+            }
+            lastSequence = sequence;
+          }
+
+          processLiveMessage(message);
+        };
+
+        ws.onerror = () => {
+          // onclose owns reconnection so every failure follows one path.
+          try { ws.close(); } catch (_) {}
+        };
+
+        ws.onclose = event => {
+          if (socket !== ws) return;
+          socket = null;
+          connecting = false;
+          clearSocketTimers();
+
+          if (!stopped) {
+            const reason = event.reason
+              || (event.code === 1006 && !opened
+                ? "WebSocket handshake failed (code 1006)"
+                : `code ${event.code}`);
+            scheduleReconnect(reason);
+          }
+        };
+      };
+
+      const start = () => {
+        stopped = false;
+        clearReconnectTimer();
+        connect();
+      };
+
+      const stop = () => {
+        stopped = true;
+        connecting = false;
+        clearReconnectTimer();
+        clearSocketTimers();
+        if (socket) {
+          const ws = socket;
+          socket = null;
+          try { ws.close(1000, "signed out"); } catch (_) {}
+        }
+        setLiveSyncUi("disconnected", "Sign in to enable real-time synchronization.");
+      };
+
+      window.addEventListener("online", () => {
+        if (stopped) return;
+        clearReconnectTimer();
+        connect();
+      });
+
+      window.addEventListener("offline", () => {
+        if (stopped) return;
+        setLiveSyncUi(
+          "offline",
+          "The browser is offline. MX will reconnect automatically when network access returns."
+        );
+        if (socket) {
+          try { socket.close(); } catch (_) {}
+        }
+      });
+
+      return Object.freeze({
+        start,
+        stop,
+        reconnect: () => {
+          if (stopped) return;
+          clearReconnectTimer();
+          if (socket) {
+            try { socket.close(); } catch (_) {}
+          } else {
+            connect();
+          }
+        },
+        status: () => state.liveState,
+        attempts: () => attempt
+      });
+    }
+
+    window.MX_LIVE = createMxLiveClient();
 
     async function getBootstrapStatus() {
       const response = await fetch(
@@ -18373,6 +19946,7 @@ initialize();
     }
 
     function logout() {
+      window.MX_LIVE?.stop();
       clearTokens();
       state.session = null;
       state.dashboard = null;
@@ -19979,6 +21553,8 @@ initialize();
         await loadSession();
         els.loginOverlay.classList.add("hidden");
 
+        window.MX_LIVE?.start();
+        await loadPresence();
         await refreshConfiguredDashboard({ notify: false });
 
         const revisions = await fetchRecordsRevision();

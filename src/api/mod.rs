@@ -5,6 +5,7 @@ pub mod backup;
 pub mod dashboard;
 pub mod deployment;
 pub mod hosting;
+pub mod live;
 pub mod mx;
 pub mod query_handler;
 pub mod reports;
