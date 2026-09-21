@@ -1,4 +1,4 @@
-use std::sync::LazyLock;
+use std::{path::Path, sync::LazyLock};
 
 use ini::Ini;
 
@@ -306,7 +306,7 @@ pub static CONFIG: LazyLock<Config> = LazyLock::new(|| {
      * Static site hosting
      */
 
-    let static_site_path_value = static_site_hosting
+    let configured_static_site_path = static_site_hosting
         .get("static_site_path")
         .map(ToString::to_string)
         .unwrap_or_else(|| {
@@ -316,6 +316,19 @@ pub static CONFIG: LazyLock<Config> = LazyLock::new(|| {
                 "CONFIG"
             )
         });
+
+    // MX 1.0 initially called the browser asset directory `web`. Keep existing
+    // deployment configurations working after the Svelte frontend replacement.
+    let static_site_path_value = if matches!(
+        configured_static_site_path.as_str(),
+        "web" | "frontend/legacy"
+    ) && !Path::new(&configured_static_site_path).exists()
+        && Path::new("frontend/dist").is_dir()
+    {
+        "frontend/dist".to_string()
+    } else {
+        configured_static_site_path
+    };
 
     /*
      * N1 values
@@ -355,7 +368,7 @@ pub static CONFIG: LazyLock<Config> = LazyLock::new(|| {
      * We intentionally allow fragment="" here.
      *
      * init_config.rs creates an empty fragment value on first run.
-     * The DGS/N1 handler will report that N1 has not yet been configured
+     * The MX/N1 handler will report that N1 has not yet been configured
      * when an attachment operation is attempted.
      */
 

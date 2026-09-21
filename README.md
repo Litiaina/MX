@@ -18,7 +18,7 @@
 </div>
 
 <p align="center">
-  <strong>Current release: MX 1.0.0</strong>
+  <strong>Current release: MX 1.1.0</strong>
 </p>
 
 ---
@@ -111,7 +111,8 @@ Rust + Axum + Tokio
 
 ### Browser
 
-The browser provides the unified MX interface:
+The browser interface is a Svelte 5 + TypeScript application built to static
+assets in `frontend/dist` and served by the Rust process. It provides:
 
 - Dashboard
 - Records
@@ -1111,15 +1112,31 @@ Strict warning-free check:
 RUSTFLAGS="-D warnings" cargo check
 ```
 
-Run development build:
+Install and validate the Svelte frontend with Node.js 24 or newer:
+
+```bash
+cd frontend
+npm ci
+npm run check
+npm test
+npm run build
+cd ..
+```
+
+Run MX with the production frontend from `frontend/dist`:
 
 ```bash
 cargo run
 ```
 
+For browser-interface development, run `npm run dev` inside `frontend`. Vite
+proxies `/mx` and `/ping` to the Rust HTTPS server. Svelte is a build-time
+dependency; production does not require a Node.js process.
+
 Production build:
 
 ```bash
+cd frontend && npm ci && npm run build && cd ..
 cargo build --release
 ```
 
@@ -1138,8 +1155,12 @@ mx/
 ├── Cargo.toml
 ├── mx.config
 ├── mx.env
-├── web/
-│   └── index.html
+├── frontend/
+│   ├── src/                 # Svelte 5 and TypeScript application
+│   ├── public/              # Static frontend assets
+│   ├── dist/                # Shipped production frontend served by Rust
+│   ├── package.json
+│   └── vite.config.ts
 │
 └── src/
     ├── api/

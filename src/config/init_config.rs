@@ -28,7 +28,7 @@ pub fn init_default_config<P: AsRef<Path>>(path: P) -> io::Result<()> {
         .set("server_limit_burst_size", "300");
 
     conf.with_section(Some("static_site_hosting"))
-        .set("static_site_path", "");
+        .set("static_site_path", "frontend/dist");
 
     // MX attachment storage.
     // "fragment" is the hash of the dedicated N1 MX fragment.

@@ -50,7 +50,6 @@ struct PresenceState {
     connections: u64,
     online: bool,
     generation: u64,
-    last_seen_at: i64,
 }
 
 struct LiveHub {
@@ -125,16 +124,36 @@ struct PresenceAccount {
     name: String,
     access_level: i64,
     access_name: String,
-    online: bool,
-    last_seen_at: Option<i64>,
 }
 
-fn presence_snapshot() -> HashMap<String, PresenceState> {
-    hub()
+fn online_presence_accounts() -> Vec<PresenceAccount> {
+    let presence = hub()
         .presence
         .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clone()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    online_presence_accounts_from(&presence)
+}
+
+fn online_presence_accounts_from(
+    presence: &HashMap<String, PresenceState>,
+) -> Vec<PresenceAccount> {
+    let mut accounts = presence
+        .iter()
+        .filter(|(_, state)| state.online)
+        .map(|(uid, state)| PresenceAccount {
+            uid: uid.clone(),
+            name: state.name.clone(),
+            access_level: state.access_level,
+            access_name: access_name(state.access_level).to_string(),
+        })
+        .collect::<Vec<_>>();
+    accounts.sort_by(|left, right| {
+        left.name
+            .to_ascii_lowercase()
+            .cmp(&right.name.to_ascii_lowercase())
+            .then_with(|| left.uid.cmp(&right.uid))
+    });
+    accounts
 }
 
 fn prune_expired_tickets(tickets: &mut HashMap<String, LiveTicket>, now: i64) {
@@ -290,14 +309,11 @@ pub async fn live_socket(ws: WebSocketUpgrade, Query(query): Query<LiveSocketQue
 }
 
 fn mark_presence_connected(ticket: &LiveTicket) {
-    let mut became_online = false;
-
-    {
+    let became_online = {
         let mut presence = hub()
             .presence
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-
         let entry = presence
             .entry(ticket.uid.clone())
             .or_insert_with(|| PresenceState {
@@ -306,33 +322,21 @@ fn mark_presence_connected(ticket: &LiveTicket) {
                 connections: 0,
                 online: false,
                 generation: 0,
-                last_seen_at: now_millis(),
             });
 
         entry.name = ticket.name.clone();
         entry.access_level = ticket.access_level;
         entry.connections = entry.connections.saturating_add(1);
         entry.generation = entry.generation.saturating_add(1);
-        entry.last_seen_at = now_millis();
-
-        if !entry.online {
-            entry.online = true;
-            became_online = true;
-        }
-    }
+        let became_online = !entry.online;
+        entry.online = true;
+        became_online
+    };
 
     if became_online {
-        publish_live_event(
-            "presence.user.online",
-            Some(&ticket.uid),
-            json!({
-                "uid": ticket.uid,
-                "name": ticket.name,
-                "access_level": ticket.access_level,
-                "access_name": access_name(ticket.access_level),
-                "online": true,
-            }),
-        );
+        // The API is authoritative for the current online list. The event only
+        // tells clients to refresh and deliberately contains no account data.
+        publish_live_event("presence.changed", None, json!({}));
     }
 }
 
@@ -342,55 +346,32 @@ fn mark_presence_disconnected(ticket: LiveTicket) {
             .presence
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-
         let Some(entry) = presence.get_mut(&ticket.uid) else {
             return;
         };
-
         entry.connections = entry.connections.saturating_sub(1);
         entry.generation = entry.generation.saturating_add(1);
-        entry.last_seen_at = now_millis();
         entry.generation
     };
 
-    let uid = ticket.uid.clone();
-    let name = ticket.name.clone();
-    let access_level = ticket.access_level;
-
     tokio::spawn(async move {
         tokio::time::sleep(Duration::from_millis(PRESENCE_OFFLINE_GRACE_MS)).await;
-
-        let should_publish = {
+        let went_offline = {
             let mut presence = hub()
                 .presence
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
-
-            let Some(entry) = presence.get_mut(&uid) else {
-                return;
-            };
-
-            if entry.connections == 0 && entry.generation == generation && entry.online {
-                entry.online = false;
-                entry.last_seen_at = now_millis();
-                true
-            } else {
-                false
+            let should_remove = presence.get(&ticket.uid).is_some_and(|entry| {
+                entry.connections == 0 && entry.generation == generation && entry.online
+            });
+            if should_remove {
+                presence.remove(&ticket.uid);
             }
+            should_remove
         };
 
-        if should_publish {
-            publish_live_event(
-                "presence.user.offline",
-                Some(&uid),
-                json!({
-                    "uid": uid,
-                    "name": name,
-                    "access_level": access_level,
-                    "access_name": access_name(access_level),
-                    "online": false,
-                }),
-            );
+        if went_offline {
+            publish_live_event("presence.changed", None, json!({}));
         }
     });
 }
@@ -533,72 +514,49 @@ pub async fn get_presence(claims: Claims) -> Response {
         );
     }
 
-    let online = presence_snapshot();
-
-    let result = tokio::task::spawn_blocking(
-        move || -> Result<Vec<PresenceAccount>, SqliteDatabaseError> {
-            with_sql_connection(|connection| {
-                let mut statement = connection.prepare(
-                    r#"
-                    SELECT uid, name, access_level
-                    FROM users
-                    ORDER BY name COLLATE NOCASE ASC, uid ASC
-                    "#,
-                )?;
-
-                let rows = statement.query_map([], |row| {
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, i64>(2)?,
-                    ))
-                })?;
-
-                let mut accounts = Vec::new();
-                for row in rows {
-                    let (uid, name, access_level) = row?;
-                    let presence = online.get(&uid);
-                    accounts.push(PresenceAccount {
-                        uid,
-                        name,
-                        access_level,
-                        access_name: access_name(access_level).to_string(),
-                        online: presence.is_some_and(|entry| entry.online),
-                        last_seen_at: presence.map(|entry| entry.last_seen_at),
-                    });
-                }
-                Ok(accounts)
-            })
-        },
+    let accounts = online_presence_accounts();
+    api_json(
+        StatusCode::OK,
+        json!({
+            "online": accounts.len(),
+            "accounts": accounts,
+            "at": now_millis(),
+        }),
     )
-    .await;
+}
 
-    match result {
-        Ok(Ok(accounts)) => {
-            let online_count = accounts.iter().filter(|account| account.online).count();
-            api_json(
-                StatusCode::OK,
-                json!({
-                    "accounts": accounts,
-                    "online": online_count,
-                    "total": accounts.len(),
-                    "at": now_millis(),
-                }),
-            )
-        }
-        Ok(Err(error)) => {
-            crate::report_error!(format!("{error}"), "live", "get_presence()");
-            api_json(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                json!({"response":"failed to load account presence"}),
-            )
-        }
-        Err(error) => {
-            crate::report_error!(format!("{error}"), "live", "get_presence()");
-            api_json(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                json!({"response":"presence lookup task failed"}),
-            )
-        }
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn presence_response_contains_only_online_accounts() {
+        let presence = HashMap::from([
+            (
+                "offline-user".to_string(),
+                PresenceState {
+                    name: "Offline User".to_string(),
+                    access_level: 2,
+                    connections: 0,
+                    online: false,
+                    generation: 1,
+                },
+            ),
+            (
+                "online-user".to_string(),
+                PresenceState {
+                    name: "Online User".to_string(),
+                    access_level: 1,
+                    connections: 1,
+                    online: true,
+                    generation: 1,
+                },
+            ),
+        ]);
+
+        let accounts = online_presence_accounts_from(&presence);
+        assert_eq!(accounts.len(), 1);
+        assert_eq!(accounts[0].uid, "online-user");
+        assert_eq!(accounts[0].name, "Online User");
     }
 }

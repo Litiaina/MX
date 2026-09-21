@@ -15,6 +15,11 @@ use crate::{
 
 const DEFAULT_PRIMARY: &str = "#1d4ed8";
 const DEFAULT_SIDEBAR: &str = "#0f172a";
+const DEFAULT_DISPLAY_NAME: &str = "MX";
+const DEFAULT_SUBTITLE: &str = "Litiaina's General-Purpose System";
+const DEFAULT_LOGO_URL: &str = "images/system-icon.png";
+const LEGACY_DGS_SUBTITLE: &str = "DGS Information System";
+const IDENTITY_DEFAULTS_VERSION: i64 = 1;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -28,10 +33,10 @@ pub struct BrandingConfig {
 impl Default for BrandingConfig {
     fn default() -> Self {
         Self {
-            display_name: "MX".to_string(),
-            subtitle: "General-Purpose Information System".to_string(),
+            display_name: DEFAULT_DISPLAY_NAME.to_string(),
+            subtitle: DEFAULT_SUBTITLE.to_string(),
             organization_name: String::new(),
-            logo_url: "images/system-icon.png".to_string(),
+            logo_url: DEFAULT_LOGO_URL.to_string(),
         }
     }
 }
@@ -120,6 +125,18 @@ fn api_json(status: StatusCode, body: Value) -> Response {
     (status, Json(body)).into_response()
 }
 
+fn deployment_table_has_column(
+    connection: &Connection,
+    column_name: &str,
+) -> rusqlite::Result<bool> {
+    Ok(connection
+        .prepare("PRAGMA table_info(mx_deployment_config)")?
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<rusqlite::Result<Vec<_>>>()?
+        .iter()
+        .any(|name| name == column_name))
+}
+
 fn ensure_deployment_schema(connection: &Connection) -> rusqlite::Result<()> {
     let default_json =
         serde_json::to_string(&DeploymentConfig::default()).unwrap_or_else(|_| "{}".to_string());
@@ -127,22 +144,95 @@ fn ensure_deployment_schema(connection: &Connection) -> rusqlite::Result<()> {
     connection.execute_batch(
         r#"
         CREATE TABLE IF NOT EXISTS mx_deployment_config (
-            id          INTEGER PRIMARY KEY NOT NULL CHECK(id = 1),
-            revision    INTEGER NOT NULL DEFAULT 0 CHECK(revision >= 0),
-            config_json TEXT NOT NULL,
-            updated_at  INTEGER NOT NULL DEFAULT 0
+            id                        INTEGER PRIMARY KEY NOT NULL CHECK(id = 1),
+            revision                  INTEGER NOT NULL DEFAULT 0 CHECK(revision >= 0),
+            config_json               TEXT NOT NULL,
+            updated_at                INTEGER NOT NULL DEFAULT 0,
+            identity_defaults_version INTEGER NOT NULL DEFAULT 1
         );
         "#,
     )?;
 
+    if !deployment_table_has_column(connection, "identity_defaults_version")? {
+        let alter_result = connection.execute(
+            "ALTER TABLE mx_deployment_config ADD COLUMN identity_defaults_version INTEGER NOT NULL DEFAULT 0",
+            [],
+        );
+        if let Err(error) = alter_result
+            && !deployment_table_has_column(connection, "identity_defaults_version")?
+        {
+            return Err(error);
+        }
+    }
+
     connection.execute(
         r#"
         INSERT OR IGNORE INTO mx_deployment_config (
-            id, revision, config_json, updated_at
-        ) VALUES (1, 0, ?1, 0)
+            id, revision, config_json, updated_at, identity_defaults_version
+        ) VALUES (1, 0, ?1, 0, ?2)
         "#,
-        params![default_json],
+        params![default_json, IDENTITY_DEFAULTS_VERSION],
     )?;
+
+    migrate_legacy_identity(connection)?;
+
+    Ok(())
+}
+
+/// Remove the government-specific identity that shipped in pre-1.0 development
+/// builds. The version marker makes this a one-time data migration: once an
+/// installation has been checked, administrators remain free to configure any
+/// identity (including these exact strings) without MX rewriting it later.
+fn migrate_legacy_identity(connection: &Connection) -> rusqlite::Result<()> {
+    let (version, config_text): (i64, String) = connection.query_row(
+        "SELECT identity_defaults_version, config_json FROM mx_deployment_config WHERE id = 1",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+
+    if version >= IDENTITY_DEFAULTS_VERSION {
+        return Ok(());
+    }
+
+    let migrated_config = serde_json::from_str::<DeploymentConfig>(&config_text)
+        .ok()
+        .filter(|config| {
+            config
+                .branding
+                .display_name
+                .trim()
+                .eq_ignore_ascii_case(DEFAULT_DISPLAY_NAME)
+                && config
+                    .branding
+                    .subtitle
+                    .trim()
+                    .eq_ignore_ascii_case(LEGACY_DGS_SUBTITLE)
+        })
+        .and_then(|mut config| {
+            config.branding.subtitle = DEFAULT_SUBTITLE.to_string();
+            config.branding.organization_name.clear();
+            config.branding.logo_url = DEFAULT_LOGO_URL.to_string();
+            serde_json::to_string(&normalize_config(config)).ok()
+        });
+
+    if let Some(config_text) = migrated_config {
+        connection.execute(
+            r#"
+            UPDATE mx_deployment_config
+            SET revision = revision + 1,
+                config_json = ?1,
+                updated_at = CAST(STRFTIME('%s','now') AS INTEGER) * 1000,
+                identity_defaults_version = ?2
+            WHERE id = 1 AND identity_defaults_version < ?2
+            "#,
+            params![config_text, IDENTITY_DEFAULTS_VERSION],
+        )?;
+    } else {
+        connection.execute(
+            "UPDATE mx_deployment_config SET identity_defaults_version = ?1 WHERE id = 1 AND identity_defaults_version < ?1",
+            params![IDENTITY_DEFAULTS_VERSION],
+        )?;
+    }
 
     Ok(())
 }
@@ -205,12 +295,9 @@ fn clean_logo_url(value: String) -> String {
 }
 
 fn normalize_config(mut config: DeploymentConfig) -> DeploymentConfig {
-    config.branding.display_name = clean_text(config.branding.display_name, "MX", 80);
-    config.branding.subtitle = clean_text(
-        config.branding.subtitle,
-        "General-Purpose Information System",
-        160,
-    );
+    config.branding.display_name =
+        clean_text(config.branding.display_name, DEFAULT_DISPLAY_NAME, 80);
+    config.branding.subtitle = clean_text(config.branding.subtitle, DEFAULT_SUBTITLE, 160);
     config.branding.organization_name = clean_optional_text(config.branding.organization_name, 120);
     config.branding.logo_url = clean_logo_url(config.branding.logo_url);
 
@@ -297,7 +384,7 @@ fn read_config(connection: &Connection) -> rusqlite::Result<(i64, DeploymentConf
 pub async fn get_deployment_config() -> Response {
     let result = tokio::task::spawn_blocking(
         move || -> Result<(i64, DeploymentConfig, i64), SqliteDatabaseError> {
-            with_sql_connection(|connection| read_config(connection))
+            with_sql_connection(read_config)
         },
     )
     .await;
@@ -392,5 +479,65 @@ pub async fn save_deployment_config(
             StatusCode::INTERNAL_SERVER_ERROR,
             json!({"response":"failed to save deployment configuration"}),
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn legacy_dgs_identity_is_migrated_only_once() {
+        let connection = Connection::open_in_memory().expect("open in-memory database");
+        connection
+            .execute_batch(
+                r#"
+                CREATE TABLE mx_deployment_config (
+                    id          INTEGER PRIMARY KEY NOT NULL CHECK(id = 1),
+                    revision    INTEGER NOT NULL DEFAULT 0 CHECK(revision >= 0),
+                    config_json TEXT NOT NULL,
+                    updated_at  INTEGER NOT NULL DEFAULT 0
+                );
+                "#,
+            )
+            .expect("create legacy schema");
+
+        let mut legacy = DeploymentConfig::default();
+        legacy.branding.subtitle = LEGACY_DGS_SUBTITLE.to_string();
+        legacy.branding.organization_name = "DGS".to_string();
+        legacy.branding.logo_url = "https://example.test/government-seal.png".to_string();
+        connection
+            .execute(
+                "INSERT INTO mx_deployment_config (id, revision, config_json, updated_at) VALUES (1, 8, ?1, 0)",
+                params![serde_json::to_string(&legacy).expect("serialize legacy config")],
+            )
+            .expect("insert legacy config");
+
+        ensure_deployment_schema(&connection).expect("migrate legacy identity");
+        let (revision, config, _) = read_config(&connection).expect("read migrated config");
+        assert_eq!(revision, 9);
+        assert_eq!(config.branding.display_name, DEFAULT_DISPLAY_NAME);
+        assert_eq!(config.branding.subtitle, DEFAULT_SUBTITLE);
+        assert!(config.branding.organization_name.is_empty());
+        assert_eq!(config.branding.logo_url, DEFAULT_LOGO_URL);
+
+        let mut deliberately_customized = config;
+        deliberately_customized.branding.subtitle = LEGACY_DGS_SUBTITLE.to_string();
+        deliberately_customized.branding.logo_url = "https://example.test/custom.png".to_string();
+        connection
+            .execute(
+                "UPDATE mx_deployment_config SET revision = 10, config_json = ?1 WHERE id = 1",
+                params![
+                    serde_json::to_string(&deliberately_customized)
+                        .expect("serialize customized config")
+                ],
+            )
+            .expect("save deliberate customization");
+
+        ensure_deployment_schema(&connection).expect("recheck current schema");
+        let (revision, config, _) = read_config(&connection).expect("read customized config");
+        assert_eq!(revision, 10);
+        assert_eq!(config.branding.subtitle, LEGACY_DGS_SUBTITLE);
+        assert_eq!(config.branding.logo_url, "https://example.test/custom.png");
     }
 }
