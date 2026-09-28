@@ -15,10 +15,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::{
+    api::lifecycle::ensure_record_lifecycle_schema,
     api::live::publish_live_event,
+    api::modules::{DEFAULT_MODULE_UID, module_can},
     api::mx::{
-        attachment_fields::{ensure_attachment_fields_schema, load_attachment_field_db},
-        schema::{FieldDefinition, ensure_dynamic_schema, load_fields_db},
+        attachment_fields::ensure_attachment_fields_schema,
+        schema::{FieldDefinition, ensure_dynamic_schema, load_module_fields_db},
     },
     db::connector::{SqliteDatabaseError, with_sql_connection},
     middleware::auth::Claims,
@@ -29,7 +31,9 @@ const REPORT_ERROR_PREFIX: &str = "MX_REPORT:";
 
 #[derive(Debug, Deserialize, Default, Clone)]
 pub struct ReportQuery {
+    pub module_uid: Option<String>,
     pub group_field_uid: Option<String>,
+    pub secondary_group_field_uid: Option<String>,
     pub action_field_uid: Option<String>,
     pub action_mode: Option<String>,
     pub action_value: Option<String>,
@@ -38,6 +42,8 @@ pub struct ReportQuery {
     pub date_from: Option<String>,
     pub date_to: Option<String>,
     pub time_bucket: Option<String>,
+    /// JSON array of field or attachment predicates. Every predicate is ANDed.
+    pub filters: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default, Clone)]
@@ -50,6 +56,8 @@ pub struct UserPerformanceQuery {
 pub struct ExportQuery {
     pub kind: String,
     pub group_field_uid: Option<String>,
+    pub module_uid: Option<String>,
+    pub secondary_group_field_uid: Option<String>,
     pub action_field_uid: Option<String>,
     pub action_mode: Option<String>,
     pub action_value: Option<String>,
@@ -58,6 +66,15 @@ pub struct ExportQuery {
     pub date_from: Option<String>,
     pub date_to: Option<String>,
     pub time_bucket: Option<String>,
+    pub filters: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ContextFilter {
+    field_uid: Option<String>,
+    attachment_field_uid: Option<String>,
+    operator: String,
+    value: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -111,6 +128,7 @@ fn report_message(error: &SqliteDatabaseError) -> Option<String> {
 
 fn ensure_reporting_schema(connection: &Connection) -> rusqlite::Result<()> {
     ensure_dynamic_schema(connection)?;
+    ensure_record_lifecycle_schema(connection)?;
     ensure_attachment_fields_schema(connection)?;
 
     connection.execute_batch(
@@ -152,21 +170,45 @@ fn value_expression(alias: &str, field_type: &str) -> String {
     }
 }
 
-fn lookup_field(connection: &Connection, uid: &str) -> rusqlite::Result<Option<FieldDefinition>> {
-    Ok(load_fields_db(connection, false)?
+fn report_module(query: &ReportQuery) -> &str {
+    query
+        .module_uid
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(DEFAULT_MODULE_UID)
+}
+
+async fn can_read_report_module(module_uid: String, access_level: i64) -> bool {
+    tokio::task::spawn_blocking(move || {
+        with_sql_connection(|connection| module_can(connection, &module_uid, access_level, "read"))
+    })
+    .await
+    .ok()
+    .and_then(Result::ok)
+    .unwrap_or(false)
+}
+
+fn lookup_field(
+    connection: &Connection,
+    module_uid: &str,
+    uid: &str,
+) -> rusqlite::Result<Option<FieldDefinition>> {
+    Ok(load_module_fields_db(connection, module_uid, false)?
         .into_iter()
         .find(|field| field.uid == uid && field.active))
 }
 
 fn optional_group_field(
     connection: &Connection,
+    module_uid: &str,
     uid: Option<&str>,
 ) -> rusqlite::Result<Option<FieldDefinition>> {
     let Some(uid) = uid.map(str::trim).filter(|value| !value.is_empty()) else {
         return Ok(None);
     };
 
-    let field = lookup_field(connection, uid)?
+    let field = lookup_field(connection, module_uid, uid)?
         .ok_or_else(|| report_error("group_field_uid was not found or is archived"))?;
 
     if field.field_type == "attachments" {
@@ -183,6 +225,7 @@ fn report_grouping(
     query: &ReportQuery,
     bind: &mut Vec<SqlValue>,
 ) -> rusqlite::Result<(String, String, bool, bool)> {
+    let module_uid = report_module(query);
     let time_bucket = query
         .time_bucket
         .as_deref()
@@ -201,6 +244,15 @@ fn report_grouping(
                 "group_field_uid cannot be combined with time_bucket",
             ));
         }
+        if query
+            .secondary_group_field_uid
+            .as_deref()
+            .is_some_and(|value| !value.trim().is_empty())
+        {
+            return Err(report_error(
+                "secondary_group_field_uid cannot be combined with time_bucket",
+            ));
+        }
 
         if !matches!(
             bucket.as_str(),
@@ -217,7 +269,7 @@ fn report_grouping(
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .ok_or_else(|| report_error("date_field_uid is required when time_bucket is used"))?;
-        let date_field = lookup_field(connection, date_uid)?
+        let date_field = lookup_field(connection, module_uid, date_uid)?
             .ok_or_else(|| report_error("date_field_uid was not found or is archived"))?;
         if date_field.field_type != "date" {
             return Err(report_error("date_field_uid must reference a Date field"));
@@ -240,21 +292,54 @@ fn report_grouping(
         return Ok((expression, join, true, true));
     }
 
-    let group_field = optional_group_field(connection, query.group_field_uid.as_deref())?;
+    let group_field =
+        optional_group_field(connection, module_uid, query.group_field_uid.as_deref())?;
     match group_field.as_ref() {
         Some(field) => {
             bind.push(SqlValue::Text(field.uid.clone()));
             let index = bind.len();
-            Ok((
-                value_expression("gv", &field.field_type),
-                format!(
-                    " LEFT JOIN mx_record_values gv ON gv.record_uid = r.uid AND gv.field_uid = ?{index} "
-                ),
-                false,
-                false,
-            ))
+            let primary = value_expression("gv", &field.field_type);
+            let mut join = format!(
+                " LEFT JOIN mx_record_values gv ON gv.record_uid = r.uid AND gv.field_uid = ?{index} "
+            );
+            if let Some(secondary) = optional_group_field(
+                connection,
+                module_uid,
+                query.secondary_group_field_uid.as_deref(),
+            )? {
+                if secondary.uid == field.uid {
+                    return Err(report_error(
+                        "secondary_group_field_uid must differ from group_field_uid",
+                    ));
+                }
+                bind.push(SqlValue::Text(secondary.uid));
+                let secondary_index = bind.len();
+                join.push_str(&format!(" LEFT JOIN mx_record_values g2v ON g2v.record_uid = r.uid AND g2v.field_uid = ?{secondary_index} "));
+                let secondary_expr = value_expression("g2v", &secondary.field_type);
+                Ok((
+                    format!(
+                        "(CASE WHEN TRIM({primary})='' THEN 'Unspecified' ELSE TRIM({primary}) END) || ' / ' || (CASE WHEN TRIM({secondary_expr})='' THEN 'Unspecified' ELSE TRIM({secondary_expr}) END)"
+                    ),
+                    join,
+                    false,
+                    false,
+                ))
+            } else {
+                Ok((primary, join, false, false))
+            }
         }
-        None => Ok(("'All records'".to_string(), String::new(), false, false)),
+        None => {
+            if query
+                .secondary_group_field_uid
+                .as_deref()
+                .is_some_and(|value| !value.trim().is_empty())
+            {
+                return Err(report_error(
+                    "group_field_uid is required when secondary_group_field_uid is used",
+                ));
+            }
+            Ok(("'All records'".to_string(), String::new(), false, false))
+        }
     }
 }
 
@@ -266,6 +351,7 @@ fn append_date_filter(
     where_sql: &mut String,
     date_already_joined: bool,
 ) -> rusqlite::Result<()> {
+    let module_uid = report_module(query);
     let Some(date_uid) = query
         .date_field_uid
         .as_deref()
@@ -276,7 +362,7 @@ fn append_date_filter(
     };
 
     if !date_already_joined {
-        let date_field = lookup_field(connection, date_uid)?
+        let date_field = lookup_field(connection, module_uid, date_uid)?
             .ok_or_else(|| report_error("date_field_uid was not found or is archived"))?;
 
         if date_field.field_type != "date" {
@@ -328,6 +414,99 @@ fn append_date_filter(
     Ok(())
 }
 
+fn append_context_filters(
+    connection: &Connection,
+    query: &ReportQuery,
+    bind: &mut Vec<SqlValue>,
+    where_sql: &mut String,
+) -> rusqlite::Result<()> {
+    let Some(text) = query
+        .filters
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(());
+    };
+    let filters = serde_json::from_str::<Vec<ContextFilter>>(text)
+        .map_err(|_| report_error("filters must be a JSON array"))?;
+    if filters.len() > 24 {
+        return Err(report_error("a report can contain at most 24 filters"));
+    }
+    let module_uid = report_module(query);
+    for filter in filters {
+        let operator = filter.operator.trim().to_ascii_lowercase();
+        if let Some(uid) = filter
+            .attachment_field_uid
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            let field = lookup_field(connection, module_uid, uid)?.ok_or_else(|| {
+                report_error("an attachment filter field was not found or is archived")
+            })?;
+            if field.field_type != "attachments" {
+                return Err(report_error(
+                    "attachment_field_uid must reference a File Attachment field",
+                ));
+            }
+            if !matches!(operator.as_str(), "has" | "missing") {
+                return Err(report_error(
+                    "attachment filter operator must be has or missing",
+                ));
+            }
+            bind.push(SqlValue::Text(field.uid));
+            let index = bind.len();
+            let negate = if operator == "missing" { "NOT " } else { "" };
+            where_sql.push_str(&format!(" AND {negate}EXISTS(SELECT 1 FROM mx_attachments cf WHERE cf.entry_uid=r.uid AND cf.attachment_field_uid=?{index}) "));
+            continue;
+        }
+        let uid = filter
+            .field_uid
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| {
+                report_error("each filter requires field_uid or attachment_field_uid")
+            })?;
+        let field = lookup_field(connection, module_uid, uid)?
+            .ok_or_else(|| report_error("a filter field was not found or is archived"))?;
+        if field.field_type == "attachments" {
+            return Err(report_error(
+                "use attachment_field_uid for attachment filters",
+            ));
+        }
+        if !matches!(
+            operator.as_str(),
+            "equals" | "not_equals" | "contains" | "empty" | "nonempty"
+        ) {
+            return Err(report_error("field filter operator is unsupported"));
+        }
+        bind.push(SqlValue::Text(field.uid));
+        let field_index = bind.len();
+        let expression = value_expression("cfv", &field.field_type);
+        let condition = match operator.as_str() {
+            "empty" => format!("TRIM({expression})=''"),
+            "nonempty" => format!("TRIM({expression})<>''"),
+            "equals" | "not_equals" | "contains" => {
+                let value = filter.value.as_deref().unwrap_or("").trim().to_string();
+                bind.push(SqlValue::Text(value));
+                let value_index = bind.len();
+                match operator.as_str() {
+                    "equals" => format!("LOWER(TRIM({expression}))=LOWER(TRIM(?{value_index}))"),
+                    "not_equals" => {
+                        format!("LOWER(TRIM({expression}))<>LOWER(TRIM(?{value_index}))")
+                    }
+                    _ => format!("LOWER({expression}) LIKE '%' || LOWER(?{value_index}) || '%'"),
+                }
+            }
+            _ => unreachable!(),
+        };
+        where_sql.push_str(&format!(" AND EXISTS(SELECT 1 FROM mx_record_values cfv WHERE cfv.record_uid=r.uid AND cfv.field_uid=?{field_index} AND {condition}) "));
+    }
+    Ok(())
+}
+
 fn attachment_presence_rows(
     connection: &Connection,
     query: &ReportQuery,
@@ -341,10 +520,14 @@ fn attachment_presence_rows(
         .filter(|value| !value.is_empty())
         .ok_or_else(|| report_error("attachment_field_uid is required"))?;
 
-    let attachment_field = load_attachment_field_db(connection, attachment_field_uid, true)?
-        .ok_or_else(|| report_error("attachment_field_uid was not found or is archived"))?;
+    let module_uid = report_module(query).to_string();
+    let attachment_field = lookup_field(connection, &module_uid, attachment_field_uid)?
+        .filter(|field| field.field_type == "attachments")
+        .ok_or_else(|| {
+            report_error("attachment_field_uid was not found in this module or is archived")
+        })?;
 
-    let mut bind: Vec<SqlValue> = Vec::new();
+    let mut bind: Vec<SqlValue> = vec![SqlValue::Text(module_uid)];
     let (group_expr, group_join, date_already_joined, chronological) =
         report_grouping(connection, query, &mut bind)?;
 
@@ -352,7 +535,7 @@ fn attachment_presence_rows(
     let attachment_index = bind.len();
 
     let mut joins = group_join;
-    let mut where_sql = String::new();
+    let mut where_sql = " AND r.module_uid=?1 AND r.deleted_at IS NULL ".to_string();
     append_date_filter(
         connection,
         query,
@@ -361,6 +544,7 @@ fn attachment_presence_rows(
         &mut where_sql,
         date_already_joined,
     )?;
+    append_context_filters(connection, query, &mut bind, &mut where_sql)?;
 
     let order_sql = if chronological {
         "group_name COLLATE NOCASE ASC"
@@ -445,7 +629,8 @@ fn action_rate_rows(
         ));
     }
 
-    let mut bind: Vec<SqlValue> = Vec::new();
+    let module_uid = report_module(query).to_string();
+    let mut bind: Vec<SqlValue> = vec![SqlValue::Text(module_uid.clone())];
     let (group_expr, group_join, date_already_joined, chronological) =
         report_grouping(connection, query, &mut bind)?;
 
@@ -460,7 +645,7 @@ fn action_rate_rows(
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .ok_or_else(|| report_error("action_field_uid is required for this match mode"))?;
-        let action_field = lookup_field(connection, action_uid)?
+        let action_field = lookup_field(connection, &module_uid, action_uid)?
             .ok_or_else(|| report_error("action_field_uid was not found or is archived"))?;
 
         if action_field.field_type == "attachments" {
@@ -500,7 +685,7 @@ fn action_rate_rows(
         }
     };
 
-    let mut where_sql = String::new();
+    let mut where_sql = " AND r.module_uid=?1 AND r.deleted_at IS NULL ".to_string();
     append_date_filter(
         connection,
         query,
@@ -509,6 +694,7 @@ fn action_rate_rows(
         &mut where_sql,
         date_already_joined,
     )?;
+    append_context_filters(connection, query, &mut bind, &mut where_sql)?;
 
     let order_sql = if chronological {
         "group_name COLLATE NOCASE ASC"
@@ -773,6 +959,12 @@ pub async fn get_action_rate_report(claims: Claims, Query(query): Query<ReportQu
     if !claims.can_read_records() {
         return api_json(StatusCode::FORBIDDEN, json!({"response":"access denied"}));
     }
+    if !can_read_report_module(report_module(&query).to_string(), claims.access_level).await {
+        return api_json(
+            StatusCode::FORBIDDEN,
+            json!({"response":"you cannot view reports for this module"}),
+        );
+    }
 
     let result =
         tokio::task::spawn_blocking(move || -> Result<Vec<ActionRateRow>, SqliteDatabaseError> {
@@ -842,10 +1034,10 @@ fn csv_line(values: impl IntoIterator<Item = String>) -> String {
         + "\r\n"
 }
 
-fn detailed_records_csv(connection: &Connection) -> rusqlite::Result<String> {
+fn detailed_records_csv(connection: &Connection, module_uid: &str) -> rusqlite::Result<String> {
     ensure_reporting_schema(connection)?;
 
-    let fields = load_fields_db(connection, false)?
+    let fields = load_module_fields_db(connection, module_uid, false)?
         .into_iter()
         .filter(|field| field.active)
         .collect::<Vec<_>>();
@@ -858,8 +1050,11 @@ fn detailed_records_csv(connection: &Connection) -> rusqlite::Result<String> {
         .filter(|field| field.field_type == "attachments")
         .collect::<Vec<_>>();
 
-    let count: i64 =
-        connection.query_row("SELECT COUNT(*) FROM mx_records", [], |row| row.get(0))?;
+    let count: i64 = connection.query_row(
+        "SELECT COUNT(*) FROM mx_records WHERE module_uid=?1 AND deleted_at IS NULL",
+        params![module_uid],
+        |row| row.get(0),
+    )?;
 
     if count.max(0) as usize > MAX_EXPORT_ROWS {
         return Err(report_error(format!(
@@ -867,9 +1062,11 @@ fn detailed_records_csv(connection: &Connection) -> rusqlite::Result<String> {
         )));
     }
 
-    let mut uid_statement = connection.prepare("SELECT uid FROM mx_records ORDER BY rowid ASC")?;
+    let mut uid_statement = connection.prepare(
+        "SELECT uid FROM mx_records WHERE module_uid=?1 AND deleted_at IS NULL ORDER BY rowid ASC",
+    )?;
     let uids = uid_statement
-        .query_map([], |row| row.get::<_, String>(0))?
+        .query_map(params![module_uid], |row| row.get::<_, String>(0))?
         .collect::<Result<Vec<_>, _>>()?;
 
     let mut values_by_record: HashMap<String, HashMap<String, String>> = HashMap::new();
@@ -892,11 +1089,12 @@ fn detailed_records_csv(connection: &Connection) -> rusqlite::Result<String> {
              AND f.field_type <> 'attachments'
             JOIN mx_records r
               ON r.uid = rv.record_uid
+            WHERE r.module_uid=?1 AND r.deleted_at IS NULL
             ORDER BY r.rowid ASC, f.position ASC, f.rowid ASC
             "#,
         )?;
 
-        let mapped = value_statement.query_map([], |row| {
+        let mapped = value_statement.query_map(params![module_uid], |row| {
             let record_uid: String = row.get(0)?;
             let field_uid: String = row.get(1)?;
             let field_type: String = row.get(2)?;
@@ -941,12 +1139,13 @@ fn detailed_records_csv(connection: &Connection) -> rusqlite::Result<String> {
                 COALESCE(attachment_field_uid, ''),
                 file_name,
                 size
-            FROM mx_attachments
-            ORDER BY rowid ASC
+            FROM mx_attachments a JOIN mx_records r ON r.uid=a.entry_uid
+            WHERE r.module_uid=?1 AND r.deleted_at IS NULL
+            ORDER BY a.rowid ASC
             "#,
         )?;
 
-        let mapped = attachment_statement.query_map([], |row| {
+        let mapped = attachment_statement.query_map(params![module_uid], |row| {
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, String>(1)?,
@@ -1011,11 +1210,10 @@ fn detailed_records_csv(connection: &Connection) -> rusqlite::Result<String> {
     Ok(output)
 }
 
-fn attachments_csv(connection: &Connection) -> rusqlite::Result<String> {
+fn attachments_csv(connection: &Connection, module_uid: &str) -> rusqlite::Result<String> {
     ensure_reporting_schema(connection)?;
 
-    let count: i64 =
-        connection.query_row("SELECT COUNT(*) FROM mx_attachments", [], |row| row.get(0))?;
+    let count: i64 = connection.query_row("SELECT COUNT(*) FROM mx_attachments a JOIN mx_records r ON r.uid=a.entry_uid WHERE r.module_uid=?1 AND r.deleted_at IS NULL",params![module_uid],|row|row.get(0))?;
 
     if count.max(0) as usize > MAX_EXPORT_ROWS {
         return Err(report_error(format!(
@@ -1051,12 +1249,13 @@ fn attachments_csv(connection: &Connection) -> rusqlite::Result<String> {
             object_key,
             COALESCE(version_id, ''),
             created_at
-        FROM mx_attachments
-        ORDER BY rowid ASC
+        FROM mx_attachments a JOIN mx_records r ON r.uid=a.entry_uid
+        WHERE r.module_uid=?1 AND r.deleted_at IS NULL
+        ORDER BY a.rowid ASC
         "#,
     )?;
 
-    let rows = statement.query_map([], |row| {
+    let rows = statement.query_map(params![module_uid], |row| {
         Ok(vec![
             row.get::<_, String>(0)?,
             row.get::<_, String>(1)?,
@@ -1169,6 +1368,23 @@ pub async fn export_report_csv(claims: Claims, Query(query): Query<ExportQuery>)
     }
 
     let kind = query.kind.trim().to_ascii_lowercase();
+    let module_uid_for_export = query
+        .module_uid
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(DEFAULT_MODULE_UID)
+        .to_string();
+    if matches!(
+        kind.as_str(),
+        "action_rate" | "records" | "detailed_records" | "attachments"
+    ) && !can_read_report_module(module_uid_for_export.clone(), claims.access_level).await
+    {
+        return api_json(
+            StatusCode::FORBIDDEN,
+            json!({"response":"you cannot export reports for this module"}),
+        );
+    }
     if kind == "user_performance" && !claims.can_manage_accounts() {
         return api_json(
             StatusCode::FORBIDDEN,
@@ -1179,8 +1395,10 @@ pub async fn export_report_csv(claims: Claims, Query(query): Query<ExportQuery>)
     let kind_for_task = kind.clone();
     let result = tokio::task::spawn_blocking(move || -> Result<String, SqliteDatabaseError> {
         with_sql_connection(|connection| match kind_for_task.as_str() {
-            "records" | "detailed_records" => detailed_records_csv(connection),
-            "attachments" => attachments_csv(connection),
+            "records" | "detailed_records" => {
+                detailed_records_csv(connection, &module_uid_for_export)
+            }
+            "attachments" => attachments_csv(connection, &module_uid_for_export),
             "user_performance" => user_performance_csv(
                 connection,
                 &UserPerformanceQuery {
@@ -1191,7 +1409,9 @@ pub async fn export_report_csv(claims: Claims, Query(query): Query<ExportQuery>)
             "action_rate" => action_rate_csv(
                 connection,
                 &ReportQuery {
+                    module_uid: query.module_uid.clone(),
                     group_field_uid: query.group_field_uid.clone(),
+                    secondary_group_field_uid: query.secondary_group_field_uid.clone(),
                     action_field_uid: query.action_field_uid.clone(),
                     action_mode: query.action_mode.clone(),
                     action_value: query.action_value.clone(),
@@ -1200,6 +1420,7 @@ pub async fn export_report_csv(claims: Claims, Query(query): Query<ExportQuery>)
                     date_from: query.date_from.clone(),
                     date_to: query.date_to.clone(),
                     time_bucket: query.time_bucket.clone(),
+                    filters: query.filters.clone(),
                 },
             ),
             _ => Err(report_error(

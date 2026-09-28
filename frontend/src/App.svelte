@@ -6,6 +6,7 @@
   import type { DeploymentConfig } from './lib/api/domain';
   import { loadDeployment } from './lib/api/workspace';
   import { currentSession, endSession, reloadSession, restoreSession } from './lib/auth/session';
+  import { primaryForeground } from './lib/util/appearance';
 
   let loading = $state(true);
   let authMessage = $state('');
@@ -13,7 +14,8 @@
     branding: { display_name: 'MX', subtitle: "Litiaina's General-Purpose System", organization_name: '', logo_url: 'images/system-icon.png' },
     appearance: { preset: 'blue', primary_color: '#1d4ed8', sidebar_color: '#0f172a', radius: 'rounded', density: 'normal', default_theme: 'light', content_width: 'wide' },
     terminology: { record_singular: 'Record', record_plural: 'Records', dashboard_label: 'Dashboard', administration_label: 'Administration' },
-    navigation: { show_dashboard: true, show_records: true, show_quick_actions: true, default_workspace: 'dashboard' }
+    navigation: { show_dashboard: true, show_records: true, show_quick_actions: true, default_workspace: 'dashboard' },
+    collaboration: { message_page_size: 256 }
   };
   let deployment = $state<DeploymentConfig>(defaults);
 
@@ -33,9 +35,9 @@
 
   $effect(() => {
     document.documentElement.style.setProperty('--primary', deployment.appearance.primary_color);
+    document.documentElement.style.setProperty('--on-primary', primaryForeground(deployment.appearance.primary_color));
     document.documentElement.style.setProperty('--sidebar', deployment.appearance.sidebar_color);
-    const storedTheme = localStorage.getItem('mx_theme');
-    document.documentElement.dataset.theme = storedTheme || deployment.appearance.default_theme;
+    document.documentElement.dataset.theme = deployment.appearance.default_theme;
     document.documentElement.dataset.density = deployment.appearance.density;
     document.documentElement.style.setProperty('--corner-radius', ({ square: '3px', subtle: '7px', rounded: '12px', soft: '18px' } as Record<string, string>)[deployment.appearance.radius] || '12px');
     document.documentElement.style.setProperty('--content-max', ({ standard: '76rem', wide: '92rem', full: '120rem' } as Record<string, string>)[deployment.appearance.content_width] || '92rem');

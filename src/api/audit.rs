@@ -596,6 +596,21 @@ fn classify_action(method: &Method, path: &str) -> Option<AuditClassification> {
         });
     }
 
+    if segments.len() == 6
+        && segments[0] == "mx"
+        && segments[1] == "v1"
+        && segments[2] == "admin"
+        && segments[3] == "modules"
+        && segments[5] == "storage-layout"
+        && method == Method::PUT
+    {
+        return Some(AuditClassification {
+            action: "storage.layout.update",
+            target_type: Some("module-storage-layout"),
+            target_uid: segments.get(4).map(|value| value.to_string()),
+        });
+    }
+
     if path == "/mx/v1/admin/backups" && method == Method::POST {
         return Some(AuditClassification {
             action: "backup.create",

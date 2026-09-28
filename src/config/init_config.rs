@@ -38,6 +38,5 @@ pub fn init_default_config<P: AsRef<Path>>(path: P) -> io::Result<()> {
         .set("insecure_tls", "true")
         .set("attachment_max_size_mb", "50");
 
-    conf.write_to_file(path)
-        .map_err(|error| io::Error::new(io::ErrorKind::Other, error))
+    conf.write_to_file(path).map_err(io::Error::other)
 }

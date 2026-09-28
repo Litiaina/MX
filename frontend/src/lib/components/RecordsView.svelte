@@ -1,11 +1,13 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import ChevronDown from '@lucide/svelte/icons/chevron-down';
+  import ChevronUp from '@lucide/svelte/icons/chevron-up';
   import type { LiveMessage } from '../live/client';
-  import type { MxRecord, SchemaResponse } from '../api/domain';
-  import { deleteRecord, listRecords, loadSchema } from '../api/workspace';
+  import type { ModulePermission, MxRecord, SchemaResponse } from '../api/domain';
+  import { deleteRecord, getRecord, listRecords, loadModuleSchema, loadSchema } from '../api/workspace';
   import RecordEditor from './RecordEditor.svelte';
 
-  let { accessLevel, revision = 0, liveMessage = null, recordSingular = 'Record', recordPlural = 'Records' }: { accessLevel: number; revision?: number; liveMessage?: LiveMessage | null; recordSingular?: string; recordPlural?: string } = $props();
+  let { accessLevel, moduleUid = '', modulePermission = null, openRecordUid = '', revision = 0, liveMessage = null, recordSingular = 'Record', recordPlural = 'Records' }: { accessLevel: number; moduleUid?: string; modulePermission?: ModulePermission | null; openRecordUid?: string; revision?: number; liveMessage?: LiveMessage | null; recordSingular?: string; recordPlural?: string } = $props();
   let schema = $state<SchemaResponse | null>(null);
   let rows = $state<MxRecord[]>([]);
   let page = $state(1); let pageInput = $state(1); let pages = $state(0); let total = $state(0); let pageSize = $state(50);
@@ -23,20 +25,29 @@
   let legacyColumns: string[] | null = null;
   let searchTimer: number | undefined;
   let refreshSequence = 0;
-  const canWrite = $derived(accessLevel <= 2); const canDelete = $derived(accessLevel <= 1);
+  let openedDeepLink = '';
+  const canWrite = $derived(modulePermission ? modulePermission.can_create || modulePermission.can_update : accessLevel <= 2); const canDelete = $derived(modulePermission ? modulePermission.can_delete : accessLevel <= 1);
   const eligibleFields = $derived(schema?.fields.filter((field) => field.active).sort((a, b) => a.position - b.position) || []);
   const visibleFields = $derived(eligibleFields.filter((field) => selectedKeys.includes(field.key)));
   const searchableFields = $derived(schema?.fields.filter((field) => field.active && field.searchable && field.field_type !== 'attachments').sort((a, b) => a.position - b.position) || []);
 
-  onMount(() => { try { const saved = JSON.parse(localStorage.getItem('mx_record_columns_v3') || 'null'); if (saved && Array.isArray(saved.shown) && Array.isArray(saved.hidden)) columnOverrides = { shown: saved.shown.filter((key: unknown): key is string => typeof key === 'string'), hidden: saved.hidden.filter((key: unknown): key is string => typeof key === 'string') }; else { const old = JSON.parse(localStorage.getItem('mx_record_columns_v2') || 'null'); if (Array.isArray(old)) legacyColumns = old.filter((key): key is string => typeof key === 'string'); } } catch { /* Use schema defaults. */ } void refresh(true); return () => window.clearTimeout(searchTimer); });
+  const columnStorageKey = $derived(`mx_record_columns_v3_${moduleUid || 'default'}`);
+  onMount(() => { try { const saved = JSON.parse(localStorage.getItem(columnStorageKey) || localStorage.getItem('mx_record_columns_v3') || 'null'); if (saved && Array.isArray(saved.shown) && Array.isArray(saved.hidden)) columnOverrides = { shown: saved.shown.filter((key: unknown): key is string => typeof key === 'string'), hidden: saved.hidden.filter((key: unknown): key is string => typeof key === 'string') }; else { const old = JSON.parse(localStorage.getItem('mx_record_columns_v2') || 'null'); if (Array.isArray(old)) legacyColumns = old.filter((key): key is string => typeof key === 'string'); } } catch { /* Use schema defaults. */ } void refresh(true); return () => window.clearTimeout(searchTimer); });
   $effect(() => { if (revision !== lastRevision && schema) { lastRevision = revision; void refresh(liveMessage?.type.startsWith('schema.') === true); } });
+  $effect(() => { if (schema && openRecordUid && openRecordUid !== openedDeepLink) void openLinkedRecord(openRecordUid); });
+
+  async function openLinkedRecord(uid: string) {
+    openedDeepLink = uid; error = '';
+    try { editor = await getRecord(uid, moduleUid || undefined); focusAttachments = false; }
+    catch (reason) { error = reason instanceof Error ? reason.message : `The linked ${recordSingular.toLowerCase()} could not be opened.`; }
+  }
 
   async function refresh(withSchema = false) {
     const request = ++refreshSequence;
     loading = true; error = '';
     try {
       if (withSchema || !schema) {
-        schema = await loadSchema();
+        schema = moduleUid ? await loadModuleSchema(moduleUid) : await loadSchema();
         const allowed = new Set(schema.fields.filter((field) => field.active).map((field) => field.key));
         const defaults = schema.fields.filter((field) => field.active && field.table_visible).sort((a, b) => a.position - b.position).map((field) => field.key);
         columnOverrides = { shown: columnOverrides.shown.filter((key) => allowed.has(key)), hidden: columnOverrides.hidden.filter((key) => allowed.has(key)) };
@@ -48,7 +59,7 @@
         selectedKeys = [...defaults.filter((key) => !columnOverrides.hidden.includes(key)), ...columnOverrides.shown.filter((key) => !defaults.includes(key))];
       }
       const activeFilters = Object.fromEntries(Object.entries(filters).filter(([, value]) => value.trim()));
-      const result = await listRecords({ page, limit: pageSize, q: search.trim(), match: matchMode, filters: activeFilters, attachments: attachmentMode, sort_by: sortBy || undefined, sort_dir: sortDir });
+      const result = await listRecords({ page, limit: pageSize, q: search.trim(), match: matchMode, filters: activeFilters, attachments: attachmentMode, sort_by: sortBy || undefined, sort_dir: sortDir }, moduleUid || undefined);
       if (request !== refreshSequence) return;
       rows = result.data; page = result.page; pageInput = result.page; pages = result.total_pages; total = result.total;
     } catch (reason) { error = reason instanceof Error ? reason.message : 'Records could not be loaded.'; }
@@ -77,7 +88,7 @@
   async function sort(key: string) { if (sortBy === key) sortDir = sortDir === 'asc' ? 'desc' : 'asc'; else { sortBy = key; sortDir = 'asc'; } page = 1; await refresh(); }
   async function movePage(next: number) { page = next; await refresh(); }
   async function goToPage(event: SubmitEvent) { event.preventDefault(); page = Math.min(Math.max(1, Number(pageInput) || 1), Math.max(1, pages)); await refresh(); }
-  function saveColumnOverrides() { localStorage.setItem('mx_record_columns_v3', JSON.stringify(columnOverrides)); }
+  function saveColumnOverrides() { localStorage.setItem(columnStorageKey, JSON.stringify(columnOverrides)); }
   function toggleColumn(key: string, checked: boolean) {
     const defaultVisible = schema?.fields.find((field) => field.key === key)?.table_visible === true;
     selectedKeys = checked ? [...selectedKeys.filter((item) => item !== key), key] : selectedKeys.filter((item) => item !== key);
@@ -89,12 +100,12 @@
   async function changePageSize() { page = 1; await refresh(); }
   async function clearFilters() { filters = {}; search = ''; attachmentMode = ''; sortBy = ''; sortDir = 'asc'; page = 1; await refresh(); }
   function openRecord(row: MxRecord, attachments = false) { focusAttachments = attachments; editor = row; }
-  function closeEditor() { focusAttachments = false; editor = undefined; }
+  function closeEditor() { focusAttachments = false; editor = undefined; if (openRecordUid) location.hash = `module/${encodeURIComponent(moduleUid || 'mx-default-records')}`; }
   async function removeRecord(row: MxRecord, event: MouseEvent) {
     event.stopPropagation();
-    if (!confirm(`Delete this ${recordSingular.toLowerCase()} and all of its attachments?`)) return;
+    if (!confirm(`Move this ${recordSingular.toLowerCase()} to Administrator Trash? Its attachments and history will be preserved.`)) return;
     deletingUid = row.uid; error = '';
-    try { await deleteRecord(row.uid); if (rows.length === 1 && page > 1) page -= 1; await refresh(); }
+    try { await deleteRecord(row.uid, moduleUid || undefined); if (rows.length === 1 && page > 1) page -= 1; await refresh(); }
     catch (reason) { error = reason instanceof Error ? reason.message : `The ${recordSingular.toLowerCase()} could not be deleted.`; }
     finally { deletingUid = ''; }
   }
@@ -109,9 +120,9 @@
   </div>
   <details class="advanced-search"><summary>Advanced filters and sorting</summary><form class="filter-grid" onsubmit={searchSubmit}>{#each searchableFields as field}<label>{field.label}{#if field.field_type === 'select'}<select value={filters[field.key] || ''} onchange={(event) => filters[field.key] = event.currentTarget.value}><option value="">Any value</option>{#each (field.config.options as (string | number | boolean)[] || []) as option}<option value={String(option)}>{String(option)}</option>{/each}</select>{:else if field.field_type === 'boolean'}<select value={filters[field.key] || ''} onchange={(event) => filters[field.key] = event.currentTarget.value}><option value="">Either</option><option value="true">Yes</option><option value="false">No</option></select>{:else}<input type={field.field_type === 'date' ? 'date' : ['integer', 'decimal'].includes(field.field_type) ? 'number' : 'text'} value={filters[field.key] || ''} oninput={(event) => filters[field.key] = event.currentTarget.value} placeholder={field.field_type === 'date' ? undefined : 'Field contains…'} />{/if}</label>{/each}<label>Attachments<select bind:value={attachmentMode}><option value="">With or without files</option><option value="with">With attachments</option><option value="without">Without attachments</option></select></label><label>Sort field<select bind:value={sortBy}><option value="">Default order</option>{#each eligibleFields.filter((field) => field.sortable) as field}<option value={field.key}>{field.label}</option>{/each}</select></label><label>Sort direction<select bind:value={sortDir}><option value="asc">Ascending</option><option value="desc">Descending</option></select></label><div class="button-row"><button class="button primary">Apply filters</button><button class="button" type="button" onclick={clearFilters}>Clear all</button></div></form></details>
   {#if error}<div class="notice error">{error}</div>{/if}
-  <div class="table-wrap records-table"><table><thead><tr><th class="row-index-column">#</th>{#each visibleFields as field}<th><button class="table-sort" class:sortable={field.sortable} onclick={() => field.sortable && sort(field.key)}>{field.label}{sortBy === field.key ? (sortDir === 'asc' ? ' ↑' : ' ↓') : ''}</button></th>{/each}<th class="record-actions-column">Action</th></tr></thead>
+  <div class="table-wrap records-table"><table><thead><tr><th class="row-index-column">#</th>{#each visibleFields as field}<th><button class="table-sort" class:sortable={field.sortable} onclick={() => field.sortable && sort(field.key)}>{field.label}{#if sortBy === field.key}{#if sortDir === 'asc'}<ChevronUp size={14} />{:else}<ChevronDown size={14} />{/if}{/if}</button></th>{/each}<th class="record-actions-column">Action</th></tr></thead>
     <tbody>{#if loading}<tr><td class="table-message" colspan={visibleFields.length + 2}>Loading {recordPlural.toLowerCase()}…</td></tr>{:else if !rows.length}<tr><td class="table-message" colspan={visibleFields.length + 2}>No {recordPlural.toLowerCase()} match this view.</td></tr>{:else}{#each rows as row, rowIndex}<tr onclick={() => openRecord(row)} class="clickable-row"><td class="row-index-column"><span title={`${recordSingular} ${row.uid}`}>{(page - 1) * pageSize + rowIndex + 1}</span></td>{#each visibleFields as field}<td class={field.field_type === 'long_text' ? 'long-text-cell' : ''} data-field-type={field.field_type} title={field.field_type === 'long_text' ? undefined : display(row, field.key)}>{#if field.field_type === 'attachments'}{@const fieldFiles = row.attached_files.filter((file) => file.attachment_field_uid === field.uid)}<button class="attachment-cell-button" class:empty={!fieldFiles.length} onclick={(event) => { event.stopPropagation(); openRecord(row, true); }}>{fieldFiles.length ? `${fieldFiles.length} file${fieldFiles.length === 1 ? '' : 's'}` : 'No files'}</button>{:else}{display(row, field.key)}{/if}</td>{/each}<td class="record-actions-column"><div class="record-row-actions"><button class="button small" onclick={(event) => { event.stopPropagation(); openRecord(row); }}>{canWrite ? 'Edit' : 'View'}</button>{#if canDelete}<button class="button danger small" disabled={deletingUid === row.uid} onclick={(event) => removeRecord(row, event)}>{deletingUid === row.uid ? 'Deleting…' : 'Delete'}</button>{/if}</div></td></tr>{/each}{/if}</tbody></table></div>
   <div class="pagination records-pagination"><span>{rows.length ? `${((page - 1) * pageSize + 1).toLocaleString()}–${Math.min(page * pageSize, total).toLocaleString()} of ${total.toLocaleString()}` : 'No records'}</span><label>Rows<select bind:value={pageSize} onchange={changePageSize}><option value={25}>25</option><option value={50}>50</option><option value={100}>100</option><option value={256}>256</option></select></label><button class="button" disabled={page <= 1 || loading} onclick={() => movePage(1)}>First</button><button class="button" disabled={page <= 1 || loading} onclick={() => movePage(page - 1)}>Previous</button><form onsubmit={goToPage}><label>Page<input type="number" min="1" max={Math.max(1, pages)} bind:value={pageInput} /></label><button class="button" aria-label="Go to page">Go</button></form><span>of {pages}</span><button class="button" disabled={page >= pages || loading} onclick={() => movePage(page + 1)}>Next</button><button class="button" disabled={page >= pages || loading} onclick={() => movePage(pages)}>Last</button></div>
 </section>
 
-{#if editor !== undefined && schema}<RecordEditor {schema} record={editor} {canWrite} {canDelete} {liveMessage} {focusAttachments} recordLabel={recordSingular} onClose={closeEditor} onSaved={() => refresh(true)} />{/if}
+{#if editor !== undefined && schema}<RecordEditor {schema} {moduleUid} record={editor} {canWrite} {canDelete} {liveMessage} {focusAttachments} recordLabel={recordSingular} onClose={closeEditor} onSaved={() => refresh(true)} />{/if}

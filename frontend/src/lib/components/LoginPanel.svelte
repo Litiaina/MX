@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import CircleCheck from '@lucide/svelte/icons/circle-check';
   import {
     authenticate,
     bootstrapAdministrator,
@@ -116,7 +117,7 @@
         {#if brandSubtitle}<p class="auth-subtitle">{brandSubtitle}</p>{/if}
       </div>
       <div class="auth-assurance">
-        <span aria-hidden="true">✓</span>
+        <span aria-hidden="true"><CircleCheck size={17} /></span>
         <div><strong>Protected workspace</strong><small>Your account and security settings stay under your control.</small></div>
       </div>
     </aside>

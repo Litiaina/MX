@@ -1,6 +1,9 @@
 use axum::{
     Json,
+    body::Body,
+    extract::Multipart,
     http::StatusCode,
+    http::header::{CACHE_CONTROL, CONTENT_TYPE},
     response::{IntoResponse, Response},
 };
 use rusqlite::{Connection, params};
@@ -8,7 +11,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::{
-    api::live::publish_live_event,
+    api::{
+        live::publish_live_event,
+        mx::handler::{n1_access_token, n1_download, n1_ensure_directory, n1_upload_one_shot},
+    },
     db::connector::{SqliteDatabaseError, with_sql_connection},
     middleware::auth::Claims,
 };
@@ -107,6 +113,20 @@ impl Default for NavigationConfig {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CollaborationConfig {
+    pub message_page_size: usize,
+}
+
+impl Default for CollaborationConfig {
+    fn default() -> Self {
+        Self {
+            message_page_size: 256,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct DeploymentConfig {
@@ -114,6 +134,7 @@ pub struct DeploymentConfig {
     pub appearance: AppearanceConfig,
     pub terminology: TerminologyConfig,
     pub navigation: NavigationConfig,
+    pub collaboration: CollaborationConfig,
 }
 
 #[derive(Debug, Deserialize)]
@@ -150,6 +171,15 @@ fn ensure_deployment_schema(connection: &Connection) -> rusqlite::Result<()> {
             updated_at                INTEGER NOT NULL DEFAULT 0,
             identity_defaults_version INTEGER NOT NULL DEFAULT 1
         );
+        CREATE TABLE IF NOT EXISTS mx_branding_assets (
+            asset_key   TEXT PRIMARY KEY NOT NULL,
+            object_key  TEXT NOT NULL,
+            file_name   TEXT NOT NULL,
+            mime_type   TEXT NOT NULL,
+            size        INTEGER NOT NULL,
+            updated_at  INTEGER NOT NULL,
+            updated_by  TEXT NOT NULL
+        );
         "#,
     )?;
 
@@ -177,6 +207,142 @@ fn ensure_deployment_schema(connection: &Connection) -> rusqlite::Result<()> {
     migrate_legacy_identity(connection)?;
 
     Ok(())
+}
+
+fn logo_type(mime_type: &str, file_name: &str) -> Option<(&'static str, &'static str)> {
+    match (
+        mime_type.trim().to_ascii_lowercase().as_str(),
+        file_name.to_ascii_lowercase(),
+    ) {
+        ("image/png", _) => Some(("png", "image/png")),
+        ("image/jpeg", _) => Some(("jpg", "image/jpeg")),
+        ("image/webp", _) => Some(("webp", "image/webp")),
+        ("image/gif", _) => Some(("gif", "image/gif")),
+        (_, name) if name.ends_with(".png") => Some(("png", "image/png")),
+        (_, name) if name.ends_with(".jpg") || name.ends_with(".jpeg") => {
+            Some(("jpg", "image/jpeg"))
+        }
+        (_, name) if name.ends_with(".webp") => Some(("webp", "image/webp")),
+        (_, name) if name.ends_with(".gif") => Some(("gif", "image/gif")),
+        _ => None,
+    }
+}
+
+pub async fn upload_deployment_logo(claims: Claims, mut multipart: Multipart) -> Response {
+    if !claims.can_manage_accounts() {
+        return api_json(
+            StatusCode::FORBIDDEN,
+            json!({"response":"administrator access is required"}),
+        );
+    }
+    let field = match multipart.next_field().await {
+        Ok(Some(field)) => field,
+        _ => {
+            return api_json(
+                StatusCode::BAD_REQUEST,
+                json!({"response":"select a logo image to upload"}),
+            );
+        }
+    };
+    let file_name = field.file_name().unwrap_or("logo").to_string();
+    let supplied_type = field.content_type().unwrap_or("").to_string();
+    let Some((extension, mime_type)) = logo_type(&supplied_type, &file_name) else {
+        return api_json(
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            json!({"response":"logo must be PNG, JPEG, WebP, or GIF"}),
+        );
+    };
+    let bytes = match field.bytes().await {
+        Ok(bytes) if !bytes.is_empty() && bytes.len() <= 5 * 1024 * 1024 => bytes.to_vec(),
+        Ok(_) => {
+            return api_json(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                json!({"response":"logo must be between 1 byte and 5 MiB"}),
+            );
+        }
+        Err(_) => {
+            return api_json(
+                StatusCode::BAD_REQUEST,
+                json!({"response":"logo upload could not be read"}),
+            );
+        }
+    };
+    let object_key = format!("__mx/branding/logo.{extension}");
+    let token = match n1_access_token().await {
+        Ok(token) => token,
+        Err(_) => {
+            return api_json(
+                StatusCode::BAD_GATEWAY,
+                json!({"response":"N1 is unavailable; the logo was not changed"}),
+            );
+        }
+    };
+    if n1_ensure_directory("__mx", &token).await.is_err()
+        || n1_ensure_directory("__mx/branding", &token).await.is_err()
+        || n1_upload_one_shot(&object_key, mime_type, bytes.clone(), &token)
+            .await
+            .is_err()
+    {
+        return api_json(
+            StatusCode::BAD_GATEWAY,
+            json!({"response":"N1 could not store the logo"}),
+        );
+    }
+    let actor_uid = claims.uid.clone();
+    let stored_key = object_key.clone();
+    let stored_name = file_name.clone();
+    let stored_type = mime_type.to_string();
+    let size = bytes.len() as i64;
+    let now = chrono::Utc::now().timestamp_millis();
+    let result = tokio::task::spawn_blocking(move || with_sql_connection(|connection| {
+        ensure_deployment_schema(connection)?;
+        let transaction = connection.unchecked_transaction()?;
+        transaction.execute(
+            "INSERT INTO mx_branding_assets(asset_key,object_key,file_name,mime_type,size,updated_at,updated_by) VALUES ('logo',?1,?2,?3,?4,?5,?6) ON CONFLICT(asset_key) DO UPDATE SET object_key=excluded.object_key,file_name=excluded.file_name,mime_type=excluded.mime_type,size=excluded.size,updated_at=excluded.updated_at,updated_by=excluded.updated_by",
+            params![stored_key,stored_name,stored_type,size,now,actor_uid],
+        )?;
+        let (revision, mut config, _) = read_config(&transaction)?;
+        config.branding.logo_url = format!("/mx/v1/deployment/logo?v={}", revision + 1);
+        transaction.execute("UPDATE mx_deployment_config SET revision=revision+1,config_json=?1,updated_at=?2 WHERE id=1",params![serde_json::to_string(&config).unwrap_or_default(),now])?;
+        transaction.commit()?;
+        Ok(config)
+    })).await;
+    match result {
+        Ok(Ok(config)) => {
+            publish_live_event(
+                "deployment.updated",
+                Some(&claims.uid),
+                json!({"branding":"logo"}),
+            );
+            api_json(
+                StatusCode::OK,
+                json!({"response":"logo uploaded to N1","logo_url":config.branding.logo_url,"config":config}),
+            )
+        }
+        _ => api_json(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            json!({"response":"logo was stored but its deployment metadata could not be saved"}),
+        ),
+    }
+}
+
+pub async fn get_deployment_logo() -> Response {
+    let result = tokio::task::spawn_blocking(move || with_sql_connection(|connection| {
+        ensure_deployment_schema(connection)?;
+        connection.query_row("SELECT object_key,file_name,mime_type FROM mx_branding_assets WHERE asset_key='logo'",[],|row|Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?,row.get::<_,String>(2)?)))
+    })).await;
+    let Ok(Ok((object_key, file_name, mime_type))) = result else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    match n1_download(&object_key, &file_name).await {
+        Ok(bytes) => Response::builder()
+            .status(StatusCode::OK)
+            .header(CONTENT_TYPE, mime_type)
+            .header(CACHE_CONTROL, "public, max-age=86400")
+            .body(Body::from(bytes))
+            .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response()),
+        Err(_) => StatusCode::BAD_GATEWAY.into_response(),
+    }
 }
 
 /// Remove the government-specific identity that shipped in pre-1.0 development
@@ -358,6 +524,8 @@ fn normalize_config(mut config: DeploymentConfig) -> DeploymentConfig {
         config.navigation.default_workspace = "dashboard".to_string();
     }
 
+    config.collaboration.message_page_size = config.collaboration.message_page_size.clamp(32, 512);
+
     config
 }
 
@@ -375,6 +543,11 @@ fn read_config(connection: &Connection) -> rusqlite::Result<(i64, DeploymentConf
         .unwrap_or_default();
 
     Ok((revision, config, updated_at))
+}
+
+pub(crate) fn collaboration_message_page_size(connection: &Connection) -> rusqlite::Result<usize> {
+    let (_, config, _) = read_config(connection)?;
+    Ok(config.collaboration.message_page_size)
 }
 
 /// Public, non-secret deployment presentation configuration.
@@ -539,5 +712,28 @@ mod tests {
         assert_eq!(revision, 10);
         assert_eq!(config.branding.subtitle, LEGACY_DGS_SUBTITLE);
         assert_eq!(config.branding.logo_url, "https://example.test/custom.png");
+    }
+
+    #[test]
+    fn collaboration_page_size_defaults_and_stays_within_safe_bounds() {
+        let legacy = serde_json::from_str::<DeploymentConfig>("{}").unwrap();
+        assert_eq!(
+            normalize_config(legacy).collaboration.message_page_size,
+            256
+        );
+
+        let mut too_small = DeploymentConfig::default();
+        too_small.collaboration.message_page_size = 1;
+        assert_eq!(
+            normalize_config(too_small).collaboration.message_page_size,
+            32
+        );
+
+        let mut too_large = DeploymentConfig::default();
+        too_large.collaboration.message_page_size = 10_000;
+        assert_eq!(
+            normalize_config(too_large).collaboration.message_page_size,
+            512
+        );
     }
 }

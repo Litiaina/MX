@@ -6,37 +6,63 @@ use axum::routing::{any, delete, get, patch, post, put};
 use tower_http::cors::{Any, CorsLayer};
 
 use crate::api::account::handler::{
-    begin_totp_enrollment, change_password, confirm_totp_enrollment, disable_totp,
-    regenerate_recovery_codes, update_profile,
+    begin_totp_enrollment, cancel_totp_enrollment, change_password, confirm_totp_enrollment,
+    disable_totp, regenerate_recovery_codes, update_profile,
 };
 use crate::api::admin::handler::{
     admin_reset_user_password, admin_reset_user_security, create_super_user, delete_super_user,
     execute_query, get_user, modify_super_user,
 };
 
+use crate::api::lifecycle::{
+    delete_default_record, delete_module_record, get_default_record_version,
+    get_module_record_version, get_trashed_record, list_default_record_versions,
+    list_module_record_versions, list_trash, restore_default_record_version,
+    restore_module_record_version, restore_trashed_record,
+};
 use crate::api::mx::handler::{
-    delete_mx_attachment, delete_mx_record, download_mx_attachment, preview_mx_attachment,
-    upload_mx_attachment_field,
+    delete_mx_attachment, download_mx_attachment, preview_mx_attachment, upload_mx_attachment_field,
 };
 use crate::api::mx::records::{
-    create_mx_record, get_mx_record, list_mx_records, patch_mx_record, update_mx_record,
+    create_module_record, create_mx_record, get_module_record, get_mx_record, list_module_records,
+    list_mx_records, patch_module_record, patch_mx_record, update_module_record, update_mx_record,
 };
 use crate::api::mx::schema::{
-    create_schema_field, get_admin_record_schema, get_record_schema, update_schema_field,
+    create_module_schema_field, create_schema_field, get_admin_record_schema,
+    get_module_record_schema, get_record_schema, update_module_schema_order, update_schema_field,
     update_schema_order, update_system_schema_field,
 };
 
-use crate::api::mx::storage::{get_storage_layout, update_storage_layout};
+use crate::api::mx::storage::{
+    get_module_storage_layout, get_storage_layout, update_module_storage_layout,
+    update_storage_layout,
+};
 
 use crate::api::audit::{audit_request, get_audit_log};
 use crate::api::backup::{create_backup, download_backup, list_backups, verify_backup};
+use crate::api::collaboration::{
+    add_channel_member, create_channel, create_direct_channel, delete_message,
+    download_message_file, edit_message, list_channels, list_collaboration_people, list_messages,
+    mark_channel_read, preview_message_file, send_message, upload_message_file,
+};
 use crate::api::dashboard::get_records_revision;
-use crate::api::deployment::{get_deployment_config, save_deployment_config};
+use crate::api::deployment::{
+    get_deployment_config, get_deployment_logo, save_deployment_config, upload_deployment_logo,
+};
 use crate::api::live::{get_presence, issue_live_ticket, live_socket};
+use crate::api::modules::{create_module, list_modules, update_module};
+use crate::api::notifications::{
+    list_notifications, mark_all_notifications_read, mark_notification_read,
+};
+use crate::api::preferences::{
+    delete_notification_sound, get_notification_sound, get_notification_sound_info,
+    get_preferences, save_preferences, upload_notification_sound,
+};
 use crate::api::reports::{
     export_report_csv, get_action_rate_report, get_dashboard_config, get_user_performance_report,
     save_dashboard_config,
 };
+use crate::api::search::global_search;
 use crate::api::user::handler::{create_user, delete_user, modify_user};
 
 use crate::config::load_config::CONFIG;
@@ -62,6 +88,7 @@ fn public_routes() -> Router {
         .route("/mx/v1/auth/authenticate", post(authorize))
         .route("/mx/v1/auth/refresh", post(refresh_access_token))
         .route("/mx/v1/deployment/config", get(get_deployment_config))
+        .route("/mx/v1/deployment/logo", get(get_deployment_logo))
         .route("/mx/v1/live", any(live_socket))
 }
 
@@ -74,9 +101,25 @@ fn bootstrap_routes() -> Router {
 fn admin_routes() -> Router {
     Router::new()
         .route("/mx/v1/admin/audit", get(get_audit_log))
+        .route("/mx/v1/admin/trash", get(list_trash))
+        .route("/mx/v1/admin/trash/{uid}", get(get_trashed_record))
+        .route(
+            "/mx/v1/admin/trash/{uid}/restore",
+            post(restore_trashed_record),
+        )
+        .route("/mx/v1/admin/modules", post(create_module))
+        .route("/mx/v1/admin/modules/{uid}", put(update_module))
         .route("/mx/v1/admin/schema", get(get_admin_record_schema))
         .route("/mx/v1/admin/schema/fields", post(create_schema_field))
+        .route(
+            "/mx/v1/admin/modules/{module_uid}/fields",
+            post(create_module_schema_field),
+        )
         .route("/mx/v1/admin/schema/order", put(update_schema_order))
+        .route(
+            "/mx/v1/admin/modules/{module_uid}/schema/order",
+            put(update_module_schema_order),
+        )
         .route("/mx/v1/admin/schema/fields/{uid}", put(update_schema_field))
         .route(
             "/mx/v1/admin/schema/system/{key}",
@@ -88,8 +131,16 @@ fn admin_routes() -> Router {
             put(save_deployment_config),
         )
         .route(
+            "/mx/v1/admin/deployment-logo",
+            post(upload_deployment_logo).layer(DefaultBodyLimit::max(6 * 1024 * 1024)),
+        )
+        .route(
             "/mx/v1/admin/storage-layout",
             get(get_storage_layout).put(update_storage_layout),
+        )
+        .route(
+            "/mx/v1/admin/modules/{module_uid}/storage-layout",
+            get(get_module_storage_layout).put(update_module_storage_layout),
         )
         .route(
             "/mx/v1/admin/backups",
@@ -115,9 +166,80 @@ fn admin_routes() -> Router {
 fn user_routes() -> Router {
     Router::new()
         .route("/mx/v1/auth/session", get(session_info))
+        .route("/mx/v1/modules", get(list_modules))
+        .route("/mx/v1/notifications", get(list_notifications))
+        .route(
+            "/mx/v1/notifications/read-all",
+            post(mark_all_notifications_read),
+        )
+        .route(
+            "/mx/v1/notifications/{uid}/read",
+            post(mark_notification_read),
+        )
+        .route(
+            "/mx/v1/collaboration/channels",
+            get(list_channels).post(create_channel),
+        )
+        .route(
+            "/mx/v1/collaboration/people",
+            get(list_collaboration_people),
+        )
+        .route("/mx/v1/collaboration/direct", post(create_direct_channel))
+        .route(
+            "/mx/v1/collaboration/channels/{uid}/messages",
+            get(list_messages).post(send_message),
+        )
+        .route(
+            "/mx/v1/collaboration/channels/{uid}/read",
+            post(mark_channel_read),
+        )
+        .route(
+            "/mx/v1/collaboration/channels/{uid}/members",
+            post(add_channel_member),
+        )
+        .route(
+            "/mx/v1/collaboration/messages/{uid}",
+            put(edit_message).delete(delete_message),
+        )
+        .route(
+            "/mx/v1/collaboration/messages/{uid}/files",
+            post(upload_message_file).layer(DefaultBodyLimit::max(
+                CONFIG
+                    .n1
+                    .attachment_max_size_mb
+                    .saturating_mul(1024 * 1024)
+                    .saturating_add(1024 * 1024),
+            )),
+        )
+        .route(
+            "/mx/v1/collaboration/files/{uid}/download",
+            get(download_message_file),
+        )
+        .route(
+            "/mx/v1/collaboration/files/{uid}/preview",
+            get(preview_message_file),
+        )
         .route("/mx/v1/account/profile", patch(update_profile))
+        .route(
+            "/mx/v1/account/preferences",
+            get(get_preferences).put(save_preferences),
+        )
+        .route(
+            "/mx/v1/account/notification-sound",
+            get(get_notification_sound)
+                .post(upload_notification_sound)
+                .delete(delete_notification_sound)
+                .layer(DefaultBodyLimit::max(6 * 1024 * 1024)),
+        )
+        .route(
+            "/mx/v1/account/notification-sound/info",
+            get(get_notification_sound_info),
+        )
         .route("/mx/v1/account/password", post(change_password))
-        .route("/mx/v1/account/totp/enroll", post(begin_totp_enrollment))
+        .route(
+            "/mx/v1/account/totp/enroll",
+            post(begin_totp_enrollment).delete(cancel_totp_enrollment),
+        )
         .route("/mx/v1/account/totp/confirm", post(confirm_totp_enrollment))
         .route("/mx/v1/account/totp", delete(disable_totp))
         .route(
@@ -139,6 +261,10 @@ fn mx_routes() -> Router {
 
     Router::new()
         .route("/mx/v1/schema", get(get_record_schema))
+        .route(
+            "/mx/v1/modules/{module_uid}/schema",
+            get(get_module_record_schema),
+        )
         .route("/mx/v1/dashboard/config", get(get_dashboard_config))
         .route("/mx/v1/reports/action-rate", get(get_action_rate_report))
         .route(
@@ -147,6 +273,7 @@ fn mx_routes() -> Router {
         )
         .route("/mx/v1/reports/export.csv", get(export_report_csv))
         .route("/mx/v1/status/revision", get(get_records_revision))
+        .route("/mx/v1/search", get(global_search))
         .route("/mx/v1/live/ticket", post(issue_live_ticket))
         .route("/mx/v1/presence", get(get_presence))
         .route(
@@ -154,11 +281,38 @@ fn mx_routes() -> Router {
             get(list_mx_records).post(create_mx_record),
         )
         .route(
+            "/mx/v1/modules/{module_uid}/records",
+            get(list_module_records).post(create_module_record),
+        )
+        .route(
             "/mx/v1/records/{uid}",
             get(get_mx_record)
                 .patch(patch_mx_record)
                 .put(update_mx_record)
-                .delete(delete_mx_record),
+                .delete(delete_default_record),
+        )
+        .route(
+            "/mx/v1/records/{uid}/versions",
+            get(list_default_record_versions),
+        )
+        .route(
+            "/mx/v1/records/{uid}/versions/{version_uid}",
+            get(get_default_record_version).post(restore_default_record_version),
+        )
+        .route(
+            "/mx/v1/modules/{module_uid}/records/{uid}",
+            get(get_module_record)
+                .patch(patch_module_record)
+                .put(update_module_record)
+                .delete(delete_module_record),
+        )
+        .route(
+            "/mx/v1/modules/{module_uid}/records/{uid}/versions",
+            get(list_module_record_versions),
+        )
+        .route(
+            "/mx/v1/modules/{module_uid}/records/{uid}/versions/{version_uid}",
+            get(get_module_record_version).post(restore_module_record_version),
         )
         .route(
             "/mx/v1/records/{uid}/attachments/fields/{field_uid}",

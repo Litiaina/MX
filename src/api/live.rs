@@ -55,8 +55,14 @@ struct PresenceState {
 struct LiveHub {
     tickets: Mutex<HashMap<String, LiveTicket>>,
     presence: Mutex<HashMap<String, PresenceState>>,
-    events: broadcast::Sender<String>,
+    events: broadcast::Sender<LiveEnvelope>,
     sequence: AtomicU64,
+}
+
+#[derive(Debug, Clone)]
+struct LiveEnvelope {
+    recipient_uid: Option<String>,
+    text: String,
 }
 
 impl LiveHub {
@@ -103,6 +109,33 @@ fn api_json(status: StatusCode, body: Value) -> Response {
 /// transaction has committed. WebSocket messages are notifications, not the
 /// source of truth; clients may always re-fetch through the normal MX API.
 pub fn publish_live_event(event_type: &str, actor_uid: Option<&str>, payload: Value) {
+    publish_event(None, event_type, actor_uid, payload);
+}
+
+/// Publish a private real-time event. The broadcast channel is only the local
+/// transport: each WebSocket filters the envelope before any JSON is written
+/// to the client, so private notification/message payloads are never exposed
+/// to other signed-in users.
+pub fn publish_user_event(
+    recipient_uid: &str,
+    event_type: &str,
+    actor_uid: Option<&str>,
+    payload: Value,
+) {
+    publish_event(
+        Some(recipient_uid.to_string()),
+        event_type,
+        actor_uid,
+        payload,
+    );
+}
+
+fn publish_event(
+    recipient_uid: Option<String>,
+    event_type: &str,
+    actor_uid: Option<&str>,
+    payload: Value,
+) {
     let sequence = hub().sequence.fetch_add(1, Ordering::Relaxed) + 1;
     let body = json!({
         "type": event_type,
@@ -114,7 +147,10 @@ pub fn publish_live_event(event_type: &str, actor_uid: Option<&str>, payload: Va
 
     if let Ok(text) = serde_json::to_string(&body) {
         // It is valid for there to be no connected receivers.
-        let _ = hub().events.send(text);
+        let _ = hub().events.send(LiveEnvelope {
+            recipient_uid,
+            text,
+        });
     }
 }
 
@@ -340,7 +376,7 @@ fn mark_presence_connected(ticket: &LiveTicket) {
     }
 }
 
-fn mark_presence_disconnected(ticket: LiveTicket) {
+fn mark_presence_disconnected(ticket: LiveTicket, allow_reconnect_grace: bool) {
     let generation = {
         let mut presence = hub()
             .presence
@@ -354,8 +390,7 @@ fn mark_presence_disconnected(ticket: LiveTicket) {
         entry.generation
     };
 
-    tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(PRESENCE_OFFLINE_GRACE_MS)).await;
+    let finish = move || {
         let went_offline = {
             let mut presence = hub()
                 .presence
@@ -373,7 +408,16 @@ fn mark_presence_disconnected(ticket: LiveTicket) {
         if went_offline {
             publish_live_event("presence.changed", None, json!({}));
         }
-    });
+    };
+
+    if allow_reconnect_grace {
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(PRESENCE_OFFLINE_GRACE_MS)).await;
+            finish();
+        });
+    } else {
+        finish();
+    }
 }
 
 async fn run_live_socket(socket: WebSocket, ticket: LiveTicket) {
@@ -400,13 +444,14 @@ async fn run_live_socket(socket: WebSocket, ticket: LiveTicket) {
     .to_string();
 
     if sender.send(Message::Text(hello.into())).await.is_err() {
-        mark_presence_disconnected(ticket);
+        mark_presence_disconnected(ticket, false);
         return;
     }
 
     let outbound_activity = last_activity.clone();
     let credential_uid = ticket.uid.clone();
     let credential_auth_version = ticket.auth_version;
+    let event_recipient_uid = ticket.uid.clone();
     let mut outbound = tokio::spawn(async move {
         let mut heartbeat = tokio::time::interval(Duration::from_millis(SOCKET_HEARTBEAT_MS));
         heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -415,8 +460,11 @@ async fn run_live_socket(socket: WebSocket, ticket: LiveTicket) {
             tokio::select! {
                 event = events.recv() => {
                     match event {
-                        Ok(text) => {
-                            if sender.send(Message::Text(text.into())).await.is_err() {
+                        Ok(envelope) => {
+                            if envelope.recipient_uid.as_deref().is_some_and(|uid| uid != event_recipient_uid) {
+                                continue;
+                            }
+                            if sender.send(Message::Text(envelope.text.into())).await.is_err() {
                                 break;
                             }
                         }
@@ -483,7 +531,7 @@ async fn run_live_socket(socket: WebSocket, ticket: LiveTicket) {
     let mut inbound = tokio::spawn(async move {
         while let Some(message) = receiver.next().await {
             match message {
-                Ok(Message::Close(_)) => break,
+                Ok(Message::Close(_)) => return true,
                 Ok(Message::Pong(_)) | Ok(Message::Ping(_)) => {
                     inbound_activity.store(now_millis().max(0) as u64, Ordering::Relaxed);
                 }
@@ -496,14 +544,15 @@ async fn run_live_socket(socket: WebSocket, ticket: LiveTicket) {
                 Err(_) => break,
             }
         }
+        false
     });
 
-    tokio::select! {
-        _ = &mut outbound => inbound.abort(),
-        _ = &mut inbound => outbound.abort(),
-    }
+    let allow_reconnect_grace = tokio::select! {
+        _ = &mut outbound => { inbound.abort(); true },
+        outcome = &mut inbound => { outbound.abort(); !matches!(outcome, Ok(true)) },
+    };
 
-    mark_presence_disconnected(ticket);
+    mark_presence_disconnected(ticket, allow_reconnect_grace);
 }
 
 pub async fn get_presence(claims: Claims) -> Response {

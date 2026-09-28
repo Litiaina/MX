@@ -14,6 +14,7 @@ use uuid::Uuid;
 use crate::{
     api::{
         live::publish_live_event,
+        modules::{DEFAULT_MODULE_UID, ensure_module_schema, load_module_db, module_can},
         mx::{
             handler::ensure_mx_record_schema,
             storage::{ensure_storage_layout_schema, field_used_by_storage_layout_db},
@@ -63,6 +64,9 @@ pub struct SchemaResponse {
 
 #[derive(Debug, Deserialize)]
 pub struct CreateFieldRequest {
+    #[serde(default)]
+    pub module_uid: Option<String>,
+
     pub key: String,
     pub label: String,
     pub field_type: String,
@@ -359,6 +363,7 @@ fn row_to_field(row: &rusqlite::Row<'_>) -> rusqlite::Result<FieldDefinition> {
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn insert_builtin_field(
     connection: &rusqlite::Connection,
     uid: &str,
@@ -518,6 +523,10 @@ pub(crate) fn ensure_dynamic_schema(connection: &rusqlite::Connection) -> rusqli
         "#,
     )?;
 
+    // Attach the legacy global structure to the default module and make the
+    // same tables capable of holding independent schemas for new modules.
+    ensure_module_schema(connection)?;
+
     // Bring old attachment metadata tables up to the minimum shape needed for
     // File Attachment fields before migration. Fresh databases already have
     // these columns; ALTER TABLE runs only for older deployments.
@@ -630,7 +639,7 @@ pub(crate) fn ensure_dynamic_schema(connection: &rusqlite::Connection) -> rusqli
                 "storage_name": storage_name,
                 "description": description,
                 "multiple": multiple != 0,
-                "max_files": max_files.and_then(|value| if value > 0 { Some(value) } else { None }),
+                "max_files": max_files.filter(|&value| value > 0),
             });
 
             migrated += connection.execute(
@@ -1105,8 +1114,9 @@ pub(crate) fn bump_schema_revision(connection: &rusqlite::Connection) -> rusqlit
     Ok(())
 }
 
-pub(crate) fn load_fields_db(
+pub(crate) fn load_module_fields_db(
     connection: &rusqlite::Connection,
+    module_uid: &str,
     include_archived: bool,
 ) -> rusqlite::Result<Vec<FieldDefinition>> {
     ensure_dynamic_schema(connection)?;
@@ -1115,7 +1125,7 @@ pub(crate) fn load_fields_db(
         r#"
         SELECT
             uid,
-            field_key,
+            COALESCE(module_key, field_key),
             label,
             field_type,
             required,
@@ -1128,13 +1138,14 @@ pub(crate) fn load_fields_db(
             active,
             config_json
         FROM mx_fields
+        WHERE module_uid = ?1
         ORDER BY active DESC, position ASC, label COLLATE NOCASE ASC
         "#
     } else {
         r#"
         SELECT
             uid,
-            field_key,
+            COALESCE(module_key, field_key),
             label,
             field_type,
             required,
@@ -1147,13 +1158,13 @@ pub(crate) fn load_fields_db(
             active,
             config_json
         FROM mx_fields
-        WHERE active = 1
+        WHERE module_uid = ?1 AND active = 1
         ORDER BY position ASC, label COLLATE NOCASE ASC
         "#
     };
 
     let mut statement = connection.prepare(sql)?;
-    let rows = statement.query_map([], row_to_field)?;
+    let rows = statement.query_map(params![module_uid], row_to_field)?;
 
     rows.collect::<Result<Vec<_>, _>>()
 }
@@ -1206,11 +1217,21 @@ pub(crate) fn field_map_by_key(fields: &[FieldDefinition]) -> BTreeMap<String, F
 }
 
 async fn load_schema(include_archived: bool) -> Result<SchemaResponse, String> {
+    load_module_schema(DEFAULT_MODULE_UID.to_string(), include_archived).await
+}
+
+async fn load_module_schema(
+    module_uid: String,
+    include_archived: bool,
+) -> Result<SchemaResponse, String> {
     let database_result =
         tokio::task::spawn_blocking(move || -> Result<SchemaResponse, SqliteDatabaseError> {
             with_sql_connection(|connection| {
                 let revision = schema_revision_db(connection)?;
-                let fields = load_fields_db(connection, include_archived)?;
+                if load_module_db(connection, &module_uid)?.is_none() {
+                    return Err(rusqlite::Error::QueryReturnedNoRows);
+                }
+                let fields = load_module_fields_db(connection, &module_uid, include_archived)?;
                 let system_fields = load_system_fields_db(connection)?;
 
                 Ok(SchemaResponse {
@@ -1229,8 +1250,10 @@ async fn load_schema(include_archived: bool) -> Result<SchemaResponse, String> {
     }
 }
 
-pub(crate) async fn load_active_schema() -> Result<SchemaResponse, String> {
-    load_schema(false).await
+pub(crate) async fn load_active_module_schema(
+    module_uid: String,
+) -> Result<SchemaResponse, String> {
+    load_module_schema(module_uid, false).await
 }
 
 pub async fn get_record_schema(claims: Claims) -> Response {
@@ -1246,6 +1269,39 @@ pub async fn get_record_schema(claims: Claims) -> Response {
             api_json(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 json!({ "response": "failed to load MX record structure" }),
+            )
+        }
+    }
+}
+
+pub async fn get_module_record_schema(claims: Claims, Path(module_uid): Path<String>) -> Response {
+    if !claims.can_read_records() {
+        return read_denied();
+    }
+    if !claims.can_manage_accounts() {
+        let permission_module = module_uid.clone();
+        let access_level = claims.access_level;
+        let allowed = tokio::task::spawn_blocking(move || {
+            with_sql_connection(|connection| {
+                module_can(connection, &permission_module, access_level, "read")
+            })
+        })
+        .await
+        .ok()
+        .and_then(Result::ok)
+        .unwrap_or(false);
+        if !allowed {
+            return read_denied();
+        }
+    }
+    let include_archived = claims.can_manage_accounts();
+    match load_module_schema(module_uid, include_archived).await {
+        Ok(schema) => api_json(StatusCode::OK, json!(schema)),
+        Err(error) => {
+            crate::report_error!(error, "function", "get_module_record_schema()");
+            api_json(
+                StatusCode::NOT_FOUND,
+                json!({"response":"module structure was not found"}),
             )
         }
     }
@@ -1277,6 +1333,13 @@ pub async fn create_schema_field(
         return access_denied();
     }
 
+    let module_uid = request
+        .module_uid
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(DEFAULT_MODULE_UID)
+        .to_string();
     let key = match normalize_key(&request.key) {
         Ok(value) => value,
         Err(error) => {
@@ -1311,7 +1374,7 @@ pub async fn create_schema_field(
         && config
             .get("storage_name")
             .and_then(Value::as_str)
-            .map_or(true, str::is_empty)
+            .is_none_or(str::is_empty)
     {
         let mut default_storage = normalize_attachment_storage_name(&label);
         if default_storage.is_empty() {
@@ -1323,6 +1386,22 @@ pub async fn create_schema_field(
     }
 
     let uid = Uuid::new_v4().to_string();
+    let internal_key = if module_uid == DEFAULT_MODULE_UID {
+        key.clone()
+    } else {
+        let module_prefix = module_uid
+            .chars()
+            .filter(|character| character.is_ascii_alphanumeric())
+            .take(16)
+            .collect::<String>();
+        let prefix = format!("m_{}__", module_prefix);
+        let available = 64usize.saturating_sub(prefix.len());
+        format!(
+            "{}{}",
+            prefix,
+            key.chars().take(available).collect::<String>()
+        )
+    };
     let requested_position = request.position;
     let required = request.required || field_type == "auto_number";
     let unique_value = if field_type == "attachments" {
@@ -1331,7 +1410,9 @@ pub async fn create_schema_field(
         request.unique_value || field_type == "auto_number"
     };
     let sortable = request.sortable && field_type != "long_text" && field_type != "attachments";
-    let key_for_db = key.clone();
+    let key_for_db = internal_key;
+    let module_key_for_db = key.clone();
+    let module_uid_for_db = module_uid.clone();
     let label_for_db = label.clone();
     let field_type_for_db = field_type.clone();
     let config_for_db = config.to_string();
@@ -1341,6 +1422,9 @@ pub async fn create_schema_field(
         tokio::task::spawn_blocking(move || -> Result<FieldDefinition, SqliteDatabaseError> {
             with_sql_connection(|connection| {
                 ensure_dynamic_schema(connection)?;
+                if load_module_db(connection, &module_uid_for_db)?.is_none() {
+                    return Err(rusqlite::Error::QueryReturnedNoRows);
+                }
 
                 let position = match requested_position {
                     Some(value) => value.max(0),
@@ -1350,7 +1434,7 @@ pub async fn create_schema_field(
                         FROM (
                             SELECT position
                             FROM mx_fields
-                            WHERE active = 1
+                            WHERE active = 1 AND module_uid = ?1
 
                             UNION ALL
 
@@ -1358,7 +1442,7 @@ pub async fn create_schema_field(
                             FROM mx_system_fields
                         )
                         "#,
-                        [],
+                        params![module_uid_for_db],
                         |row| row.get::<_, i64>(0),
                     )?,
                 };
@@ -1379,9 +1463,11 @@ pub async fn create_schema_field(
                         position,
                         active,
                         config_json
+                        ,module_uid
+                        ,module_key
                     ) VALUES (
                         ?1, ?2, ?3, ?4, ?5, ?6, ?7,
-                        ?8, ?9, ?10, ?11, 1, ?12
+                        ?8, ?9, ?10, ?11, 1, ?12, ?13, ?14
                     )
                     "#,
                     params![
@@ -1397,6 +1483,8 @@ pub async fn create_schema_field(
                         request.table_priority,
                         position,
                         config_for_db,
+                        module_uid_for_db,
+                        module_key_for_db,
                     ],
                 )?;
 
@@ -1406,7 +1494,7 @@ pub async fn create_schema_field(
                     r#"
                     SELECT
                         uid,
-                        field_key,
+                        COALESCE(module_key, field_key),
                         label,
                         field_type,
                         required,
@@ -1438,6 +1526,11 @@ pub async fn create_schema_field(
             api_json(StatusCode::CREATED, json!(field))
         }
 
+        Ok(Err(SqliteDatabaseError::Sqlite(rusqlite::Error::QueryReturnedNoRows))) => api_json(
+            StatusCode::NOT_FOUND,
+            json!({"response":"module was not found"}),
+        ),
+
         Ok(Err(SqliteDatabaseError::Sqlite(rusqlite::Error::SqliteFailure(error, _))))
             if error.code == rusqlite::ErrorCode::ConstraintViolation =>
         {
@@ -1467,6 +1560,15 @@ pub async fn create_schema_field(
             )
         }
     }
+}
+
+pub async fn create_module_schema_field(
+    claims: Claims,
+    Path(module_uid): Path<String>,
+    Json(mut request): Json<CreateFieldRequest>,
+) -> Response {
+    request.module_uid = Some(module_uid);
+    create_schema_field(claims, Json(request)).await
 }
 
 fn duplicate_value_exists(
@@ -1688,11 +1790,29 @@ pub async fn update_schema_order(
     claims: Claims,
     Json(request): Json<UpdateSchemaOrderRequest>,
 ) -> Response {
+    update_schema_order_for_module(claims, DEFAULT_MODULE_UID.to_string(), request, true).await
+}
+
+pub async fn update_module_schema_order(
+    claims: Claims,
+    Path(module_uid): Path<String>,
+    Json(request): Json<UpdateSchemaOrderRequest>,
+) -> Response {
+    update_schema_order_for_module(claims, module_uid, request, false).await
+}
+
+async fn update_schema_order_for_module(
+    claims: Claims,
+    module_uid: String,
+    request: UpdateSchemaOrderRequest,
+    include_system_fields: bool,
+) -> Response {
     if !claims.can_manage_accounts() {
         return access_denied();
     }
 
     let items = request.items;
+    let event_module_uid = module_uid.clone();
 
     let database_result =
         tokio::task::spawn_blocking(move || -> Result<u64, SqliteDatabaseError> {
@@ -1704,16 +1824,16 @@ pub async fn update_schema_order(
                         r#"
                         SELECT uid
                         FROM mx_fields
-                        WHERE active = 1
+                        WHERE active = 1 AND module_uid = ?1
                         "#,
                     )?;
 
                     statement
-                        .query_map([], |row| row.get::<_, String>(0))?
+                        .query_map(params![module_uid], |row| row.get::<_, String>(0))?
                         .collect::<Result<HashSet<_>, rusqlite::Error>>()?
                 };
 
-                let system_field_keys = {
+                let system_field_keys = if include_system_fields {
                     let mut statement = connection.prepare(
                         r#"
                         SELECT field_key
@@ -1724,6 +1844,8 @@ pub async fn update_schema_order(
                     statement
                         .query_map([], |row| row.get::<_, String>(0))?
                         .collect::<Result<HashSet<_>, rusqlite::Error>>()?
+                } else {
+                    HashSet::new()
                 };
 
                 if items.len() != active_field_uids.len() + system_field_keys.len() {
@@ -1785,6 +1907,9 @@ pub async fn update_schema_order(
                         }
 
                         "system" => {
+                            if !include_system_fields {
+                                unreachable!("custom module order rejected system fields");
+                            }
                             transaction.execute(
                                 r#"
                                 UPDATE mx_system_fields
@@ -1820,7 +1945,7 @@ pub async fn update_schema_order(
             publish_live_event(
                 "schema.updated",
                 Some(&claims.uid),
-                json!({"reason":"field_order.updated","revision":revision}),
+                json!({"reason":"field_order.updated","revision":revision,"module_uid":event_module_uid}),
             );
             api_json(
                 StatusCode::OK,
@@ -1913,7 +2038,7 @@ pub async fn update_schema_field(
                     r#"
                     SELECT
                         uid,
-                        field_key,
+                        COALESCE(module_key, field_key),
                         label,
                         field_type,
                         required,
@@ -2013,7 +2138,7 @@ pub async fn update_schema_field(
                     && next_config
                         .get("storage_name")
                         .and_then(Value::as_str)
-                        .map_or(true, str::is_empty)
+                        .is_none_or(str::is_empty)
                 {
                     let stable_name = existing
                         .config
@@ -2094,7 +2219,7 @@ pub async fn update_schema_field(
                     r#"
                     SELECT
                         uid,
-                        field_key,
+                        COALESCE(module_key, field_key),
                         label,
                         field_type,
                         required,

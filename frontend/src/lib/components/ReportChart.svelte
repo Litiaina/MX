@@ -64,9 +64,9 @@
 {/if}
 
 <style>
-  .chart-empty { min-height: 15rem; display: grid; place-items: center; color: var(--muted); font-size: .75rem; }
+  .chart-empty { min-height: 15rem; display: grid; place-items: center; color: var(--muted); font-size: calc(.75rem * var(--font-scale)); }
   .horizontal-chart { display: grid; gap: .8rem; padding: 1rem 0 .25rem; }
-  .horizontal-row { display: grid; grid-template-columns: minmax(7rem, 1fr) minmax(10rem, 2.5fr) 4.5rem; align-items: center; gap: .75rem; font-size: .72rem; }
+  .horizontal-row { display: grid; grid-template-columns: minmax(7rem, 1fr) minmax(10rem, 2.5fr) 4.5rem; align-items: center; gap: .75rem; font-size: calc(.72rem * var(--font-scale)); }
   .horizontal-row > span { overflow: hidden; color: var(--text-2); font-weight: 750; text-overflow: ellipsis; white-space: nowrap; }
   .horizontal-row > strong { color: var(--text-2); }
   .horizontal-track { height: 1rem; display: flex; overflow: hidden; border-radius: .3rem; background: var(--surface-3); }
@@ -74,20 +74,20 @@
   .line-chart { overflow-x: auto; }
   svg { width: 100%; min-width: 36rem; display: block; }
   svg line { stroke: var(--line); stroke-width: 1; }
-  svg text { fill: var(--muted); font-size: 10px; font-weight: 650; }
+  svg text { fill: var(--muted); font-size: calc(10px * var(--font-scale)); font-weight: 650; }
   svg polyline { fill: none; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
   svg circle { stroke: var(--surface); stroke-width: 2; }
-  .chart-legend { display: flex; flex-wrap: wrap; gap: .6rem 1rem; margin-top: .7rem; color: var(--text-2); font-size: .68rem; font-weight: 700; }
+  .chart-legend { display: flex; flex-wrap: wrap; gap: .6rem 1rem; margin-top: .7rem; color: var(--text-2); font-size: calc(.68rem * var(--font-scale)); font-weight: 700; }
   .chart-legend span { display: inline-flex; align-items: center; gap: .4rem; }
   .chart-legend i, .pie-legend i { width: .65rem; height: .65rem; flex: none; border-radius: .2rem; }
   .pie-layout { display: grid; grid-template-columns: minmax(14rem, .8fr) minmax(15rem, 1.2fr); align-items: center; gap: 2rem; padding: .8rem; }
   .pie { width: min(100%, 16rem); aspect-ratio: 1; justify-self: center; display: grid; place-items: center; border-radius: 50%; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text) 6%, transparent); }
   .pie.donut::after { content: ''; width: 53%; aspect-ratio: 1; grid-area: 1 / 1; border-radius: 50%; background: var(--surface); }
   .pie > div { z-index: 1; grid-area: 1 / 1; display: grid; text-align: center; }
-  .pie > div strong { font-size: 1.5rem; }
+  .pie > div strong { font-size: calc(1.5rem * var(--font-scale)); }
   .pie > div small { color: var(--muted); }
   .pie-legend { display: grid; gap: .55rem; }
-  .pie-legend div { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: .5rem; font-size: .7rem; }
+  .pie-legend div { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: .5rem; font-size: calc(.7rem * var(--font-scale)); }
   .pie-legend span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   @media (max-width: 700px) { .pie-layout { grid-template-columns: 1fr; } .horizontal-row { grid-template-columns: minmax(5rem, .8fr) minmax(7rem, 1.5fr) 3.5rem; } }
 </style>

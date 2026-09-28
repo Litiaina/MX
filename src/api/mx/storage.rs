@@ -1,5 +1,6 @@
 use axum::{
     Json,
+    extract::Path,
     http::StatusCode,
     response::{IntoResponse, Response},
 };
@@ -9,6 +10,7 @@ use serde_json::{Value, json};
 
 use crate::{
     api::live::publish_live_event,
+    api::modules::{DEFAULT_MODULE_UID, ensure_module_schema},
     api::mx::schema::ensure_dynamic_schema,
     db::connector::{SqliteDatabaseError, with_sql_connection},
     middleware::auth::Claims,
@@ -27,6 +29,10 @@ pub struct StorageLayoutField {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct StorageLayoutResponse {
+    pub module_uid: String,
+    pub module_name: String,
+    pub module_slug: String,
+    pub configured: bool,
     pub revision: u64,
     pub root: String,
     pub folder_fields: Vec<StorageLayoutField>,
@@ -82,6 +88,7 @@ pub(crate) fn ensure_storage_layout_schema(
     connection: &rusqlite::Connection,
 ) -> rusqlite::Result<()> {
     ensure_dynamic_schema(connection)?;
+    ensure_module_schema(connection)?;
 
     connection.execute_batch(
         r#"
@@ -121,6 +128,55 @@ pub(crate) fn ensure_storage_layout_schema(
 
         CREATE INDEX IF NOT EXISTS idx_mx_record_storage_directory
             ON mx_record_storage(directory_path);
+
+        CREATE TABLE IF NOT EXISTS mx_module_storage_layout_meta (
+            module_uid             TEXT PRIMARY KEY NOT NULL,
+            revision               INTEGER NOT NULL DEFAULT 0 CHECK(revision >= 0),
+            file_prefix_field_uid  TEXT,
+            FOREIGN KEY(module_uid)
+                REFERENCES mx_modules(uid)
+                ON DELETE CASCADE,
+            FOREIGN KEY(file_prefix_field_uid)
+                REFERENCES mx_fields(uid)
+                ON DELETE RESTRICT
+        );
+
+        CREATE TABLE IF NOT EXISTS mx_module_storage_layout_folders (
+            module_uid  TEXT NOT NULL,
+            position    INTEGER NOT NULL CHECK(position >= 0),
+            field_uid   TEXT NOT NULL,
+            PRIMARY KEY(module_uid, position),
+            UNIQUE(module_uid, field_uid),
+            FOREIGN KEY(module_uid)
+                REFERENCES mx_modules(uid)
+                ON DELETE CASCADE,
+            FOREIGN KEY(field_uid)
+                REFERENCES mx_fields(uid)
+                ON DELETE RESTRICT
+        );
+
+        INSERT OR IGNORE INTO mx_module_storage_layout_meta (
+            module_uid,
+            revision,
+            file_prefix_field_uid
+        )
+        SELECT
+            'mx-default-records',
+            revision,
+            file_prefix_field_uid
+        FROM mx_storage_layout_meta
+        WHERE id = 1;
+
+        INSERT OR IGNORE INTO mx_module_storage_layout_folders (
+            module_uid,
+            position,
+            field_uid
+        )
+        SELECT
+            'mx-default-records',
+            position,
+            field_uid
+        FROM mx_storage_layout_folders;
         "#,
     )
 }
@@ -135,15 +191,14 @@ pub(crate) fn field_used_by_storage_layout_db(
         r#"
         SELECT EXISTS(
             SELECT 1
-            FROM mx_storage_layout_folders
+            FROM mx_module_storage_layout_folders
             WHERE field_uid = ?1
 
             UNION ALL
 
             SELECT 1
-            FROM mx_storage_layout_meta
-            WHERE id = 1
-              AND file_prefix_field_uid = ?1
+            FROM mx_module_storage_layout_meta
+            WHERE file_prefix_field_uid = ?1
         )
         "#,
         params![field_uid],
@@ -155,6 +210,7 @@ pub(crate) fn field_used_by_storage_layout_db(
 
 fn load_field(
     connection: &rusqlite::Connection,
+    module_uid: &str,
     uid: &str,
 ) -> rusqlite::Result<StorageLayoutField> {
     connection.query_row(
@@ -166,9 +222,10 @@ fn load_field(
             field_type
         FROM mx_fields
         WHERE uid = ?1
+          AND module_uid = ?2
           AND active = 1
         "#,
-        params![uid],
+        params![uid, module_uid],
         |row| {
             Ok(StorageLayoutField {
                 uid: row.get(0)?,
@@ -180,32 +237,95 @@ fn load_field(
     )
 }
 
-fn load_layout_db(connection: &rusqlite::Connection) -> rusqlite::Result<StorageLayoutResponse> {
+fn storage_root_for_module(
+    connection: &rusqlite::Connection,
+    module_uid: &str,
+) -> rusqlite::Result<String> {
+    if module_uid == DEFAULT_MODULE_UID {
+        return Ok(STORAGE_ROOT.to_string());
+    }
+
+    let slug = connection.query_row(
+        "SELECT slug FROM mx_modules WHERE uid = ?1",
+        params![module_uid],
+        |row| row.get::<_, String>(0),
+    )?;
+
+    Ok(format!(
+        "{STORAGE_ROOT}/{}",
+        sanitize_component(&slug, "module")
+    ))
+}
+
+fn ensure_module_layout(
+    connection: &rusqlite::Connection,
+    module_uid: &str,
+) -> rusqlite::Result<()> {
+    let inserted = connection.execute(
+        r#"
+        INSERT OR IGNORE INTO mx_module_storage_layout_meta (
+            module_uid,
+            revision,
+            file_prefix_field_uid
+        )
+        SELECT uid, 0, NULL
+        FROM mx_modules
+        WHERE uid = ?1
+        "#,
+        params![module_uid],
+    )?;
+
+    if inserted == 0 {
+        let exists: i64 = connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM mx_modules WHERE uid = ?1)",
+            params![module_uid],
+            |row| row.get(0),
+        )?;
+        if exists == 0 {
+            return Err(rusqlite::Error::QueryReturnedNoRows);
+        }
+    }
+
+    Ok(())
+}
+
+fn load_layout_db(
+    connection: &rusqlite::Connection,
+    module_uid: &str,
+) -> rusqlite::Result<StorageLayoutResponse> {
     ensure_storage_layout_schema(connection)?;
+    ensure_module_layout(connection, module_uid)?;
 
     let (revision, prefix_uid): (i64, Option<String>) = connection.query_row(
         r#"
         SELECT revision, file_prefix_field_uid
-        FROM mx_storage_layout_meta
-        WHERE id = 1
+        FROM mx_module_storage_layout_meta
+        WHERE module_uid = ?1
         "#,
-        [],
+        params![module_uid],
         |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    let (module_name, module_slug) = connection.query_row(
+        "SELECT name, slug FROM mx_modules WHERE uid = ?1",
+        params![module_uid],
+        |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
     )?;
 
     let mut statement = connection.prepare(
         r#"
         SELECT f.uid, f.field_key, f.label, f.field_type
-        FROM mx_storage_layout_folders layout
+        FROM mx_module_storage_layout_folders layout
         JOIN mx_fields f
           ON f.uid = layout.field_uid
-        WHERE f.active = 1
+        WHERE layout.module_uid = ?1
+          AND f.module_uid = ?1
+          AND f.active = 1
         ORDER BY layout.position ASC
         "#,
     )?;
 
     let folder_fields = statement
-        .query_map([], |row| {
+        .query_map(params![module_uid], |row| {
             Ok(StorageLayoutField {
                 uid: row.get(0)?,
                 key: row.get(1)?,
@@ -216,20 +336,31 @@ fn load_layout_db(connection: &rusqlite::Connection) -> rusqlite::Result<Storage
         .collect::<Result<Vec<_>, rusqlite::Error>>()?;
 
     let file_prefix_field = match prefix_uid {
-        Some(uid) => load_field(connection, &uid).optional()?,
+        Some(uid) => load_field(connection, module_uid, &uid).optional()?,
         None => None,
     };
 
-    let frozen_records: i64 =
-        connection.query_row("SELECT COUNT(*) FROM mx_record_storage", [], |row| {
-            row.get(0)
-        })?;
+    let frozen_records: i64 = connection.query_row(
+        r#"
+        SELECT COUNT(*)
+        FROM mx_record_storage storage
+        JOIN mx_records record ON record.uid = storage.record_uid
+        WHERE record.module_uid = ?1
+        "#,
+        params![module_uid],
+        |row| row.get(0),
+    )?;
 
-    let mut preview_parts = vec![STORAGE_ROOT.to_string()];
+    let root = storage_root_for_module(connection, module_uid)?;
+    let mut preview_parts = vec![root.clone()];
 
     for field in &folder_fields {
         preview_parts.push(format!("<{}>", field.label));
     }
+
+    // The configured File Attachment field always owns the final directory
+    // segment at upload time, so show it in the saved preview as well.
+    preview_parts.push("<File Attachment field>".to_string());
 
     let file_name = match &file_prefix_field {
         Some(field) => format!("<{}>__filename.ext", field.label),
@@ -237,10 +368,15 @@ fn load_layout_db(connection: &rusqlite::Connection) -> rusqlite::Result<Storage
     };
 
     preview_parts.push(file_name);
+    let configured = revision > 0 || !folder_fields.is_empty() || file_prefix_field.is_some();
 
     Ok(StorageLayoutResponse {
+        module_uid: module_uid.to_string(),
+        module_name,
+        module_slug,
+        configured,
         revision: revision.max(0) as u64,
-        root: STORAGE_ROOT.to_string(),
+        root,
         folder_fields,
         file_prefix_field,
         frozen_records: frozen_records.max(0) as u64,
@@ -249,13 +385,21 @@ fn load_layout_db(connection: &rusqlite::Connection) -> rusqlite::Result<Storage
 }
 
 pub async fn get_storage_layout(claims: Claims) -> Response {
+    get_storage_layout_for_module(claims, DEFAULT_MODULE_UID.to_string()).await
+}
+
+pub async fn get_module_storage_layout(claims: Claims, Path(module_uid): Path<String>) -> Response {
+    get_storage_layout_for_module(claims, module_uid).await
+}
+
+async fn get_storage_layout_for_module(claims: Claims, module_uid: String) -> Response {
     if !claims.can_manage_accounts() {
         return access_denied();
     }
 
     let result = tokio::task::spawn_blocking(
         move || -> Result<StorageLayoutResponse, SqliteDatabaseError> {
-            with_sql_connection(|connection| load_layout_db(connection))
+            with_sql_connection(|connection| load_layout_db(connection, &module_uid))
         },
     )
     .await;
@@ -294,6 +438,22 @@ pub async fn get_storage_layout(claims: Claims) -> Response {
 pub async fn update_storage_layout(
     claims: Claims,
     Json(request): Json<UpdateStorageLayoutRequest>,
+) -> Response {
+    update_storage_layout_for_module(claims, DEFAULT_MODULE_UID.to_string(), request).await
+}
+
+pub async fn update_module_storage_layout(
+    claims: Claims,
+    Path(module_uid): Path<String>,
+    Json(request): Json<UpdateStorageLayoutRequest>,
+) -> Response {
+    update_storage_layout_for_module(claims, module_uid, request).await
+}
+
+async fn update_storage_layout_for_module(
+    claims: Claims,
+    module_uid: String,
+    request: UpdateStorageLayoutRequest,
 ) -> Response {
     if !claims.can_manage_accounts() {
         return access_denied();
@@ -338,9 +498,10 @@ pub async fn update_storage_layout(
         move || -> Result<StorageLayoutResponse, SqliteDatabaseError> {
             with_sql_connection(|connection| {
                 ensure_storage_layout_schema(connection)?;
+                ensure_module_layout(connection, &module_uid)?;
 
                 for uid in &unique_uids {
-                    let field = load_field(connection, uid).map_err(|_| {
+                    let field = load_field(connection, &module_uid, uid).map_err(|_| {
                         rusqlite::Error::InvalidParameterName(
                             "MX_STORAGE_FIELD_NOT_FOUND".to_string(),
                         )
@@ -353,7 +514,7 @@ pub async fn update_storage_layout(
                 }
 
                 if let Some(uid) = prefix_uid.as_deref() {
-                    let field = load_field(connection, uid).map_err(|_| {
+                    let field = load_field(connection, &module_uid, uid).map_err(|_| {
                         rusqlite::Error::InvalidParameterName(
                             "MX_STORAGE_FIELD_NOT_FOUND".to_string(),
                         )
@@ -367,34 +528,38 @@ pub async fn update_storage_layout(
 
                 let transaction = connection.unchecked_transaction()?;
 
-                transaction.execute("DELETE FROM mx_storage_layout_folders", [])?;
+                transaction.execute(
+                    "DELETE FROM mx_module_storage_layout_folders WHERE module_uid = ?1",
+                    params![&module_uid],
+                )?;
 
                 for (position, uid) in unique_uids.iter().enumerate() {
                     transaction.execute(
                         r#"
-                        INSERT INTO mx_storage_layout_folders (
+                        INSERT INTO mx_module_storage_layout_folders (
+                            module_uid,
                             position,
                             field_uid
-                        ) VALUES (?1, ?2)
+                        ) VALUES (?1, ?2, ?3)
                         "#,
-                        params![position as i64, uid],
+                        params![&module_uid, position as i64, uid],
                     )?;
                 }
 
                 transaction.execute(
                     r#"
-                    UPDATE mx_storage_layout_meta
+                    UPDATE mx_module_storage_layout_meta
                     SET
                         revision = revision + 1,
                         file_prefix_field_uid = ?1
-                    WHERE id = 1
+                    WHERE module_uid = ?2
                     "#,
-                    params![prefix_uid],
+                    params![prefix_uid, &module_uid],
                 )?;
 
                 transaction.commit()?;
 
-                load_layout_db(connection)
+                load_layout_db(connection, &module_uid)
             })
         },
     )
@@ -405,7 +570,7 @@ pub async fn update_storage_layout(
             publish_live_event(
                 "storage.updated",
                 Some(&claims.uid),
-                json!({"revision": layout.revision}),
+                json!({"module_uid": layout.module_uid, "revision": layout.revision}),
             );
             api_json(
                 StatusCode::OK,
@@ -476,8 +641,6 @@ fn sanitize_component(value: &str, fallback: &str) -> String {
             || character == '_'
         {
             output.push(character);
-        } else if character.is_whitespace() {
-            output.push('_');
         } else {
             output.push('_');
         }
@@ -587,9 +750,24 @@ fn resolve_record_storage_db(
 ) -> rusqlite::Result<StorageResolutionOutcome> {
     ensure_storage_layout_schema(connection)?;
 
+    let module_uid = connection
+        .query_row(
+            "SELECT module_uid FROM mx_records WHERE uid = ?1",
+            params![record_uid],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?;
+
+    let Some(module_uid) = module_uid else {
+        return Ok(StorageResolutionOutcome::NotFound);
+    };
+
+    ensure_module_layout(connection, &module_uid)?;
+    let storage_root = storage_root_for_module(connection, &module_uid)?;
+
     let record_exists = connection.query_row(
-        "SELECT EXISTS(SELECT 1 FROM mx_records WHERE uid = ?1)",
-        params![record_uid],
+        "SELECT EXISTS(SELECT 1 FROM mx_records WHERE uid = ?1 AND module_uid = ?2)",
+        params![record_uid, &module_uid],
         |row| row.get::<_, i64>(0),
     )? != 0;
 
@@ -640,15 +818,15 @@ fn resolve_record_storage_db(
         let directory_path = existing_object_key
             .rsplit_once('/')
             .map(|(directory, _)| directory.to_string())
-            .unwrap_or_else(|| STORAGE_ROOT.to_string());
+            .unwrap_or_else(|| storage_root.clone());
 
         let (layout_revision, _): (i64, Option<String>) = connection.query_row(
             r#"
             SELECT revision, file_prefix_field_uid
-            FROM mx_storage_layout_meta
-            WHERE id = 1
+            FROM mx_module_storage_layout_meta
+            WHERE module_uid = ?1
             "#,
-            [],
+            params![&module_uid],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )?;
 
@@ -675,10 +853,10 @@ fn resolve_record_storage_db(
     let (layout_revision, prefix_uid): (i64, Option<String>) = connection.query_row(
         r#"
         SELECT revision, file_prefix_field_uid
-        FROM mx_storage_layout_meta
-        WHERE id = 1
+        FROM mx_module_storage_layout_meta
+        WHERE module_uid = ?1
         "#,
-        [],
+        params![&module_uid],
         |row| Ok((row.get(0)?, row.get(1)?)),
     )?;
 
@@ -686,13 +864,14 @@ fn resolve_record_storage_db(
         let mut statement = connection.prepare(
             r#"
             SELECT field_uid
-            FROM mx_storage_layout_folders
+            FROM mx_module_storage_layout_folders
+            WHERE module_uid = ?1
             ORDER BY position ASC
             "#,
         )?;
 
         statement
-            .query_map([], |row| row.get::<_, String>(0))?
+            .query_map(params![&module_uid], |row| row.get::<_, String>(0))?
             .collect::<Result<Vec<_>, rusqlite::Error>>()?
     };
 
@@ -702,7 +881,8 @@ fn resolve_record_storage_db(
      */
     if folder_uids.is_empty() && prefix_uid.is_none() {
         let directory_path = format!(
-            "{STORAGE_ROOT}/{}",
+            "{}/{}",
+            storage_root,
             sanitize_component(record_uid, "record")
         );
 
@@ -726,13 +906,13 @@ fn resolve_record_storage_db(
         }));
     }
 
-    let mut components = vec![STORAGE_ROOT.to_string()];
+    let mut components = vec![storage_root];
 
     for field_uid in &folder_uids {
         let value = render_record_field_value(connection, record_uid, field_uid)?;
 
         let Some((label, value)) = value else {
-            let label = load_field(connection, field_uid)
+            let label = load_field(connection, &module_uid, field_uid)
                 .map(|field| field.label)
                 .unwrap_or_else(|_| field_uid.clone());
 
@@ -747,7 +927,7 @@ fn resolve_record_storage_db(
             let value = render_record_field_value(connection, record_uid, field_uid)?;
 
             let Some((_label, value)) = value else {
-                let label = load_field(connection, field_uid)
+                let label = load_field(connection, &module_uid, field_uid)
                     .map(|field| field.label)
                     .unwrap_or_else(|_| field_uid.to_string());
 
@@ -820,5 +1000,78 @@ pub(crate) async fn resolve_record_storage(
         }
         Ok(Ok(StorageResolutionOutcome::NotFound)) => Err(StorageResolutionError::NotFound),
         Ok(Err(_)) | Err(_) => Err(StorageResolutionError::Database),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn insert_module(connection: &rusqlite::Connection, uid: &str, slug: &str) {
+        ensure_storage_layout_schema(connection).unwrap();
+        connection
+            .execute(
+                r#"
+                INSERT INTO mx_modules(
+                    uid, slug, name, singular_name, description, icon, color,
+                    position, active, config_json, created_at, updated_at
+                ) VALUES (?1, ?2, 'Cases', 'Case', '', 'C', '#1d4ed8', 2, 1, '{}', 1, 1)
+                "#,
+                params![uid, slug],
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn custom_modules_have_isolated_storage_roots_and_layouts() {
+        let connection = rusqlite::Connection::open_in_memory().unwrap();
+        connection
+            .pragma_update(None, "foreign_keys", "ON")
+            .unwrap();
+        ensure_storage_layout_schema(&connection).unwrap();
+        insert_module(&connection, "module-cases", "legal-cases");
+
+        let default_layout = load_layout_db(&connection, DEFAULT_MODULE_UID).unwrap();
+        let module_layout = load_layout_db(&connection, "module-cases").unwrap();
+
+        assert_eq!(default_layout.root, "records");
+        assert_eq!(default_layout.module_uid, DEFAULT_MODULE_UID);
+        assert_eq!(default_layout.module_name, "Records");
+        assert_eq!(module_layout.root, "records/legal-cases");
+        assert_eq!(module_layout.module_uid, "module-cases");
+        assert_eq!(module_layout.module_name, "Cases");
+        assert!(!module_layout.configured);
+        assert_eq!(
+            module_layout.preview,
+            "records/legal-cases/<File Attachment field>/filename.ext"
+        );
+        assert!(module_layout.folder_fields.is_empty());
+        assert!(module_layout.file_prefix_field.is_none());
+    }
+
+    #[test]
+    fn a_layout_rejects_fields_from_another_module() {
+        let connection = rusqlite::Connection::open_in_memory().unwrap();
+        connection
+            .pragma_update(None, "foreign_keys", "ON")
+            .unwrap();
+        ensure_storage_layout_schema(&connection).unwrap();
+        insert_module(&connection, "module-cases", "cases");
+
+        let default_field_uid = "default-office".to_string();
+        connection
+            .execute(
+                r#"
+                INSERT INTO mx_fields(
+                    uid, field_key, label, field_type, required, unique_value,
+                    searchable, sortable, table_visible, table_priority,
+                    position, active, config_json, module_uid, module_key
+                ) VALUES (?1, 'default_office', 'Office', 'text', 0, 0, 1, 1, 1, 50, 0, 1, '{}', ?2, 'office')
+                "#,
+                params![&default_field_uid, DEFAULT_MODULE_UID],
+            )
+            .unwrap();
+
+        assert!(load_field(&connection, "module-cases", &default_field_uid).is_err());
     }
 }

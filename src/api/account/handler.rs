@@ -332,6 +332,71 @@ pub async fn confirm_totp_enrollment(
     }
 }
 
+pub async fn cancel_totp_enrollment(
+    claims: Claims,
+    Json(request): Json<TotpEnrollmentRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    if request.password.is_empty() {
+        return Err(bad_request("current password is required"));
+    }
+
+    let uid = claims.uid;
+    let result = tokio::task::spawn_blocking(move || {
+        with_sql_connection(|connection| {
+            let transaction = connection.unchecked_transaction()?;
+            let active: Option<String> = transaction.query_row(
+                "SELECT totp_secret FROM users WHERE uid = ?1",
+                params![uid],
+                |row| row.get(0),
+            )?;
+            if active.is_some() {
+                return Ok(OperationOutcome::TotpAlreadyEnabled);
+            }
+
+            let status = verify_user_credentials(
+                &transaction,
+                &uid,
+                &request.password,
+                None,
+                None,
+            )?;
+            if status != CredentialStatus::Valid {
+                return Ok(OperationOutcome::Credentials(status));
+            }
+            transaction.execute(
+                "UPDATE users SET totp_pending_secret = NULL, totp_pending_created_at = NULL WHERE uid = ?1",
+                params![uid],
+            )?;
+            transaction.commit()?;
+            Ok(OperationOutcome::Updated)
+        })
+    })
+    .await;
+
+    match result {
+        Ok(Ok(OperationOutcome::Updated)) => Ok((
+            StatusCode::OK,
+            Json(json!({
+                "response":"pending authenticator enrollment cancelled",
+                "session_invalidated":false
+            })),
+        )),
+        Ok(Ok(OperationOutcome::TotpAlreadyEnabled)) => {
+            Err(conflict("two-factor authentication is already enabled"))
+        }
+        Ok(Ok(OperationOutcome::Credentials(status))) => Err(credentials_error(status)),
+        Ok(Ok(_)) => Err(internal_error()),
+        Ok(Err(error)) => {
+            log_database_error("cancel_totp_enrollment", &error);
+            Err(internal_error())
+        }
+        Err(error) => {
+            crate::report_error!(format!("{error}"), "function", "cancel_totp_enrollment()");
+            Err(internal_error())
+        }
+    }
+}
+
 pub async fn disable_totp(
     claims: Claims,
     Json(request): Json<SecurityReauthRequest>,

@@ -1,6 +1,13 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
+  import Bell from '@lucide/svelte/icons/bell';
+  import Play from '@lucide/svelte/icons/play';
+  import Trash2 from '@lucide/svelte/icons/trash-2';
+  import Upload from '@lucide/svelte/icons/upload';
+  import Volume2 from '@lucide/svelte/icons/volume-2';
   import {
     beginTotpEnrollment,
+    cancelTotpEnrollment,
     changePassword,
     confirmTotpEnrollment,
     disableTotp,
@@ -10,6 +17,9 @@
   import { secondFactor } from '../api/auth';
   import { clearAuthTokens } from '../api/client';
   import type { Session, TotpEnrollmentResponse } from '../api/types';
+  import type { NotificationPreferences, NotificationSoundInfo, UserPreferences } from '../api/domain';
+  import { deleteNotificationSound, loadNotificationSound, loadNotificationSoundInfo, loadPreferences, savePreferences, uploadNotificationSound } from '../api/workspace';
+  import { decodeNotificationSound, playNotificationSound } from '../util/notificationAudio';
 
   let {
     session,
@@ -42,6 +52,13 @@
   let securityPassword = $state('');
   let securityFactor = $state('');
   let recoveryCodes = $state<string[]>([]);
+  let accountPreferences = $state<UserPreferences | null>(null);
+  let notifications = $state<NotificationPreferences | null>(null);
+  let notificationSound = $state<NotificationSoundInfo>({ exists: false });
+  let selectedSound = $state<File | null>(null);
+  let soundUploadProgress = $state(0);
+
+  onMount(() => void loadNotificationSettings());
 
   $effect(() => {
     profileName = session.name;
@@ -53,6 +70,76 @@
     notice = '';
     error = '';
   }
+
+  async function loadNotificationSettings() {
+    try {
+      const response = await loadPreferences();
+      accountPreferences = response.preferences;
+      notifications = { ...response.preferences.notifications };
+      // Custom sound support is optional while an older MX process is being
+      // restarted. It must never prevent Profile, Password, or 2FA from loading.
+      try { notificationSound = await loadNotificationSoundInfo(); }
+      catch { notificationSound = { exists: false }; }
+    }
+    catch (reason) { fail(reason); }
+  }
+  function setNotification(key: keyof NotificationPreferences, value: string) {
+    if (!notifications) return;
+    (notifications as unknown as Record<string, unknown>)[key] = value === '' ? null : value === 'true';
+  }
+  async function saveNotificationSettings(event: SubmitEvent) {
+    event.preventDefault(); if (!accountPreferences || !notifications) return;
+    startAction('notifications');
+    try {
+      if (notifications.browser_enabled && 'Notification' in window && Notification.permission === 'default') {
+        const permission = await Notification.requestPermission();
+        if (permission !== 'granted') notifications.browser_enabled = false;
+      }
+      const response = await savePreferences({ ...accountPreferences, notifications });
+      accountPreferences = response.preferences; notifications = { ...response.preferences.notifications };
+      notice = 'Notification preferences saved.';
+    } catch (reason) { fail(reason); } finally { busyAction = ''; }
+  }
+  function chooseNotificationSound(event: Event) {
+    selectedSound = (event.currentTarget as HTMLInputElement).files?.[0] || null;
+    soundUploadProgress = 0;
+  }
+  async function uploadCustomSound() {
+    if (!selectedSound || !accountPreferences || !notifications) return;
+    startAction('notification-sound'); soundUploadProgress = 0;
+    try {
+      const decoded = await decodeNotificationSound(selectedSound);
+      await playNotificationSound(decoded, notifications.sound_volume ?? 70);
+      notificationSound = await uploadNotificationSound(selectedSound, (loaded, total) => soundUploadProgress = total ? Math.round(loaded / total * 100) : 0);
+      notifications.sound_enabled = true; notifications.sound_source = 'custom';
+      const response = await savePreferences({ ...accountPreferences, notifications });
+      accountPreferences = response.preferences; notifications = { ...response.preferences.notifications };
+      selectedSound = null; soundUploadProgress = 100; notice = 'Custom notification sound uploaded to N1 and enabled.';
+    } catch (reason) { fail(reason); } finally { busyAction = ''; }
+  }
+  async function removeCustomSound() {
+    if (!accountPreferences || !notifications || !notificationSound.exists || !window.confirm('Remove your custom notification sound and use the MX sound?')) return;
+    startAction('notification-sound');
+    try {
+      await deleteNotificationSound(); notificationSound = { exists: false };
+      notifications.sound_source = 'default';
+      const response = await savePreferences({ ...accountPreferences, notifications });
+      accountPreferences = response.preferences; notifications = { ...response.preferences.notifications };
+      notice = 'Custom notification sound removed. MX will use its built-in sound.';
+    } catch (reason) { fail(reason); } finally { busyAction = ''; }
+  }
+  async function testNotificationSound() {
+    if (!notifications) return;
+    startAction('test-notification-sound');
+    try {
+      let buffer: AudioBuffer | null = null;
+      if (selectedSound) buffer = await decodeNotificationSound(selectedSound);
+      else if (notifications.sound_source === 'custom' && notificationSound.exists) buffer = await decodeNotificationSound(await loadNotificationSound(notificationSound.updated_at));
+      await playNotificationSound(buffer, notifications.sound_volume ?? 70);
+      notice = 'Notification sound played.';
+    } catch (reason) { fail(reason); } finally { busyAction = ''; }
+  }
+  function formatBytes(value = 0) { return value < 1024 ** 2 ? `${(value / 1024).toFixed(1)} KB` : `${(value / 1024 ** 2).toFixed(1)} MB`; }
 
   function fail(reason: unknown) {
     error = reason instanceof Error ? reason.message : 'The operation failed.';
@@ -118,7 +205,28 @@
     try {
       enrollment = await beginTotpEnrollment(enrollmentPassword);
       enrollmentCode = '';
+      await onSessionChanged();
       notice = 'Scan the QR code, then confirm a current authenticator code.';
+    } catch (reason) {
+      fail(reason);
+    } finally {
+      busyAction = '';
+    }
+  }
+
+  async function cancelEnrollment() {
+    if (!enrollmentPassword) {
+      error = 'Enter your current password to cancel the incomplete enrollment.';
+      return;
+    }
+    startAction('cancel-enrollment');
+    try {
+      await cancelTotpEnrollment(enrollmentPassword);
+      enrollment = null;
+      enrollmentPassword = '';
+      enrollmentCode = '';
+      await onSessionChanged();
+      notice = 'Incomplete authenticator enrollment cancelled.';
     } catch (reason) {
       fail(reason);
     } finally {
@@ -272,6 +380,8 @@
             <p class="muted">
               {#if session.totp_enabled}
                 {session.recovery_codes_remaining} recovery code{session.recovery_codes_remaining === 1 ? '' : 's'} remaining.
+              {:else if session.totp_enrollment_pending}
+                An authenticator enrollment was started but has not been confirmed. Two-factor authentication is not active yet.
               {:else}
                 Enrollment remains inactive until you confirm a valid code.
               {/if}
@@ -303,11 +413,55 @@
           </div>
         {:else}
           <form class="form-stack compact" onsubmit={startEnrollment}>
+            {#if session.totp_enrollment_pending}<div class="notice warning"><strong>Enrollment incomplete</strong><p>For security, the previous secret is not shown again. Enter your password to restart with a new QR code, or cancel the pending enrollment.</p></div>{/if}
             <label>Current password<input bind:value={enrollmentPassword} type="password" autocomplete="current-password" required /></label>
-            <button class="button primary" type="submit" disabled={busyAction !== ''}>Set up authenticator</button>
+            <div class="button-row">
+              {#if session.totp_enrollment_pending}<button class="button" type="button" onclick={cancelEnrollment} disabled={busyAction !== ''}>Cancel incomplete setup</button>{/if}
+              <button class="button primary" type="submit" disabled={busyAction !== ''}>{session.totp_enrollment_pending ? 'Restart authenticator setup' : 'Set up authenticator'}</button>
+            </div>
           </form>
         {/if}
       </section>
+
+      {#if notifications}
+        <section class="panel wide notification-settings">
+          <div class="panel-heading"><div><h2>Notifications</h2><p class="muted">Receive immediate in-app alerts, sound, and optional operating-system notifications. Channel-level mute settings still take priority.</p></div><Bell size={22} aria-hidden="true" /></div>
+          <form onsubmit={saveNotificationSettings}>
+            <div class="notification-delivery-options">
+              <label class="checkbox"><input type="checkbox" bind:checked={notifications.browser_enabled} /> Show operating-system notifications when MX is in the background</label>
+              <label class="checkbox"><input type="checkbox" bind:checked={notifications.sound_enabled} /> Play a sound for immediate notifications</label>
+            </div>
+
+            <section class:disabled={!notifications.sound_enabled} class="notification-sound-card">
+              <div class="notification-sound-heading"><span><Volume2 size={20} /></span><div><strong>Notification sound</strong><small>The built-in chime works offline. A custom sound is stored privately in N1, preloaded into MX's server cache, and decoded once by this browser.</small></div></div>
+              <div class="notification-sound-controls">
+                <label>Sound<select bind:value={notifications.sound_source} disabled={!notifications.sound_enabled}><option value="default">Built-in MX chime</option><option value="custom" disabled={!notificationSound.exists}>My custom sound{notificationSound.exists && notificationSound.file_name ? ` — ${notificationSound.file_name}` : ''}</option></select></label>
+                <label>Volume: {notifications.sound_volume}%<input type="range" min="0" max="100" step="5" bind:value={notifications.sound_volume} disabled={!notifications.sound_enabled} /></label>
+                <button class="button icon-label" type="button" onclick={testNotificationSound} disabled={!notifications.sound_enabled || busyAction !== ''}><Play size={15} />Test sound</button>
+              </div>
+              <div class="notification-sound-upload">
+                <label class="sound-file-picker"><Upload size={17} /><span><strong>{selectedSound?.name || 'Upload a custom sound'}</strong><small>MP3, WAV, OGG, WebM audio, M4A, or AAC · maximum 5 MiB</small></span><input type="file" accept="audio/mpeg,audio/wav,audio/ogg,audio/webm,audio/mp4,audio/aac,.mp3,.wav,.ogg,.webm,.m4a,.aac" onchange={chooseNotificationSound} /></label>
+                {#if selectedSound}<button class="button primary icon-label" type="button" onclick={uploadCustomSound} disabled={busyAction !== ''}><Upload size={15} />{busyAction === 'notification-sound' ? `Uploading ${soundUploadProgress}%` : 'Upload and use'}</button>{/if}
+                {#if notificationSound.exists}<div class="stored-sound"><span><strong>{notificationSound.file_name}</strong><small>{notificationSound.mime_type} · {formatBytes(notificationSound.size)}</small></span><button class="button danger small icon-label" type="button" onclick={removeCustomSound} disabled={busyAction !== ''}><Trash2 size={14} />Remove</button></div>{/if}
+              </div>
+            </section>
+
+            <div class="notification-preference-grid">
+              <label>Direct messages<select value={String(notifications.messages ?? '')} onchange={(event) => setNotification('messages', event.currentTarget.value)}><option value="">Use system default</option><option value="true">Notify</option><option value="false">Do not notify</option></select></label>
+              <label>Mentions<select value={String(notifications.mentions ?? '')} onchange={(event) => setNotification('mentions', event.currentTarget.value)}><option value="">Use system default</option><option value="true">Notify</option><option value="false">Do not notify</option></select></label>
+              <label>Channel activity<select value={String(notifications.channel_activity ?? '')} onchange={(event) => setNotification('channel_activity', event.currentTarget.value)}><option value="">Use system default</option><option value="true">Notify</option><option value="false">Do not notify</option></select></label>
+              <label>Records created<select value={String(notifications.record_created ?? '')} onchange={(event) => setNotification('record_created', event.currentTarget.value)}><option value="">Use system default</option><option value="true">Notify</option><option value="false">Do not notify</option></select></label>
+              <label>Records updated<select value={String(notifications.record_updated ?? '')} onchange={(event) => setNotification('record_updated', event.currentTarget.value)}><option value="">Use system default</option><option value="true">Notify</option><option value="false">Do not notify</option></select></label>
+              <label>Record assignments<select value={String(notifications.record_assigned ?? '')} onchange={(event) => setNotification('record_assigned', event.currentTarget.value)}><option value="">Use system default</option><option value="true">Notify</option><option value="false">Do not notify</option></select></label>
+              <label>Attachments received<select value={String(notifications.attachment_received ?? '')} onchange={(event) => setNotification('attachment_received', event.currentTarget.value)}><option value="">Use system default</option><option value="true">Notify</option><option value="false">Do not notify</option></select></label>
+              <label>Workflow changes<select value={String(notifications.workflow_changes ?? '')} onchange={(event) => setNotification('workflow_changes', event.currentTarget.value)}><option value="">Use system default</option><option value="true">Notify</option><option value="false">Do not notify</option></select></label>
+              <label>Task activity<select value={String(notifications.task_activity ?? '')} onchange={(event) => setNotification('task_activity', event.currentTarget.value)}><option value="">Use system default</option><option value="true">Notify</option><option value="false">Do not notify</option></select></label>
+            </div>
+            <div class="notification-schedule"><label>Delivery<select bind:value={notifications.digest}><option value={null}>Use system default</option><option value="immediate">Immediately</option><option value="daily">Daily digest</option><option value="weekly">Weekly digest</option><option value="off">Only show in notification center</option></select></label><label>Quiet hours start<input type="time" bind:value={notifications.quiet_hours_start} /></label><label>Quiet hours end<input type="time" bind:value={notifications.quiet_hours_end} /></label></div>
+            <div class="button-row"><button class="button primary" disabled={busyAction !== ''}>Save notification preferences</button></div>
+          </form>
+        </section>
+      {/if}
     </div>
   {/if}
 </section>

@@ -1,11 +1,12 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import type { ActionRateRow, DashboardWidget, PresenceResponse, UserPerformanceRow } from '../api/domain';
-  import { actionRate, exportReport, loadDashboardConfig, loadPresence, userPerformance } from '../api/workspace';
+  import type { ActionRateRow, DashboardWidget, ModuleDefinition, PresenceResponse, UserPerformanceRow } from '../api/domain';
+  import { actionRate, exportReport, loadDashboardConfig, loadModules, loadPresence, userPerformance } from '../api/workspace';
   import ReportChart from './ReportChart.svelte';
 
   let { isAdmin, revision = 0, dashboardLabel = 'Dashboard', recordSingular = 'Record', recordPlural = 'Records' }: { isAdmin: boolean; revision?: number; dashboardLabel?: string; recordSingular?: string; recordPlural?: string } = $props();
   let widgets = $state<DashboardWidget[]>([]);
+  let modules = $state<ModuleDefinition[]>([]); let exportModuleUid = $state('mx-default-records');
   let widgetRows = $state<Record<string, ActionRateRow[]>>({});
   let performance = $state<UserPerformanceRow[]>([]);
   let presence = $state<PresenceResponse | null>(null);
@@ -38,8 +39,11 @@
   async function refresh() {
     loading = true; error = '';
     try {
-      const config = await loadDashboardConfig();
-      widgets = Array.isArray(config.config.widgets) ? config.config.widgets : [];
+      const [config, moduleData] = await Promise.all([loadDashboardConfig(), loadModules()]);
+      modules = moduleData.modules.filter((module) => module.active);
+      if (!modules.some((module) => module.uid === exportModuleUid)) exportModuleUid = modules[0]?.uid || 'mx-default-records';
+      const readableModules = new Set(modules.map((module) => module.uid));
+      widgets = (Array.isArray(config.config.widgets) ? config.config.widgets : []).filter((widget) => readableModules.has(widget.module_uid || 'mx-default-records'));
       showPerformance = config.config.show_user_performance === true && isAdmin;
       const reports = await Promise.all(widgets.map(async (widget) => [widget.uid, (await actionRate(widget, dateFrom, dateTo)).rows] as const));
       widgetRows = Object.fromEntries(reports);
@@ -85,7 +89,7 @@
     {/each}</div>
   {/if}
 
-  <section class="panel section-panel"><div class="panel-heading"><div><h2>Data exports</h2><p class="muted">Portable CSV reports from the authoritative database.</p></div></div><div class="button-row"><button class="button" onclick={() => exportReport('records')}>Detailed {recordPlural.toLowerCase()}</button><button class="button" onclick={() => exportReport('attachments')}>Attachments</button>{#if isAdmin}<button class="button" onclick={() => exportReport('user_performance', undefined, dateFrom, dateTo)}>User performance</button>{/if}</div></section>
+  <section class="panel section-panel"><div class="panel-heading"><div><h2>Data exports</h2><p class="muted">Portable CSV reports from the authoritative database, scoped to the selected module.</p></div><label>Module<select bind:value={exportModuleUid}>{#each modules as module}<option value={module.uid}>{module.name}</option>{/each}</select></label></div><div class="button-row"><button class="button" onclick={() => exportReport('records', undefined, '', '', exportModuleUid)}>Detailed records</button><button class="button" onclick={() => exportReport('attachments', undefined, '', '', exportModuleUid)}>Attachments</button>{#if isAdmin}<button class="button" onclick={() => exportReport('user_performance', undefined, dateFrom, dateTo)}>User performance</button>{/if}</div></section>
 
   {#if showPerformance}<section class="panel section-panel"><div class="panel-heading"><div><h2>User performance</h2><p class="muted">Audited activity during {periodLabel().toLowerCase()}.</p></div></div><div class="table-wrap"><table><thead><tr><th>User</th><th>Created</th><th>Updated</th><th>Uploads</th><th>Deleted</th><th>Downloads</th><th>Successful</th><th>Failed</th><th>Records touched</th><th>Last activity</th></tr></thead><tbody>{#each performance as row}<tr><td><strong>{row.actor_name}</strong><small class="block">{row.actor_email}</small></td><td>{row.records_created}</td><td>{row.records_updated}</td><td>{row.attachments_uploaded}</td><td>{row.records_deleted}</td><td>{row.attachment_downloads}</td><td>{row.successful_actions}</td><td>{row.failed_actions}</td><td>{row.unique_records_touched}</td><td>{time(row.last_activity)}</td></tr>{/each}</tbody></table></div></section>{/if}
 </section>

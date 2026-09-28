@@ -55,6 +55,13 @@ export function confirmTotpEnrollment(
   );
 }
 
+export function cancelTotpEnrollment(password: string): Promise<OperationResponse> {
+  return apiJson(
+    '/mx/v1/account/totp/enroll',
+    jsonRequest('DELETE', { password })
+  );
+}
+
 export function disableTotp(
   password: string,
   factor: SecondFactor

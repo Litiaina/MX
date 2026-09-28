@@ -28,7 +28,17 @@ async function readJson(response: Response): Promise<unknown> {
   try {
     return JSON.parse(text);
   } catch {
-    return { response: text };
+    const contentType = response.headers.get('content-type')?.toLowerCase() || '';
+    const looksLikeHtml = contentType.includes('text/html') || /^\s*<(?:!doctype|html|head|body)\b/i.test(text);
+    if (looksLikeHtml) {
+      return {
+        response: response.status === 404
+          ? 'This feature is not available from the running MX server. Restart the updated server and try again.'
+          : `The MX server returned an unexpected web page (${response.status}).`
+      };
+    }
+    const compact = text.replace(/\s+/g, ' ').trim();
+    return { response: compact.length > 300 ? `${compact.slice(0, 300)}…` : compact };
   }
 }
 
@@ -157,7 +167,17 @@ export async function apiUpload<T>(
     request.onload = async () => {
       let payload: unknown = null;
       try { payload = request.responseText ? JSON.parse(request.responseText) : null; }
-      catch { payload = request.responseText ? { response: request.responseText } : null; }
+      catch {
+        const text = request.responseText || '';
+        const contentType = request.getResponseHeader('content-type')?.toLowerCase() || '';
+        const looksLikeHtml = contentType.includes('text/html') || /^\s*<(?:!doctype|html|head|body)\b/i.test(text);
+        const compact = text.replace(/\s+/g, ' ').trim();
+        payload = text ? {
+          response: looksLikeHtml
+            ? `The MX server returned an unexpected web page (${request.status}).`
+            : compact.length > 300 ? `${compact.slice(0, 300)}…` : compact
+        } : null;
+      }
       if (request.status === 401 && retry && refreshToken()) {
         try { await refreshAccessToken(); resolve(await apiUpload<T>(path, body, onProgress, false)); }
         catch (reason) { reject(reason); }

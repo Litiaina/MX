@@ -18,7 +18,7 @@
 </div>
 
 <p align="center">
-  <strong>Current release: MX 1.1.0</strong>
+  <strong>Current release: MX 2.0.0</strong>
 </p>
 
 ---
@@ -27,7 +27,7 @@
 
 **MX** is a schema-driven information-system platform built for deployments that should not be locked to one predefined record format.
 
-A fresh MX deployment starts with **no business fields and no predefined dashboard statistics**. An Administrator defines the information model through the application itself. Forms, record tables, search, attachment handling, N1 storage paths, dashboard widgets, statistics, and exports adapt to that configuration.
+A fresh MX deployment starts with a default Records module but **no mandatory business fields and no predefined dashboard statistics**. Administrators can add more modules, give each module its own fields and permissions, and build the information model through the application itself. Forms, record tables, search, attachment handling, N1 storage paths, dashboard widgets, statistics, and exports adapt to that configuration.
 
 MX is therefore not a hard-coded document tracker, correspondence registry, inventory system, ticketing system, or workflow application.
 
@@ -68,11 +68,11 @@ MX platform
 └── backup safety
 
 Deployment configuration
-├── fields
-├── field order
-├── validation rules
-├── file-attachment fields
-├── N1 folder layout
+├── modules and module identities
+├── module-specific fields and field order
+├── module access matrices
+├── validation and file-attachment fields
+├── module-specific N1 folder layouts
 ├── table presentation
 ├── dashboard widgets
 ├── statistics
@@ -115,11 +115,14 @@ The browser interface is a Svelte 5 + TypeScript application built to static
 assets in `frontend/dist` and served by the Rust process. It provides:
 
 - Dashboard
-- Records
+- independently configured modules
+- Collaboration channels and direct messages
+- Notifications
 - Administration
 - attachment preview
 - search and filtering
 - account management
+- personal theme, accent color, scale, density, refresh, and notification preferences
 - schema configuration
 - reporting and exports
 - real-time synchronization
@@ -158,6 +161,8 @@ N1 stores:
 
 - original uploaded attachment bytes;
 - attachment versions;
+- collaboration file shares;
+- the uploaded deployment logo;
 - verified SQLite backup objects.
 
 The N1 object is authoritative for file content. Preview files are derived data and may be regenerated.
@@ -167,7 +172,7 @@ The N1 object is authoritative for file content. Preview files are derived data 
 
 ## Real-Time Collaboration
 
-MX 1.0 includes authenticated real-time synchronization for multi-user deployments.
+MX 2.0 includes authenticated real-time synchronization for multi-user deployments.
 
 Connected browsers maintain a WebSocket session with the MX server. When records,
 attachments, schema configuration, dashboard configuration, deployment settings,
@@ -260,11 +265,11 @@ This keeps reconnection and recovery deterministic.
 
 ---
 
-## Fully Dynamic Record Structure
+## Modules and Dynamic Record Structure
 
-The **Record Structure** is the source of truth for the business model of a deployment.
+Each **Module Structure** is the source of truth for one part of a deployment's business model.
 
-A fresh installation can contain zero fields.
+A fresh installation can contain multiple independently configured modules, and each module can contain zero fields.
 
 Administrators add only what that deployment requires.
 
@@ -406,7 +411,7 @@ Search is generated from the active Record Structure rather than hard-coded busi
 
 ### Universal Search
 
-Universal Search can search active fields marked `Searchable` and attachment filenames.
+Universal Search searches active fields marked `Searchable` and attachment filenames across every module the current account may read. Results are permission-filtered on the server and open the matching record directly.
 
 ### Field Search
 
@@ -426,7 +431,7 @@ The browser does not need to download the complete database just to find or disp
 
 ## Configurable N1 Storage Layout
 
-Administrators can select Record Structure fields to build the base N1 hierarchy.
+Administrators can select fields from each module to build that module's base N1 hierarchy. A field from one module cannot be reused accidentally by another module's layout.
 
 A File Attachment field automatically contributes its own final folder segment.
 
@@ -476,7 +481,9 @@ This prevents later edits to values such as office, division, or date from scatt
 
 Changing the global storage-layout configuration affects records whose storage namespace has not yet been established.
 
-Existing N1 object keys are not silently moved just because a label or global layout changes.
+Existing N1 object keys are not silently moved just because a label or module layout changes.
+
+Custom modules use separate `records/<module-slug>/` roots. The migrated default Records module keeps its existing `records/` namespace for compatibility.
 
 ---
 
@@ -687,10 +694,12 @@ Administration is separated into function-specific tabs.
 
 ```text
 Accounts
-Record Structure
-N1 Storage
+Modules & Fields
 Dashboard
+Trash
+Deployment
 Backups
+Updates
 Audit Log
 ```
 
@@ -698,9 +707,9 @@ Audit Log
 
 Manage users and access levels.
 
-### Record Structure
+### Modules & Fields
 
-Build and maintain the deployment's dynamic schema.
+Create modules and maintain each module's identity, access matrix, dynamic schema, and N1 layout.
 
 ### N1 Storage
 
@@ -720,6 +729,14 @@ Review authenticated system activity.
 
 These configuration areas are intended for Administrators.
 
+### Trash and record history
+
+Record deletion is recoverable. Administrators can restore soft-deleted records from Trash, while users with edit access can inspect saved record versions and restore an earlier field state. Attachment metadata is included in version snapshots.
+
+### Updates
+
+Release discovery and installation remain deliberately disabled until the signed-artifact, update-channel, rollback, and maintenance-window contract is defined. The public repository alone is not treated as sufficient authority to replace a running production binary.
+
 ---
 
 ## Access Levels
@@ -733,10 +750,10 @@ These configuration areas are intended for Administrators.
 
 | Role | General capabilities |
 |---|---|
-| Administrator | Full record access plus accounts, schema, storage layout, dashboard configuration, database administration, audit, and backups |
-| Manager | Read, create, edit, upload, download, and delete records/attachments |
-| Editor | Read, create, edit, upload, and download; no delete |
-| Viewer | Read, search, preview, and download |
+| Administrator | Full platform access plus accounts, modules, schema, storage layouts, dashboard configuration, database administration, audit, and backups |
+| Manager | Defaults to read, create, edit, upload, download, and delete; each module can override its matrix |
+| Editor | Defaults to read, create, edit, upload, and download; each module can override its matrix |
+| Viewer | Defaults to read, search, preview, and download; each module can override its matrix |
 
 Authorization is enforced by the backend rather than only by hiding interface controls.
 
@@ -851,6 +868,8 @@ Important MX tables include:
 
 ```text
 mx_records
+mx_modules
+mx_module_permissions
 mx_schema_meta
 mx_fields
 mx_record_values
@@ -858,8 +877,16 @@ mx_unique_values
 mx_field_sequences
 mx_attachments
 mx_record_storage
-mx_storage_layout
+mx_module_storage_layout_meta
+mx_module_storage_layout_folders
+mx_record_versions
+mx_record_version_values
+mx_record_version_attachments
 mx_dashboard_config
+mx_user_preferences
+mx_notifications
+mx_channels
+mx_messages
 mx_audit_log
 mx_backups
 ```
@@ -904,8 +931,28 @@ PATCH  /mx/v1/account/profile
 POST   /mx/v1/account/password
 POST   /mx/v1/account/totp/enroll
 POST   /mx/v1/account/totp/confirm
+DELETE /mx/v1/account/totp/enroll
 DELETE /mx/v1/account/totp
 POST   /mx/v1/account/recovery-codes/regenerate
+
+GET /mx/v1/account/preferences
+PUT /mx/v1/account/preferences
+```
+
+Authenticator enrollment uses a pending secret. Password-only login remains possible while setup is incomplete, but once confirmation activates the secret every password login requires a valid TOTP or single-use recovery code.
+
+### Modules
+
+```http
+GET  /mx/v1/modules
+POST /mx/v1/admin/modules
+PUT  /mx/v1/admin/modules/{module_uid}
+
+GET  /mx/v1/modules/{module_uid}/schema
+POST /mx/v1/admin/modules/{module_uid}/fields
+PUT  /mx/v1/admin/modules/{module_uid}/schema/order
+
+GET /mx/v1/search?q={query}
 ```
 
 ### Schema
@@ -924,6 +971,9 @@ PUT  /mx/v1/admin/schema/order
 ```http
 GET /mx/v1/admin/storage-layout
 PUT /mx/v1/admin/storage-layout
+
+GET /mx/v1/admin/modules/{module_uid}/storage-layout
+PUT /mx/v1/admin/modules/{module_uid}/storage-layout
 ```
 
 ### Dashboard
@@ -953,6 +1003,17 @@ GET    /mx/v1/records/{uid}
 PATCH  /mx/v1/records/{uid}
 PUT    /mx/v1/records/{uid}
 DELETE /mx/v1/records/{uid}
+
+GET    /mx/v1/modules/{module_uid}/records
+POST   /mx/v1/modules/{module_uid}/records
+GET    /mx/v1/modules/{module_uid}/records/{uid}
+PATCH  /mx/v1/modules/{module_uid}/records/{uid}
+PUT    /mx/v1/modules/{module_uid}/records/{uid}
+DELETE /mx/v1/modules/{module_uid}/records/{uid}
+
+GET  /mx/v1/modules/{module_uid}/records/{uid}/versions
+GET  /mx/v1/modules/{module_uid}/records/{uid}/versions/{version_uid}
+POST /mx/v1/modules/{module_uid}/records/{uid}/versions/{version_uid}
 ```
 
 `PATCH` is the preferred path for collaborative editing because it sends only
@@ -979,6 +1040,26 @@ GET /mx/v1/status/revision
 ```
 
 The lightweight revision endpoint remains useful for refresh/fallback logic.
+
+### Collaboration and notifications
+
+```http
+GET  /mx/v1/collaboration/people
+GET  /mx/v1/collaboration/channels
+POST /mx/v1/collaboration/channels
+POST /mx/v1/collaboration/direct
+GET  /mx/v1/collaboration/channels/{channel_uid}/messages
+POST /mx/v1/collaboration/channels/{channel_uid}/messages
+PUT  /mx/v1/collaboration/messages/{message_uid}
+DELETE /mx/v1/collaboration/messages/{message_uid}
+POST /mx/v1/collaboration/messages/{message_uid}/files
+
+GET  /mx/v1/notifications
+POST /mx/v1/notifications/read-all
+POST /mx/v1/notifications/{uid}/read
+```
+
+Messages, mentions, record links, channel membership, unread state, shared-file metadata, and notifications are durable SQLite state. Messages use administrator-sized cursor pages (256 by default) and older history loads automatically as the conversation scrolls upward. Edits are marked, while deletion keeps an immutable database row and exposes only a non-editable tombstone. Shared image files render authenticated in-conversation thumbnails with ghost loading; shared bytes remain in N1. Scoped WebSocket events provide immediate delivery without exposing one user's private events to other sockets.
 
 ### Real-time synchronization and presence
 
@@ -1177,8 +1258,13 @@ mx/
     │   ├── user/
     │   ├── audit.rs
     │   ├── backup.rs
+    │   ├── collaboration.rs
     │   ├── dashboard.rs
+    │   ├── lifecycle.rs
     │   ├── live.rs
+    │   ├── modules.rs
+    │   ├── notifications.rs
+    │   ├── preferences.rs
     │   ├── reports.rs
     │   ├── query_handler.rs
     │   └── route.rs
@@ -1195,6 +1281,7 @@ The main responsibilities are intentionally separated:
 
 ```text
 schema.rs             dynamic Record Structure
+modules.rs            module identities and access matrices
 records.rs            dynamic values, search, sorting, pagination
 attachment_fields.rs  File Attachment field behavior and metadata
 storage.rs            configurable and frozen N1 namespaces
@@ -1202,6 +1289,10 @@ handler.rs            record/attachment operations and N1 coordination
 reports.rs            statistics, dashboard reporting, CSV export
 dashboard.rs          dashboard support
 live.rs               WebSocket sessions, live events, and presence
+collaboration.rs      channels, messages, N1 file shares, and record links
+notifications.rs      durable per-user notification delivery
+preferences.rs        per-user appearance and notification overrides
+lifecycle.rs          record versions, soft delete, Trash, and recovery
 audit.rs              accountability history
 backup.rs             verified SQLite snapshots stored in N1
 ```
@@ -1271,15 +1362,17 @@ MX follows these principles:
 ---
 
 
-## MX 1.0
+## MX 2.0
 
-MX 1.0 is the first public stable release of the MX general-purpose information
-system platform.
+MX 2.0 is the second-generation stable release of the MX general-purpose
+information-system platform.
 
-The 1.0 line establishes the current platform contract around:
+The 2.0 line establishes the current platform contract around:
 
 ```text
 dynamic Record Structure
+independent configurable modules
+module-specific permissions and N1 layouts
 File Attachment fields
 configurable N1 storage layout
 Universal and Advanced Search
@@ -1288,6 +1381,11 @@ custom dashboard/statistics builder
 CSV reporting and exports
 deployment Appearance & Identity
 role-based access
+per-user appearance and notification overrides
+durable notifications and scoped WebSocket delivery
+built-in channels, direct messages, groups, record links, and N1 file sharing
+record version history and recoverable Trash
+uploaded N1 deployment branding
 audit logging
 verified SQLite backups to N1
 real-time WebSocket synchronization
@@ -1299,16 +1397,16 @@ responsive light/dark interface
 Cargo package version:
 
 ```text
-1.0.0
+2.0.0
 ```
 
 Product/release name:
 
 ```text
-MX 1.0
+MX 2.0
 ```
 
-Future additions can evolve the platform without redefining the 1.0 identity:
+Future additions can evolve the platform without redefining the 2.0 identity:
 MX remains a schema-driven, self-hosted general-purpose information system.
 
 ---

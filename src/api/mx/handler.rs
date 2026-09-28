@@ -27,13 +27,15 @@ use uuid::Uuid;
 use crate::{
     api::{
         api_error::SqliteError,
+        lifecycle::{capture_record_lifecycle_event, ensure_record_lifecycle_schema},
         live::publish_live_event,
+        modules::module_can,
         mx::{
             attachment_fields::{ensure_attachment_fields_schema, load_attachment_field_db},
             model::{CreateEntryRequest, Entry, FileAttachment, UpdateEntryRequest},
-            records::ensure_record_collaboration_schema,
             storage::{ResolvedRecordStorage, StorageResolutionError, resolve_record_storage},
         },
+        notifications::notify_module_readers,
     },
     config::load_config::CONFIG,
     db::connector::{SqliteDatabaseError, with_sql_connection},
@@ -166,6 +168,45 @@ struct AttachmentMove {
 
 fn api_json(status: StatusCode, body: JsonValue) -> Response {
     (status, Json(body)).into_response()
+}
+
+async fn record_module_permission(
+    record_uid: String,
+    access_level: i64,
+    capability: &'static str,
+) -> Option<String> {
+    tokio::task::spawn_blocking(move || {
+        with_sql_connection(|connection| {
+            ensure_record_lifecycle_schema(connection)?;
+            let module_uid = connection.query_row(
+                "SELECT module_uid FROM mx_records WHERE uid=?1 AND deleted_at IS NULL",
+                params![record_uid],
+                |row| row.get::<_, String>(0),
+            )?;
+            if module_can(connection, &module_uid, access_level, capability)? {
+                Ok(Some(module_uid))
+            } else {
+                Ok(None)
+            }
+        })
+    })
+    .await
+    .ok()
+    .and_then(Result::ok)
+    .flatten()
+}
+
+async fn attachment_field_belongs_to_module(field_uid: String, module_uid: String) -> bool {
+    tokio::task::spawn_blocking(move || {
+        with_sql_connection(|connection| {
+            ensure_record_lifecycle_schema(connection)?;
+            connection.query_row(
+                "SELECT EXISTS(SELECT 1 FROM mx_fields WHERE uid=?1 AND module_uid=?2 AND active=1 AND field_type='attachments')",
+                params![field_uid,module_uid],
+                |row| row.get::<_, bool>(0),
+            )
+        })
+    }).await.ok().and_then(Result::ok).unwrap_or(false)
 }
 
 fn mx_access_denied() -> Response {
@@ -353,20 +394,20 @@ pub(crate) async fn n1_access_token() -> Result<String, MxOperationError> {
     {
         let guard = n1_token_cache().read().await;
 
-        if let Some(cached) = guard.as_ref() {
-            if cached.expires_at > Instant::now() + safety_window {
-                return Ok(cached.access_token.clone());
-            }
+        if let Some(cached) = guard.as_ref()
+            && cached.expires_at > Instant::now() + safety_window
+        {
+            return Ok(cached.access_token.clone());
         }
     }
 
     let mut guard = n1_token_cache().write().await;
 
     // Another request may have refreshed the token while this request waited.
-    if let Some(cached) = guard.as_ref() {
-        if cached.expires_at > Instant::now() + safety_window {
-            return Ok(cached.access_token.clone());
-        }
+    if let Some(cached) = guard.as_ref()
+        && cached.expires_at > Instant::now() + safety_window
+    {
+        return Ok(cached.access_token.clone());
     }
 
     let base_url = n1_base_url()?;
@@ -425,8 +466,6 @@ fn sanitize_namespace_component(value: &str, fallback: &str) -> String {
             || character == '_'
         {
             output.push(character);
-        } else if character.is_whitespace() {
-            output.push('_');
         } else {
             output.push('_');
         }
@@ -749,7 +788,7 @@ fn attachment_extension(file_name: &str) -> Option<String> {
     }
 }
 
-fn office_preview_supported(file_name: &str) -> bool {
+pub(crate) fn office_preview_supported(file_name: &str) -> bool {
     matches!(
         attachment_extension(file_name).as_deref(),
         Some(
@@ -804,7 +843,7 @@ fn mx_preview_cache_path(attachment: &FileAttachment) -> PathBuf {
     ))
 }
 
-fn generate_office_pdf_preview(
+pub(crate) fn generate_office_pdf_preview(
     attachment: FileAttachment,
     original_bytes: Vec<u8>,
 ) -> Result<Vec<u8>, String> {
@@ -892,7 +931,11 @@ fn generate_office_pdf_preview(
     result
 }
 
-fn inline_attachment_response(bytes: Vec<u8>, content_type: &str, file_name: &str) -> Response {
+pub(crate) fn inline_attachment_response(
+    bytes: Vec<u8>,
+    content_type: &str,
+    file_name: &str,
+) -> Response {
     let safe_name = file_name.replace('"', "_");
 
     let mut response = Response::new(Body::from(bytes));
@@ -1648,8 +1691,7 @@ pub async fn execute_list_mx_records(
                 SQL query instead of one query per MX entry.
                 */
                 if !entries.is_empty() {
-                    let placeholders = std::iter::repeat("?")
-                        .take(entries.len())
+                    let placeholders = std::iter::repeat_n("?", entries.len())
                         .collect::<Vec<_>>()
                         .join(",");
 
@@ -1720,11 +1762,7 @@ pub async fn execute_list_mx_records(
 
                 let total = total.max(0) as usize;
 
-                let total_pages = if total == 0 {
-                    1
-                } else {
-                    (total + limit - 1) / limit
-                };
+                let total_pages = if total == 0 { 1 } else { total.div_ceil(limit) };
 
                 let has_next = page < total_pages;
 
@@ -1875,50 +1913,6 @@ async fn execute_get_stored_entry(entry_uid: String) -> Result<StoredEntry, Sqli
 
     match database_result {
         Ok(Ok(entry)) => Ok(entry),
-
-        Ok(Err(SqliteDatabaseError::Sqlite(rusqlite::Error::QueryReturnedNoRows))) => {
-            Err(SqliteError::NotFound)
-        }
-
-        Ok(Err(_)) => Err(SqliteError::SqliteDatabaseError),
-        Err(_) => Err(SqliteError::JoinError),
-    }
-}
-
-async fn execute_get_storage_identity(entry_uid: String) -> Result<StorageIdentity, SqliteError> {
-    let database_result =
-        tokio::task::spawn_blocking(move || -> Result<StorageIdentity, SqliteDatabaseError> {
-            with_sql_connection(|connection| {
-                ensure_mx_record_schema(connection)?;
-                connection.query_row(
-                    r#"
-                            SELECT
-                                control_year,
-                                control_no,
-                                date,
-                                office
-                            FROM mx_records
-                            WHERE uid = ?1
-                            "#,
-                    params![entry_uid],
-                    |row| {
-                        let control_no: i64 = row.get(1)?;
-
-                        let _control_year: i32 = row.get(0)?;
-
-                        Ok(StorageIdentity {
-                            control_no: control_no.max(0) as u64,
-                            date: row.get(2)?,
-                            office: row.get(3)?,
-                        })
-                    },
-                )
-            })
-        })
-        .await;
-
-    match database_result {
-        Ok(Ok(identity)) => Ok(identity),
 
         Ok(Err(SqliteDatabaseError::Sqlite(rusqlite::Error::QueryReturnedNoRows))) => {
             Err(SqliteError::NotFound)
@@ -2109,63 +2103,6 @@ async fn execute_get_attachment(
     }
 }
 
-async fn execute_list_attachments_for_entry(
-    entry_uid: String,
-) -> Result<Vec<FileAttachment>, SqliteError> {
-    let database_result = tokio::task::spawn_blocking(
-        move || -> Result<Vec<FileAttachment>, SqliteDatabaseError> {
-            with_sql_connection(|connection| {
-                ensure_mx_record_schema(connection)?;
-                ensure_attachment_fields_schema(connection)?;
-                let mut statement = connection.prepare(
-                    r#"
-                            SELECT
-                                uid,
-                                file_name,
-                                mime_type,
-                                size,
-                                object_key,
-                                version_id,
-                                attachment_field_uid,
-                                attachment_field_label,
-                                attachment_field_storage_name
-                            FROM mx_attachments
-                            WHERE entry_uid = ?1
-                            ORDER BY rowid ASC
-                            "#,
-                )?;
-
-                let attachments = statement
-                    .query_map(params![entry_uid], |row| {
-                        let size: i64 = row.get(3)?;
-
-                        Ok(FileAttachment {
-                            uid: row.get(0)?,
-                            file_name: row.get(1)?,
-                            mime_type: row.get(2)?,
-                            size: size.max(0) as u64,
-                            object_key: row.get(4)?,
-                            version_id: row.get(5)?,
-                            attachment_field_uid: row.get(6)?,
-                            attachment_field_label: row.get(7)?,
-                            attachment_field_storage_name: row.get(8)?,
-                        })
-                    })?
-                    .collect::<Result<Vec<_>, rusqlite::Error>>()?;
-
-                Ok(attachments)
-            })
-        },
-    )
-    .await;
-
-    match database_result {
-        Ok(Ok(attachments)) => Ok(attachments),
-        Ok(Err(_)) => Err(SqliteError::SqliteDatabaseError),
-        Err(_) => Err(SqliteError::JoinError),
-    }
-}
-
 async fn execute_delete_attachment_metadata(
     entry_uid: String,
     attachment_uid: String,
@@ -2186,61 +2123,6 @@ async fn execute_delete_attachment_metadata(
                 if affected == 0 {
                     return Err(rusqlite::Error::QueryReturnedNoRows);
                 }
-
-                Ok(())
-            })
-        })
-        .await;
-
-    match database_result {
-        Ok(Ok(())) => Ok(()),
-
-        Ok(Err(SqliteDatabaseError::Sqlite(rusqlite::Error::QueryReturnedNoRows))) => {
-            Err(SqliteError::NotFound)
-        }
-
-        Ok(Err(_)) => Err(SqliteError::SqliteDatabaseError),
-        Err(_) => Err(SqliteError::JoinError),
-    }
-}
-
-async fn execute_delete_entry_metadata(entry_uid: String) -> Result<(), SqliteError> {
-    let database_result =
-        tokio::task::spawn_blocking(move || -> Result<(), SqliteDatabaseError> {
-            with_sql_connection(|connection| {
-                ensure_mx_record_schema(connection)?;
-                ensure_record_collaboration_schema(connection)?;
-                let transaction = connection.unchecked_transaction()?;
-
-                transaction.execute(
-                    r#"
-                        DELETE FROM mx_attachments
-                        WHERE entry_uid = ?1
-                        "#,
-                    params![&entry_uid],
-                )?;
-
-                transaction.execute(
-                    r#"
-                        DELETE FROM mx_record_field_revisions
-                        WHERE record_uid = ?1
-                        "#,
-                    params![&entry_uid],
-                )?;
-
-                let affected = transaction.execute(
-                    r#"
-                        DELETE FROM mx_records
-                        WHERE uid = ?1
-                        "#,
-                    params![&entry_uid],
-                )?;
-
-                if affected == 0 {
-                    return Err(rusqlite::Error::QueryReturnedNoRows);
-                }
-
-                transaction.commit()?;
 
                 Ok(())
             })
@@ -2310,11 +2192,7 @@ pub async fn execute_upload_mx_attachment(
     let result = tokio::task::spawn_blocking(move || -> Result<_, SqliteDatabaseError> {
         with_sql_connection(|connection| {
             ensure_attachment_fields_schema(connection)?;
-            Ok(load_attachment_field_db(
-                connection,
-                &field_uid_for_lookup,
-                true,
-            )?)
+            load_attachment_field_db(connection, &field_uid_for_lookup, true)
         })
     })
     .await;
@@ -2361,13 +2239,13 @@ pub async fn execute_upload_mx_attachment(
             field.label
         )));
     }
-    if let Some(max_files) = field.max_files {
-        if current_count >= max_files {
-            return Err(MxOperationError::InvalidRequest(format!(
-                "{} already contains the configured maximum of {} file(s).",
-                field.label, max_files
-            )));
-        }
+    if let Some(max_files) = field.max_files
+        && current_count >= max_files
+    {
+        return Err(MxOperationError::InvalidRequest(format!(
+            "{} already contains the configured maximum of {} file(s).",
+            field.label, max_files
+        )));
     }
 
     let storage = match resolve_record_storage(entry_uid.clone()).await {
@@ -2439,45 +2317,6 @@ pub async fn execute_delete_mx_attachment(
         return Err(MxOperationError::Sqlite(error));
     }
 
-    Ok(())
-}
-
-pub async fn execute_delete_mx_record_with_attachments(
-    entry_uid: String,
-) -> Result<(), MxOperationError> {
-    // Ensure the entry exists before touching N1.
-    execute_get_storage_identity(entry_uid.clone()).await?;
-
-    let attachments = execute_list_attachments_for_entry(entry_uid.clone()).await?;
-
-    let mut deleted_object_keys: Vec<String> = Vec::new();
-
-    for attachment in &attachments {
-        match n1_soft_delete(&attachment.object_key).await {
-            Ok(()) => {
-                deleted_object_keys.push(attachment.object_key.clone());
-            }
-
-            Err(error) => {
-                for object_key in deleted_object_keys.iter().rev() {
-                    let _ = n1_recover(object_key).await;
-                }
-
-                return Err(error);
-            }
-        }
-    }
-
-    if let Err(error) = execute_delete_entry_metadata(entry_uid).await {
-        for object_key in deleted_object_keys.iter().rev() {
-            let _ = n1_recover(object_key).await;
-        }
-
-        return Err(MxOperationError::Sqlite(error));
-    }
-
-    // The yearly sequence is intentionally NOT decremented.
-    // Deleted control numbers are never reused.
     Ok(())
 }
 
@@ -2575,12 +2414,12 @@ async fn execute_update_entry_with_n1_moves(
     if let Err(error) =
         execute_update_mx_record_db(entry_uid.clone(), request.clone(), moves.clone()).await
     {
-        if !moves.is_empty() {
-            if let Ok(token) = n1_access_token().await {
-                for moved in moves.iter().rev() {
-                    if moved.old_key != moved.new_key {
-                        let _ = n1_rename(&moved.new_key, &moved.old_key, &token).await;
-                    }
+        if !moves.is_empty()
+            && let Ok(token) = n1_access_token().await
+        {
+            for moved in moves.iter().rev() {
+                if moved.old_key != moved.new_key {
+                    let _ = n1_rename(&moved.new_key, &moved.old_key, &token).await;
                 }
             }
         }
@@ -2677,30 +2516,11 @@ pub async fn list_mx_records(claims: Claims, Query(query): Query<MxListQuery>) -
     }
 }
 
-pub async fn delete_mx_record(claims: Claims, Path(uid): Path<String>) -> Response {
-    if !claims.can_delete_records() {
-        return mx_access_denied();
-    }
-
-    let deleted_uid = uid.clone();
-    match execute_delete_mx_record_with_attachments(uid).await {
-        Ok(()) => {
-            publish_live_event(
-                "record.deleted",
-                Some(&claims.uid),
-                json!({"record_uid": deleted_uid}),
-            );
-            StatusCode::NO_CONTENT.into_response()
-        }
-
-        Err(error) => map_mx_error(error),
-    }
-}
-
 async fn upload_mx_attachments_inner(
     entry_uid: String,
     attachment_field_uid: String,
     actor_uid: String,
+    module_uid: String,
     mut multipart: Multipart,
 ) -> Response {
     let mut uploaded: Vec<FileAttachment> = Vec::new();
@@ -2773,6 +2593,21 @@ async fn upload_mx_attachments_inner(
             }),
         );
     }
+    capture_record_lifecycle_event(entry_uid.clone(), actor_uid.clone(), "attachments_added").await;
+    for attachment in &uploaded {
+        tokio::spawn(notify_module_readers(
+            module_uid.clone(),
+            actor_uid.clone(),
+            "attachment.received".to_string(),
+            "Attachment received".to_string(),
+            format!(
+                "{} was attached to a record you can access.",
+                attachment.file_name
+            ),
+            entry_uid.clone(),
+            json!({"record_uid":entry_uid,"module_uid":module_uid,"attachment_uid":attachment.uid,"file_name":attachment.file_name}),
+        ));
+    }
 
     api_json(StatusCode::CREATED, json!({"attachments":uploaded}))
 }
@@ -2785,14 +2620,36 @@ pub async fn upload_mx_attachment_field(
     if !claims.can_write_records() {
         return mx_access_denied();
     }
-    upload_mx_attachments_inner(entry_uid, attachment_field_uid, claims.uid, multipart).await
+    let Some(module_uid) =
+        record_module_permission(entry_uid.clone(), claims.access_level, "update").await
+    else {
+        return mx_access_denied();
+    };
+    if !attachment_field_belongs_to_module(attachment_field_uid.clone(), module_uid.clone()).await {
+        return api_json(
+            StatusCode::BAD_REQUEST,
+            json!({"response":"the attachment field does not belong to this record module"}),
+        );
+    }
+    upload_mx_attachments_inner(
+        entry_uid,
+        attachment_field_uid,
+        claims.uid,
+        module_uid,
+        multipart,
+    )
+    .await
 }
 
 pub async fn delete_mx_attachment(
     claims: Claims,
     Path((entry_uid, attachment_uid)): Path<(String, String)>,
 ) -> Response {
-    if !claims.can_delete_records() {
+    if !claims.can_delete_records()
+        || record_module_permission(entry_uid.clone(), claims.access_level, "delete")
+            .await
+            .is_none()
+    {
         return mx_access_denied();
     }
 
@@ -2801,6 +2658,12 @@ pub async fn delete_mx_attachment(
 
     match execute_delete_mx_attachment(entry_uid, attachment_uid).await {
         Ok(()) => {
+            capture_record_lifecycle_event(
+                record_uid.clone(),
+                claims.uid.clone(),
+                "attachment_deleted",
+            )
+            .await;
             publish_live_event(
                 "attachment.deleted",
                 Some(&claims.uid),
@@ -2820,7 +2683,11 @@ pub async fn preview_mx_attachment(
     claims: Claims,
     Path((entry_uid, attachment_uid)): Path<(String, String)>,
 ) -> Response {
-    if !claims.can_read_records() {
+    if !claims.can_read_records()
+        || record_module_permission(entry_uid.clone(), claims.access_level, "read")
+            .await
+            .is_none()
+    {
         return mx_access_denied();
     }
 
@@ -2893,7 +2760,11 @@ pub async fn download_mx_attachment(
     claims: Claims,
     Path((entry_uid, attachment_uid)): Path<(String, String)>,
 ) -> Response {
-    if !claims.can_read_records() {
+    if !claims.can_read_records()
+        || record_module_permission(entry_uid.clone(), claims.access_level, "read")
+            .await
+            .is_none()
+    {
         return mx_access_denied();
     }
 

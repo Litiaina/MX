@@ -181,4 +181,31 @@ mod tests {
             CredentialStatus::Invalid
         );
     }
+
+    #[test]
+    fn active_totp_never_accepts_password_only_login() {
+        let connection = test_connection(Some("JBSWY3DPEHPK3PXP"));
+        assert_eq!(
+            verify_user_credentials(
+                &connection,
+                "user-1",
+                "correct horse battery staple",
+                None,
+                None,
+            )
+            .unwrap(),
+            CredentialStatus::SecondFactorRequired
+        );
+        assert_eq!(
+            verify_user_credentials(
+                &connection,
+                "user-1",
+                "correct horse battery staple",
+                Some("000000"),
+                None,
+            )
+            .unwrap(),
+            CredentialStatus::Invalid
+        );
+    }
 }

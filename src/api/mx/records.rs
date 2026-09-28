@@ -13,15 +13,18 @@ use uuid::Uuid;
 
 use crate::{
     api::{
+        lifecycle::{capture_record_version, ensure_record_lifecycle_schema},
         live::publish_live_event,
+        modules::{DEFAULT_MODULE_UID, module_can},
         mx::{
             attachment_fields::ensure_attachment_fields_schema,
             model::FileAttachment,
             schema::{
-                FieldDefinition, ensure_dynamic_schema, field_map_by_key, load_active_schema,
-                load_fields_db,
+                FieldDefinition, ensure_dynamic_schema, field_map_by_key,
+                load_active_module_schema, load_module_fields_db,
             },
         },
+        notifications::notify_module_readers,
     },
     db::connector::{SqliteDatabaseError, with_sql_connection},
     middleware::auth::Claims,
@@ -865,8 +868,7 @@ fn load_field_revisions(
         return Ok(HashMap::new());
     }
 
-    let placeholders = std::iter::repeat("?")
-        .take(record_uids.len())
+    let placeholders = std::iter::repeat_n("?", record_uids.len())
         .collect::<Vec<_>>()
         .join(",");
     let params = record_uids
@@ -879,7 +881,7 @@ fn load_field_revisions(
     let mut revisions: HashMap<String, BTreeMap<String, i64>> = HashMap::new();
     let sql = format!(
         r#"
-        SELECT rv.record_uid, f.field_key
+        SELECT rv.record_uid, COALESCE(f.module_key, f.field_key)
         FROM mx_record_values rv
         JOIN mx_fields f ON f.uid = rv.field_uid
         WHERE rv.record_uid IN ({placeholders})
@@ -897,7 +899,7 @@ fn load_field_revisions(
     // the field value was cleared.
     let sql = format!(
         r#"
-        SELECT r.record_uid, f.field_key, r.revision
+        SELECT r.record_uid, COALESCE(f.module_key, f.field_key), r.revision
         FROM mx_record_field_revisions r
         JOIN mx_fields f ON f.uid = r.field_uid
         WHERE r.record_uid IN ({placeholders})
@@ -919,6 +921,7 @@ fn load_field_revisions(
 }
 
 fn patch_record_db(
+    module_uid: String,
     uid: String,
     changes: BTreeMap<String, Option<NormalizedValue>>,
     raw_changes: BTreeMap<String, Value>,
@@ -928,14 +931,15 @@ fn patch_record_db(
     with_sql_connection(|connection| {
         ensure_dynamic_schema(connection)?;
         ensure_record_collaboration_schema(connection)?;
+        ensure_record_lifecycle_schema(connection)?;
 
-        let fields = load_fields_db(connection, false)?;
+        let fields = load_module_fields_db(connection, &module_uid, false)?;
         let field_map = field_map_by_key(&fields);
         let transaction = connection.unchecked_transaction()?;
 
         let exists = transaction.query_row(
-            "SELECT EXISTS(SELECT 1 FROM mx_records WHERE uid = ?1)",
-            params![&uid],
+            "SELECT EXISTS(SELECT 1 FROM mx_records WHERE uid = ?1 AND module_uid = ?2 AND deleted_at IS NULL)",
+            params![&uid, module_uid],
             |row| row.get::<_, i64>(0),
         )? != 0;
 
@@ -998,6 +1002,10 @@ fn patch_record_db(
                     .unwrap_or(Value::Null),
             );
             new_revisions.insert(key.clone(), next_revision);
+        }
+
+        if !changed_values.is_empty() {
+            capture_record_version(&transaction, &uid, &module_uid, "updated", &actor_uid)?;
         }
 
         transaction.commit()?;
@@ -1069,13 +1077,15 @@ fn next_hidden_legacy_number(transaction: &rusqlite::Transaction<'_>) -> rusqlit
 }
 
 fn create_record_db(
+    module_uid: String,
     request_values: BTreeMap<String, NormalizedValue>,
     actor_uid: String,
 ) -> Result<String, SqliteDatabaseError> {
     with_sql_connection(|connection| {
         ensure_dynamic_schema(connection)?;
         ensure_record_collaboration_schema(connection)?;
-        let fields = load_fields_db(connection, false)?;
+        ensure_record_lifecycle_schema(connection)?;
+        let fields = load_module_fields_db(connection, &module_uid, false)?;
         let transaction = connection.unchecked_transaction()?;
         let uid = Uuid::new_v4().to_string();
         let mut values = request_values;
@@ -1113,8 +1123,9 @@ fn create_record_db(
                 subject,
                 routed_to_div,
                 remarks
+                ,module_uid
             ) VALUES (
-                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9
+                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10
             )
             "#,
             params![
@@ -1127,11 +1138,13 @@ fn create_record_db(
                 subject,
                 routed_to_div,
                 remarks,
+                module_uid,
             ],
         )?;
 
         write_dynamic_values(&transaction, &uid, &fields, &values)?;
         initialize_field_revisions(&transaction, &uid, &fields, &values, &actor_uid)?;
+        capture_record_version(&transaction, &uid, &module_uid, "created", &actor_uid)?;
         transaction.commit()?;
 
         Ok(uid)
@@ -1139,6 +1152,7 @@ fn create_record_db(
 }
 
 fn update_record_db(
+    module_uid: String,
     uid: String,
     request_values: BTreeMap<String, NormalizedValue>,
     actor_uid: String,
@@ -1146,7 +1160,8 @@ fn update_record_db(
     with_sql_connection(|connection| {
         ensure_dynamic_schema(connection)?;
         ensure_record_collaboration_schema(connection)?;
-        let fields = load_fields_db(connection, false)?;
+        ensure_record_lifecycle_schema(connection)?;
+        let fields = load_module_fields_db(connection, &module_uid, false)?;
         let transaction = connection.unchecked_transaction()?;
 
         let existing = transaction.query_row(
@@ -1159,9 +1174,9 @@ fn update_record_db(
                     routed_to_div,
                     remarks
                 FROM mx_records
-                WHERE uid = ?1
+                WHERE uid = ?1 AND module_uid = ?2 AND deleted_at IS NULL
                 "#,
-            params![&uid],
+            params![&uid, module_uid],
             |row| {
                 Ok((
                     row.get::<_, String>(0)?,
@@ -1233,7 +1248,7 @@ fn update_record_db(
                 subject = ?5,
                 routed_to_div = ?6,
                 remarks = ?7
-            WHERE uid = ?1
+            WHERE uid = ?1 AND module_uid = ?8 AND deleted_at IS NULL
             "#,
             params![
                 &uid,
@@ -1243,6 +1258,7 @@ fn update_record_db(
                 subject,
                 routed_to_div,
                 remarks,
+                module_uid,
             ],
         )?;
 
@@ -1252,6 +1268,7 @@ fn update_record_db(
 
         write_dynamic_values(&transaction, &uid, &fields, &values)?;
         bump_all_field_revisions(&transaction, &uid, &fields, &actor_uid)?;
+        capture_record_version(&transaction, &uid, &module_uid, "updated", &actor_uid)?;
         transaction.commit()?;
 
         Ok(())
@@ -1281,8 +1298,7 @@ fn load_record_values(
         return Ok(HashMap::new());
     }
 
-    let placeholders = std::iter::repeat("?")
-        .take(record_uids.len())
+    let placeholders = std::iter::repeat_n("?", record_uids.len())
         .collect::<Vec<_>>()
         .join(",");
 
@@ -1290,7 +1306,7 @@ fn load_record_values(
         r#"
         SELECT
             rv.record_uid,
-            f.field_key,
+            COALESCE(f.module_key, f.field_key),
             f.field_type,
             rv.value_text,
             rv.value_integer,
@@ -1343,8 +1359,7 @@ fn load_attachments(
         return Ok(HashMap::new());
     }
 
-    let placeholders = std::iter::repeat("?")
-        .take(record_uids.len())
+    let placeholders = std::iter::repeat_n("?", record_uids.len())
         .collect::<Vec<_>>()
         .join(",");
 
@@ -1413,11 +1428,15 @@ fn sql_value_expression(alias: &str) -> String {
 }
 
 fn build_where_clause(
+    module_uid: &str,
     query: &DynamicListQuery,
     fields: &[FieldDefinition],
 ) -> Result<(String, Vec<SqlValue>), String> {
-    let mut conditions: Vec<String> = Vec::new();
-    let mut sql_params: Vec<SqlValue> = Vec::new();
+    let mut conditions: Vec<String> = vec![
+        "e.module_uid = ?".to_string(),
+        "e.deleted_at IS NULL".to_string(),
+    ];
+    let mut sql_params: Vec<SqlValue> = vec![SqlValue::Text(module_uid.to_string())];
     let match_mode = normalize_match_mode(query.match_mode.as_deref());
     let expression = sql_value_expression("rv");
 
@@ -1591,10 +1610,14 @@ fn build_order_clause(query: &DynamicListQuery, fields: &[FieldDefinition]) -> S
     )
 }
 
-fn list_records_db(query: DynamicListQuery) -> Result<DynamicPage, SqliteDatabaseError> {
+fn list_records_db(
+    module_uid: String,
+    query: DynamicListQuery,
+) -> Result<DynamicPage, SqliteDatabaseError> {
     with_sql_connection(|connection| {
         ensure_dynamic_schema(connection)?;
-        let fields = load_fields_db(connection, false)?;
+        ensure_record_lifecycle_schema(connection)?;
+        let fields = load_module_fields_db(connection, &module_uid, false)?;
 
         let page = query.page.unwrap_or(1).max(1);
         let limit = query
@@ -1603,8 +1626,8 @@ fn list_records_db(query: DynamicListQuery) -> Result<DynamicPage, SqliteDatabas
             .clamp(1, MAX_PAGE_LIMIT);
         let offset = page.saturating_sub(1).saturating_mul(limit);
 
-        let (where_clause, mut base_params) =
-            build_where_clause(&query, &fields).map_err(rusqlite::Error::InvalidParameterName)?;
+        let (where_clause, mut base_params) = build_where_clause(&module_uid, &query, &fields)
+            .map_err(rusqlite::Error::InvalidParameterName)?;
 
         let count_sql = format!(
             r#"
@@ -1655,11 +1678,7 @@ fn list_records_db(query: DynamicListQuery) -> Result<DynamicPage, SqliteDatabas
             .collect::<Vec<_>>();
 
         let total = total.max(0) as usize;
-        let total_pages = if total == 0 {
-            1
-        } else {
-            (total + limit - 1) / limit
-        };
+        let total_pages = if total == 0 { 1 } else { total.div_ceil(limit) };
 
         Ok(DynamicPage {
             data,
@@ -1672,15 +1691,16 @@ fn list_records_db(query: DynamicListQuery) -> Result<DynamicPage, SqliteDatabas
     })
 }
 
-fn get_record_db(uid: String) -> Result<DynamicRecord, SqliteDatabaseError> {
+fn get_record_db(module_uid: String, uid: String) -> Result<DynamicRecord, SqliteDatabaseError> {
     with_sql_connection(|connection| {
         ensure_dynamic_schema(connection)?;
         ensure_record_collaboration_schema(connection)?;
+        ensure_record_lifecycle_schema(connection)?;
 
         let exists = connection
             .query_row(
-                "SELECT uid FROM mx_records WHERE uid = ?1",
-                params![&uid],
+                "SELECT uid FROM mx_records WHERE uid = ?1 AND module_uid = ?2 AND deleted_at IS NULL",
+                params![&uid, module_uid],
                 |row| row.get::<_, String>(0),
             )
             .optional()?;
@@ -1740,236 +1760,230 @@ fn database_error_response(error: SqliteDatabaseError) -> Response {
     }
 }
 
-pub async fn create_mx_record(
+async fn module_permission(module_uid: &str, access_level: i64, capability: &str) -> bool {
+    let module_uid = module_uid.to_string();
+    let capability = capability.to_string();
+    tokio::task::spawn_blocking(move || {
+        with_sql_connection(|connection| {
+            module_can(connection, &module_uid, access_level, &capability)
+        })
+    })
+    .await
+    .ok()
+    .and_then(Result::ok)
+    .unwrap_or(false)
+}
+
+async fn create_record_for_module(
     claims: Claims,
-    Json(request): Json<DynamicRecordRequest>,
+    module_uid: String,
+    request: DynamicRecordRequest,
 ) -> Response {
-    if !claims.can_write_records() {
+    if !claims.can_write_records()
+        || !module_permission(&module_uid, claims.access_level, "create").await
+    {
         return access_denied();
     }
-
-    let schema = match load_active_schema().await {
+    let schema = match load_active_module_schema(module_uid.clone()).await {
         Ok(schema) => schema,
         Err(error) => {
-            crate::report_error!(error, "function", "create_mx_record()");
-
+            crate::report_error!(error, "function", "create_record_for_module()");
             return api_json(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                json!({ "response": "failed to load MX record structure" }),
+                StatusCode::NOT_FOUND,
+                json!({"response":"module structure was not found"}),
             );
         }
     };
-
     let normalized = match validate_payload(&schema.fields, &request.values) {
         Ok(values) => values,
-        Err(error) => {
-            return api_json(StatusCode::BAD_REQUEST, json!({ "response": error }));
-        }
+        Err(error) => return api_json(StatusCode::BAD_REQUEST, json!({"response":error})),
     };
-
     let actor_uid = claims.uid.clone();
-    let database_result =
-        tokio::task::spawn_blocking(move || create_record_db(normalized, actor_uid)).await;
-
-    let uid = match database_result {
+    let db_module_uid = module_uid.clone();
+    let uid = match tokio::task::spawn_blocking(move || {
+        create_record_db(db_module_uid, normalized, actor_uid)
+    })
+    .await
+    {
         Ok(Ok(uid)) => uid,
         Ok(Err(error)) => return database_error_response(error),
         Err(error) => {
-            crate::report_error!(format!("{error}"), "function", "create_mx_record()");
-
+            crate::report_error!(format!("{error}"), "function", "create_record_for_module()");
             return api_json(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                json!({ "response": "record creation task failed" }),
+                json!({"response":"record creation task failed"}),
             );
         }
     };
-
-    let record_result = tokio::task::spawn_blocking(move || get_record_db(uid)).await;
-
-    match record_result {
+    match tokio::task::spawn_blocking({
+        let module_uid = module_uid.clone();
+        move || get_record_db(module_uid, uid)
+    })
+    .await
+    {
         Ok(Ok(record)) => {
             publish_live_event(
                 "record.created",
                 Some(&claims.uid),
-                json!({"record_uid": record.uid}),
+                json!({"record_uid":record.uid,"module_uid":module_uid}),
             );
+            tokio::spawn(notify_module_readers(
+                module_uid.clone(),
+                claims.uid.clone(),
+                "record.created".to_string(),
+                "Record created".to_string(),
+                "A record was added to a module you can access.".to_string(),
+                record.uid.clone(),
+                json!({"record_uid":record.uid,"module_uid":module_uid}),
+            ));
             api_json(StatusCode::CREATED, json!(record))
         }
         Ok(Err(error)) => database_error_response(error),
-        Err(error) => {
-            crate::report_error!(format!("{error}"), "function", "create_mx_record()");
-
-            api_json(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                json!({ "response": "record was created but could not be reloaded" }),
-            )
-        }
+        Err(_) => api_json(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            json!({"response":"record was created but could not be reloaded"}),
+        ),
     }
 }
 
-pub async fn update_mx_record(
+async fn update_record_for_module(
     claims: Claims,
-    Path(uid): Path<String>,
-    Json(request): Json<DynamicRecordRequest>,
+    module_uid: String,
+    uid: String,
+    request: DynamicRecordRequest,
 ) -> Response {
-    if !claims.can_write_records() {
+    if !claims.can_write_records()
+        || !module_permission(&module_uid, claims.access_level, "update").await
+    {
         return access_denied();
     }
-
-    let schema = match load_active_schema().await {
+    let schema = match load_active_module_schema(module_uid.clone()).await {
         Ok(schema) => schema,
-        Err(error) => {
-            crate::report_error!(error, "function", "update_mx_record()");
-
+        Err(_) => {
             return api_json(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                json!({ "response": "failed to load MX record structure" }),
+                StatusCode::NOT_FOUND,
+                json!({"response":"module structure was not found"}),
             );
         }
     };
-
     let normalized = match validate_payload(&schema.fields, &request.values) {
         Ok(values) => values,
-        Err(error) => {
-            return api_json(StatusCode::BAD_REQUEST, json!({ "response": error }));
-        }
+        Err(error) => return api_json(StatusCode::BAD_REQUEST, json!({"response":error})),
     };
-
-    let uid_for_update = uid.clone();
+    let db_uid = uid.clone();
+    let db_module_uid = module_uid.clone();
     let actor_uid = claims.uid.clone();
-    let database_result = tokio::task::spawn_blocking(move || {
-        update_record_db(uid_for_update, normalized, actor_uid)
+    match tokio::task::spawn_blocking(move || {
+        update_record_db(db_module_uid, db_uid, normalized, actor_uid)
     })
-    .await;
-
-    match database_result {
+    .await
+    {
         Ok(Ok(())) => {}
         Ok(Err(error)) => return database_error_response(error),
-        Err(error) => {
-            crate::report_error!(format!("{error}"), "function", "update_mx_record()");
-
+        Err(_) => {
             return api_json(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                json!({ "response": "record update task failed" }),
+                json!({"response":"record update task failed"}),
             );
         }
     }
-
-    let record_result = tokio::task::spawn_blocking(move || get_record_db(uid)).await;
-
-    match record_result {
+    match tokio::task::spawn_blocking({
+        let module_uid = module_uid.clone();
+        move || get_record_db(module_uid, uid)
+    })
+    .await
+    {
         Ok(Ok(record)) => {
             publish_live_event(
                 "record.updated",
                 Some(&claims.uid),
-                json!({
-                    "record_uid": record.uid,
-                    "mode": "legacy_full_update"
-                }),
+                json!({"record_uid":record.uid,"module_uid":module_uid}),
             );
+            tokio::spawn(notify_module_readers(
+                module_uid.clone(),
+                claims.uid.clone(),
+                "record.updated".to_string(),
+                "Record updated".to_string(),
+                "A record in a module you can access was updated.".to_string(),
+                record.uid.clone(),
+                json!({"record_uid":record.uid,"module_uid":module_uid}),
+            ));
             api_json(StatusCode::OK, json!(record))
         }
         Ok(Err(error)) => database_error_response(error),
-        Err(error) => {
-            crate::report_error!(format!("{error}"), "function", "update_mx_record()");
-
-            api_json(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                json!({ "response": "record was updated but could not be reloaded" }),
-            )
-        }
+        Err(_) => api_json(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            json!({"response":"record was updated but could not be reloaded"}),
+        ),
     }
 }
 
-pub async fn get_mx_record(claims: Claims, Path(uid): Path<String>) -> Response {
-    if !claims.can_read_records() {
+async fn get_record_for_module(claims: Claims, module_uid: String, uid: String) -> Response {
+    if !claims.can_read_records()
+        || !module_permission(&module_uid, claims.access_level, "read").await
+    {
         return access_denied();
     }
-
-    let result = tokio::task::spawn_blocking(move || get_record_db(uid)).await;
-    match result {
+    match tokio::task::spawn_blocking(move || get_record_db(module_uid, uid)).await {
         Ok(Ok(record)) => api_json(StatusCode::OK, json!(record)),
         Ok(Err(error)) => database_error_response(error),
-        Err(error) => {
-            crate::report_error!(format!("{error}"), "function", "get_mx_record()");
-            api_json(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                json!({"response":"record lookup task failed"}),
-            )
-        }
+        Err(_) => api_json(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            json!({"response":"record lookup task failed"}),
+        ),
     }
 }
 
-pub async fn patch_mx_record(
+async fn patch_record_for_module(
     claims: Claims,
-    Path(uid): Path<String>,
-    Json(request): Json<DynamicPatchRequest>,
+    module_uid: String,
+    uid: String,
+    request: DynamicPatchRequest,
 ) -> Response {
-    if !claims.can_write_records() {
+    if !claims.can_write_records()
+        || !module_permission(&module_uid, claims.access_level, "update").await
+    {
         return access_denied();
     }
-
-    let schema = match load_active_schema().await {
+    let schema = match load_active_module_schema(module_uid.clone()).await {
         Ok(schema) => schema,
-        Err(error) => {
-            crate::report_error!(error, "function", "patch_mx_record()");
+        Err(_) => {
             return api_json(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                json!({"response":"failed to load MX record structure"}),
+                StatusCode::NOT_FOUND,
+                json!({"response":"module structure was not found"}),
             );
         }
     };
-
     let normalized =
         match validate_patch_payload(&schema.fields, &request.changes, &request.base_revisions) {
             Ok(values) => values,
-            Err(error) => {
-                return api_json(StatusCode::BAD_REQUEST, json!({"response": error}));
-            }
+            Err(error) => return api_json(StatusCode::BAD_REQUEST, json!({"response":error})),
         };
-
     if normalized.is_empty() {
-        let uid_for_load = uid.clone();
-        return match tokio::task::spawn_blocking(move || get_record_db(uid_for_load)).await {
-            Ok(Ok(record)) => api_json(StatusCode::OK, json!(record)),
-            Ok(Err(error)) => database_error_response(error),
-            Err(error) => {
-                crate::report_error!(format!("{error}"), "function", "patch_mx_record()");
-                api_json(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    json!({"response":"record lookup task failed"}),
-                )
-            }
-        };
+        return get_record_for_module(claims, module_uid, uid).await;
     }
-
     let raw_changes = request.changes.clone();
     let base_revisions = request.base_revisions.clone();
     let actor_uid = claims.uid.clone();
-    let uid_for_patch = uid.clone();
-
-    let result = tokio::task::spawn_blocking(move || {
+    let db_uid = uid.clone();
+    let db_module_uid = module_uid.clone();
+    let outcome = match tokio::task::spawn_blocking(move || {
         patch_record_db(
-            uid_for_patch,
+            db_module_uid,
+            db_uid,
             normalized,
             raw_changes,
             base_revisions,
             actor_uid,
         )
     })
-    .await;
-
-    let outcome = match result {
+    .await
+    {
         Ok(Ok(PatchDbResult::Applied(outcome))) => outcome,
         Ok(Ok(PatchDbResult::Conflict(conflicts))) => {
             return api_json(
                 StatusCode::CONFLICT,
-                json!({
-                    "error":"field_conflict",
-                    "response":"One or more fields changed after you opened this record.",
-                    "record_uid": uid,
-                    "conflicts": conflicts,
-                }),
+                json!({"error":"field_conflict","response":"One or more fields changed after you opened this record.","record_uid":uid,"conflicts":conflicts}),
             );
         }
         Ok(Ok(PatchDbResult::NotFound)) => {
@@ -1979,56 +1993,114 @@ pub async fn patch_mx_record(
             );
         }
         Ok(Err(error)) => return database_error_response(error),
-        Err(error) => {
-            crate::report_error!(format!("{error}"), "function", "patch_mx_record()");
+        Err(_) => {
             return api_json(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 json!({"response":"record patch task failed"}),
             );
         }
     };
-
     publish_live_event(
         "record.fields.updated",
         Some(&claims.uid),
-        json!({
-            "record_uid": uid,
-            "changes": outcome.changed_values,
-            "field_revisions": outcome.field_revisions,
-        }),
+        json!({"record_uid":uid,"module_uid":module_uid,"changes":outcome.changed_values,"field_revisions":outcome.field_revisions}),
     );
-
-    let uid_for_load = uid.clone();
-    match tokio::task::spawn_blocking(move || get_record_db(uid_for_load)).await {
+    tokio::spawn(notify_module_readers(
+        module_uid.clone(),
+        claims.uid.clone(),
+        "record.updated".to_string(),
+        "Record updated".to_string(),
+        "Fields changed on a record in a module you can access.".to_string(),
+        uid.clone(),
+        json!({"record_uid":uid,"module_uid":module_uid}),
+    ));
+    match tokio::task::spawn_blocking(move || get_record_db(module_uid, uid)).await {
         Ok(Ok(record)) => api_json(StatusCode::OK, json!(record)),
         Ok(Err(error)) => database_error_response(error),
-        Err(error) => {
-            crate::report_error!(format!("{error}"), "function", "patch_mx_record()");
-            api_json(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                json!({"response":"record was updated but could not be reloaded"}),
-            )
-        }
+        Err(_) => api_json(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            json!({"response":"record was updated but could not be reloaded"}),
+        ),
     }
 }
 
-pub async fn list_mx_records(claims: Claims, Query(query): Query<DynamicListQuery>) -> Response {
-    if !claims.can_read_records() {
+async fn list_records_for_module(
+    claims: Claims,
+    module_uid: String,
+    query: DynamicListQuery,
+) -> Response {
+    if !claims.can_read_records()
+        || !module_permission(&module_uid, claims.access_level, "read").await
+    {
         return access_denied();
     }
-
-    let database_result = tokio::task::spawn_blocking(move || list_records_db(query)).await;
-
-    match database_result {
+    match tokio::task::spawn_blocking(move || list_records_db(module_uid, query)).await {
         Ok(Ok(page)) => api_json(StatusCode::OK, json!(page)),
         Ok(Err(error)) => database_error_response(error),
-        Err(error) => {
-            crate::report_error!(format!("{error}"), "function", "list_mx_records()");
-
-            api_json(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                json!({ "response": "record list task failed" }),
-            )
-        }
+        Err(_) => api_json(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            json!({"response":"record list task failed"}),
+        ),
     }
+}
+
+pub async fn create_mx_record(
+    claims: Claims,
+    Json(request): Json<DynamicRecordRequest>,
+) -> Response {
+    create_record_for_module(claims, DEFAULT_MODULE_UID.to_string(), request).await
+}
+pub async fn create_module_record(
+    claims: Claims,
+    Path(module_uid): Path<String>,
+    Json(request): Json<DynamicRecordRequest>,
+) -> Response {
+    create_record_for_module(claims, module_uid, request).await
+}
+pub async fn update_mx_record(
+    claims: Claims,
+    Path(uid): Path<String>,
+    Json(request): Json<DynamicRecordRequest>,
+) -> Response {
+    update_record_for_module(claims, DEFAULT_MODULE_UID.to_string(), uid, request).await
+}
+pub async fn update_module_record(
+    claims: Claims,
+    Path((module_uid, uid)): Path<(String, String)>,
+    Json(request): Json<DynamicRecordRequest>,
+) -> Response {
+    update_record_for_module(claims, module_uid, uid, request).await
+}
+pub async fn get_mx_record(claims: Claims, Path(uid): Path<String>) -> Response {
+    get_record_for_module(claims, DEFAULT_MODULE_UID.to_string(), uid).await
+}
+pub async fn get_module_record(
+    claims: Claims,
+    Path((module_uid, uid)): Path<(String, String)>,
+) -> Response {
+    get_record_for_module(claims, module_uid, uid).await
+}
+pub async fn patch_mx_record(
+    claims: Claims,
+    Path(uid): Path<String>,
+    Json(request): Json<DynamicPatchRequest>,
+) -> Response {
+    patch_record_for_module(claims, DEFAULT_MODULE_UID.to_string(), uid, request).await
+}
+pub async fn patch_module_record(
+    claims: Claims,
+    Path((module_uid, uid)): Path<(String, String)>,
+    Json(request): Json<DynamicPatchRequest>,
+) -> Response {
+    patch_record_for_module(claims, module_uid, uid, request).await
+}
+pub async fn list_mx_records(claims: Claims, Query(query): Query<DynamicListQuery>) -> Response {
+    list_records_for_module(claims, DEFAULT_MODULE_UID.to_string(), query).await
+}
+pub async fn list_module_records(
+    claims: Claims,
+    Path(module_uid): Path<String>,
+    Query(query): Query<DynamicListQuery>,
+) -> Response {
+    list_records_for_module(claims, module_uid, query).await
 }

@@ -141,6 +141,8 @@ async fn server() {
 
     initialize_sql_db().await;
 
+    tokio::spawn(crate::api::preferences::warm_notification_sound_cache());
+
     tracing::info!(
         "SQLite database initialized from '{}'.",
         CONFIG.database.db_path
