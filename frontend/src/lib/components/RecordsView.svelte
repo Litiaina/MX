@@ -3,6 +3,7 @@
   import ChevronDown from '@lucide/svelte/icons/chevron-down';
   import ChevronUp from '@lucide/svelte/icons/chevron-up';
   import type { LiveMessage } from '../live/client';
+  import { requestConfirmation } from '../confirmation';
   import type { ModulePermission, MxRecord, SchemaResponse } from '../api/domain';
   import { deleteRecord, getRecord, listRecords, loadModuleSchema, loadSchema } from '../api/workspace';
   import RecordEditor from './RecordEditor.svelte';
@@ -103,7 +104,11 @@
   function closeEditor() { focusAttachments = false; editor = undefined; if (openRecordUid) location.hash = `module/${encodeURIComponent(moduleUid || 'mx-default-records')}`; }
   async function removeRecord(row: MxRecord, event: MouseEvent) {
     event.stopPropagation();
-    if (!confirm(`Move this ${recordSingular.toLowerCase()} to Administrator Trash? Its attachments and history will be preserved.`)) return;
+    if (!await requestConfirmation({
+      title: `Move this ${recordSingular.toLowerCase()} to trash?`,
+      description: 'Its fields, attachments, and version history will be preserved so an administrator can inspect or restore it.',
+      confirmLabel: 'Move to trash'
+    })) return;
     deletingUid = row.uid; error = '';
     try { await deleteRecord(row.uid, moduleUid || undefined); if (rows.length === 1 && page > 1) page -= 1; await refresh(); }
     catch (reason) { error = reason instanceof Error ? reason.message : `The ${recordSingular.toLowerCase()} could not be deleted.`; }

@@ -17,6 +17,7 @@
   import { secondFactor } from '../api/auth';
   import { clearAuthTokens } from '../api/client';
   import type { Session, TotpEnrollmentResponse } from '../api/types';
+  import { requestConfirmation } from '../confirmation';
   import type { NotificationPreferences, NotificationSoundInfo, UserPreferences } from '../api/domain';
   import { deleteNotificationSound, loadNotificationSound, loadNotificationSoundInfo, loadPreferences, savePreferences, uploadNotificationSound } from '../api/workspace';
   import { decodeNotificationSound, playNotificationSound } from '../util/notificationAudio';
@@ -118,7 +119,11 @@
     } catch (reason) { fail(reason); } finally { busyAction = ''; }
   }
   async function removeCustomSound() {
-    if (!accountPreferences || !notifications || !notificationSound.exists || !window.confirm('Remove your custom notification sound and use the MX sound?')) return;
+    if (!accountPreferences || !notifications || !notificationSound.exists || !await requestConfirmation({
+      title: 'Remove custom notification sound?',
+      description: 'Your uploaded sound will be deleted and this account will return to the built-in MX notification sound.',
+      confirmLabel: 'Remove sound'
+    })) return;
     startAction('notification-sound');
     try {
       await deleteNotificationSound(); notificationSound = { exists: false };
@@ -251,7 +256,11 @@
   }
 
   async function removeTotp() {
-    if (!window.confirm('Disable two-factor authentication and revoke every recovery code?')) return;
+    if (!await requestConfirmation({
+      title: 'Disable two-factor authentication?',
+      description: 'Every recovery code will also be revoked and you will need to sign in again.',
+      confirmLabel: 'Disable 2FA'
+    })) return;
     startAction('disable');
     try {
       await disableTotp(securityPassword, secondFactor(securityFactor));
@@ -264,7 +273,11 @@
   }
 
   async function replaceRecoveryCodes() {
-    if (!window.confirm('Replace every recovery code? Existing codes will stop working immediately.')) return;
+    if (!await requestConfirmation({
+      title: 'Replace every recovery code?',
+      description: 'All existing recovery codes will stop working immediately. Save the new codes somewhere secure.',
+      confirmLabel: 'Replace codes'
+    })) return;
     startAction('recovery');
     try {
       const response = await regenerateRecoveryCodes(

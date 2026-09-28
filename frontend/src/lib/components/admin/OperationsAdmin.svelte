@@ -5,6 +5,7 @@
   import ShieldCheck from '@lucide/svelte/icons/shield-check';
   import Upload from '@lucide/svelte/icons/upload';
   import type { AuditPage, BackupEntry, DeploymentConfig } from '../../api/domain';
+  import { requestConfirmation } from '../../confirmation';
   import { createBackup, downloadBackup, listBackups, loadAudit, loadDeployment, saveDeployment, uploadDeploymentLogo, verifyBackup } from '../../api/workspace';
 
   let { section = 'deployment' }: { section?: 'deployment' | 'backups' | 'updates' | 'audit' } = $props();
@@ -45,8 +46,8 @@
     };
     return labels[action] || action.replace(/[._-]+/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
   }
-  function restoreDefaults() {
-    if (!config || !confirm('Restore the standard MX identity settings in this form? Nothing changes until you save.')) return;
+  async function restoreDefaults() {
+    if (!config || !await requestConfirmation({ title: 'Restore MX identity defaults?', description: 'Only this form will be reset. Nothing changes for users until you save the deployment identity.', confirmLabel: 'Restore defaults', tone: 'primary' })) return;
     config = {
       branding: { display_name: 'MX', subtitle: "Litiaina's General-Purpose System", organization_name: '', logo_url: 'images/system-icon.png' },
       appearance: { preset: 'blue', primary_color: '#1d4ed8', sidebar_color: '#0f172a', radius: 'rounded', density: 'normal', default_theme: 'light', content_width: 'wide' },

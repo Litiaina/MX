@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import LoginPanel from './lib/components/LoginPanel.svelte';
   import Workspace from './lib/components/Workspace.svelte';
+  import ConfirmationDialogHost from './lib/components/ConfirmationDialogHost.svelte';
   import { AUTH_EXPIRED_EVENT } from './lib/api/client';
   import type { DeploymentConfig } from './lib/api/domain';
   import { loadDeployment } from './lib/api/workspace';
@@ -82,3 +83,5 @@
 {:else}
   <Workspace session={$currentSession} {deployment} onSessionChanged={reloadSession} onSessionEnded={sessionEnded} onDeploymentChanged={reloadDeployment} />
 {/if}
+
+<ConfirmationDialogHost />

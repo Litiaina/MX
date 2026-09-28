@@ -293,6 +293,19 @@ fn clean_text(value: &str, maximum: usize) -> String {
         .collect()
 }
 
+fn clean_message_text(value: &str, maximum: usize) -> String {
+    value
+        .replace("\r\n", "\n")
+        .replace('\r', "\n")
+        .chars()
+        .filter(|character| *character == '\n' || *character == '\t' || !character.is_control())
+        .collect::<String>()
+        .trim()
+        .chars()
+        .take(maximum)
+        .collect()
+}
+
 fn safe_component(value: &str, fallback: &str) -> String {
     let value = value
         .trim()
@@ -762,7 +775,7 @@ pub async fn send_message(
     Path(channel_uid): Path<String>,
     Json(request): Json<SendMessageRequest>,
 ) -> Response {
-    let body = clean_text(&request.body, 20_000);
+    let body = clean_message_text(&request.body, 20_000);
     if body.is_empty() {
         return api_json(
             StatusCode::BAD_REQUEST,
@@ -884,7 +897,7 @@ pub async fn edit_message(
     Path(message_uid): Path<String>,
     Json(request): Json<EditMessageRequest>,
 ) -> Response {
-    let body = clean_text(&request.body, 20_000);
+    let body = clean_message_text(&request.body, 20_000);
     if body.is_empty() {
         return api_json(
             StatusCode::BAD_REQUEST,
@@ -1367,6 +1380,20 @@ pub async fn preview_message_file(claims: Claims, Path(file_uid): Path<String>) 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn message_cleanup_preserves_line_breaks_but_rejects_other_controls() {
+        let cleaned = clean_message_text(
+            "  Email: admin@example.test\r\nPassword:\tsecret\u{0000}\rNext line  ",
+            20_000,
+        );
+
+        assert_eq!(
+            cleaned,
+            "Email: admin@example.test\nPassword:\tsecret\nNext line"
+        );
+        assert!(!cleaned.contains('\0'));
+    }
 
     #[test]
     fn read_markers_migrate_and_distinguish_same_millisecond_messages() {

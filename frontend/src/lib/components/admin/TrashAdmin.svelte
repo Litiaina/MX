@@ -6,6 +6,7 @@
   import RotateCcw from '@lucide/svelte/icons/rotate-ccw';
   import X from '@lucide/svelte/icons/x';
   import type { TrashRecord, TrashRecordDetail } from '../../api/domain';
+  import { requestConfirmation } from '../../confirmation';
   import { getTrashRecord, listTrash, restoreTrashRecord } from '../../api/workspace';
 
   let records = $state<TrashRecord[]>([]); let detail = $state<TrashRecordDetail | null>(null);
@@ -29,7 +30,7 @@
 
   async function restore(item: TrashRecord) {
     const identity = item.summary_fields[0]?.value || item.singular_name;
-    if (!confirm(`Restore ${identity} to ${item.module_name}?`)) return;
+    if (!await requestConfirmation({ title: `Restore ${identity}?`, description: `This ${item.singular_name.toLowerCase()} will return to ${item.module_name} with its retained fields, history, and attachments.`, confirmLabel: 'Restore record', tone: 'primary' })) return;
     busy = item.uid; error = '';
     try {
       await restoreTrashRecord(item.uid);

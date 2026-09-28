@@ -7,6 +7,7 @@
   import { ApiError } from '../api/client';
   import type { FieldConflict, FieldDefinition, JsonValue, MxRecord, RecordVersionDetail, RecordVersionSummary, SchemaResponse } from '../api/domain';
   import type { LiveMessage } from '../live/client';
+  import { requestConfirmation } from '../confirmation';
   import { cloneJson } from '../util/json';
   import { createRecord, deleteAttachment, deleteRecord, download, getRecord, getRecordVersion, listRecordVersions, patchRecord, previewAttachment, restoreRecordVersion, uploadAttachments } from '../api/workspace';
 
@@ -294,7 +295,11 @@
   }
 
   async function removeRecord() {
-    if (!current || !confirm(`Move this ${recordLabel.toLowerCase()} to Administrator Trash? Its attachments and history will be preserved.`)) return;
+    if (!current || !await requestConfirmation({
+      title: `Move this ${recordLabel.toLowerCase()} to trash?`,
+      description: 'Its fields, attachments, and version history will be preserved so an administrator can inspect or restore it.',
+      confirmLabel: 'Move to trash'
+    })) return;
     busy = true;
     try { await deleteRecord(current.uid, moduleUid || undefined); await onSaved(); onClose(); }
     catch (reason) { error = reason instanceof Error ? reason.message : 'Delete failed.'; }
@@ -328,7 +333,12 @@
     if (!current) return;
     const hasUnsavedChanges = fields.some((field) => field.field_type !== 'attachments' && isDirty(field.key)) || Object.values(pending).some((files) => files.length);
     const warning = hasUnsavedChanges ? ' Your unsaved editor changes and queued files will be replaced.' : '';
-    if (!confirm(`Restore version ${item.version}? The current saved state will remain in history.${warning}`)) return;
+    if (!await requestConfirmation({
+      title: `Restore version ${item.version}?`,
+      description: `The current saved state will remain in history.${warning}`,
+      confirmLabel: 'Restore version',
+      tone: 'primary'
+    })) return;
     historyLoading = true; historyError = '';
     try {
       await restoreRecordVersion(current.uid, item.uid, moduleUid || undefined);
@@ -351,7 +361,11 @@
   }
 
   async function removeFile(uid: string) {
-    if (!current || !confirm('Delete this attachment?')) return;
+    if (!current || !await requestConfirmation({
+      title: 'Delete this attachment?',
+      description: 'The file will be removed from this record. This action cannot be undone from the record editor.',
+      confirmLabel: 'Delete attachment'
+    })) return;
     busy = true;
     try { await deleteAttachment(current.uid, uid); persisted = await getRecord(current.uid, moduleUid || undefined); await onSaved(); }
     catch (reason) { error = reason instanceof Error ? reason.message : 'Delete failed.'; }

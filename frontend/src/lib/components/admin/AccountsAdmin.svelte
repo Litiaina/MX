@@ -3,6 +3,7 @@
   import { onMount } from 'svelte';
   import type { Session } from '../../api/types';
   import type { UserSummary } from '../../api/domain';
+  import { requestConfirmation } from '../../confirmation';
   import { createUser, loadUsers, removeUser, resetUserPassword, resetUserSecurity, updateUserAccess } from '../../api/workspace';
 
   let { session }: { session: Session } = $props();
@@ -21,7 +22,7 @@
 
   async function add(event: SubmitEvent) { event.preventDefault(); loading = true; try { await createUser({ name, email, password, access_level: access }); name = ''; email = ''; password = ''; access = 2; message('Account created.'); await refresh(); } catch (reason) { fail(reason); } finally { loading = false; } }
   async function saveAccess(user: UserSummary) { try { await updateUserAccess(user.uid, user.access_level); message(`Access for ${user.name} updated.`); await refresh(); } catch (reason) { fail(reason); } }
-  async function remove(user: UserSummary) { if (!confirm(`Delete ${user.name}? Their account will no longer be able to sign in.`)) return; try { await removeUser(user.uid); message('Account deleted.'); await refresh(); } catch (reason) { fail(reason); } }
+  async function remove(user: UserSummary) { if (!await requestConfirmation({ title: `Delete ${user.name}?`, description: 'Their account will no longer be able to sign in. This is an administrator action.', confirmLabel: 'Delete account' })) return; try { await removeUser(user.uid); message('Account deleted.'); await refresh(); } catch (reason) { fail(reason); } }
   function begin(mode: 'password' | 'security', user: UserSummary) { recovery = { mode, user }; newPassword = ''; confirmPassword = ''; adminPassword = ''; factor = ''; error = ''; }
   async function submitRecovery(event: SubmitEvent) {
     event.preventDefault(); if (!recovery) return;
