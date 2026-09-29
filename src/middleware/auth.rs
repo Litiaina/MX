@@ -149,6 +149,7 @@ pub struct SessionBody {
     pub totp_enabled: bool,
     pub totp_enrollment_pending: bool,
     pub recovery_codes_remaining: i64,
+    pub profile_photo_updated_at: Option<i64>,
 }
 
 static JWT_KEYS: LazyLock<Keys> = LazyLock::new(|| {
@@ -486,7 +487,8 @@ pub async fn session_info(claims: Claims) -> Result<Json<SessionBody>, AuthError
                                     access_level,
                                     totp_secret,
                                     totp_pending_secret,
-                                    (SELECT COUNT(*) FROM user_recovery_codes codes WHERE codes.user_uid = users.uid)
+                                    (SELECT COUNT(*) FROM user_recovery_codes codes WHERE codes.user_uid = users.uid),
+                                    (SELECT updated_at FROM mx_user_profile_photos photo WHERE photo.user_uid = users.uid)
                                 FROM users
                                 WHERE uid = ?1
                                 LIMIT 1
@@ -506,6 +508,7 @@ pub async fn session_info(claims: Claims) -> Result<Json<SessionBody>, AuthError
                     let totp_pending_secret: Option<String> = row.get("totp_pending_secret")?;
 
                     let recovery_codes_remaining: i64 = row.get(6)?;
+                    let profile_photo_updated_at: Option<i64> = row.get(7)?;
 
                     Ok(SessionBody {
                         uid,
@@ -516,6 +519,7 @@ pub async fn session_info(claims: Claims) -> Result<Json<SessionBody>, AuthError
                         totp_enabled: totp_secret.is_some(),
                         totp_enrollment_pending: totp_pending_secret.is_some(),
                         recovery_codes_remaining,
+                        profile_photo_updated_at,
                     })
                 },
             )

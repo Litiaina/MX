@@ -37,7 +37,7 @@
   $effect(() => {
     document.documentElement.style.setProperty('--primary', deployment.appearance.primary_color);
     document.documentElement.style.setProperty('--on-primary', primaryForeground(deployment.appearance.primary_color));
-    document.documentElement.style.setProperty('--sidebar', deployment.appearance.sidebar_color);
+    document.documentElement.style.setProperty('--brand-sidebar', deployment.appearance.sidebar_color);
     document.documentElement.dataset.theme = deployment.appearance.default_theme;
     document.documentElement.dataset.density = deployment.appearance.density;
     document.documentElement.style.setProperty('--corner-radius', ({ square: '3px', subtle: '7px', rounded: '12px', soft: '18px' } as Record<string, string>)[deployment.appearance.radius] || '12px');

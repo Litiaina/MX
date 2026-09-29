@@ -427,7 +427,9 @@ async fn record_audit_event(write: AuditWrite) -> Result<(), String> {
     }
 }
 
-fn ensure_audit_schema(connection: &rusqlite::Connection) -> Result<(), rusqlite::Error> {
+pub(crate) fn ensure_audit_schema(
+    connection: &rusqlite::Connection,
+) -> Result<(), rusqlite::Error> {
     crate::api::mx::migration::migrate_legacy_schema(connection)?;
     connection.execute_batch(
         r#"
@@ -497,7 +499,71 @@ fn ensure_audit_schema(connection: &rusqlite::Connection) -> Result<(), rusqlite
             );
         END;
         "#,
-    )
+    )?;
+
+    // Builds before the module-scoped route classifier was added still wrote
+    // authoritative record versions, but omitted the corresponding audit row.
+    // Reconstruct only older lifecycle entries and skip any event already
+    // represented by the live audit middleware. The stable event UID makes
+    // this migration idempotent.
+    let backfill_cutoff = chrono::Utc::now().timestamp_millis() - 5 * 60 * 1000;
+    connection.execute(
+        r#"
+        INSERT OR IGNORE INTO mx_audit_log (
+            event_uid, actor_uid, actor_name, actor_email, access_level,
+            action, method, path, target_type, target_uid,
+            status_code, success, user_agent, created_at
+        )
+        SELECT
+            'record-version:' || version.uid,
+            version.actor_uid,
+            user.name,
+            user.email,
+            user.access_level,
+            CASE version.event
+                WHEN 'created' THEN 'record.create'
+                WHEN 'deleted' THEN 'record.delete'
+                ELSE 'record.update'
+            END,
+            CASE version.event
+                WHEN 'created' THEN 'POST'
+                WHEN 'deleted' THEN 'DELETE'
+                ELSE 'PATCH'
+            END,
+            CASE version.event
+                WHEN 'created' THEN '/mx/v1/modules/' || version.module_uid || '/records'
+                ELSE '/mx/v1/modules/' || version.module_uid || '/records/' || version.record_uid
+            END,
+            'record',
+            version.record_uid,
+            200,
+            1,
+            'MX lifecycle audit reconstruction',
+            version.created_at
+        FROM mx_record_versions version
+        JOIN users user ON user.uid = version.actor_uid
+        WHERE version.event IN ('created','updated','deleted','restored','version_restored')
+          AND version.created_at <= ?1
+          AND NOT EXISTS (
+              SELECT 1
+              FROM mx_audit_log audit
+              WHERE audit.actor_uid = version.actor_uid
+                AND audit.action = CASE version.event
+                    WHEN 'created' THEN 'record.create'
+                    WHEN 'deleted' THEN 'record.delete'
+                    ELSE 'record.update'
+                END
+                AND ABS(audit.created_at - version.created_at) <= 60000
+                AND (
+                    (version.event = 'created' AND audit.target_uid IS NULL)
+                    OR audit.target_uid = version.record_uid
+                )
+          )
+        "#,
+        params![backfill_cutoff],
+    )?;
+
+    Ok(())
 }
 
 fn classify_action(method: &Method, path: &str) -> Option<AuditClassification> {
@@ -593,6 +659,20 @@ fn classify_action(method: &Method, path: &str) -> Option<AuditClassification> {
             action: "storage.layout.update",
             target_type: Some("n1-storage-layout"),
             target_uid: None,
+        });
+    }
+
+    if segments.len() == 5
+        && segments[0] == "mx"
+        && segments[1] == "v1"
+        && segments[2] == "admin"
+        && segments[3] == "modules"
+        && method == Method::DELETE
+    {
+        return Some(AuditClassification {
+            action: "module.delete",
+            target_type: Some("module"),
+            target_uid: segments.get(4).map(|value| value.to_string()),
         });
     }
 
@@ -755,6 +835,44 @@ fn classify_action(method: &Method, path: &str) -> Option<AuditClassification> {
         });
     }
 
+    // Custom modules use a module-scoped record route. These writes must be
+    // classified exactly like the legacy/default-module record routes or the
+    // user-performance report silently drops the activity.
+    if segments.len() >= 5
+        && segments[0] == "mx"
+        && segments[1] == "v1"
+        && segments[2] == "modules"
+        && segments[4] == "records"
+    {
+        if segments.len() == 5 && method == Method::POST {
+            return Some(AuditClassification {
+                action: "record.create",
+                target_type: Some("record"),
+                target_uid: None,
+            });
+        }
+
+        if segments.len() == 6 {
+            let record_uid = Some(segments[5].to_string());
+            if method == Method::PUT || method == Method::PATCH {
+                return Some(AuditClassification {
+                    action: "record.update",
+                    target_type: Some("record"),
+                    target_uid: record_uid,
+                });
+            }
+            if method == Method::DELETE {
+                return Some(AuditClassification {
+                    action: "record.delete",
+                    target_type: Some("record"),
+                    target_uid: record_uid,
+                });
+            }
+        }
+
+        return None;
+    }
+
     if segments.len() < 3 || segments[0] != "mx" || segments[1] != "v1" || segments[2] != "records"
     {
         return None;
@@ -845,4 +963,37 @@ fn classify_action(method: &Method, path: &str) -> Option<AuditClassification> {
     }
 
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn classifies_custom_module_record_writes() {
+        let created = classify_action(&Method::POST, "/mx/v1/modules/inventory/records")
+            .expect("module record creation must be audited");
+        assert_eq!(created.action, "record.create");
+        assert_eq!(created.target_uid, None);
+
+        let updated = classify_action(&Method::PATCH, "/mx/v1/modules/inventory/records/record-42")
+            .expect("module record update must be audited");
+        assert_eq!(updated.action, "record.update");
+        assert_eq!(updated.target_uid.as_deref(), Some("record-42"));
+
+        let deleted = classify_action(
+            &Method::DELETE,
+            "/mx/v1/modules/inventory/records/record-42",
+        )
+        .expect("module record deletion must be audited");
+        assert_eq!(deleted.action, "record.delete");
+        assert_eq!(deleted.target_uid.as_deref(), Some("record-42"));
+    }
+
+    #[test]
+    fn does_not_classify_module_record_reads_as_activity() {
+        assert!(
+            classify_action(&Method::GET, "/mx/v1/modules/inventory/records/record-42").is_none()
+        );
+    }
 }

@@ -2,8 +2,10 @@
   import type { ActionRateRow, DashboardWidget } from '../api/domain';
 
   let { rows, widget, recordPlural = 'Records' }: { rows: ActionRateRow[]; widget: DashboardWidget; recordPlural?: string } = $props();
+  type SeriesKey = 'focused' | 'other' | 'total' | 'rate';
   const palette = ['var(--primary)', '#7c3aed', '#0891b2', '#059669', '#d97706', '#dc2626', '#4f46e5', '#0f766e', '#9333ea', '#ea580c', '#0284c7', '#65a30d', '#be123c', '#475569', '#a16207'];
   const mode = $derived(widget.chart_value || 'matched');
+  const focus = $derived(widget.result_focus || (mode === 'pending' ? 'pending' : 'matched'));
   const prepared = $derived.by(() => {
     const source = rows.map((row) => ({ ...row }));
     if (widget.display_mode === 'line') return source;
@@ -20,21 +22,25 @@
   });
   const maximum = $derived(mode === 'rate' ? 100 : Math.max(1, ...prepared.map((row) => sortableValue(row))));
   const lineSeries = $derived(mode === 'breakdown'
-    ? [{ key: 'actioned' as const, label: 'Matched', color: palette[0] }, { key: 'pending' as const, label: 'Not matched', color: palette[5] }]
-    : [{ key: (mode === 'total' ? 'total' : mode === 'rate' ? 'rate' : 'actioned') as keyof ActionRateRow, label: valueLabel(), color: palette[0] }]);
-  const pieRows = $derived(prepared.map((row, index) => ({ row, index, value: mode === 'total' ? row.total : row.actioned })).filter((item) => item.value > 0));
+    ? [{ key: 'focused' as SeriesKey, label: 'Answers question', color: palette[0] }, { key: 'other' as SeriesKey, label: 'Other records', color: palette[5] }]
+    : [{ key: (mode === 'total' ? 'total' : mode === 'rate' ? 'rate' : 'focused') as SeriesKey, label: valueLabel(), color: palette[0] }]);
+  const pieRows = $derived(prepared.map((row, index) => ({ row, index, value: mode === 'total' ? row.total : focusedValue(row) })).filter((item) => item.value > 0));
   const pieTotal = $derived(pieRows.reduce((sum, item) => sum + item.value, 0));
   const pieGradient = $derived.by(() => {
     let position = 0;
     return `conic-gradient(${pieRows.map((item) => { const start = position; position += pieTotal ? item.value / pieTotal * 100 : 0; return `${palette[item.index % palette.length]} ${start}% ${position}%`; }).join(', ')})`;
   });
 
-  function sortableValue(row: ActionRateRow) { if (mode === 'total') return row.total; if (mode === 'rate') return row.rate; if (mode === 'breakdown') return row.total; return row.actioned; }
-  function valueLabel() { if (mode === 'total') return 'Total records'; if (mode === 'rate') return 'Match rate'; if (mode === 'breakdown') return 'Matched vs not matched'; return 'Matched records'; }
+  function focusedValue(row: ActionRateRow) { return focus === 'pending' ? row.pending : row.actioned; }
+  function otherValue(row: ActionRateRow) { return focus === 'pending' ? row.actioned : row.pending; }
+  function focusedRate(row: ActionRateRow) { return row.total ? focusedValue(row) * 100 / row.total : 0; }
+  function seriesValue(row: ActionRateRow, key: SeriesKey) { if (key === 'focused') return focusedValue(row); if (key === 'other') return otherValue(row); if (key === 'total') return row.total; return focusedRate(row); }
+  function sortableValue(row: ActionRateRow) { if (mode === 'total') return row.total; if (mode === 'rate') return focusedRate(row); if (mode === 'breakdown') return row.total; return focusedValue(row); }
+  function valueLabel() { if (mode === 'total') return 'Total records'; if (mode === 'rate') return 'Answer rate'; if (mode === 'breakdown') return 'Answer and remainder'; return 'Records answering the question'; }
   function displayValue(value: number) { return mode === 'rate' ? `${value.toFixed(1)}%` : value.toLocaleString(); }
   function xAt(index: number) { return prepared.length === 1 ? 460 : 58 + 834 * index / Math.max(1, prepared.length - 1); }
-  function yAt(value: number) { const max = mode === 'rate' ? 100 : Math.max(1, ...lineSeries.flatMap((series) => prepared.map((row) => Number(row[series.key] || 0)))); return 282 - Math.max(0, value) / max * 250; }
-  function points(key: keyof ActionRateRow) { return prepared.map((row, index) => `${xAt(index)},${yAt(Number(row[key] || 0))}`).join(' '); }
+  function yAt(value: number) { const max = mode === 'rate' ? 100 : Math.max(1, ...lineSeries.flatMap((series) => prepared.map((row) => seriesValue(row, series.key)))); return 282 - Math.max(0, value) / max * 250; }
+  function points(key: SeriesKey) { return prepared.map((row, index) => `${xAt(index)},${yAt(seriesValue(row, key))}`).join(' '); }
 </script>
 
 {#if !prepared.length}
@@ -44,21 +50,21 @@
     {#each prepared as row, index}
       <div class="horizontal-row"><span title={row.group}>{row.group || 'Unspecified'}</span><div class="horizontal-track">
         {#if mode === 'breakdown'}
-          <i style={`width:${row.actioned / maximum * 100}%;background:${palette[0]}`} title={`${row.actioned} matched`}></i><i style={`width:${row.pending / maximum * 100}%;background:${palette[5]};opacity:.72`} title={`${row.pending} not matched`}></i>
+          <i style={`width:${focusedValue(row) / maximum * 100}%;background:${palette[0]}`} title={`${focusedValue(row)} answer the question`}></i><i style={`width:${otherValue(row) / maximum * 100}%;background:${palette[5]};opacity:.72`} title={`${otherValue(row)} other records`}></i>
         {:else}<i style={`width:${sortableValue(row) / maximum * 100}%;background:${palette[index % palette.length]}`}></i>{/if}
       </div><strong>{mode === 'breakdown' ? row.total.toLocaleString() : displayValue(sortableValue(row))}</strong></div>
     {/each}
   </div>
-  {#if mode === 'breakdown' && widget.show_legend !== false}<div class="chart-legend"><span><i style={`background:${palette[0]}`}></i>Matched</span><span><i style={`background:${palette[5]}`}></i>Not matched</span></div>{/if}
+  {#if mode === 'breakdown' && widget.show_legend !== false}<div class="chart-legend"><span><i style={`background:${palette[0]}`}></i>Answers question</span><span><i style={`background:${palette[5]}`}></i>Other records</span></div>{/if}
 {:else if widget.display_mode === 'line'}
   <div class="line-chart"><svg viewBox="0 0 920 340" role="img" aria-label={`${widget.title} line chart`}>
     {#each [0, .25, .5, .75, 1] as part}<line x1="58" y1={282 - 250 * part} x2="892" y2={282 - 250 * part}></line><text x="48" y={286 - 250 * part} text-anchor="end">{mode === 'rate' ? `${Math.round(part * 100)}%` : Math.round(maximum * part)}</text>{/each}
-    {#each lineSeries as series}<polyline points={points(series.key)} style={`stroke:${series.color}`}></polyline>{#each prepared as row, index}<circle cx={xAt(index)} cy={yAt(Number(row[series.key] || 0))} r="4" style={`fill:${series.color}`}><title>{row.group}: {series.label} {displayValue(Number(row[series.key] || 0))}</title></circle>{/each}{/each}
+    {#each lineSeries as series}<polyline points={points(series.key)} style={`stroke:${series.color}`}></polyline>{#each prepared as row, index}<circle cx={xAt(index)} cy={yAt(seriesValue(row, series.key))} r="4" style={`fill:${series.color}`}><title>{row.group}: {series.label} {displayValue(seriesValue(row, series.key))}</title></circle>{/each}{/each}
     {#each prepared as row, index}{#if index % Math.max(1, Math.ceil(prepared.length / 8)) === 0 || index === prepared.length - 1}<text x={xAt(index)} y="318" text-anchor="middle">{row.group.length > 12 ? `${row.group.slice(0, 11)}…` : row.group}</text>{/if}{/each}
   </svg></div>
   {#if widget.show_legend !== false}<div class="chart-legend">{#each lineSeries as series}<span><i style={`background:${series.color}`}></i>{series.label}</span>{/each}</div>{/if}
 {:else if widget.display_mode === 'pie' || widget.display_mode === 'donut'}
-  <div class="pie-layout"><div class:donut={widget.display_mode === 'donut'} class="pie" style={`background:${pieGradient}`} role="img" aria-label={`${widget.title} ${widget.display_mode} chart`}>{#if widget.display_mode === 'donut'}<div><strong>{pieTotal.toLocaleString()}</strong><small>{mode === 'total' ? `total ${recordPlural.toLowerCase()}` : `matched ${recordPlural.toLowerCase()}`}</small></div>{/if}</div>
+  <div class="pie-layout"><div class:donut={widget.display_mode === 'donut'} class="pie" style={`background:${pieGradient}`} role="img" aria-label={`${widget.title} ${widget.display_mode} chart`}>{#if widget.display_mode === 'donut'}<div><strong>{pieTotal.toLocaleString()}</strong><small>{mode === 'total' ? `total ${recordPlural.toLowerCase()}` : `${recordPlural.toLowerCase()} answering the question`}</small></div>{/if}</div>
     {#if widget.show_legend !== false}<div class="pie-legend">{#each pieRows as item}<div><i style={`background:${palette[item.index % palette.length]}`}></i><span>{item.row.group || 'Unspecified'}</span><strong>{item.value.toLocaleString()} · {pieTotal ? (item.value / pieTotal * 100).toFixed(1) : '0.0'}%</strong></div>{/each}</div>{/if}
   </div>
 {/if}

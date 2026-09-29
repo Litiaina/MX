@@ -3,7 +3,7 @@ import type {
   ActionRateRow, AuditPage, BackupEntry, DashboardConfigResponse, DashboardWidget,
   DeploymentConfig, DeploymentResponse, FieldDefinition, JsonValue, MxRecord, PresenceResponse,
   PreferencesResponse, RecordPage, SchemaResponse, StorageLayout, UserPerformanceRow, UserPreferences, UserSummary,
-  ChannelReadState, ChatMessage, CollaborationChannel, CollaborationPerson, MxNotification, ModuleDefinition, NotificationSoundInfo, RecordVersionDetail,
+  ChannelFile, ChannelMember, ChannelReadState, ChatMessage, CollaborationChannel, CollaborationPerson, MxNotification, ModuleDefinition, NotificationSoundInfo, RecordVersionDetail,
   RecordVersionSummary, TrashRecord, TrashRecordDetail, GlobalSearchResult
 } from './domain';
 
@@ -17,6 +17,8 @@ export const createModule = (data: { name: string; singular_name?: string; descr
   apiJson<{ module: ModuleDefinition }>('/mx/v1/admin/modules', jsonRequest('POST', data));
 export const updateModule = (uid: string, changes: Partial<ModuleDefinition>) =>
   apiJson<{ module: ModuleDefinition }>(`/mx/v1/admin/modules/${encodeURIComponent(uid)}`, jsonRequest('PUT', changes));
+export const deleteModule = (uid: string, credentials: { confirmation: string; admin_password: string; admin_otp: string | null; admin_recovery_code: string | null }) =>
+  apiJson<{ response: string; module_uid: string; module_name: string; records_deleted: number; attachments_moved_to_n1_trash: number }>(`/mx/v1/admin/modules/${encodeURIComponent(uid)}`, jsonRequest('DELETE', credentials));
 
 export function listRecords(query: { page?: number; limit?: number; q?: string; match?: 'contains' | 'prefix' | 'exact'; filters?: Record<string, string>; attachments?: 'with' | 'without' | ''; sort_by?: string; sort_dir?: string } = {}, moduleUid?: string) {
   const params = new URLSearchParams();
@@ -135,10 +137,24 @@ export const createChannel = (data: { name: string; description: string; member_
   apiJson<{ uid: string }>('/mx/v1/collaboration/channels', jsonRequest('POST', data));
 export const createDirectChannel = (user_uid: string) =>
   apiJson<{ uid: string; created: boolean }>('/mx/v1/collaboration/direct', jsonRequest('POST', { user_uid }));
+export const updateChannel = (channelUid: string, name: string, description: string, invite_policy?: CollaborationChannel['invite_policy']) =>
+  apiJson<{ response: string }>(`/mx/v1/collaboration/channels/${encodeURIComponent(channelUid)}`, jsonRequest('PUT', { name, description, invite_policy }));
+export const listChannelMembers = (channelUid: string) =>
+  apiJson<{ members: ChannelMember[] }>(`/mx/v1/collaboration/channels/${encodeURIComponent(channelUid)}/members`);
+export const saveChannelMember = (channelUid: string, user_uid: string, role: 'owner' | 'admin' | 'member' = 'member') =>
+  apiJson<{ response: string; member: ChannelMember }>(`/mx/v1/collaboration/channels/${encodeURIComponent(channelUid)}/members`, jsonRequest('POST', { user_uid, role }));
+export const removeChannelMember = async (channelUid: string, userUid: string) => {
+  const response = await apiFetch(`/mx/v1/collaboration/channels/${encodeURIComponent(channelUid)}/members/${encodeURIComponent(userUid)}`, { method: 'DELETE' });
+  if (!response.ok) throw new Error((await response.json().catch(() => null))?.response || 'Could not remove the space member.');
+};
+export const searchChannel = (channelUid: string, q: string, limit = 50) =>
+  apiJson<{ messages: ChatMessage[] }>(`/mx/v1/collaboration/channels/${encodeURIComponent(channelUid)}/search?q=${encodeURIComponent(q)}&limit=${limit}`);
+export const listChannelFiles = (channelUid: string, q = '', limit = 50, offset = 0) =>
+  apiJson<{ files: ChannelFile[]; total: number }>(`/mx/v1/collaboration/channels/${encodeURIComponent(channelUid)}/files?q=${encodeURIComponent(q)}&limit=${limit}&offset=${offset}`);
 export const listMessages = (channelUid: string, before?: number) => {
   const params = new URLSearchParams(); if (before) params.set('before', String(before));
   const query = params.size ? `?${params}` : '';
-  return apiJson<{ messages: ChatMessage[]; read_states: ChannelReadState[]; has_more: boolean; page_size: number }>(`/mx/v1/collaboration/channels/${encodeURIComponent(channelUid)}/messages${query}`);
+  return apiJson<{ messages: ChatMessage[]; pinned_messages: ChatMessage[]; read_states: ChannelReadState[]; has_more: boolean; page_size: number }>(`/mx/v1/collaboration/channels/${encodeURIComponent(channelUid)}/messages${query}`);
 };
 export const sendMessage = (channelUid: string, body: string, mention_uids: string[] = [], record_uids: string[] = [], reply_to_uid: string | null = null) =>
   apiJson<{ message: ChatMessage }>(`/mx/v1/collaboration/channels/${encodeURIComponent(channelUid)}/messages`, jsonRequest('POST', { body, mention_uids, record_uids, reply_to_uid }));
@@ -148,6 +164,10 @@ export const deleteMessage = async (messageUid: string) => {
   const response = await apiFetch(`/mx/v1/collaboration/messages/${encodeURIComponent(messageUid)}`, { method: 'DELETE' });
   if (!response.ok) throw new Error((await response.json().catch(() => null))?.response || 'Could not delete the message.');
 };
+export const toggleMessageReaction = (messageUid: string, emoji: string) =>
+  apiJson<{ message: ChatMessage }>(`/mx/v1/collaboration/messages/${encodeURIComponent(messageUid)}/reactions`, jsonRequest('POST', { emoji }));
+export const setMessagePinned = (messageUid: string, pinned: boolean) =>
+  apiJson<{ message: ChatMessage }>(`/mx/v1/collaboration/messages/${encodeURIComponent(messageUid)}/pin`, { method: pinned ? 'PUT' : 'DELETE' });
 export const markChannelRead = (channelUid: string) =>
   apiJson<{ read_state: ChannelReadState }>(`/mx/v1/collaboration/channels/${encodeURIComponent(channelUid)}/read`, { method: 'POST' });
 export const uploadMessageFile = (messageUid: string, file: File, onProgress?: (loaded: number, total: number) => void) => {

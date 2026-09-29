@@ -1,0 +1,95 @@
+@layer legacy, tokens, foundation, shell, workspaces;
+
+@layer tokens {
+  :root {
+    --primary: #2563eb;
+    --brand-sidebar: #171717;
+    --on-primary: #ffffff;
+    --primary-text: color-mix(in srgb, var(--primary) 58%, #111827);
+    --sidebar: #ffffff;
+    --on-sidebar: #171717;
+    --bg: #fafafa;
+    --surface: #ffffff;
+    --surface-2: #f6f6f6;
+    --surface-3: #ededed;
+    --surface-raised: #ffffff;
+    --text: #171717;
+    --text-2: #1f2937;
+    --muted: #475569;
+    --line: #d7dbe0;
+    --line-strong: #b9c0c9;
+    --danger: #c43232;
+    --danger-surface: #fff4f3;
+    --success: #16825d;
+    --success-surface: #eef9f4;
+    --warning: #9a5a13;
+    --warning-surface: #fff8e8;
+    --corner-radius: .45rem;
+    --content-max: 92rem;
+    --font-scale: 1;
+    --application-font-scale: 1;
+    --interface-factor: 1;
+    --user-interface-factor: 1;
+    --shell-gutter: calc(clamp(.75rem, 1.5vw, 1.4rem) * var(--interface-factor));
+    --rail-width: min(calc(3.55rem * var(--interface-factor)), 4.35rem);
+    --nav-width: min(calc(18.5rem * var(--interface-factor)), 22rem);
+    --topbar-height: min(calc(3.5rem * var(--interface-factor)), 4.4rem);
+    --shadow-popover: 0 .9rem 2.2rem rgba(0, 0, 0, .12), 0 .12rem .4rem rgba(0, 0, 0, .06);
+    --shadow-dialog: 0 1.6rem 4rem rgba(0, 0, 0, .2);
+    font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    color: var(--text);
+    background: var(--bg);
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
+  }
+
+  [data-theme='dark'] {
+    color-scheme: dark;
+    --primary-text: color-mix(in srgb, var(--primary) 44%, white);
+    --sidebar: #101214;
+    --on-sidebar: #e7e9ec;
+    --bg: #111315;
+    --surface: #17191c;
+    --surface-2: #1d2024;
+    --surface-3: #252a2f;
+    --surface-raised: #20242a;
+    --text: #e7e9ec;
+    --text-2: #c4c9ce;
+    --muted: #90989f;
+    --line: #2d3339;
+    --line-strong: #3b444c;
+    --danger: #ff7b72;
+    --danger-surface: #352021;
+    --success: #52c995;
+    --success-surface: #183027;
+    --warning: #e6ad58;
+    --warning-surface: #342a1b;
+    --shadow-popover: 0 1rem 2.5rem rgba(0, 0, 0, .34), 0 .15rem .5rem rgba(0, 0, 0, .24);
+    --shadow-dialog: 0 1.6rem 4rem rgba(0, 0, 0, .48);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    [data-theme='system'] {
+      color-scheme: dark;
+      --primary-text: color-mix(in srgb, var(--primary) 44%, white);
+      --sidebar: #101214;
+      --on-sidebar: #e7e9ec;
+      --bg: #111315;
+      --surface: #17191c;
+      --surface-2: #1d2024;
+      --surface-3: #252a2f;
+      --surface-raised: #20242a;
+      --text: #e7e9ec;
+      --text-2: #c4c9ce;
+      --muted: #90989f;
+      --line: #2d3339;
+      --line-strong: #3b444c;
+      --danger: #ff7b72;
+      --danger-surface: #352021;
+      --success: #52c995;
+      --success-surface: #183027;
+      --warning: #e6ad58;
+      --warning-surface: #342a1b;
+    }
+  }
+}

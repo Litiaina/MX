@@ -145,7 +145,8 @@ export interface DashboardWidget {
   attachment_field_uid: string | null;
   date_field_uid: string | null;
   time_bucket: 'day' | 'week' | 'month' | 'quarter' | 'year' | null;
-  chart_value: 'matched' | 'total' | 'rate' | 'breakdown' | null;
+  chart_value: 'matched' | 'pending' | 'total' | 'rate' | 'breakdown' | null;
+  result_focus?: 'matched' | 'pending';
   category_limit: number | null;
   show_legend: boolean | null;
   definition?: string | null;
@@ -230,10 +231,14 @@ export interface MxNotification {
 export interface CollaborationChannel {
   uid: string; kind: 'channel' | 'group' | 'direct'; name: string; description: string;
   created_by: string; created_at: number; role: 'owner' | 'admin' | 'member';
-  notification_level: 'all' | 'mentions' | 'muted'; member_count: number;
+  notification_level: 'all' | 'mentions' | 'muted'; invite_policy: 'owner' | 'admins' | 'members'; member_count: number;
   unread_count: number; last_message_at: number | null; direct_user_uid: string | null;
 }
-export interface CollaborationPerson { uid: string; name: string }
+export interface CollaborationPerson { uid: string; name: string; profile_photo_updated_at?: number | null }
+
+export interface ChannelMember {
+  user_uid: string; user_name: string; profile_photo_updated_at?: number | null; role: 'owner' | 'admin' | 'member'; joined_at: number;
+}
 
 export interface ChannelReadState {
   user_uid: string; user_name: string; last_read_at: number; last_read_message_id: number;
@@ -248,17 +253,31 @@ export interface MessageFile {
   uid: string; file_name: string; mime_type: string; size: number; created_at: number;
 }
 
+export interface ChannelFile extends MessageFile {
+  message_uid: string; sender_uid: string; sender_name: string; message_created_at: number;
+}
+
 export interface MessageRecordLink {
   uid: string; module_uid: string; module_name: string; singular_name: string; label: string;
 }
 
-export interface ChatMessage {
-  uid: string; channel_uid: string; sender_uid: string; sender_name: string; body: string;
-  reply_to_uid: string | null; created_at: number; edited_at: number | null;
-  deleted_at: number | null; sequence: number; files: MessageFile[]; record_links: MessageRecordLink[];
+export interface MessageReplyPreview {
+  uid: string; sender_uid: string; sender_name: string; body: string; deleted_at: number | null;
 }
 
-export interface UserSummary { uid: string; email: string; name: string; access_level: number; access_name: string; totp_enabled: boolean }
+export interface MessageReactionUser { uid: string; name: string }
+export interface MessageReaction { emoji: string; users: MessageReactionUser[] }
+export interface MessageMention { uid: string; name: string }
+
+export interface ChatMessage {
+  uid: string; channel_uid: string; sender_uid: string; sender_name: string; body: string;
+  sender_profile_photo_updated_at?: number | null;
+  reply_to_uid: string | null; reply_preview?: MessageReplyPreview | null; created_at: number; edited_at: number | null;
+  deleted_at: number | null; sequence: number; files: MessageFile[]; record_links: MessageRecordLink[]; reactions?: MessageReaction[]; mentions?: MessageMention[];
+  pinned_at?: number | null; pinned_by_uid?: string | null; pinned_by_name?: string | null;
+}
+
+export interface UserSummary { uid: string; email: string; name: string; access_level: number; access_name: string; totp_enabled: boolean; profile_photo_updated_at?: number | null }
 
 export interface StorageLayout {
   module_uid: string; module_name: string; module_slug: string; configured: boolean;

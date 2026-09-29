@@ -1,6 +1,15 @@
 use std::io::Cursor;
 
-use axum::{Json, http::StatusCode, response::IntoResponse};
+use axum::{
+    Json,
+    body::Body,
+    extract::{Multipart, Path},
+    http::{
+        HeaderValue, StatusCode,
+        header::{CACHE_CONTROL, CONTENT_DISPOSITION, CONTENT_TYPE},
+    },
+    response::{IntoResponse, Response},
+};
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use image::ImageFormat;
 use rusqlite::{OptionalExtension, params};
@@ -10,6 +19,12 @@ use crate::{
     api::account::model::{
         PasswordChangeRequest, ProfileUpdateRequest, RecoveryCodesResponse, SecurityReauthRequest,
         TotpConfirmRequest, TotpEnrollmentRequest, TotpEnrollmentResponse,
+    },
+    api::{
+        live::publish_live_event,
+        mx::handler::{
+            n1_access_token, n1_download, n1_ensure_directory, n1_soft_delete, n1_upload_one_shot,
+        },
     },
     db::connector::{SqliteDatabaseError, with_sql_connection},
     middleware::{auth::Claims, totp::verify_totp},
@@ -23,6 +38,271 @@ use crate::{
 };
 
 const TOTP_ENROLLMENT_TTL_SECONDS: i64 = 10 * 60;
+
+pub(crate) fn ensure_profile_photo_schema(
+    connection: &rusqlite::Connection,
+) -> rusqlite::Result<()> {
+    connection.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS mx_user_profile_photos (
+            user_uid   TEXT PRIMARY KEY NOT NULL,
+            object_key TEXT NOT NULL UNIQUE,
+            file_name  TEXT NOT NULL,
+            mime_type  TEXT NOT NULL,
+            size       INTEGER NOT NULL CHECK(size > 0),
+            updated_at INTEGER NOT NULL,
+            FOREIGN KEY(user_uid) REFERENCES users(uid) ON DELETE CASCADE
+        );
+        "#,
+    )
+}
+
+fn profile_photo_type(mime_type: &str, file_name: &str) -> Option<(&'static str, &'static str)> {
+    let mime = mime_type.trim().to_ascii_lowercase();
+    let name = file_name.to_ascii_lowercase();
+    match mime.as_str() {
+        "image/png" => Some(("png", "image/png")),
+        "image/jpeg" => Some(("jpg", "image/jpeg")),
+        "image/webp" => Some(("webp", "image/webp")),
+        "image/gif" => Some(("gif", "image/gif")),
+        _ if name.ends_with(".png") => Some(("png", "image/png")),
+        _ if name.ends_with(".jpg") || name.ends_with(".jpeg") => Some(("jpg", "image/jpeg")),
+        _ if name.ends_with(".webp") => Some(("webp", "image/webp")),
+        _ if name.ends_with(".gif") => Some(("gif", "image/gif")),
+        _ => None,
+    }
+}
+
+fn profile_photo_json(
+    user_uid: &str,
+    file_name: &str,
+    mime_type: &str,
+    size: i64,
+    updated_at: i64,
+) -> Value {
+    json!({
+        "exists": true,
+        "file_name": file_name,
+        "mime_type": mime_type,
+        "size": size,
+        "updated_at": updated_at,
+        "url": format!("/mx/v1/account/profile-photo/{user_uid}?v={updated_at}")
+    })
+}
+
+pub async fn upload_profile_photo(claims: Claims, mut multipart: Multipart) -> Response {
+    let field = match multipart.next_field().await {
+        Ok(Some(field)) => field,
+        _ => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"response":"select a profile image to upload"})),
+            )
+                .into_response();
+        }
+    };
+    let file_name = field.file_name().unwrap_or("profile-photo").to_string();
+    let supplied_type = field.content_type().unwrap_or("").to_string();
+    let Some((extension, mime_type)) = profile_photo_type(&supplied_type, &file_name) else {
+        return (
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            Json(json!({"response":"profile photo must be PNG, JPEG, WebP, or GIF"})),
+        )
+            .into_response();
+    };
+    let bytes = match field.bytes().await {
+        Ok(bytes) if !bytes.is_empty() && bytes.len() <= 5 * 1024 * 1024 => bytes.to_vec(),
+        Ok(_) => {
+            return (
+                StatusCode::PAYLOAD_TOO_LARGE,
+                Json(json!({"response":"profile photo must be between 1 byte and 5 MiB"})),
+            )
+                .into_response();
+        }
+        Err(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"response":"profile photo upload could not be read"})),
+            )
+                .into_response();
+        }
+    };
+    if image::load_from_memory(&bytes).is_err() {
+        return (
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            Json(json!({"response":"the selected file is not a valid image"})),
+        )
+            .into_response();
+    }
+
+    let user_uid = claims.uid;
+    let object_key = format!("__mx/profile-photos/{user_uid}/avatar.{extension}");
+    let token = match n1_access_token().await {
+        Ok(token) => token,
+        Err(_) => {
+            return (
+                StatusCode::BAD_GATEWAY,
+                Json(json!({"response":"N1 is unavailable; the profile photo was not changed"})),
+            )
+                .into_response();
+        }
+    };
+    for directory in [
+        "__mx".to_string(),
+        "__mx/profile-photos".to_string(),
+        format!("__mx/profile-photos/{user_uid}"),
+    ] {
+        if n1_ensure_directory(&directory, &token).await.is_err() {
+            return (
+                StatusCode::BAD_GATEWAY,
+                Json(json!({"response":"N1 could not prepare profile photo storage"})),
+            )
+                .into_response();
+        }
+    }
+    if n1_upload_one_shot(&object_key, mime_type, bytes.clone(), &token)
+        .await
+        .is_err()
+    {
+        return (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({"response":"N1 could not store the profile photo"})),
+        )
+            .into_response();
+    }
+
+    let now = chrono::Utc::now().timestamp_millis();
+    let stored_uid = user_uid.clone();
+    let stored_key = object_key.clone();
+    let stored_name = file_name.clone();
+    let stored_type = mime_type.to_string();
+    let size = bytes.len() as i64;
+    let result = tokio::task::spawn_blocking(move || {
+        with_sql_connection(|connection| {
+            ensure_profile_photo_schema(connection)?;
+            let old_key = connection.query_row(
+                "SELECT object_key FROM mx_user_profile_photos WHERE user_uid=?1",
+                params![stored_uid],
+                |row| row.get::<_, String>(0),
+            ).optional()?;
+            connection.execute(
+                "INSERT INTO mx_user_profile_photos(user_uid,object_key,file_name,mime_type,size,updated_at) VALUES (?1,?2,?3,?4,?5,?6) ON CONFLICT(user_uid) DO UPDATE SET object_key=excluded.object_key,file_name=excluded.file_name,mime_type=excluded.mime_type,size=excluded.size,updated_at=excluded.updated_at",
+                params![stored_uid,stored_key,stored_name,stored_type,size,now],
+            )?;
+            Ok(old_key)
+        })
+    }).await;
+    let old_key = match result {
+        Ok(Ok(value)) => value,
+        _ => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"response":"photo was stored but its metadata could not be saved"})),
+            )
+                .into_response();
+        }
+    };
+    if let Some(old_key) = old_key.filter(|key| key != &object_key) {
+        let _ = n1_soft_delete(&old_key).await;
+    }
+    publish_live_event(
+        "profile.updated",
+        Some(&user_uid),
+        json!({"uid":user_uid,"profile_photo_updated_at":now}),
+    );
+    (
+        StatusCode::OK,
+        Json(profile_photo_json(
+            &user_uid, &file_name, mime_type, size, now,
+        )),
+    )
+        .into_response()
+}
+
+pub async fn get_profile_photo(_claims: Claims, Path(user_uid): Path<String>) -> Response {
+    let result = tokio::task::spawn_blocking(move || {
+        with_sql_connection(|connection| {
+            ensure_profile_photo_schema(connection)?;
+            connection.query_row(
+                "SELECT object_key,file_name,mime_type,updated_at FROM mx_user_profile_photos WHERE user_uid=?1",
+                params![user_uid],
+                |row| Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?,row.get::<_,String>(2)?,row.get::<_,i64>(3)?)),
+            ).optional()
+        })
+    }).await;
+    let Ok(Ok(Some((object_key, file_name, mime_type, updated_at)))) = result else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let bytes = match n1_download(&object_key, &file_name).await {
+        Ok(bytes) => bytes,
+        Err(_) => return StatusCode::BAD_GATEWAY.into_response(),
+    };
+    let mut response = Response::new(Body::from(bytes));
+    *response.status_mut() = StatusCode::OK;
+    response.headers_mut().insert(
+        CONTENT_TYPE,
+        HeaderValue::from_str(&mime_type)
+            .unwrap_or_else(|_| HeaderValue::from_static("application/octet-stream")),
+    );
+    let safe_name = file_name.replace('"', "_");
+    if let Ok(value) = HeaderValue::from_str(&format!("inline; filename=\"{safe_name}\"")) {
+        response.headers_mut().insert(CONTENT_DISPOSITION, value);
+    }
+    response.headers_mut().insert(
+        CACHE_CONTROL,
+        HeaderValue::from_static("private, max-age=86400, immutable"),
+    );
+    if let Ok(value) = HeaderValue::from_str(&format!("\"{updated_at}\"")) {
+        response.headers_mut().insert("etag", value);
+    }
+    response
+}
+
+pub async fn delete_profile_photo(claims: Claims) -> Response {
+    let user_uid = claims.uid;
+    let delete_uid = user_uid.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        with_sql_connection(|connection| {
+            ensure_profile_photo_schema(connection)?;
+            let object_key = connection
+                .query_row(
+                    "SELECT object_key FROM mx_user_profile_photos WHERE user_uid=?1",
+                    params![delete_uid],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?;
+            connection.execute(
+                "DELETE FROM mx_user_profile_photos WHERE user_uid=?1",
+                params![delete_uid],
+            )?;
+            Ok(object_key)
+        })
+    })
+    .await;
+    let object_key = match result {
+        Ok(Ok(value)) => value,
+        _ => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"response":"failed to remove profile photo"})),
+            )
+                .into_response();
+        }
+    };
+    if let Some(object_key) = object_key {
+        let _ = n1_soft_delete(&object_key).await;
+    }
+    publish_live_event(
+        "profile.updated",
+        Some(&user_uid),
+        json!({"uid":user_uid,"profile_photo_updated_at":Value::Null}),
+    );
+    (
+        StatusCode::OK,
+        Json(json!({"response":"profile photo removed"})),
+    )
+        .into_response()
+}
 
 type ApiError = (StatusCode, Json<Value>);
 

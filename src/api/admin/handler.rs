@@ -210,7 +210,7 @@ pub async fn get_user(
                 match filter {
                     Some(filter) => {
                         let query = format!(
-                            "SELECT uid, email, name, access_level, totp_secret FROM users WHERE {} = ?1 LIMIT 1",
+                            "SELECT uid, email, name, access_level, totp_secret, (SELECT updated_at FROM mx_user_profile_photos photo WHERE photo.user_uid = users.uid) FROM users WHERE {} = ?1 LIMIT 1",
                             filter
                         );
 
@@ -222,6 +222,7 @@ pub async fn get_user(
                             let name: String = row.get("name")?;
                             let access_level: i64 = row.get("access_level")?;
                             let totp_secret: Option<String> = row.get("totp_secret")?;
+                            let profile_photo_updated_at: Option<i64> = row.get(5)?;
 
                             Ok(UserSummary {
                                 uid,
@@ -230,6 +231,7 @@ pub async fn get_user(
                                 access_level,
                                 access_name: access_level_name(access_level).to_string(),
                                 totp_enabled: totp_secret.is_some(),
+                                profile_photo_updated_at,
                             })
                         })?;
 
@@ -241,7 +243,8 @@ pub async fn get_user(
                     None => {
                         let mut statement = connection.prepare(
                             r#"
-                        SELECT uid, email, name, access_level, totp_secret
+                        SELECT uid, email, name, access_level, totp_secret,
+                               (SELECT updated_at FROM mx_user_profile_photos photo WHERE photo.user_uid = users.uid)
                         FROM users
                         ORDER BY email ASC
                         "#,
@@ -253,6 +256,7 @@ pub async fn get_user(
                             let name: String = row.get("name")?;
                             let access_level: i64 = row.get("access_level")?;
                             let totp_secret: Option<String> = row.get("totp_secret")?;
+                            let profile_photo_updated_at: Option<i64> = row.get(5)?;
 
                             Ok(UserSummary {
                                 uid,
@@ -261,6 +265,7 @@ pub async fn get_user(
                                 access_level,
                                 access_name: access_level_name(access_level).to_string(),
                                 totp_enabled: totp_secret.is_some(),
+                                profile_photo_updated_at,
                             })
                         })?;
 

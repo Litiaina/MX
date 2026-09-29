@@ -104,7 +104,7 @@
 <main class="auth-page">
   <section class="auth-shell">
     <aside class="auth-identity" aria-label={`${brandName} identity`}>
-      <div>
+      <div class="auth-brand">
         <div class="auth-logo">
           {#if showLogo}
             <img src={logoUrl} alt={`${brandName} logo`} onerror={() => failedLogoUrl = logoUrl} />
@@ -115,6 +115,17 @@
         {#if organizationName}<p class="auth-organization">{organizationName}</p>{/if}
         <h1>{brandName}</h1>
         {#if brandSubtitle}<p class="auth-subtitle">{brandSubtitle}</p>{/if}
+      </div>
+      <div class="auth-visual" aria-hidden="true">
+        <span class="auth-orbit orbit-one"></span>
+        <span class="auth-orbit orbit-two"></span>
+        <div class="auth-visual-window">
+          <header><i></i><i></i><i></i><span>MX workspace</span></header>
+          <div class="auth-visual-body">
+            <aside><i></i><i></i><i></i><i></i></aside>
+            <section><b></b><b></b><div><i></i><i></i><i></i></div><b></b></section>
+          </div>
+        </div>
       </div>
       <div class="auth-assurance">
         <span aria-hidden="true"><CircleCheck size={17} /></span>

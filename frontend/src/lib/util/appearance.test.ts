@@ -2,19 +2,18 @@ import { describe, expect, it } from 'vitest';
 import { appearanceScale, primaryForeground, validAccentColor } from './appearance';
 
 describe('appearanceScale', () => {
-  it('compensates text when only the interface is enlarged', () => {
+  it('keeps type unchanged when only the interface is enlarged', () => {
     const result = appearanceScale(150, 100);
 
     expect(result.interfaceRatio).toBe(1.5);
-    expect(result.applicationFontRatio * result.interfaceRatio).toBeCloseTo(1);
+    expect(result.fontRatio).toBe(1);
   });
 
   it('keeps interface dimensions unchanged when only text is enlarged', () => {
     const result = appearanceScale(100, 135);
 
     expect(result.interfaceRatio).toBe(1);
-    expect(result.applicationFontRatio * result.interfaceRatio).toBeCloseTo(1.35);
-    expect(result.viewportPercent).toBe(100);
+    expect(result.fontRatio).toBeCloseTo(1.35);
   });
 
   it('clamps persisted values to the supported ranges', () => {

@@ -1,15 +1,29 @@
 <script lang="ts">
-  import { onDestroy } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
   import Search from '@lucide/svelte/icons/search';
   import ModuleIcon from './ModuleIcon.svelte';
   import type { GlobalSearchResult } from '../api/domain';
   import { globalSearch } from '../api/workspace';
 
+  let { onRequestOpen = () => {} }: { onRequestOpen?: () => void } = $props();
+
   let query = $state(''); let results = $state<GlobalSearchResult[]>([]);
   let open = $state(false); let loading = $state(false); let error = $state('');
+  let input: HTMLInputElement;
   let timer: number | undefined; let request = 0;
 
   onDestroy(() => window.clearTimeout(timer));
+  onMount(() => {
+    const shortcut = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        onRequestOpen();
+        window.requestAnimationFrame(() => input?.focus());
+      }
+    };
+    window.addEventListener('keydown', shortcut);
+    return () => window.removeEventListener('keydown', shortcut);
+  });
 
   function schedule() {
     window.clearTimeout(timer); error = ''; open = query.trim().length >= 2;
@@ -31,7 +45,7 @@
 
 <div class="global-search" class:open>
   <span aria-hidden="true"><Search size={15} /></span>
-  <input bind:value={query} oninput={schedule} onfocus={() => open = query.trim().length >= 2} onblur={() => window.setTimeout(() => open = false, 160)} onkeydown={(event) => { if (event.key === 'Escape') { open = false; event.currentTarget.blur(); } }} type="search" placeholder="Search all modules…" aria-label="Search all modules" autocomplete="off" />
+  <input bind:this={input} bind:value={query} oninput={schedule} onfocus={() => open = query.trim().length >= 2} onblur={() => window.setTimeout(() => open = false, 160)} onkeydown={(event) => { if (event.key === 'Escape') { open = false; event.currentTarget.blur(); } }} type="search" placeholder="Search all modules…" aria-label="Search all modules" autocomplete="off" />
   {#if open}<div class="global-search-results" role="listbox">
     <header><strong>Search across modules</strong><small>Only records you may view appear</small></header>
     {#if loading}<div class="search-skeleton"><i></i><i></i><i></i></div>

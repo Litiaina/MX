@@ -107,6 +107,16 @@ pub async fn initialize_sql_db() {
                         ON DELETE CASCADE
                 );
 
+                CREATE TABLE IF NOT EXISTS mx_user_profile_photos (
+                    user_uid   TEXT PRIMARY KEY NOT NULL,
+                    object_key TEXT NOT NULL UNIQUE,
+                    file_name  TEXT NOT NULL,
+                    mime_type  TEXT NOT NULL,
+                    size       INTEGER NOT NULL CHECK(size > 0),
+                    updated_at INTEGER NOT NULL,
+                    FOREIGN KEY(user_uid) REFERENCES users(uid) ON DELETE CASCADE
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_user_recovery_codes_user
                     ON user_recovery_codes(user_uid);
 

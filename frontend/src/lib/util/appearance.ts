@@ -1,8 +1,6 @@
 export interface AppearanceScale {
   interfaceRatio: number;
   fontRatio: number;
-  applicationFontRatio: number;
-  viewportPercent: number;
 }
 
 export function appearanceScale(interfacePercent: number, fontPercent: number): AppearanceScale {
@@ -11,9 +9,7 @@ export function appearanceScale(interfacePercent: number, fontPercent: number): 
 
   return {
     interfaceRatio,
-    fontRatio,
-    applicationFontRatio: fontRatio / interfaceRatio,
-    viewportPercent: 100 / interfaceRatio
+    fontRatio
   };
 }
 

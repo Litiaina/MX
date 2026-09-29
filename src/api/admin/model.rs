@@ -19,6 +19,7 @@ pub struct UserSummary {
     pub access_level: i64,
     pub access_name: String,
     pub totp_enabled: bool,
+    pub profile_photo_updated_at: Option<i64>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]

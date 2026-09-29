@@ -1,17 +1,5 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import Bell from '@lucide/svelte/icons/bell';
-  import Download from '@lucide/svelte/icons/download';
-  import FileText from '@lucide/svelte/icons/file-text';
-  import LayoutDashboard from '@lucide/svelte/icons/layout-dashboard';
-  import LogOut from '@lucide/svelte/icons/log-out';
-  import Menu from '@lucide/svelte/icons/menu';
-  import MessagesSquare from '@lucide/svelte/icons/messages-square';
-  import MoonStar from '@lucide/svelte/icons/moon-star';
-  import RefreshCw from '@lucide/svelte/icons/refresh-cw';
-  import Settings from '@lucide/svelte/icons/settings';
-  import ShieldCheck from '@lucide/svelte/icons/shield-check';
-  import UserRound from '@lucide/svelte/icons/user-round';
   import X from '@lucide/svelte/icons/x';
   import type { DeploymentConfig, ModuleDefinition, MxNotification, UserPreferences } from '../api/domain';
   import type { Session } from '../api/types';
@@ -24,11 +12,11 @@
   import AdminView from './AdminView.svelte';
   import CollaborationView from './CollaborationView.svelte';
   import DashboardView from './DashboardView.svelte';
-  import GlobalSearch from './GlobalSearch.svelte';
-  import ModuleIcon from './ModuleIcon.svelte';
-  import NotificationCenter from './NotificationCenter.svelte';
+  import DisplaySettingsDialog from './DisplaySettingsDialog.svelte';
   import NotificationKindIcon from './NotificationKindIcon.svelte';
   import RecordsView from './RecordsView.svelte';
+  import WorkspaceSidebar from './WorkspaceSidebar.svelte';
+  import WorkspaceTopbar from './WorkspaceTopbar.svelte';
 
   let { session, deployment, onSessionChanged, onSessionEnded, onDeploymentChanged }:
     { session: Session; deployment: DeploymentConfig; onSessionChanged: () => Promise<unknown>; onSessionEnded: (message: string) => void; onDeploymentChanged: () => Promise<void> } = $props();
@@ -36,8 +24,10 @@
   let view = $state<View>('dashboard');
   let recordRevision = $state(0); let dashboardRevision = $state(0); let adminRevision = $state(0);
   let live = $state(false); let mobileOpen = $state(false); let settingsOpen = $state(false);
-  let notificationsOpen = $state(false); let notificationRevision = $state(0); let unreadNotifications = $state(0);
+  let notificationRevision = $state(0); let unreadNotifications = $state(0);
   let collaborationRevision = $state(0);
+  let activeCollaborationChannelUid = $state('');
+  let activeCollaborationNewestVisible = $state(false);
   let notificationPreferences = $state<UserPreferences['notifications']>(defaultNotificationPreferences());
   let modules = $state<ModuleDefinition[]>([]);
   let selectedModuleUid = $state('mx-default-records');
@@ -132,6 +122,7 @@
       return;
     }
     if (message.type === 'preferences.updated') { void loadAccountPreferences(); return; }
+    if (message.type === 'profile.updated') { lastCollaborationEvent = message; collaborationRevision += 1; if (message.actor_uid === session.uid) void onSessionChanged(); return; }
     if (message.type.startsWith('message.') || message.type.startsWith('channel.') || message.type.startsWith('file.')) { lastCollaborationEvent = message; collaborationRevision += 1; notificationRevision += 1; return; }
     if (message.type.startsWith('module.')) { void loadWorkspaceModules(); recordRevision += 1; dashboardRevision += 1; return; }
     if (message.type === 'presence.changed') { dashboardRevision += 1; collaborationRevision += 1; return; }
@@ -165,10 +156,28 @@
     };
   }
   function alertImmediately() { const digest = notificationPreferences?.digest; return !digest || digest === 'immediate'; }
+  function notificationMatchesOpenContext(item: MxNotification) {
+    return view === 'collaboration'
+      && document.visibilityState === 'visible'
+      && document.hasFocus()
+      && activeCollaborationNewestVisible
+      && item.target_type === 'channel'
+      && !!item.target_uid
+      && item.target_uid === activeCollaborationChannelUid;
+  }
+  async function acknowledgeContextNotification(item: MxNotification) {
+    dismissToast(item.uid);
+    try { await markNotificationRead(item.uid); }
+    catch { /* The next inbox refresh will retain it if the acknowledgement failed. */ }
+    notificationRevision += 1;
+    await refreshUnreadCount();
+  }
   function announceNotification(message: LiveMessage) {
     const item = asNotification(message);
+    if (!item) { void refreshUnreadCount(); return; }
+    if (notificationMatchesOpenContext(item)) { void acknowledgeContextNotification(item); return; }
     unreadNotifications += 1;
-    if (!item || !alertImmediately() || inQuietHours(notificationPreferences.quiet_hours_start, notificationPreferences.quiet_hours_end)) return;
+    if (!alertImmediately() || inQuietHours(notificationPreferences.quiet_hours_start, notificationPreferences.quiet_hours_end)) return;
     notificationToasts = [item, ...notificationToasts.filter((toast) => toast.uid !== item.uid)].slice(0, 4);
     const existing = notificationToastTimers.get(item.uid); if (existing) window.clearTimeout(existing);
     notificationToastTimers.set(item.uid, window.setTimeout(() => dismissToast(item.uid), 9000));
@@ -193,6 +202,12 @@
   function dismissToast(uid: string) {
     const timer = notificationToastTimers.get(uid); if (timer) window.clearTimeout(timer);
     notificationToastTimers.delete(uid); notificationToasts = notificationToasts.filter((item) => item.uid !== uid);
+  }
+  function setActiveCollaborationChannel(uid: string, newestVisible: boolean) {
+    activeCollaborationChannelUid = uid;
+    activeCollaborationNewestVisible = newestVisible;
+    if (!newestVisible || view !== 'collaboration' || document.visibilityState !== 'visible' || !document.hasFocus()) return;
+    for (const item of notificationToasts.filter((toast) => toast.target_type === 'channel' && toast.target_uid === uid)) void acknowledgeContextNotification(item);
   }
   function openNotification(item: MxNotification) {
     dismissToast(item.uid);
@@ -229,8 +244,6 @@
     else if (view === 'dashboard') dashboardRevision += 1;
     else if (view === 'admin') adminRevision += 1;
   }
-  function initials(name: string) { return name.split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toUpperCase(); }
-  function moduleGroup(module: ModuleDefinition) { return typeof module.config.navigation_group === 'string' ? module.config.navigation_group.trim() : ''; }
   function setTheme(value: string) { theme = value; document.documentElement.dataset.theme = value || deployment.appearance.default_theme; }
   function toggleTheme() {
     const darkNow = document.documentElement.dataset.theme === 'dark' || (document.documentElement.dataset.theme === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
@@ -249,13 +262,12 @@
     // both values were multiplied into the root font size, making the two
     // controls behave identically.
     document.documentElement.style.removeProperty('font-size');
-    const { interfaceRatio, fontRatio, applicationFontRatio, viewportPercent } = appearanceScale(value, font);
-    document.documentElement.style.setProperty('--interface-scale', String(interfaceRatio));
+    for (const legacyProperty of ['--interface-scale', '--interface-viewport-width', '--interface-viewport-height']) document.documentElement.style.removeProperty(legacyProperty);
+    const { interfaceRatio, fontRatio } = appearanceScale(value, font);
+    document.documentElement.style.setProperty('--interface-factor', String(interfaceRatio));
+    document.documentElement.style.setProperty('--user-interface-factor', String(interfaceRatio));
     document.documentElement.style.setProperty('--font-scale', String(fontRatio));
-    // Compensate text for interface zoom so the two preferences remain independent.
-    document.documentElement.style.setProperty('--application-font-scale', String(applicationFontRatio));
-    document.documentElement.style.setProperty('--interface-viewport-width', `${viewportPercent}%`);
-    document.documentElement.style.setProperty('--interface-viewport-height', `${viewportPercent}vh`);
+    document.documentElement.style.setProperty('--application-font-scale', String(fontRatio));
   }
   function applyPersonalAppearance() {
     setTheme(theme);
@@ -269,7 +281,7 @@
     applyScale();
   }
   function resetPersonalAppearance() {
-    for (const property of ['--interface-scale', '--font-scale', '--application-font-scale', '--interface-viewport-width', '--interface-viewport-height']) document.documentElement.style.removeProperty(property);
+    for (const property of ['--interface-factor', '--font-scale', '--application-font-scale']) document.documentElement.style.removeProperty(property);
     document.documentElement.dataset.theme = deployment.appearance.default_theme;
     document.documentElement.dataset.density = deployment.appearance.density;
     document.documentElement.dataset.reducedMotion = 'false';
@@ -333,23 +345,12 @@
 </script>
 
 <div class="application">
-  <aside class:open={mobileOpen} class="sidebar">
-    <div class="sidebar-brand">{#if deployment.branding.logo_url}<img src={deployment.branding.logo_url} alt="" />{:else}<span>{initials(deployment.branding.display_name)}</span>{/if}<div><strong>{deployment.branding.display_name}</strong><small>{deployment.branding.subtitle}</small></div></div>
-    <nav class="main-nav" aria-label="Main navigation">
-      {#if deployment.navigation.show_dashboard}<button class:active={view === 'dashboard'} onclick={() => go('dashboard')}><span><LayoutDashboard size={17} /></span>{deployment.terminology.dashboard_label}</button>{/if}
-      {#if modules.length}{#each modules as module, index}{#if moduleGroup(module) && (index === 0 || moduleGroup(modules[index - 1]) !== moduleGroup(module))}<span class="nav-group-label">{moduleGroup(module)}</span>{/if}<button class:active={view === 'records' && selectedModuleUid === module.uid} onclick={() => goModule(module.uid)}><span style={`color:${module.color}`}><ModuleIcon name={module.icon} size={17} /></span>{module.name}</button>{/each}{:else if deployment.navigation.show_records}<button class:active={view === 'records'} onclick={() => go('records')}><span><FileText size={17} /></span>{deployment.terminology.record_plural}</button>{/if}<button class:active={view === 'collaboration'} onclick={() => go('collaboration')}><span><MessagesSquare size={17} /></span>Collaboration</button>
-      {#if session.access_level === 0}<button class:active={view === 'admin'} onclick={() => go('admin')}><span><ShieldCheck size={17} /></span>{deployment.terminology.administration_label}</button>{/if}
-    </nav>
-    {#if deployment.navigation.show_quick_actions}<section class="quick-actions"><span>Quick actions</span>{#if deployment.navigation.show_records}<button onclick={() => goModule(selectedModule?.uid || modules[0]?.uid || 'mx-default-records')}><i><FileText size={15} /></i>Open {(selectedModule?.singular_name || deployment.terminology.record_singular).toLowerCase()} workspace</button>{/if}<button onclick={() => exportReport('records', undefined, '', '', selectedModule?.uid || 'mx-default-records')}><i><Download size={15} /></i>Export detailed {(selectedModule?.name || deployment.terminology.record_plural).toLowerCase()}</button></section>{/if}
-    <div class="sidebar-foot"><div class="live-state"><i class:online={live}></i>{live ? 'Live sync connected' : 'Reconnecting live sync'}</div><button class:active={view === 'account'} class="profile-button" onclick={() => go('account')}><span>{initials(session.name)}</span><div><strong>{session.name}</strong><small>{session.access_name} · My account</small></div></button></div>
-  </aside>
+  <WorkspaceSidebar {deployment} {session} {modules} {view} {selectedModuleUid} {selectedModule} {live} open={mobileOpen} onToggle={() => mobileOpen = !mobileOpen} onNavigate={go} onNavigateModule={goModule} onExport={() => exportReport('records', undefined, '', '', selectedModule?.uid || 'mx-default-records')} />
   <main class="main-stage">
-    <header class="mobile-header"><button class="icon-button" aria-label="Open navigation" onclick={() => mobileOpen = !mobileOpen}><Menu size={20} /></button><strong>{viewTitle}</strong><button class="button small icon-label" onclick={refreshCurrent}><RefreshCw size={15} />Refresh</button></header>
-    <header class="workspace-topbar"><div class="topbar-context"><button class="menu-button" aria-label="Open navigation menu" aria-expanded={mobileOpen} onclick={() => mobileOpen = !mobileOpen}><Menu size={18} /></button><div class="workspace-identity"><small>{deployment.branding.display_name}</small><strong>{viewTitle}</strong></div></div><div class="desktop-actions"><GlobalSearch /><span class:online={live} class="topbar-live">{live ? 'Live' : 'Reconnecting'}</span><button class="topbar-tool" type="button" title="Refresh current workspace" aria-label="Refresh current workspace" onclick={refreshCurrent}><RefreshCw size={17} /></button><div class="notification-anchor"><button class="topbar-tool notification-button" type="button" title="Notifications" aria-label={`Notifications${unreadNotifications ? `, ${unreadNotifications} unread` : ''}`} aria-expanded={notificationsOpen} onclick={() => notificationsOpen = !notificationsOpen}><Bell size={17} />{#if unreadNotifications}<span>{unreadNotifications > 99 ? '99+' : unreadNotifications}</span>{/if}</button>{#if notificationsOpen}<NotificationCenter revision={notificationRevision} onUnread={(count) => unreadNotifications = count} onClose={() => notificationsOpen = false} />{/if}</div><button class="topbar-tool" type="button" title="Personal settings" aria-label="Personal settings" onclick={() => settingsOpen = true}><Settings size={17} /></button><button class="topbar-tool" type="button" title="Change theme" aria-label="Change theme" onclick={toggleTheme}><MoonStar size={17} /></button><button class="topbar-tool" type="button" title="My account" aria-label="My account" onclick={() => go('account')}><UserRound size={17} /></button><button class="topbar-tool sign-out-button" type="button" title="Sign out" aria-label="Sign out" onclick={() => onSessionEnded('Signed out.')}><LogOut size={17} /></button></div></header>
-    <nav class="workspace-tabs" aria-label="Workspace tabs">{#if deployment.navigation.show_dashboard}<button class:active={view === 'dashboard'} onclick={() => go('dashboard')}><span><LayoutDashboard size={15} /></span>{deployment.terminology.dashboard_label}</button>{/if}{#if modules.length}{#each modules as module}<button class:active={view === 'records' && selectedModuleUid === module.uid} onclick={() => goModule(module.uid)}><span style={`color:${module.color}`}><ModuleIcon name={module.icon} size={15} /></span>{module.name}</button>{/each}{:else if deployment.navigation.show_records}<button class:active={view === 'records'} onclick={() => go('records')}><span><FileText size={15} /></span>{deployment.terminology.record_plural}</button>{/if}<button class:active={view === 'collaboration'} onclick={() => go('collaboration')}><span><MessagesSquare size={15} /></span>Collaboration</button>{#if session.access_level === 0}<button class:active={view === 'admin'} onclick={() => go('admin')}><span><ShieldCheck size={15} /></span>{deployment.terminology.administration_label}<small>Admin</small></button>{/if}</nav>
+    <WorkspaceTopbar productName={deployment.branding.display_name} {viewTitle} {live} navigationOpen={mobileOpen} {notificationRevision} {unreadNotifications} onToggleNavigation={() => mobileOpen = !mobileOpen} onRefresh={refreshCurrent} onOpenSettings={() => settingsOpen = true} onToggleTheme={toggleTheme} onOpenAccount={() => go('account')} onSignOut={() => onSessionEnded('Signed out.')} onUnread={(count) => unreadNotifications = count} />
     {#if view === 'dashboard'}<DashboardView isAdmin={session.access_level === 0} revision={dashboardRevision} dashboardLabel={deployment.terminology.dashboard_label} recordSingular={deployment.terminology.record_singular} recordPlural={deployment.terminology.record_plural} />
     {:else if view === 'records'}{#key selectedModuleUid}<RecordsView accessLevel={session.access_level} moduleUid={selectedModule?.uid || ''} modulePermission={selectedModulePermission} openRecordUid={linkedRecordUid} revision={recordRevision} liveMessage={lastRecordEvent} recordSingular={selectedModule?.singular_name || deployment.terminology.record_singular} recordPlural={selectedModule?.name || deployment.terminology.record_plural} />{/key}
-    {:else if view === 'collaboration'}<CollaborationView {session} openChannelUid={linkedChannelUid} revision={collaborationRevision} connected={live} liveEvent={lastCollaborationEvent} />
+    {:else if view === 'collaboration'}<CollaborationView {session} openChannelUid={linkedChannelUid} revision={collaborationRevision} connected={live} liveEvent={lastCollaborationEvent} onChannelChanged={setActiveCollaborationChannel} />
     {:else if view === 'admin' && session.access_level === 0}{#key adminRevision}<AdminView {session} administrationLabel={deployment.terminology.administration_label} dashboardLabel={deployment.terminology.dashboard_label} />{/key}
     {:else}<AccountSecurity {session} {onSessionChanged} {onSessionEnded} />{/if}
   </main>
@@ -371,4 +372,26 @@
   </section>
 {/if}
 
-{#if settingsOpen}<div class="overlay" role="presentation" onclick={(event) => { if (event.currentTarget === event.target) settingsOpen = false; }}><div class="dialog settings-dialog" role="dialog" aria-modal="true" aria-labelledby="display-settings-title"><div class="dialog-head"><div><p class="eyebrow">Personal preferences</p><h2 id="display-settings-title">Display and refresh</h2><p class="muted">Saved to your MX account and applied over administrator defaults.</p></div><button class="icon-button" aria-label="Close" onclick={() => settingsOpen = false}><X size={19} /></button></div>{#if settingsError}<div class="notice error">{settingsError}</div>{/if}<form class="form-stack" onsubmit={(event) => { event.preventDefault(); void saveDisplaySettings(); }}><label>Theme<select bind:value={theme} onchange={() => setTheme(theme)}><option value="">Use administrator default</option><option value="light">Light</option><option value="dark">Dark</option><option value="system">Use system setting</option></select></label><fieldset class="personal-accent"><legend>Accent color</legend><div class="accent-swatches"><button class:active={!accentColor} type="button" style={`--swatch:${deployment.appearance.primary_color}`} onclick={() => { accentColor = ''; applyPersonalAppearance(); }} title="Use administrator default" aria-label="Use administrator default accent"><i></i></button>{#each accentPresets as color}<button class:active={accentColor === color} type="button" style={`--swatch:${color}`} onclick={() => { accentColor = color; applyPersonalAppearance(); }} title={color} aria-label={`Use accent ${color}`}><i></i></button>{/each}<label class="accent-custom" title="Choose a custom accent"><input type="color" value={accentColor || deployment.appearance.primary_color} oninput={(event) => { accentColor = event.currentTarget.value; applyPersonalAppearance(); }} /><span>Custom</span></label></div><small>{accentColor ? `Personal override · ${accentColor}` : 'Using the administrator default'}</small></fieldset><label>Density<select bind:value={density} onchange={applyPersonalAppearance}><option value="">Use administrator default</option><option value="compact">Compact</option><option value="normal">Normal</option><option value="comfortable">Comfortable</option></select></label><label>Content width<select bind:value={contentWidth} onchange={applyPersonalAppearance}><option value="">Use administrator default</option><option value="standard">Standard</option><option value="wide">Wide</option><option value="full">Full width</option></select></label><label class="checkbox setting-checkbox"><input type="checkbox" bind:checked={autoScale} onchange={applyScale} /> Automatically fit the interface to this screen</label><label>Interface size: {autoScale ? `${recommendedScale()}% recommended` : `${scale}%`}<input type="range" min="85" max="160" step="5" bind:value={scale} disabled={autoScale} oninput={applyScale} /></label><label>Font size: {fontScale}%<input type="range" min="85" max="150" step="5" bind:value={fontScale} oninput={applyScale} /></label><label class="checkbox setting-checkbox"><input type="checkbox" bind:checked={reducedMotion} onchange={applyPersonalAppearance} /> Reduce animation and motion</label><label>Automatic data refresh<select bind:value={autoRefresh}><option value={0}>Off — live updates only</option><option value={30}>Every 30 seconds</option><option value={60}>Every minute</option><option value={300}>Every 5 minutes</option><option value={900}>Every 15 minutes</option></select></label><div class="dialog-actions"><button class="button" type="button" onclick={() => settingsOpen = false}>Cancel</button><span class="spacer"></span><button class="button primary" disabled={settingsBusy}>{settingsBusy ? 'Saving…' : 'Save preferences'}</button></div></form></div></div>{/if}
+{#if settingsOpen}
+  <DisplaySettingsDialog
+    {deployment}
+    error={settingsError}
+    busy={settingsBusy}
+    {accentPresets}
+    bind:theme
+    bind:accentColor
+    bind:density
+    bind:contentWidth
+    bind:autoScale
+    bind:scale
+    bind:fontScale
+    bind:reducedMotion
+    bind:autoRefresh
+    {recommendedScale}
+    onClose={() => settingsOpen = false}
+    onThemeChange={setTheme}
+    onAppearanceChange={applyPersonalAppearance}
+    onScaleChange={applyScale}
+    onSave={saveDisplaySettings}
+  />
+{/if}

@@ -1,10 +1,27 @@
-import { apiJson, jsonRequest } from './client';
+import { apiFetch, apiJson, apiUpload, jsonRequest } from './client';
 import type {
   OperationResponse,
   RecoveryCodesResponse,
   SecondFactor,
   TotpEnrollmentResponse
 } from './types';
+import type { ProfilePhotoInfo } from './types';
+
+export function uploadProfilePhoto(file: File, onProgress?: (loaded: number, total: number) => void): Promise<ProfilePhotoInfo> {
+  const body = new FormData();
+  body.append('photo', file);
+  return apiUpload('/mx/v1/account/profile-photo', body, onProgress);
+}
+
+export function deleteProfilePhoto(): Promise<OperationResponse> {
+  return apiJson('/mx/v1/account/profile-photo', { method: 'DELETE' });
+}
+
+export async function loadProfilePhoto(userUid: string, version: number): Promise<Blob> {
+  const response = await apiFetch(`/mx/v1/account/profile-photo/${encodeURIComponent(userUid)}?v=${encodeURIComponent(String(version))}`);
+  if (!response.ok) throw new Error('Profile photo could not be loaded.');
+  return response.blob();
+}
 
 export function updateProfile(input: {
   currentPassword: string;

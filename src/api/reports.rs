@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::{
+    api::audit::ensure_audit_schema,
     api::lifecycle::ensure_record_lifecycle_schema,
     api::live::publish_live_event,
     api::modules::{DEFAULT_MODULE_UID, module_can},
@@ -770,16 +771,13 @@ fn user_performance_rows(
     query: &UserPerformanceQuery,
 ) -> rusqlite::Result<Vec<UserPerformanceRow>> {
     ensure_reporting_schema(connection)?;
+    ensure_audit_schema(connection)?;
 
     let audit_exists = connection.query_row(
         "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='mx_audit_log')",
         [],
         |row| row.get::<_, i64>(0),
     )? != 0;
-
-    if !audit_exists {
-        return Ok(Vec::new());
-    }
 
     let mut conditions = vec!["1 = 1".to_string()];
     let mut bind: Vec<SqlValue> = Vec::new();
@@ -804,28 +802,51 @@ fn user_performance_rows(
         conditions.push(format!("created_at <= ?{}", bind.len()));
     }
 
-    let sql = format!(
-        r#"
+    let audit_summary = if audit_exists {
+        format!(
+            r#"
         SELECT
             actor_uid,
-            MAX(COALESCE(actor_name, '')),
-            MAX(COALESCE(actor_email, '')),
-            SUM(CASE WHEN success = 1 AND action = 'record.create' THEN 1 ELSE 0 END),
-            SUM(CASE WHEN success = 1 AND action = 'record.update' THEN 1 ELSE 0 END),
-            SUM(CASE WHEN success = 1 AND action = 'attachment.upload' THEN 1 ELSE 0 END),
-            SUM(CASE WHEN success = 1 AND action = 'record.delete' THEN 1 ELSE 0 END),
-            SUM(CASE WHEN success = 1 AND action = 'attachment.download' THEN 1 ELSE 0 END),
-            SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END),
-            SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END),
-            COUNT(DISTINCT CASE WHEN target_type = 'record' THEN target_uid END),
-            MAX(created_at)
+            SUM(CASE WHEN success = 1 AND action = 'record.create' THEN 1 ELSE 0 END) AS records_created,
+            SUM(CASE WHEN success = 1 AND action = 'record.update' THEN 1 ELSE 0 END) AS records_updated,
+            SUM(CASE WHEN success = 1 AND action = 'attachment.upload' THEN 1 ELSE 0 END) AS attachments_uploaded,
+            SUM(CASE WHEN success = 1 AND action = 'record.delete' THEN 1 ELSE 0 END) AS records_deleted,
+            SUM(CASE WHEN success = 1 AND action = 'attachment.download' THEN 1 ELSE 0 END) AS attachment_downloads,
+            SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) AS successful_actions,
+            SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) AS failed_actions,
+            COUNT(DISTINCT CASE WHEN target_type = 'record' THEN target_uid END) AS unique_records_touched,
+            MAX(created_at) AS last_activity
         FROM mx_audit_log
         WHERE {}
         GROUP BY actor_uid
-        ORDER BY SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) DESC,
-                 actor_uid ASC
         "#,
-        conditions.join(" AND ")
+            conditions.join(" AND ")
+        )
+    } else {
+        "SELECT NULL AS actor_uid, 0 AS records_created, 0 AS records_updated, 0 AS attachments_uploaded, 0 AS records_deleted, 0 AS attachment_downloads, 0 AS successful_actions, 0 AS failed_actions, 0 AS unique_records_touched, 0 AS last_activity WHERE 0".to_string()
+    };
+
+    let sql = format!(
+        r#"
+        SELECT
+            user.uid,
+            user.name,
+            user.email,
+            COALESCE(activity.records_created, 0),
+            COALESCE(activity.records_updated, 0),
+            COALESCE(activity.attachments_uploaded, 0),
+            COALESCE(activity.records_deleted, 0),
+            COALESCE(activity.attachment_downloads, 0),
+            COALESCE(activity.successful_actions, 0),
+            COALESCE(activity.failed_actions, 0),
+            COALESCE(activity.unique_records_touched, 0),
+            COALESCE(activity.last_activity, 0)
+        FROM users user
+        LEFT JOIN ({audit_summary}) activity ON activity.actor_uid = user.uid
+        ORDER BY COALESCE(activity.successful_actions, 0) DESC,
+                 user.name COLLATE NOCASE,
+                 user.uid
+        "#
     );
 
     let mut statement = connection.prepare(&sql)?;
@@ -1440,5 +1461,84 @@ pub async fn export_report_csv(claims: Claims, Query(query): Query<ExportQuery>)
             StatusCode::INTERNAL_SERVER_ERROR,
             json!({"response":"failed to create report export"}),
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn user_performance_includes_accounts_without_audit_activity() {
+        let connection = Connection::open_in_memory().expect("open in-memory database");
+        connection
+            .execute_batch(
+                r#"
+                CREATE TABLE users (
+                    uid TEXT PRIMARY KEY NOT NULL,
+                    email TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    access_level INTEGER NOT NULL DEFAULT 1
+                );
+                INSERT INTO users(uid,email,name) VALUES
+                    ('u1','one@example.test','One'),
+                    ('u2','two@example.test','Two'),
+                    ('u3','three@example.test','Three'),
+                    ('u4','four@example.test','Four');
+                "#,
+            )
+            .expect("create accounts");
+
+        let rows = user_performance_rows(&connection, &UserPerformanceQuery::default())
+            .expect("build performance rows");
+
+        assert_eq!(rows.len(), 4);
+        assert!(rows.iter().all(|row| row.successful_actions == 0));
+        assert!(rows.iter().all(|row| row.last_activity == 0));
+    }
+
+    #[test]
+    fn user_performance_reconstructs_missing_module_audit_from_record_versions() {
+        let connection = Connection::open_in_memory().expect("open in-memory database");
+        connection
+            .execute_batch(
+                r#"
+                CREATE TABLE users (
+                    uid TEXT PRIMARY KEY NOT NULL,
+                    email TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    access_level INTEGER NOT NULL DEFAULT 1
+                );
+                INSERT INTO users(uid,email,name,access_level) VALUES
+                    ('u1','one@example.test','One',1),
+                    ('u2','two@example.test','Two',1);
+                "#,
+            )
+            .expect("create accounts");
+        ensure_reporting_schema(&connection).expect("create reporting schema");
+        connection
+            .execute_batch(
+                r#"
+                INSERT INTO mx_record_versions(uid,record_uid,module_uid,version_no,event,actor_uid,created_at)
+                VALUES
+                    ('v1','record-1','inventory',1,'created','u2',1000),
+                    ('v2','record-1','inventory',2,'updated','u2',2000);
+                "#,
+            )
+            .expect("insert historical versions");
+
+        let rows = user_performance_rows(&connection, &UserPerformanceQuery::default())
+            .expect("build performance rows");
+        let actor = rows.iter().find(|row| row.actor_uid == "u2").unwrap();
+        assert_eq!(actor.records_created, 1);
+        assert_eq!(actor.records_updated, 1);
+        assert_eq!(actor.successful_actions, 2);
+        assert_eq!(actor.unique_records_touched, 1);
+
+        // Running the report again must not duplicate reconstructed entries.
+        let rows = user_performance_rows(&connection, &UserPerformanceQuery::default())
+            .expect("rebuild performance rows");
+        let actor = rows.iter().find(|row| row.actor_uid == "u2").unwrap();
+        assert_eq!(actor.successful_actions, 2);
     }
 }

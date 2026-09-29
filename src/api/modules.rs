@@ -10,9 +10,13 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use crate::{
-    api::{live::publish_live_event, mx::handler::ensure_mx_record_schema},
+    api::{
+        live::publish_live_event,
+        mx::handler::{ensure_mx_record_schema, n1_recover, n1_soft_delete},
+    },
     db::connector::{SqliteDatabaseError, with_sql_connection},
     middleware::auth::Claims,
+    util::authentication::{CredentialStatus, verify_user_credentials},
 };
 
 pub const DEFAULT_MODULE_UID: &str = "mx-default-records";
@@ -68,6 +72,30 @@ pub struct UpdateModuleRequest {
     pub active: Option<bool>,
     pub config: Option<Value>,
     pub permissions: Option<Vec<ModulePermission>>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DeleteModuleRequest {
+    pub confirmation: String,
+    pub admin_password: String,
+    pub admin_otp: Option<String>,
+    pub admin_recovery_code: Option<String>,
+}
+
+#[derive(Debug)]
+struct ModuleDeletionPlan {
+    name: String,
+    record_count: i64,
+    attachment_count: i64,
+    object_keys: Vec<String>,
+}
+
+#[derive(Debug)]
+enum ModuleDeletionPreflight {
+    Ready(ModuleDeletionPlan),
+    NotFound,
+    ConfirmationMismatch,
+    Credentials(CredentialStatus),
 }
 
 fn table_has_column(
@@ -464,10 +492,277 @@ pub async fn update_module(
     }
 }
 
+async fn recover_module_objects(object_keys: &[String]) -> bool {
+    let mut recovered = true;
+    for object_key in object_keys.iter().rev() {
+        if n1_recover(object_key).await.is_err() {
+            recovered = false;
+        }
+    }
+    recovered
+}
+
+pub async fn delete_module(
+    claims: Claims,
+    Path(uid): Path<String>,
+    Json(request): Json<DeleteModuleRequest>,
+) -> Response {
+    if !claims.can_manage_accounts() {
+        return api_json(
+            StatusCode::FORBIDDEN,
+            json!({"response":"administrator access is required"}),
+        );
+    }
+    if uid == DEFAULT_MODULE_UID {
+        return api_json(
+            StatusCode::BAD_REQUEST,
+            json!({"response":"the core migrated module cannot be deleted; create another module and archive unused fields instead"}),
+        );
+    }
+
+    let admin_uid = claims.uid.clone();
+    let preflight_uid = uid.clone();
+    let preflight = tokio::task::spawn_blocking(move || -> Result<ModuleDeletionPreflight, SqliteDatabaseError> {
+        with_sql_connection(|connection| {
+            ensure_module_schema(connection)?;
+            let transaction = connection.unchecked_transaction()?;
+            let module_name = transaction
+                .query_row(
+                    "SELECT name FROM mx_modules WHERE uid = ?1",
+                    params![&preflight_uid],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?;
+            let Some(module_name) = module_name else {
+                return Ok(ModuleDeletionPreflight::NotFound);
+            };
+            if request.confirmation.trim() != module_name {
+                return Ok(ModuleDeletionPreflight::ConfirmationMismatch);
+            }
+
+            let credential_status = verify_user_credentials(
+                &transaction,
+                &admin_uid,
+                &request.admin_password,
+                request.admin_otp.as_deref(),
+                request.admin_recovery_code.as_deref(),
+            )?;
+            if credential_status != CredentialStatus::Valid {
+                return Ok(ModuleDeletionPreflight::Credentials(credential_status));
+            }
+
+            let record_count = transaction.query_row(
+                "SELECT COUNT(*) FROM mx_records WHERE module_uid = ?1",
+                params![&preflight_uid],
+                |row| row.get::<_, i64>(0),
+            )?;
+            let mut object_keys = Vec::new();
+            if table_exists(&transaction, "mx_attachments")? {
+                let mut statement = transaction.prepare(
+                    "SELECT attachment.object_key FROM mx_attachments attachment JOIN mx_records record ON record.uid = attachment.entry_uid WHERE record.module_uid = ?1",
+                )?;
+                let keys = statement.query_map(params![&preflight_uid], |row| row.get::<_, String>(0))?;
+                for key in keys { object_keys.push(key?); }
+            }
+            if table_exists(&transaction, "mx_record_versions")?
+                && table_exists(&transaction, "mx_record_version_attachments")?
+            {
+                let mut statement = transaction.prepare(
+                    "SELECT attachment.object_key FROM mx_record_version_attachments attachment JOIN mx_record_versions version ON version.uid = attachment.version_uid WHERE version.module_uid = ?1",
+                )?;
+                let keys = statement.query_map(params![&preflight_uid], |row| row.get::<_, String>(0))?;
+                for key in keys { object_keys.push(key?); }
+            }
+            object_keys.sort();
+            object_keys.dedup();
+            let attachment_count = object_keys.len() as i64;
+            transaction.commit()?;
+            Ok(ModuleDeletionPreflight::Ready(ModuleDeletionPlan {
+                name: module_name,
+                record_count,
+                attachment_count,
+                object_keys,
+            }))
+        })
+    }).await;
+
+    let plan = match preflight {
+        Ok(Ok(ModuleDeletionPreflight::Ready(plan))) => plan,
+        Ok(Ok(ModuleDeletionPreflight::NotFound)) => {
+            return api_json(
+                StatusCode::NOT_FOUND,
+                json!({"response":"module was not found"}),
+            );
+        }
+        Ok(Ok(ModuleDeletionPreflight::ConfirmationMismatch)) => {
+            return api_json(
+                StatusCode::BAD_REQUEST,
+                json!({"response":"type the exact module name to confirm deletion"}),
+            );
+        }
+        Ok(Ok(ModuleDeletionPreflight::Credentials(CredentialStatus::SecondFactorRequired))) => {
+            return api_json(
+                StatusCode::BAD_REQUEST,
+                json!({"response":"administrator authenticator or recovery code is required"}),
+            );
+        }
+        Ok(Ok(ModuleDeletionPreflight::Credentials(_))) => {
+            return api_json(
+                StatusCode::UNAUTHORIZED,
+                json!({"response":"administrator re-authentication failed"}),
+            );
+        }
+        Ok(Err(error)) => {
+            crate::report_error!(format!("{error}"), "modules", "delete_module_preflight()");
+            return api_json(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                json!({"response":"failed to authorize module deletion"}),
+            );
+        }
+        Err(error) => {
+            crate::report_error!(format!("{error}"), "modules", "delete_module_preflight()");
+            return api_json(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                json!({"response":"module deletion task failed"}),
+            );
+        }
+    };
+
+    let mut moved_objects = Vec::new();
+    for object_key in &plan.object_keys {
+        if let Err(error) = n1_soft_delete(object_key).await {
+            let recovered = recover_module_objects(&moved_objects).await;
+            crate::report_error!(format!("{error:?}"), "modules", "delete_module_n1()");
+            return api_json(
+                StatusCode::BAD_GATEWAY,
+                json!({"response": if recovered { "N1 could not move every attachment to trash; the module was not deleted" } else { "N1 could not move every attachment to trash; the module was not deleted, but some attachment objects need manual recovery in N1" }}),
+            );
+        }
+        moved_objects.push(object_key.clone());
+    }
+
+    let delete_uid = uid.clone();
+    let deletion = tokio::task::spawn_blocking(move || -> Result<bool, SqliteDatabaseError> {
+        with_sql_connection(|connection| {
+            let transaction = connection.unchecked_transaction()?;
+            if table_exists(&transaction, "mx_notifications")? {
+                transaction.execute("DELETE FROM mx_notifications WHERE module_uid = ?1", params![&delete_uid])?;
+            }
+            if table_exists(&transaction, "mx_message_record_links")? {
+                transaction.execute("DELETE FROM mx_message_record_links WHERE record_uid IN (SELECT uid FROM mx_records WHERE module_uid = ?1)", params![&delete_uid])?;
+            }
+            if table_exists(&transaction, "mx_record_versions")? {
+                transaction.execute("DELETE FROM mx_record_versions WHERE module_uid = ?1", params![&delete_uid])?;
+            }
+            if table_exists(&transaction, "mx_record_field_revisions")? {
+                transaction.execute("DELETE FROM mx_record_field_revisions WHERE record_uid IN (SELECT uid FROM mx_records WHERE module_uid = ?1)", params![&delete_uid])?;
+            }
+            transaction.execute("DELETE FROM mx_records WHERE module_uid = ?1", params![&delete_uid])?;
+
+            if table_exists(&transaction, "mx_module_storage_layout_folders")? {
+                transaction.execute("DELETE FROM mx_module_storage_layout_folders WHERE module_uid = ?1", params![&delete_uid])?;
+            }
+            if table_exists(&transaction, "mx_module_storage_layout_meta")? {
+                transaction.execute("DELETE FROM mx_module_storage_layout_meta WHERE module_uid = ?1", params![&delete_uid])?;
+            }
+            if table_exists(&transaction, "mx_field_sequences")? {
+                transaction.execute("DELETE FROM mx_field_sequences WHERE field_uid IN (SELECT uid FROM mx_fields WHERE module_uid = ?1)", params![&delete_uid])?;
+            }
+            if table_exists(&transaction, "mx_unique_values")? {
+                transaction.execute("DELETE FROM mx_unique_values WHERE field_uid IN (SELECT uid FROM mx_fields WHERE module_uid = ?1)", params![&delete_uid])?;
+            }
+            if table_exists(&transaction, "mx_record_values")? {
+                transaction.execute("DELETE FROM mx_record_values WHERE field_uid IN (SELECT uid FROM mx_fields WHERE module_uid = ?1)", params![&delete_uid])?;
+            }
+            if table_exists(&transaction, "mx_fields")? {
+                transaction.execute("DELETE FROM mx_fields WHERE module_uid = ?1", params![&delete_uid])?;
+            }
+
+            if table_exists(&transaction, "mx_dashboard_config")? {
+                let config_text = transaction
+                    .query_row("SELECT config_json FROM mx_dashboard_config WHERE id = 1", [], |row| row.get::<_, String>(0))
+                    .optional()?;
+                if let Some(config_text) = config_text {
+                    if let Ok(mut config) = serde_json::from_str::<Value>(&config_text) {
+                        if let Some(widgets) = config.get_mut("widgets").and_then(Value::as_array_mut) {
+                            let previous = widgets.len();
+                            widgets.retain(|widget| widget.get("module_uid").and_then(Value::as_str) != Some(delete_uid.as_str()));
+                            if widgets.len() != previous {
+                                transaction.execute(
+                                    "UPDATE mx_dashboard_config SET config_json = ?1, revision = revision + 1, updated_at = ?2 WHERE id = 1",
+                                    params![config.to_string(), chrono::Utc::now().timestamp_millis()],
+                                )?;
+                            }
+                        }
+                    }
+                }
+            }
+
+            let deleted = transaction.execute("DELETE FROM mx_modules WHERE uid = ?1", params![&delete_uid])?;
+            transaction.commit()?;
+            Ok(deleted == 1)
+        })
+    }).await;
+
+    match deletion {
+        Ok(Ok(true)) => {
+            publish_live_event(
+                "module.deleted",
+                Some(&claims.uid),
+                json!({"module_uid":uid}),
+            );
+            api_json(
+                StatusCode::OK,
+                json!({
+                    "response":"module deleted",
+                    "module_uid":uid,
+                    "module_name":plan.name,
+                    "records_deleted":plan.record_count,
+                    "attachments_moved_to_n1_trash":plan.attachment_count
+                }),
+            )
+        }
+        Ok(Ok(false)) => {
+            let _ = recover_module_objects(&moved_objects).await;
+            api_json(
+                StatusCode::NOT_FOUND,
+                json!({"response":"module was not found"}),
+            )
+        }
+        Ok(Err(error)) => {
+            let recovered = recover_module_objects(&moved_objects).await;
+            crate::report_error!(format!("{error}"), "modules", "delete_module()");
+            api_json(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                json!({"response": if recovered { "module deletion failed; N1 attachments were restored" } else { "module deletion failed; some attachment objects need manual recovery in N1" }}),
+            )
+        }
+        Err(error) => {
+            let recovered = recover_module_objects(&moved_objects).await;
+            crate::report_error!(format!("{error}"), "modules", "delete_module()");
+            api_json(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                json!({"response": if recovered { "module deletion task failed; N1 attachments were restored" } else { "module deletion task failed; some attachment objects need manual recovery in N1" }}),
+            )
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::api::mx::schema::ensure_dynamic_schema;
+
+    fn administrator_claims() -> Claims {
+        Claims {
+            uid: "administrator-1".to_string(),
+            email: "administrator@mx.local".to_string(),
+            access_level: 0,
+            auth_version: 0,
+            token_kind: "access".to_string(),
+            exp: usize::MAX,
+        }
+    }
 
     #[test]
     fn module_migration_assigns_legacy_records_and_fields() {
@@ -497,5 +792,22 @@ mod tests {
                 .unwrap()
                 .is_some()
         );
+    }
+
+    #[tokio::test]
+    async fn core_module_cannot_be_deleted_even_with_an_administrator_request() {
+        let response = delete_module(
+            administrator_claims(),
+            Path(DEFAULT_MODULE_UID.to_string()),
+            Json(DeleteModuleRequest {
+                confirmation: "Records".to_string(),
+                admin_password: "not-used".to_string(),
+                admin_otp: None,
+                admin_recovery_code: None,
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 }

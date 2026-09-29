@@ -7,7 +7,8 @@ use tower_http::cors::{Any, CorsLayer};
 
 use crate::api::account::handler::{
     begin_totp_enrollment, cancel_totp_enrollment, change_password, confirm_totp_enrollment,
-    disable_totp, regenerate_recovery_codes, update_profile,
+    delete_profile_photo, disable_totp, get_profile_photo, regenerate_recovery_codes,
+    update_profile, upload_profile_photo,
 };
 use crate::api::admin::handler::{
     admin_reset_user_password, admin_reset_user_security, create_super_user, delete_super_user,
@@ -42,15 +43,17 @@ use crate::api::audit::{audit_request, get_audit_log};
 use crate::api::backup::{create_backup, download_backup, list_backups, verify_backup};
 use crate::api::collaboration::{
     add_channel_member, create_channel, create_direct_channel, delete_message,
-    download_message_file, edit_message, list_channels, list_collaboration_people, list_messages,
-    mark_channel_read, preview_message_file, send_message, upload_message_file,
+    download_message_file, edit_message, list_channel_files, list_channel_members, list_channels,
+    list_collaboration_people, list_messages, mark_channel_read, pin_message, preview_message_file,
+    remove_channel_member, search_channel, send_message, toggle_message_reaction, unpin_message,
+    update_channel, upload_message_file,
 };
 use crate::api::dashboard::get_records_revision;
 use crate::api::deployment::{
     get_deployment_config, get_deployment_logo, save_deployment_config, upload_deployment_logo,
 };
 use crate::api::live::{get_presence, issue_live_ticket, live_socket};
-use crate::api::modules::{create_module, list_modules, update_module};
+use crate::api::modules::{create_module, delete_module, list_modules, update_module};
 use crate::api::notifications::{
     list_notifications, mark_all_notifications_read, mark_notification_read,
 };
@@ -108,7 +111,10 @@ fn admin_routes() -> Router {
             post(restore_trashed_record),
         )
         .route("/mx/v1/admin/modules", post(create_module))
-        .route("/mx/v1/admin/modules/{uid}", put(update_module))
+        .route(
+            "/mx/v1/admin/modules/{uid}",
+            put(update_module).delete(delete_module),
+        )
         .route("/mx/v1/admin/schema", get(get_admin_record_schema))
         .route("/mx/v1/admin/schema/fields", post(create_schema_field))
         .route(
@@ -180,6 +186,7 @@ fn user_routes() -> Router {
             "/mx/v1/collaboration/channels",
             get(list_channels).post(create_channel),
         )
+        .route("/mx/v1/collaboration/channels/{uid}", put(update_channel))
         .route(
             "/mx/v1/collaboration/people",
             get(list_collaboration_people),
@@ -195,11 +202,31 @@ fn user_routes() -> Router {
         )
         .route(
             "/mx/v1/collaboration/channels/{uid}/members",
-            post(add_channel_member),
+            get(list_channel_members).post(add_channel_member),
+        )
+        .route(
+            "/mx/v1/collaboration/channels/{uid}/members/{user_uid}",
+            delete(remove_channel_member),
+        )
+        .route(
+            "/mx/v1/collaboration/channels/{uid}/search",
+            get(search_channel),
+        )
+        .route(
+            "/mx/v1/collaboration/channels/{uid}/files",
+            get(list_channel_files),
         )
         .route(
             "/mx/v1/collaboration/messages/{uid}",
             put(edit_message).delete(delete_message),
+        )
+        .route(
+            "/mx/v1/collaboration/messages/{uid}/reactions",
+            post(toggle_message_reaction),
+        )
+        .route(
+            "/mx/v1/collaboration/messages/{uid}/pin",
+            put(pin_message).delete(unpin_message),
         )
         .route(
             "/mx/v1/collaboration/messages/{uid}/files",
@@ -220,6 +247,13 @@ fn user_routes() -> Router {
             get(preview_message_file),
         )
         .route("/mx/v1/account/profile", patch(update_profile))
+        .route(
+            "/mx/v1/account/profile-photo",
+            post(upload_profile_photo)
+                .delete(delete_profile_photo)
+                .layer(DefaultBodyLimit::max(6 * 1024 * 1024)),
+        )
+        .route("/mx/v1/account/profile-photo/{uid}", get(get_profile_photo))
         .route(
             "/mx/v1/account/preferences",
             get(get_preferences).put(save_preferences),

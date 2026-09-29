@@ -41,6 +41,7 @@
       'account.admin.password-reset': 'Reset account password', 'account.admin.security-reset': 'Reset account authenticator',
       'database.query': 'Ran database query', 'audit.view': 'Viewed audit log',
       'backup.create': 'Created database backup', 'backup.verify': 'Verified database backup', 'backup.download': 'Downloaded database backup',
+      'module.delete': 'Deleted module',
       'schema.field.create': 'Created record field', 'schema.field.update': 'Changed record field', 'schema.order.update': 'Reordered record fields',
       'dashboard.config.update': 'Published dashboard', 'storage.layout.update': 'Changed N1 storage layout', 'deployment.config.update': 'Changed deployment identity'
     };

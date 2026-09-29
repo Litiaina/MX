@@ -12,6 +12,8 @@
     confirmTotpEnrollment,
     disableTotp,
     regenerateRecoveryCodes,
+    deleteProfilePhoto,
+    uploadProfilePhoto,
     updateProfile
   } from '../api/account';
   import { secondFactor } from '../api/auth';
@@ -21,6 +23,8 @@
   import type { NotificationPreferences, NotificationSoundInfo, UserPreferences } from '../api/domain';
   import { deleteNotificationSound, loadNotificationSound, loadNotificationSoundInfo, loadPreferences, savePreferences, uploadNotificationSound } from '../api/workspace';
   import { decodeNotificationSound, playNotificationSound } from '../util/notificationAudio';
+  import { clearProfilePhotoCache } from '../util/profilePhoto';
+  import ProfileAvatar from './ProfileAvatar.svelte';
 
   let {
     session,
@@ -40,6 +44,8 @@
   let profileEmail = $state('');
   let profilePassword = $state('');
   let profileFactor = $state('');
+  let selectedProfilePhoto = $state<File | null>(null);
+  let profilePhotoProgress = $state(0);
 
   let currentPassword = $state('');
   let newPassword = $state('');
@@ -145,6 +151,36 @@
     } catch (reason) { fail(reason); } finally { busyAction = ''; }
   }
   function formatBytes(value = 0) { return value < 1024 ** 2 ? `${(value / 1024).toFixed(1)} KB` : `${(value / 1024 ** 2).toFixed(1)} MB`; }
+
+  function chooseProfilePhoto(event: Event) {
+    selectedProfilePhoto = (event.currentTarget as HTMLInputElement).files?.[0] || null;
+    profilePhotoProgress = 0;
+  }
+  async function saveProfilePhoto() {
+    if (!selectedProfilePhoto) return;
+    startAction('profile-photo'); profilePhotoProgress = 0;
+    try {
+      await uploadProfilePhoto(selectedProfilePhoto, (loaded, total) => profilePhotoProgress = total ? Math.round(loaded / total * 100) : 0);
+      clearProfilePhotoCache(session.uid);
+      selectedProfilePhoto = null;
+      await onSessionChanged();
+      notice = 'Profile picture uploaded to N1.';
+    } catch (reason) { fail(reason); } finally { busyAction = ''; }
+  }
+  async function removeProfilePhoto() {
+    if (!session.profile_photo_updated_at || !await requestConfirmation({
+      title: 'Remove your profile picture?',
+      description: 'MX will return to showing your initials throughout the workspace.',
+      confirmLabel: 'Remove picture'
+    })) return;
+    startAction('profile-photo');
+    try {
+      await deleteProfilePhoto();
+      clearProfilePhotoCache(session.uid);
+      await onSessionChanged();
+      notice = 'Profile picture removed.';
+    } catch (reason) { fail(reason); } finally { busyAction = ''; }
+  }
 
   function fail(reason: unknown) {
     error = reason instanceof Error ? reason.message : 'The operation failed.';
@@ -365,6 +401,16 @@
       <section class="panel">
         <h2>Profile</h2>
         <p class="muted">Email changes revoke every current session.</p>
+        <div class="profile-photo-setting">
+          <span class="profile-photo-preview"><ProfileAvatar userUid={session.uid} name={session.name} updatedAt={session.profile_photo_updated_at} /></span>
+          <div><strong>Profile picture</strong><small>Shown in collaboration and account directories. PNG, JPEG, WebP, or GIF · maximum 5 MiB.</small>
+            <div class="profile-photo-actions">
+              <label class="button small icon-label"><Upload size={14} />{selectedProfilePhoto?.name || 'Choose image'}<input type="file" accept="image/png,image/jpeg,image/webp,image/gif" onchange={chooseProfilePhoto} /></label>
+              {#if selectedProfilePhoto}<button class="button primary small" type="button" onclick={saveProfilePhoto} disabled={busyAction !== ''}>{busyAction === 'profile-photo' ? `Uploading ${profilePhotoProgress}%` : 'Upload'}</button>{/if}
+              {#if session.profile_photo_updated_at}<button class="button danger small icon-label" type="button" onclick={removeProfilePhoto} disabled={busyAction !== ''}><Trash2 size={13} />Remove</button>{/if}
+            </div>
+          </div>
+        </div>
         <form class="form-stack" onsubmit={saveProfile}>
           <label>Name<input bind:value={profileName} autocomplete="name" required /></label>
           <label>Email<input bind:value={profileEmail} type="email" autocomplete="username" required /></label>

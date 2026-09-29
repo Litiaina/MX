@@ -15,7 +15,7 @@
   let loading = $state(true); let error = $state(''); let lastRevision = $state(0);
   const allRows = $derived(widgets.flatMap((widget) => widgetRows[widget.uid] || []));
   const reportTotal = $derived(allRows.reduce((sum, row) => sum + row.total, 0));
-  const reportMatched = $derived(allRows.reduce((sum, row) => sum + row.actioned, 0));
+  const reportAnswered = $derived(widgets.reduce((sum, widget) => sum + totalAnswer(widget, widgetRows[widget.uid] || []), 0));
 
   onMount(() => { setPeriodDates(); void refresh(); });
   $effect(() => { if (revision !== lastRevision && !loading) { lastRevision = revision; void refresh(); } });
@@ -54,36 +54,51 @@
   }
 
   function total(rows: ActionRateRow[], key: 'total' | 'actioned' | 'pending') { return rows.reduce((sum, row) => sum + row[key], 0); }
-  function metricValue(widget: DashboardWidget, rows: ActionRateRow[]) { return widget.kind === 'action_rate' && widget.action_mode === 'all' ? total(rows, 'total') : total(rows, 'actioned'); }
-  function time(value: number | null) { return value ? new Date(value).toLocaleString() : 'Not seen in this server session'; }
+  function focusesPending(widget: DashboardWidget) { return widget.result_focus === 'pending' || widget.chart_value === 'pending'; }
+  function answerValue(widget: DashboardWidget, row: ActionRateRow) { return focusesPending(widget) ? row.pending : row.actioned; }
+  function otherValue(widget: DashboardWidget, row: ActionRateRow) { return focusesPending(widget) ? row.actioned : row.pending; }
+  function answerRate(widget: DashboardWidget, row: ActionRateRow) { return row.total ? answerValue(widget, row) * 100 / row.total : 0; }
+  function totalAnswer(widget: DashboardWidget, rows: ActionRateRow[]) { return rows.reduce((sum, row) => sum + answerValue(widget, row), 0); }
+  function metricValue(widget: DashboardWidget, rows: ActionRateRow[]) { return totalAnswer(widget, rows); }
+  function resultLabel(widget: DashboardWidget) {
+    if (widget.kind === 'attachment_presence') return focusesPending(widget) ? 'without the configured attachment' : 'with the configured attachment';
+    return focusesPending(widget) ? 'not meeting the configured rule' : 'meeting the configured rule';
+  }
+  function time(value: number | null) { return value ? new Date(value).toLocaleString() : 'No audited activity in this period'; }
 </script>
 
 <section class="workspace-page dashboard-page">
-  <section class="dashboard-hero"><div><p class="hero-kicker">● &nbsp;Custom dashboard</p><h1>{dashboardLabel}</h1><p>Only the measures configured for this deployment appear here. Every result comes from the current {recordSingular.toLowerCase()} structure and reporting period.</p></div><div class="hero-summary"><span>{dashboardLabel} configuration</span><strong>{widgets.length}</strong><small>{widgets.length === 1 ? 'widget' : 'widgets'} · {periodLabel()}</small></div></section>
+  <section class="dashboard-hero">
+    <div>
+      <p class="hero-kicker">Live reporting</p>
+      <h1>{dashboardLabel}</h1>
+      <p>Track the measures configured for this workspace across the selected reporting period.</p>
+    </div>
+  </section>
 
   <div class="filter-strip"><label>Reporting period<select bind:value={period} onchange={changePeriod}><option value="all">All records</option><option value="today">Today</option><option value="7d">Last 7 days</option><option value="30d">Last 30 days</option><option value="90d">Last 90 days</option><option value="month">This month</option><option value="year">This year</option><option value="custom">Custom range</option></select></label>{#if period === 'custom'}<label>From<input type="date" bind:value={dateFrom} /></label><label>To<input type="date" bind:value={dateTo} /></label><button class="button primary" onclick={refresh}>Apply range</button>{/if}<button class="button" onclick={() => { period = '30d'; void changePeriod(); }}>Reset</button><button class="button" onclick={refresh} disabled={loading}>Refresh data</button></div>
   {#if error}<div class="notice error">{error}</div>{/if}
 
   <section class="panel online-presence-card"><div class="panel-heading"><div><h2>Online now</h2><p class="muted">Only people with an active MX session are shown.</p></div><span class="online-presence-count">{presence?.online || 0} online</span></div>{#if presence?.accounts.length}<div class="online-presence-list">{#each presence.accounts as account}<article class="online-person"><i aria-hidden="true"></i><div><strong>{account.name}</strong><small>{account.access_name}</small></div></article>{/each}</div>{:else}<p class="online-presence-empty">Waiting for an active session…</p>{/if}</section>
 
-  {#if !loading && widgets.length}<div class="report-summary"><div><span>Configured widgets</span><strong>{widgets.length}</strong></div><div><span>Report groups</span><strong>{allRows.length}</strong></div><div><span>{recordPlural} measured</span><strong>{reportTotal.toLocaleString()}</strong></div><div><span>Matched results</span><strong>{reportMatched.toLocaleString()}</strong></div></div>{/if}
+  {#if !loading && widgets.length}<div class="report-summary"><div><span>Measures</span><strong>{widgets.length}</strong></div><div><span>Groups</span><strong>{allRows.length}</strong></div><div><span>{recordPlural} measured</span><strong>{reportTotal.toLocaleString()}</strong></div><div><span>Matching {recordPlural.toLowerCase()}</span><strong>{reportAnswered.toLocaleString()}</strong></div></div>{/if}
 
   {#if loading}<div class="panel loading-card"><div class="loader"></div><span>Refreshing dashboard reports…</span></div>{:else if !widgets.length}<div class="empty-state"><h2>Your dashboard is ready to configure</h2><p>Administrators can create summary numbers, charts, progress views, and tables from Administration → Dashboard.</p></div>{:else}
     <div class="dashboard-grid">{#each widgets as widget}
       {@const rows = widgetRows[widget.uid] || []}
       {@const measured = total(rows, 'total')}
-      {@const matched = total(rows, 'actioned')}
+      {@const answered = totalAnswer(widget, rows)}
       <article class:metric-card={widget.display_mode === 'metric'} class:wide-report={widget.display_mode !== 'metric'} class="panel report-card">
-        <header><div><p class="eyebrow">{widget.display_mode.replace('_', ' ')}</p><h2>{widget.title}</h2><p class="muted report-subtitle">{matched.toLocaleString()} matched out of {measured.toLocaleString()} measured · {measured ? (matched / measured * 100).toFixed(1) : '0.0'}%</p></div><button class="button small" onclick={() => exportReport('action_rate', widget, dateFrom, dateTo)}>Export CSV</button></header>
+        <header><div><p class="eyebrow">{widget.display_mode.replace('_', ' ')}</p><h2>{widget.title}</h2><p class="muted report-subtitle">{answered.toLocaleString()} {resultLabel(widget)} out of {measured.toLocaleString()} measured · {measured ? (answered / measured * 100).toFixed(1) : '0.0'}%</p></div><button class="button small" onclick={() => exportReport('action_rate', widget, dateFrom, dateTo)}>Export CSV</button></header>
         {#if widget.definition}<p class="definition top-definition">{widget.definition}</p>{/if}
         {#if widget.display_mode === 'metric'}
-          <div class="metric-layout"><div><strong class="metric-value">{metricValue(widget, rows).toLocaleString()}</strong><p class="muted">{widget.action_mode === 'all' ? `${recordPlural.toLowerCase()} in scope` : `matched ${recordPlural.toLowerCase()}`}</p></div><div class="metric-rate"><strong>{measured ? (matched / measured * 100).toFixed(1) : '0.0'}%</strong><small>{total(rows, 'pending').toLocaleString()} not matched</small></div></div>
+          <div class="metric-layout"><div><strong class="metric-value">{metricValue(widget, rows).toLocaleString()}</strong><p class="muted">{recordPlural.toLowerCase()} {resultLabel(widget)}</p></div><div class="metric-rate"><strong>{measured ? (answered / measured * 100).toFixed(1) : '0.0'}%</strong><small>{Math.max(0, measured - answered).toLocaleString()} other {recordPlural.toLowerCase()}</small></div></div>
         {:else if ['bar', 'line', 'pie', 'donut'].includes(widget.display_mode)}
           <ReportChart {rows} {widget} {recordPlural} />
         {:else if widget.display_mode === 'progress'}
-          <div class="progress-list">{#each rows as row}<div><div class="progress-meta"><strong>{row.group || 'Unspecified'}</strong><span>{row.actioned.toLocaleString()} / {row.total.toLocaleString()} matched · {row.rate.toFixed(1)}%</span></div><div class="progress-track"><i style={`width:${Math.max(0, Math.min(100, row.rate))}%`}></i></div></div>{/each}</div>
+          <div class="progress-list">{#each rows as row}<div><div class="progress-meta"><strong>{row.group || 'Unspecified'}</strong><span>{answerValue(widget, row).toLocaleString()} / {row.total.toLocaleString()} {resultLabel(widget)} · {answerRate(widget, row).toFixed(1)}%</span></div><div class="progress-track"><i style={`width:${Math.max(0, Math.min(100, answerRate(widget, row)))}%`}></i></div></div>{/each}</div>
         {:else}
-          <div class="table-wrap compact-table"><table><thead><tr><th>Group</th><th>Total</th><th>Matched</th><th>Not matched</th><th>Match rate</th></tr></thead><tbody>{#if !rows.length}<tr><td colspan="5">No records are available in this period.</td></tr>{/if}{#each rows as row}<tr><td><strong>{row.group || 'Unspecified'}</strong></td><td>{row.total.toLocaleString()}</td><td>{row.actioned.toLocaleString()}</td><td>{row.pending.toLocaleString()}</td><td>{row.rate.toFixed(1)}%</td></tr>{/each}</tbody></table></div>
+          <div class="table-wrap compact-table"><table><thead><tr><th>Group</th><th>Total</th><th>Selected result</th><th>Other records</th><th>Share</th></tr></thead><tbody>{#if !rows.length}<tr><td colspan="5">No records are available in this period.</td></tr>{/if}{#each rows as row}<tr><td><strong>{row.group || 'Unspecified'}</strong></td><td>{row.total.toLocaleString()}</td><td>{answerValue(widget, row).toLocaleString()}</td><td>{otherValue(widget, row).toLocaleString()}</td><td>{answerRate(widget, row).toFixed(1)}%</td></tr>{/each}</tbody></table></div>
         {/if}
       </article>
     {/each}</div>

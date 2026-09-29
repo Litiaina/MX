@@ -669,7 +669,7 @@ pub(crate) async fn n1_soft_delete(object_key: &str) -> Result<(), MxOperationEr
     )))
 }
 
-async fn n1_recover(object_key: &str) -> Result<(), MxOperationError> {
+pub(crate) async fn n1_recover(object_key: &str) -> Result<(), MxOperationError> {
     let base_url = n1_base_url()?;
     let token = n1_access_token().await?;
 

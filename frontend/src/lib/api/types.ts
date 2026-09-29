@@ -18,6 +18,16 @@ export interface Session {
   totp_enabled: boolean;
   totp_enrollment_pending: boolean;
   recovery_codes_remaining: number;
+  profile_photo_updated_at?: number | null;
+}
+
+export interface ProfilePhotoInfo {
+  exists: boolean;
+  file_name?: string;
+  mime_type?: string;
+  size?: number;
+  updated_at?: number;
+  url?: string;
 }
 
 export interface OperationResponse {
