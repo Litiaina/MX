@@ -131,7 +131,7 @@ export const markAllNotificationsRead = () =>
   apiJson<{ response: string; updated: number }>('/mx/v1/notifications/read-all', { method: 'POST' });
 export const globalSearch = (q: string, limit = 30) =>
   apiJson<{ results: GlobalSearchResult[] }>(`/mx/v1/search?q=${encodeURIComponent(q)}&limit=${limit}`);
-export const listChannels = () => apiJson<{ channels: CollaborationChannel[] }>('/mx/v1/collaboration/channels');
+export const listChannels = () => apiJson<{ channels: CollaborationChannel[]; file_max_size_bytes?: number }>('/mx/v1/collaboration/channels');
 export const listCollaborationPeople = () => apiJson<{ people: CollaborationPerson[] }>('/mx/v1/collaboration/people');
 export const createChannel = (data: { name: string; description: string; member_uids: string[]; kind: 'channel' | 'group' }) =>
   apiJson<{ uid: string }>('/mx/v1/collaboration/channels', jsonRequest('POST', data));

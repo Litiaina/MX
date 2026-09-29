@@ -3,7 +3,9 @@
 
   let { rows, widget, recordPlural = 'Records' }: { rows: ActionRateRow[]; widget: DashboardWidget; recordPlural?: string } = $props();
   type SeriesKey = 'focused' | 'other' | 'total' | 'rate';
-  const palette = ['var(--primary)', '#7c3aed', '#0891b2', '#059669', '#d97706', '#dc2626', '#4f46e5', '#0f766e', '#9333ea', '#ea580c', '#0284c7', '#65a30d', '#be123c', '#475569', '#a16207'];
+  // Reporting deliberately uses the MX light/dark visualization palette. It
+  // must remain independent from administrator and personal accent colors.
+  const palette = Array.from({ length: 10 }, (_, index) => `var(--chart-${index + 1})`);
   const mode = $derived(widget.chart_value || 'matched');
   const focus = $derived(widget.result_focus || (mode === 'pending' ? 'pending' : 'matched'));
   const prepared = $derived.by(() => {
@@ -22,7 +24,7 @@
   });
   const maximum = $derived(mode === 'rate' ? 100 : Math.max(1, ...prepared.map((row) => sortableValue(row))));
   const lineSeries = $derived(mode === 'breakdown'
-    ? [{ key: 'focused' as SeriesKey, label: 'Answers question', color: palette[0] }, { key: 'other' as SeriesKey, label: 'Other records', color: palette[5] }]
+    ? [{ key: 'focused' as SeriesKey, label: 'Answers question', color: 'var(--chart-1)' }, { key: 'other' as SeriesKey, label: 'Other records', color: 'var(--chart-neutral)' }]
     : [{ key: (mode === 'total' ? 'total' : mode === 'rate' ? 'rate' : 'focused') as SeriesKey, label: valueLabel(), color: palette[0] }]);
   const pieRows = $derived(prepared.map((row, index) => ({ row, index, value: mode === 'total' ? row.total : focusedValue(row) })).filter((item) => item.value > 0));
   const pieTotal = $derived(pieRows.reduce((sum, item) => sum + item.value, 0));
@@ -46,54 +48,74 @@
 {#if !prepared.length}
   <div class="chart-empty">No data is available for this chart in the selected period.</div>
 {:else if widget.display_mode === 'bar'}
-  <div class="horizontal-chart" role="img" aria-label={`${widget.title} bar chart`}>
-    {#each prepared as row, index}
+  <div class="horizontal-chart chart-surface" role="img" aria-label={`${widget.title} bar chart`}>
+    {#each prepared as row}
       <div class="horizontal-row"><span title={row.group}>{row.group || 'Unspecified'}</span><div class="horizontal-track">
         {#if mode === 'breakdown'}
-          <i style={`width:${focusedValue(row) / maximum * 100}%;background:${palette[0]}`} title={`${focusedValue(row)} answer the question`}></i><i style={`width:${otherValue(row) / maximum * 100}%;background:${palette[5]};opacity:.72`} title={`${otherValue(row)} other records`}></i>
-        {:else}<i style={`width:${sortableValue(row) / maximum * 100}%;background:${palette[index % palette.length]}`}></i>{/if}
+          <i class="focused-bar" style={`width:${focusedValue(row) / maximum * 100}%`} title={`${focusedValue(row)} answer the question`}></i><i class="other-bar" style={`width:${otherValue(row) / maximum * 100}%`} title={`${otherValue(row)} other records`}></i>
+        {:else}<i class="focused-bar" style={`width:${sortableValue(row) / maximum * 100}%`}></i>{/if}
       </div><strong>{mode === 'breakdown' ? row.total.toLocaleString() : displayValue(sortableValue(row))}</strong></div>
     {/each}
   </div>
-  {#if mode === 'breakdown' && widget.show_legend !== false}<div class="chart-legend"><span><i style={`background:${palette[0]}`}></i>Answers question</span><span><i style={`background:${palette[5]}`}></i>Other records</span></div>{/if}
+  {#if mode === 'breakdown' && widget.show_legend !== false}<div class="chart-legend"><span><i style="background:var(--chart-1)"></i>Answers question</span><span><i style="background:var(--chart-neutral)"></i>Other records</span></div>{/if}
 {:else if widget.display_mode === 'line'}
-  <div class="line-chart"><svg viewBox="0 0 920 340" role="img" aria-label={`${widget.title} line chart`}>
+  <div class="line-chart chart-surface"><svg viewBox="0 0 920 340" role="img" aria-label={`${widget.title} line chart`}>
     {#each [0, .25, .5, .75, 1] as part}<line x1="58" y1={282 - 250 * part} x2="892" y2={282 - 250 * part}></line><text x="48" y={286 - 250 * part} text-anchor="end">{mode === 'rate' ? `${Math.round(part * 100)}%` : Math.round(maximum * part)}</text>{/each}
     {#each lineSeries as series}<polyline points={points(series.key)} style={`stroke:${series.color}`}></polyline>{#each prepared as row, index}<circle cx={xAt(index)} cy={yAt(seriesValue(row, series.key))} r="4" style={`fill:${series.color}`}><title>{row.group}: {series.label} {displayValue(seriesValue(row, series.key))}</title></circle>{/each}{/each}
     {#each prepared as row, index}{#if index % Math.max(1, Math.ceil(prepared.length / 8)) === 0 || index === prepared.length - 1}<text x={xAt(index)} y="318" text-anchor="middle">{row.group.length > 12 ? `${row.group.slice(0, 11)}…` : row.group}</text>{/if}{/each}
   </svg></div>
   {#if widget.show_legend !== false}<div class="chart-legend">{#each lineSeries as series}<span><i style={`background:${series.color}`}></i>{series.label}</span>{/each}</div>{/if}
 {:else if widget.display_mode === 'pie' || widget.display_mode === 'donut'}
-  <div class="pie-layout"><div class:donut={widget.display_mode === 'donut'} class="pie" style={`background:${pieGradient}`} role="img" aria-label={`${widget.title} ${widget.display_mode} chart`}>{#if widget.display_mode === 'donut'}<div><strong>{pieTotal.toLocaleString()}</strong><small>{mode === 'total' ? `total ${recordPlural.toLowerCase()}` : `${recordPlural.toLowerCase()} answering the question`}</small></div>{/if}</div>
-    {#if widget.show_legend !== false}<div class="pie-legend">{#each pieRows as item}<div><i style={`background:${palette[item.index % palette.length]}`}></i><span>{item.row.group || 'Unspecified'}</span><strong>{item.value.toLocaleString()} · {pieTotal ? (item.value / pieTotal * 100).toFixed(1) : '0.0'}%</strong></div>{/each}</div>{/if}
+  <div class:without-legend={widget.show_legend === false} class="pie-layout">
+    <figure class="pie-figure"><div class:donut={widget.display_mode === 'donut'} class="pie" style={`background:${pieGradient}`} role="img" aria-label={`${widget.title} ${widget.display_mode} chart`}>{#if widget.display_mode === 'donut'}<div><strong>{pieTotal.toLocaleString()}</strong><small>{mode === 'total' ? `total ${recordPlural.toLowerCase()}` : 'selected results'}</small></div>{/if}</div>{#if widget.display_mode === 'pie'}<figcaption><strong>{pieTotal.toLocaleString()}</strong><span>{recordPlural.toLowerCase()} across {pieRows.length} categor{pieRows.length === 1 ? 'y' : 'ies'}</span></figcaption>{/if}</figure>
+    {#if widget.show_legend !== false}<div class="pie-legend">{#each pieRows as item}<div style={`--legend-color:${palette[item.index % palette.length]}`}><i></i><span><strong title={item.row.group || 'Unspecified'}>{item.row.group || 'Unspecified'}</strong><small>{item.value.toLocaleString()} total</small></span><b>{pieTotal ? (item.value / pieTotal * 100).toFixed(1) : '0.0'}%</b></div>{/each}</div>{/if}
   </div>
 {/if}
 
 <style>
-  .chart-empty { min-height: 15rem; display: grid; place-items: center; color: var(--muted); font-size: calc(.75rem * var(--font-scale)); }
-  .horizontal-chart { display: grid; gap: .8rem; padding: 1rem 0 .25rem; }
-  .horizontal-row { display: grid; grid-template-columns: minmax(7rem, 1fr) minmax(10rem, 2.5fr) 4.5rem; align-items: center; gap: .75rem; font-size: calc(.72rem * var(--font-scale)); }
+  .chart-empty { min-height: 11rem; display: grid; place-items: center; margin-top: .75rem; border: 1px dashed var(--line); border-radius: .55rem; background: var(--chart-surface); color: var(--muted); font-size: calc(.72rem * var(--font-scale)); }
+  .chart-surface { border: 1px solid var(--line); border-radius: .55rem; background: var(--chart-surface); }
+  .horizontal-chart { width: min(100%, 68rem); display: grid; gap: .7rem; margin: .85rem auto 0; padding: .9rem 1rem; }
+  .horizontal-row { display: grid; grid-template-columns: minmax(7rem, 1fr) minmax(10rem, 2.7fr) 4.5rem; align-items: center; gap: .75rem; font-size: calc(.7rem * var(--font-scale)); }
   .horizontal-row > span { overflow: hidden; color: var(--text-2); font-weight: 750; text-overflow: ellipsis; white-space: nowrap; }
-  .horizontal-row > strong { color: var(--text-2); }
-  .horizontal-track { height: 1rem; display: flex; overflow: hidden; border-radius: .3rem; background: var(--surface-3); }
+  .horizontal-row > strong { color: var(--text); font-variant-numeric: tabular-nums; text-align: right; }
+  .horizontal-track { height: .62rem; display: flex; overflow: hidden; border-radius: 999px; background: var(--chart-track); }
   .horizontal-track i { height: 100%; min-width: 1px; }
-  .line-chart { overflow-x: auto; }
+  .horizontal-track .focused-bar { background: var(--chart-1); }
+  .horizontal-track .other-bar { background: var(--chart-neutral); }
+  .line-chart { width: min(100%, 72rem); margin: .85rem auto 0; padding: .6rem .75rem .25rem; overflow-x: auto; }
   svg { width: 100%; min-width: 36rem; display: block; }
-  svg line { stroke: var(--line); stroke-width: 1; }
+  svg line { stroke: var(--chart-grid); stroke-width: 1; stroke-dasharray: 3 5; }
   svg text { fill: var(--muted); font-size: calc(10px * var(--font-scale)); font-weight: 650; }
-  svg polyline { fill: none; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
-  svg circle { stroke: var(--surface); stroke-width: 2; }
-  .chart-legend { display: flex; flex-wrap: wrap; gap: .6rem 1rem; margin-top: .7rem; color: var(--text-2); font-size: calc(.68rem * var(--font-scale)); font-weight: 700; }
+  svg polyline { fill: none; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
+  svg circle { stroke: var(--chart-surface); stroke-width: 3; }
+  .chart-legend { display: flex; flex-wrap: wrap; justify-content: center; gap: .55rem 1rem; margin-top: .7rem; color: var(--text-2); font-size: calc(.66rem * var(--font-scale)); font-weight: 700; }
   .chart-legend span { display: inline-flex; align-items: center; gap: .4rem; }
-  .chart-legend i, .pie-legend i { width: .65rem; height: .65rem; flex: none; border-radius: .2rem; }
-  .pie-layout { display: grid; grid-template-columns: minmax(14rem, .8fr) minmax(15rem, 1.2fr); align-items: center; gap: 2rem; padding: .8rem; }
-  .pie { width: min(100%, 16rem); aspect-ratio: 1; justify-self: center; display: grid; place-items: center; border-radius: 50%; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text) 6%, transparent); }
-  .pie.donut::after { content: ''; width: 53%; aspect-ratio: 1; grid-area: 1 / 1; border-radius: 50%; background: var(--surface); }
+  .chart-legend i, .pie-legend i { width: .62rem; height: .62rem; flex: none; border-radius: .18rem; }
+  .pie-layout { width: min(100%, 40rem); display: grid; grid-template-columns: 12.5rem minmax(14rem, 1fr); align-items: center; justify-content: center; gap: 1.5rem; margin: .85rem auto 0; padding: 1rem; border: 1px solid var(--line); border-radius: .55rem; background: var(--chart-surface); }
+  .pie-layout.without-legend { grid-template-columns: minmax(12rem, 18rem); }
+  .pie-figure { display: grid; justify-items: center; gap: .65rem; margin: 0; }
+  .pie { width: min(100%, 11.5rem); aspect-ratio: 1; display: grid; place-items: center; border: .2rem solid var(--chart-surface); border-radius: 50%; box-shadow: 0 0 0 1px var(--line), 0 .45rem 1.1rem color-mix(in srgb, var(--text) 8%, transparent); }
+  .pie.donut::after { content: ''; width: 57%; aspect-ratio: 1; grid-area: 1 / 1; border: 1px solid var(--line); border-radius: 50%; background: var(--chart-surface); }
   .pie > div { z-index: 1; grid-area: 1 / 1; display: grid; text-align: center; }
-  .pie > div strong { font-size: calc(1.5rem * var(--font-scale)); }
-  .pie > div small { color: var(--muted); }
-  .pie-legend { display: grid; gap: .55rem; }
-  .pie-legend div { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: .5rem; font-size: calc(.7rem * var(--font-scale)); }
-  .pie-legend span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  @media (max-width: 700px) { .pie-layout { grid-template-columns: 1fr; } .horizontal-row { grid-template-columns: minmax(5rem, .8fr) minmax(7rem, 1.5fr) 3.5rem; } }
+  .pie > div strong { color: var(--text); font-size: calc(1.35rem * var(--font-scale)); font-variant-numeric: tabular-nums; letter-spacing: -.035em; }
+  .pie > div small { max-width: 6rem; color: var(--muted); font-size: calc(.57rem * var(--font-scale)); line-height: 1.25; }
+  .pie-figure figcaption { display: grid; justify-items: center; gap: .08rem; color: var(--muted); font-size: calc(.6rem * var(--font-scale)); }
+  .pie-figure figcaption strong { color: var(--text); font-size: calc(.85rem * var(--font-scale)); font-variant-numeric: tabular-nums; }
+  .pie-legend { min-width: 0; display: grid; gap: .35rem; }
+  .pie-legend > div { min-width: 0; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: .55rem; padding: .48rem .55rem; border: 1px solid transparent; border-radius: .42rem; font-size: calc(.68rem * var(--font-scale)); }
+  .pie-legend > div:hover { border-color: var(--line); background: var(--surface); }
+  .pie-legend i { background: var(--legend-color); }
+  .pie-legend span { min-width: 0; display: grid; gap: .04rem; }
+  .pie-legend span strong { overflow: hidden; color: var(--text-2); text-overflow: ellipsis; white-space: nowrap; }
+  .pie-legend span small { color: var(--muted); font-size: calc(.56rem * var(--font-scale)); }
+  .pie-legend b { color: var(--text); font-size: calc(.67rem * var(--font-scale)); font-variant-numeric: tabular-nums; }
+  @media (max-width: 700px) {
+    .pie-layout { grid-template-columns: 1fr; gap: 1rem; padding: .85rem; }
+    .horizontal-chart { padding: .8rem; }
+    .horizontal-row { grid-template-columns: minmax(0, 1fr) auto; gap: .28rem .65rem; }
+    .horizontal-row > span { grid-column: 1; }
+    .horizontal-row > strong { grid-column: 2; }
+    .horizontal-track { grid-column: 1 / -1; grid-row: 2; }
+  }
 </style>

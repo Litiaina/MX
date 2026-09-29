@@ -36,7 +36,8 @@ pub fn init_default_config<P: AsRef<Path>>(path: P) -> io::Result<()> {
         .set("base_url", "https://127.0.0.1:50001")
         .set("fragment", "")
         .set("insecure_tls", "true")
-        .set("attachment_max_size_mb", "50");
+        .set("attachment_max_size_mb", "50")
+        .set("collaboration_file_max_size_mb", "100");
 
     conf.write_to_file(path).map_err(io::Error::other)
 }

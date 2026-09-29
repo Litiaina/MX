@@ -233,7 +233,7 @@ fn user_routes() -> Router {
             post(upload_message_file).layer(DefaultBodyLimit::max(
                 CONFIG
                     .n1
-                    .attachment_max_size_mb
+                    .collaboration_file_max_size_mb
                     .saturating_mul(1024 * 1024)
                     .saturating_add(1024 * 1024),
             )),

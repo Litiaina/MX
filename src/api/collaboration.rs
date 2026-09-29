@@ -1064,7 +1064,13 @@ pub async fn list_channels(claims: Claims) -> Response {
     })
     .await;
     match result {
-        Ok(Ok(channels)) => api_json(StatusCode::OK, json!({"channels":channels})),
+        Ok(Ok(channels)) => api_json(
+            StatusCode::OK,
+            json!({
+                "channels":channels,
+                "file_max_size_bytes":CONFIG.n1.collaboration_file_max_size_mb.max(1).saturating_mul(1024 * 1024)
+            }),
+        ),
         _ => api_json(
             StatusCode::INTERNAL_SERVER_ERROR,
             json!({"response":"failed to load collaboration channels"}),
@@ -2105,13 +2111,13 @@ pub async fn upload_message_file(
     };
     let maximum = CONFIG
         .n1
-        .attachment_max_size_mb
+        .collaboration_file_max_size_mb
         .max(1)
         .saturating_mul(1024 * 1024);
     if bytes.len() > maximum {
         return api_json(
             StatusCode::PAYLOAD_TOO_LARGE,
-            json!({"response":format!("shared files may not exceed {} MiB", CONFIG.n1.attachment_max_size_mb)}),
+            json!({"response":format!("shared files may not exceed {} MiB", CONFIG.n1.collaboration_file_max_size_mb)}),
         );
     }
     let file_uid = Uuid::new_v4().to_string();

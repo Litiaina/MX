@@ -18,7 +18,7 @@
 </div>
 
 <p align="center">
-  <strong>Current release: MX 2.0.0</strong>
+  <strong>Current release: MX 2.1.0</strong>
 </p>
 
 ---
@@ -172,7 +172,7 @@ The N1 object is authoritative for file content. Preview files are derived data 
 
 ## Real-Time Collaboration
 
-MX 2.0 includes authenticated real-time synchronization for multi-user deployments.
+MX 2.1.0 includes authenticated real-time synchronization for multi-user deployments.
 
 Connected browsers maintain a WebSocket session with the MX server. When records,
 attachments, schema configuration, dashboard configuration, deployment settings,
@@ -1119,6 +1119,7 @@ base_url=https://127.0.0.1:50001
 fragment=<MX_FRAGMENT_HASH>
 insecure_tls=true
 attachment_max_size_mb=50
+collaboration_file_max_size_mb=100
 ```
 
 N1 secret:
@@ -1362,12 +1363,12 @@ MX follows these principles:
 ---
 
 
-## MX 2.0
+## MX 2.1.0
 
-MX 2.0 is the second-generation stable release of the MX general-purpose
+MX 2.1 is the second-generation stable release of the MX general-purpose
 information-system platform.
 
-The 2.0 line establishes the current platform contract around:
+The 2.1 line establishes the current platform contract around:
 
 ```text
 dynamic Record Structure
@@ -1397,16 +1398,16 @@ responsive light/dark interface
 Cargo package version:
 
 ```text
-2.0.0
+2.1.0
 ```
 
 Product/release name:
 
 ```text
-MX 2.0
+MX 2.1.0
 ```
 
-Future additions can evolve the platform without redefining the 2.0 identity:
+Future additions can evolve the platform without redefining the 2.1.0 identity:
 MX remains a schema-driven, self-hosted general-purpose information system.
 
 ---

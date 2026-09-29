@@ -46,6 +46,7 @@
   type ConversationFilter = 'all' | 'direct' | 'spaces';
   type DeliveryReceipt = { seen: boolean; label: string; detail: string };
   type MessageTextSegment = { text: string; mention?: { uid: string; name: string } };
+  const FALLBACK_SHARED_FILE_MAX_BYTES = 100 * 1024 * 1024;
 
   let channels = $state<CollaborationChannel[]>([]); let selected = $state<CollaborationChannel | null>(null);
   let messages = $state<ChatMessage[]>([]); let pinnedMessages = $state<ChatMessage[]>([]); let pinsOpen = $state(false); let readStates = $state<ChannelReadState[]>([]); let users = $state<CollaborationPerson[]>([]); let onlineUserUids = $state<string[]>([]); let peopleLoading = $state(false); let peopleError = $state(''); let body = $state('');
@@ -68,6 +69,7 @@
   let mentionOpen = $state(false); let mentionQuery = $state(''); let mentionStart = $state(-1); let mentionActiveIndex = $state(0);
   let liveRefreshPromise: Promise<void> | null = null; let liveRefreshQueued = false;
   let conversationRequestSequence = 0;
+  let sharedFileMaxBytes = $state(FALLBACK_SHARED_FILE_MAX_BYTES);
   const pendingPreviewUrls = new Map<File, string>();
   const reactionChoices = ['👍', '❤️', '😂', '🎉', '😮', '😢'];
 
@@ -148,6 +150,7 @@
       ]);
       if (channelResult.status === 'rejected') throw channelResult.reason;
       channels = channelResult.value.channels;
+      sharedFileMaxBytes = channelResult.value.file_max_size_bytes || FALLBACK_SHARED_FILE_MAX_BYTES;
       if (peopleResult.status === 'fulfilled') users = peopleResult.value.people;
       else peopleError = peopleResult.reason instanceof Error ? peopleResult.reason.message : 'The coworker directory is temporarily unavailable.';
       if (presenceResult.status === 'fulfilled') onlineUserUids = presenceResult.value.accounts.map((account) => account.uid);
@@ -171,6 +174,7 @@
       const stayAtEnd = isNearEnd();
       const [channelData, presenceData] = await Promise.all([listChannels(), loadPresence().catch(() => null)]);
       channels = channelData.channels;
+      sharedFileMaxBytes = channelData.file_max_size_bytes || FALLBACK_SHARED_FILE_MAX_BYTES;
       if (presenceData) onlineUserUids = presenceData.accounts.map((account) => account.uid);
       if (selected) {
         const channelUid = selected.uid;
@@ -302,6 +306,16 @@
   function releasePendingPreviews() { for (const url of pendingPreviewUrls.values()) URL.revokeObjectURL(url); pendingPreviewUrls.clear(); }
   function removePendingFile(index: number) { const file = pendingFiles[index]; if (file) releasePendingPreview(file); pendingFiles = pendingFiles.filter((_, item) => item !== index); }
   function clearPendingFiles() { releasePendingPreviews(); pendingFiles = []; }
+  function sharedFileLimitLabel() { const mib = sharedFileMaxBytes / 1024 ** 2; return `${Number.isInteger(mib) ? mib : mib.toFixed(1)} MiB`; }
+  function queueSharedFiles(files: FileList | File[]) {
+    const incoming = Array.from(files);
+    const oversized = incoming.filter((file) => file.size > sharedFileMaxBytes);
+    const accepted = incoming.filter((file) => file.size <= sharedFileMaxBytes && !pendingFiles.some((pending) => pending.name === file.name && pending.size === file.size && pending.lastModified === file.lastModified));
+    if (accepted.length) pendingFiles = [...pendingFiles, ...accepted];
+    error = oversized.length
+      ? `${oversized.map((file) => file.name).join(', ')} ${oversized.length === 1 ? 'is' : 'are'} larger than the ${sharedFileLimitLabel()} chat file limit.`
+      : '';
+  }
   function clipboardImageExtension(mimeType: string) { return ({ 'image/jpeg': 'jpg', 'image/svg+xml': 'svg', 'image/tiff': 'tiff' } as Record<string, string>)[mimeType.toLocaleLowerCase()] || mimeType.split('/')[1]?.replace(/[^a-z0-9]/gi, '') || 'png'; }
   function namedClipboardImage(file: File, index: number, timestamp: string) {
     if (file.name.trim() && !/^(?:image|clipboard)(?:\.[a-z0-9]+)?$/i.test(file.name.trim())) return file;
@@ -316,8 +330,7 @@
     if (!images.length) return;
     event.preventDefault();
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    pendingFiles = [...pendingFiles, ...images.map((file, index) => namedClipboardImage(file, index, timestamp))];
-    error = '';
+    queueSharedFiles(images.map((file, index) => namedClipboardImage(file, index, timestamp)));
   }
   function initials(value: string) { return value.split(/\s+/).filter(Boolean).map((part) => part[0]).join('').slice(0, 2).toUpperCase() || 'MX'; }
   function dayKey(value: number) { const date = new Date(value); return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`; }
@@ -520,7 +533,10 @@
     finally { directBusyUid = ''; }
   }
   async function submit(event: SubmitEvent) {
-    event.preventDefault(); if (!selected || (!body.trim() && !pendingFiles.length && !pendingRecordUids.length)) return; sending = true; error = '';
+    event.preventDefault(); if (!selected || (!body.trim() && !pendingFiles.length && !pendingRecordUids.length)) return;
+    const oversized = pendingFiles.find((file) => file.size > sharedFileMaxBytes);
+    if (oversized) { error = `${oversized.name} is larger than the ${sharedFileLimitLabel()} chat file limit.`; return; }
+    sending = true; error = '';
     try {
       const channelUid = selected.uid;
       const messageText = body.trim() || (pendingFiles.length ? `Shared ${pendingFiles.length} file${pendingFiles.length === 1 ? '' : 's'}` : `Shared ${pendingRecordUids.length} record${pendingRecordUids.length === 1 ? '' : 's'}`);
@@ -695,10 +711,10 @@
         <button class:active={section === 'spaces'} type="button" onclick={() => section = 'spaces'}><UsersRound size={15} /><span>Spaces</span></button>
       </nav>
       <div class="conversation-controls">
-        <label class="conversation-search"><span><Search size={14} /></span><input bind:this={sidebarSearch} bind:value={conversationSearch} placeholder={section === 'direct' ? 'Find a coworker' : section === 'spaces' ? 'Find a space' : 'Find a conversation'} aria-label={section === 'direct' ? 'Find a coworker' : section === 'spaces' ? 'Find a space' : 'Find a conversation'} /></label>
+        <label class="conversation-search"><span><Search size={14} /></span><input bind:this={sidebarSearch} bind:value={conversationSearch} placeholder={section === 'direct' ? 'Search people…' : section === 'spaces' ? 'Search spaces…' : 'Search conversations…'} aria-label={section === 'direct' ? 'Search people' : section === 'spaces' ? 'Search spaces' : 'Search conversations'} /></label>
         {#if section === 'direct'}<p class="conversation-privacy-note"><LockKeyhole size={12} /><span>Coworkers are discoverable; private chats are participant-only.</span></p>{/if}
       </div>
-      <div class="conversation-list-heading"><span>{section === 'direct' ? `${directoryPeople.length} coworker${directoryPeople.length === 1 ? '' : 's'}` : `${visibleChannels.length} conversation${visibleChannels.length === 1 ? '' : 's'}`}</span>{#if section !== 'direct'}<button onclick={() => void refreshLive()} aria-label="Refresh conversations" title="Refresh"><RefreshCw size={13} /></button>{/if}</div>
+      <div class="conversation-list-heading"><span>{section === 'direct' ? `People · ${directoryPeople.length}` : `Recent · ${visibleChannels.length}`}</span>{#if section !== 'direct'}<button onclick={() => void refreshLive()} aria-label="Refresh conversations" title="Refresh"><RefreshCw size={13} /></button>{/if}</div>
       {#if section === 'direct'}
         <div class="conversation-list people-directory" aria-label="Coworker directory">
           {#if peopleLoading}<div class="conversation-skeleton" aria-label="Loading coworkers"><i></i><i></i><i></i></div>
@@ -794,12 +810,12 @@
           </div>
           <form class="message-composer" bind:this={composerForm} onsubmit={submit}>
             {#if replyingTo}<div class="composer-reply-context"><Reply size={15} /><span><strong>Replying to {replyingTo.sender_name}</strong><small>{replySnippet(replyingTo)}</small></span><button type="button" onclick={() => replyingTo = null} aria-label="Cancel reply"><X size={14} /></button></div>{/if}
-            {#if pendingFiles.length || pendingRecordUids.length || pendingMentionUids.length}<div class="pending-shares">{#each pendingFiles as file, index}{#if isPendingImage(file)}<div class="pending-image-share"><img src={pendingImageUrl(file)} alt="" /><span><strong>{file.name}</strong><small>Image ready to send</small></span><button type="button" aria-label={`Remove ${file.name}`} onclick={() => removePendingFile(index)}><X size={13} /></button></div>{:else}<span><i><Paperclip size={12} /></i>{file.name}<button type="button" aria-label={`Remove ${file.name}`} onclick={() => removePendingFile(index)}><X size={12} /></button></span>{/if}{/each}{#each pendingRecordUids as uid}<span><i><FileText size={12} /></i>Record · {uid.slice(0, 12)}<button type="button" aria-label={`Remove record ${uid}`} onclick={() => pendingRecordUids = pendingRecordUids.filter((item) => item !== uid)}><X size={12} /></button></span>{/each}{#each pendingMentionUids as uid}<span><i><AtSign size={12} /></i>{personName(uid)}<button type="button" aria-label={`Remove mention ${personName(uid)}`} onclick={() => pendingMentionUids = pendingMentionUids.filter((item) => item !== uid)}><X size={12} /></button></span>{/each}</div>{/if}
+            {#if pendingFiles.length || pendingRecordUids.length || pendingMentionUids.length}<div class="pending-shares">{#each pendingFiles as file, index}{#if isPendingImage(file)}<div class="pending-image-share"><img src={pendingImageUrl(file)} alt="" /><span><strong>{file.name}</strong><small>{fileSize(file.size)} · Image ready to send</small></span><button type="button" aria-label={`Remove ${file.name}`} onclick={() => removePendingFile(index)}><X size={13} /></button></div>{:else}<span><i><Paperclip size={12} /></i>{file.name} · {fileSize(file.size)}<button type="button" aria-label={`Remove ${file.name}`} onclick={() => removePendingFile(index)}><X size={12} /></button></span>{/if}{/each}{#each pendingRecordUids as uid}<span><i><FileText size={12} /></i>Record · {uid.slice(0, 12)}<button type="button" aria-label={`Remove record ${uid}`} onclick={() => pendingRecordUids = pendingRecordUids.filter((item) => item !== uid)}><X size={12} /></button></span>{/each}{#each pendingMentionUids as uid}<span><i><AtSign size={12} /></i>{personName(uid)}<button type="button" aria-label={`Remove mention ${personName(uid)}`} onclick={() => pendingMentionUids = pendingMentionUids.filter((item) => item !== uid)}><X size={12} /></button></span>{/each}</div>{/if}
             {#if toolsOpen}<div class="composer-context-tools"><label><span>Link an MX record</span><div><input bind:value={recordLinkInput} placeholder="Record UID or copied MX link" aria-label="Record to link" /><button class="button small" type="button" onclick={addRecordLink} disabled={!recordLinkInput.trim()}>Add</button></div></label><label><span>Mention someone</span><div><select bind:value={mentionUser} aria-label="Person to mention"><option value="">Choose a person…</option>{#each mentionablePeople.filter((user) => !pendingMentionUids.includes(user.uid)) as user}<option value={user.uid}>{user.name}</option>{/each}</select><button class="button small" type="button" onclick={addMention} disabled={!mentionUser}>Add</button></div></label></div>{/if}
             <div class="composer-entry" data-mention-composer>
               {#if mentionOpen}<div id="composer-mention-options" class="composer-mention-menu" role="listbox" aria-label="People in this conversation"><header><AtSign size={14} /><span><strong>Mention someone</strong><small>{mentionQuery ? `Results for “${mentionQuery}”` : 'People in this conversation'}</small></span></header>{#if mentionSuggestions.length}<div>{#each mentionSuggestions as user, index}<button class:active={mentionActiveIndex === index} type="button" role="option" aria-selected={mentionActiveIndex === index} onmouseenter={() => mentionActiveIndex = index} onmousedown={(event) => event.preventDefault()} onclick={() => chooseMention(user)}><span class="message-avatar"><ProfileAvatar userUid={user.uid} name={user.name} updatedAt={user.profile_photo_updated_at} online={isUserOnline(user.uid)} /></span><span><strong>{user.name}</strong><small class:online={isUserOnline(user.uid)}>{isUserOnline(user.uid) ? 'Online' : 'Offline'}</small></span><span class="mention-enter">↵</span></button>{/each}</div>{:else}<p>{membersLoaded || selected.kind === 'direct' ? 'No matching people in this conversation.' : 'Loading people…'}</p>{/if}</div>{/if}
               <textarea bind:this={composerTextarea} bind:value={body} oninput={composerInput} onkeydown={composerKeydown} onpaste={composerPaste} rows="2" placeholder={`Message ${selected.name}`} aria-label="Message" aria-autocomplete="list" aria-controls="composer-mention-options"></textarea>
-              <div class="composer-commandbar"><div><label class="composer-action" title="Attach files" aria-label="Attach files"><span><Paperclip size={13} /></span><span class="composer-action-label">Attach</span><input type="file" multiple onchange={(event) => { if (event.currentTarget.files) pendingFiles = [...pendingFiles, ...event.currentTarget.files]; event.currentTarget.value = ''; }} /></label><button class:active={toolsOpen} class="composer-action" type="button" onclick={() => toolsOpen = !toolsOpen} title="Add context" aria-label="Add context"><span><Link2 size={13} /></span><span class="composer-action-label">Add context</span></button></div><span class="composer-hint">Type @ to mention · Ctrl + Enter to send</span><button class="button primary send-message icon-label" disabled={sending || (!body.trim() && !pendingFiles.length && !pendingRecordUids.length)}>{#if !sending}<Send size={13} />{/if}<span class="send-message-label">{sending ? 'Sending…' : 'Send'}</span></button></div>
+              <div class="composer-commandbar"><div><label class="composer-action" title={`Attach files up to ${sharedFileLimitLabel()}`} aria-label={`Attach files up to ${sharedFileLimitLabel()}`}><span><Paperclip size={13} /></span><span class="composer-action-label">Attach</span><input type="file" multiple onchange={(event) => { if (event.currentTarget.files) queueSharedFiles(event.currentTarget.files); event.currentTarget.value = ''; }} /></label><button class:active={toolsOpen} class="composer-action" type="button" onclick={() => toolsOpen = !toolsOpen} title="Add context" aria-label="Add context"><span><Link2 size={13} /></span><span class="composer-action-label">Add context</span></button></div><span class="composer-hint">Type @ to mention · Files up to {sharedFileLimitLabel()} · Ctrl + Enter to send</span><button class="button primary send-message icon-label" disabled={sending || (!body.trim() && !pendingFiles.length && !pendingRecordUids.length)}>{#if !sending}<Send size={13} />{/if}<span class="send-message-label">{sending ? 'Sending…' : 'Send'}</span></button></div>
             </div>
           </form>
         {:else}<div class="collaboration-empty"><div class="collaboration-empty-mark">MX</div><h2>Choose a conversation</h2><p>Keep work, documents, and record context together without leaving MX.</p><button class="button primary" onclick={() => createOpen = true}>Create a space</button></div>{/if}

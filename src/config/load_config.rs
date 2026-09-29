@@ -39,6 +39,7 @@ pub struct N1Config {
     pub fragment: String,
     pub insecure_tls: bool,
     pub attachment_max_size_mb: usize,
+    pub collaboration_file_max_size_mb: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -410,6 +411,31 @@ pub static CONFIG: LazyLock<Config> = LazyLock::new(|| {
         );
     }
 
+    let collaboration_file_max_size_mb_value = n1_section
+        .get("collaboration_file_max_size_mb")
+        .unwrap_or("100");
+
+    let collaboration_file_max_size_mb = collaboration_file_max_size_mb_value
+        .parse::<usize>()
+        .unwrap_or_else(|error| {
+            crate::fatal_error!(
+                format!(
+                    "invalid value '{}' for 'collaboration_file_max_size_mb' in section '[n1]': {}",
+                    collaboration_file_max_size_mb_value, error
+                ),
+                "static",
+                "CONFIG"
+            )
+        });
+
+    if collaboration_file_max_size_mb == 0 {
+        crate::fatal_error!(
+            "'collaboration_file_max_size_mb' in section '[n1]' must be greater than 0",
+            "static",
+            "CONFIG"
+        );
+    }
+
     /*
      * Final configuration
      */
@@ -445,6 +471,7 @@ pub static CONFIG: LazyLock<Config> = LazyLock::new(|| {
             fragment: n1_fragment,
             insecure_tls: n1_insecure_tls,
             attachment_max_size_mb,
+            collaboration_file_max_size_mb,
         },
     }
 });
