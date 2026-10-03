@@ -36,8 +36,9 @@
   import type { ChannelFile, ChannelMember, ChannelReadState, ChatMessage, CollaborationChannel, CollaborationPerson, MessageFile, MessageRecordLink, MessageReplyPreview } from '../api/domain';
   import type { Session } from '../api/types';
   import type { LiveMessage } from '../live/client';
-  import { createChannel, createDirectChannel, deleteMessage, download, editMessage, listChannelFiles, listChannelMembers, listChannels, listCollaborationPeople, listMessages, loadPresence, markChannelRead, previewMessageFile, removeChannelMember, saveChannelMember, searchChannel, sendMessage, setMessagePinned, toggleMessageReaction, updateChannel, uploadMessageFile } from '../api/workspace';
+  import { createChannel, createDirectChannel, deleteMessage, download, editMessage, listChannelFiles, listChannelMembers, listChannels, listCollaborationPeople, listMessages, loadPresence, markChannelRead, prepareMessageFilePreview, removeChannelMember, saveChannelMember, searchChannel, sendMessage, setMessagePinned, toggleMessageReaction, updateChannel, uploadMessageFile } from '../api/workspace';
   import { requestConfirmation } from '../confirmation';
+  import { shouldSendChatMessage } from '../util/interactions';
   import FilePreview from './FilePreview.svelte';
   import ProfileAvatar from './ProfileAvatar.svelte';
   import SharedImageThumbnail from './SharedImageThumbnail.svelte';
@@ -548,13 +549,17 @@
     } catch (reason) { fail(reason); } finally { sending = false; }
   }
   function composerKeydown(event: KeyboardEvent) {
+    if (event.isComposing) return;
     if (mentionOpen && mentionSuggestions.length && !event.ctrlKey && !event.metaKey) {
       if (event.key === 'ArrowDown') { event.preventDefault(); mentionActiveIndex = (mentionActiveIndex + 1) % mentionSuggestions.length; return; }
       if (event.key === 'ArrowUp') { event.preventDefault(); mentionActiveIndex = (mentionActiveIndex - 1 + mentionSuggestions.length) % mentionSuggestions.length; return; }
       if (event.key === 'Enter' || event.key === 'Tab') { event.preventDefault(); chooseMention(mentionSuggestions[Math.min(mentionActiveIndex, mentionSuggestions.length - 1)]); return; }
       if (event.key === 'Escape') { event.preventDefault(); closeMentionPicker(); return; }
     }
-    if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); composerForm?.requestSubmit(); }
+    if (shouldSendChatMessage(event)) {
+      event.preventDefault();
+      composerForm?.requestSubmit();
+    }
   }
   function downloadSharedFile(file: MessageFile) { void download(`/mx/v1/collaboration/files/${file.uid}/download`, file.file_name); }
   function showSharedFile(file: MessageFile) { previewFile = file; }
@@ -770,6 +775,9 @@
               {@const receipt = deliveryReceipt(message, index)}
               {@const sender = message.sender_uid === session.uid ? null : personByUid(message.sender_uid)}
               {@const replyPreview = replyPreviewFor(message)}
+              {#if message.event_kind}
+                <div data-message-uid={message.uid} class="message-system-event"><span>{message.body}</span><time>{clock(message.created_at)}</time></div>
+              {:else}
               <article data-message-uid={message.uid} class:search-focused={focusedMessageUid === message.uid} class:mine={message.sender_uid === session.uid} class:deleted={!!message.deleted_at} class:long-message={isLongMessage(message)} class:media-message={message.files.some(isImageFile)} class:pinned-message={!!message.pinned_at} class="chat-message">
                 {#if sender}
                   <button class="message-avatar person-trigger" type="button" onclick={() => openPersonCard(sender)} aria-label={`View ${sender.name}`}><ProfileAvatar userUid={sender.uid} name={sender.name} updatedAt={message.sender_profile_photo_updated_at ?? sender.profile_photo_updated_at} online={isUserOnline(sender.uid)} /></button>
@@ -806,6 +814,7 @@
                   {#if receipt}<div class:seen={receipt.seen} class="message-receipt" title={receipt.detail}>{#if receipt.seen}<CheckCheck size={13} strokeWidth={2.4} />{:else}<Check size={13} strokeWidth={2.4} />{/if}<span>{receipt.label}</span></div>{/if}
                 </div>
               </article>
+              {/if}
             {/each}{/if}
           </div>
           <form class="message-composer" bind:this={composerForm} onsubmit={submit}>
@@ -815,7 +824,7 @@
             <div class="composer-entry" data-mention-composer>
               {#if mentionOpen}<div id="composer-mention-options" class="composer-mention-menu" role="listbox" aria-label="People in this conversation"><header><AtSign size={14} /><span><strong>Mention someone</strong><small>{mentionQuery ? `Results for “${mentionQuery}”` : 'People in this conversation'}</small></span></header>{#if mentionSuggestions.length}<div>{#each mentionSuggestions as user, index}<button class:active={mentionActiveIndex === index} type="button" role="option" aria-selected={mentionActiveIndex === index} onmouseenter={() => mentionActiveIndex = index} onmousedown={(event) => event.preventDefault()} onclick={() => chooseMention(user)}><span class="message-avatar"><ProfileAvatar userUid={user.uid} name={user.name} updatedAt={user.profile_photo_updated_at} online={isUserOnline(user.uid)} /></span><span><strong>{user.name}</strong><small class:online={isUserOnline(user.uid)}>{isUserOnline(user.uid) ? 'Online' : 'Offline'}</small></span><span class="mention-enter">↵</span></button>{/each}</div>{:else}<p>{membersLoaded || selected.kind === 'direct' ? 'No matching people in this conversation.' : 'Loading people…'}</p>{/if}</div>{/if}
               <textarea bind:this={composerTextarea} bind:value={body} oninput={composerInput} onkeydown={composerKeydown} onpaste={composerPaste} rows="2" placeholder={`Message ${selected.name}`} aria-label="Message" aria-autocomplete="list" aria-controls="composer-mention-options"></textarea>
-              <div class="composer-commandbar"><div><label class="composer-action" title={`Attach files up to ${sharedFileLimitLabel()}`} aria-label={`Attach files up to ${sharedFileLimitLabel()}`}><span><Paperclip size={13} /></span><span class="composer-action-label">Attach</span><input type="file" multiple onchange={(event) => { if (event.currentTarget.files) queueSharedFiles(event.currentTarget.files); event.currentTarget.value = ''; }} /></label><button class:active={toolsOpen} class="composer-action" type="button" onclick={() => toolsOpen = !toolsOpen} title="Add context" aria-label="Add context"><span><Link2 size={13} /></span><span class="composer-action-label">Add context</span></button></div><span class="composer-hint">Type @ to mention · Files up to {sharedFileLimitLabel()} · Ctrl + Enter to send</span><button class="button primary send-message icon-label" disabled={sending || (!body.trim() && !pendingFiles.length && !pendingRecordUids.length)}>{#if !sending}<Send size={13} />{/if}<span class="send-message-label">{sending ? 'Sending…' : 'Send'}</span></button></div>
+              <div class="composer-commandbar"><div><label class="composer-action" title={`Attach files up to ${sharedFileLimitLabel()}`} aria-label={`Attach files up to ${sharedFileLimitLabel()}`}><span><Paperclip size={13} /></span><span class="composer-action-label">Attach</span><input type="file" multiple onchange={(event) => { if (event.currentTarget.files) queueSharedFiles(event.currentTarget.files); event.currentTarget.value = ''; }} /></label><button class:active={toolsOpen} class="composer-action" type="button" onclick={() => toolsOpen = !toolsOpen} title="Add context" aria-label="Add context"><span><Link2 size={13} /></span><span class="composer-action-label">Add context</span></button></div><span class="composer-hint">Type @ to mention · Enter to send · Shift + Enter for a new line</span><button class="button primary send-message icon-label" disabled={sending || (!body.trim() && !pendingFiles.length && !pendingRecordUids.length)}>{#if !sending}<Send size={13} />{/if}<span class="send-message-label">{sending ? 'Sending…' : 'Send'}</span></button></div>
             </div>
           </form>
         {:else}<div class="collaboration-empty"><div class="collaboration-empty-mark">MX</div><h2>Choose a conversation</h2><p>Keep work, documents, and record context together without leaving MX.</p><button class="button primary" onclick={() => createOpen = true}>Create a space</button></div>{/if}
@@ -851,7 +860,7 @@
 {/if}
 
 {#if previewFile}
-  <FilePreview fileName={previewFile.file_name} load={() => previewMessageFile(previewFile!.uid)} onClose={() => previewFile = null} />
+  <FilePreview fileName={previewFile.file_name} load={() => prepareMessageFilePreview(previewFile!.uid, previewFile!.file_name)} onClose={() => previewFile = null} />
 {/if}
 
 {#if deleteCandidate}

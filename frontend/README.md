@@ -3,6 +3,9 @@
 The MX frontend lives in this directory as part of the same repository and
 release artifact as the Rust backend.
 
+The frontend and Rust package share one product version. For MX 2.2.0, both
+package manifests and the committed production bundle must be released together.
+
 ## Layout
 
 - `src/` contains the Svelte 5 and TypeScript replacement frontend.
@@ -42,3 +45,7 @@ npm run build
 The Rust server serves `frontend/dist` in production. Rebuild and commit that
 bundle whenever frontend source changes. A Node.js process is not required at
 runtime, and an unchanged fresh checkout can start directly with `cargo run`.
+
+MX 2.2 media previews depend on the matching Rust routes for short-lived preview
+tickets and HTTP byte-range forwarding. Restart the Rust service after deploying
+a newly built frontend so the client and API cannot become version-skewed.

@@ -364,7 +364,7 @@ async fn version_detail_for_module(
                 let kind: String = row.get(1)?;
                 let value = match kind.as_str() {
                     "integer" | "auto_number" => row.get::<_,Option<i64>>(3)?.map_or(Value::Null, |value| json!(value)),
-                    "decimal" => row.get::<_,Option<f64>>(4)?.map_or(Value::Null, |value| json!(value)),
+                    "decimal" | "formula" => row.get::<_,Option<f64>>(4)?.map_or(Value::Null, |value| json!(value)),
                     "boolean" => row.get::<_,Option<i64>>(5)?.map_or(Value::Null, |value| json!(value != 0)),
                     _ => row.get::<_,Option<String>>(2)?.map_or(Value::Null, |value| json!(value)),
                 };
@@ -426,10 +426,10 @@ async fn restore_version_for_module(
         )?;
         transaction.execute(
             r#"INSERT INTO mx_unique_values(field_uid,normalized_value,record_uid)
-               SELECT f.uid, LOWER(TRIM(CASE f.field_type WHEN 'integer' THEN CAST(v.value_integer AS TEXT) WHEN 'decimal' THEN CAST(v.value_real AS TEXT) WHEN 'boolean' THEN CAST(v.value_boolean AS TEXT) ELSE COALESCE(v.value_text,'') END)), ?1
+               SELECT f.uid, LOWER(TRIM(CASE f.field_type WHEN 'integer' THEN CAST(v.value_integer AS TEXT) WHEN 'decimal' THEN CAST(v.value_real AS TEXT) WHEN 'formula' THEN CAST(v.value_real AS TEXT) WHEN 'boolean' THEN CAST(v.value_boolean AS TEXT) ELSE COALESCE(v.value_text,'') END)), ?1
                FROM mx_record_version_values v JOIN mx_fields f ON f.uid=v.field_uid
                WHERE v.version_uid=?2 AND f.unique_value=1 AND f.field_type!='auto_number'
-                 AND TRIM(CASE f.field_type WHEN 'integer' THEN CAST(v.value_integer AS TEXT) WHEN 'decimal' THEN CAST(v.value_real AS TEXT) WHEN 'boolean' THEN CAST(v.value_boolean AS TEXT) ELSE COALESCE(v.value_text,'') END)!=''"#,
+                 AND TRIM(CASE f.field_type WHEN 'integer' THEN CAST(v.value_integer AS TEXT) WHEN 'decimal' THEN CAST(v.value_real AS TEXT) WHEN 'formula' THEN CAST(v.value_real AS TEXT) WHEN 'boolean' THEN CAST(v.value_boolean AS TEXT) ELSE COALESCE(v.value_text,'') END)!=''"#,
             params![record_uid, version_uid],
         )?;
         let now = chrono::Utc::now().timestamp_millis();
@@ -590,7 +590,7 @@ fn load_trash_fields(
                 "integer" | "auto_number" => row
                     .get::<_, Option<i64>>(10)?
                     .map_or(Value::Null, |value| json!(value)),
-                "decimal" => row
+                "decimal" | "formula" => row
                     .get::<_, Option<f64>>(11)?
                     .map_or(Value::Null, |value| json!(value)),
                 "boolean" => row

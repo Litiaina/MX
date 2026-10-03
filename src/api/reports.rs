@@ -163,7 +163,7 @@ fn value_expression(alias: &str, field_type: &str) -> String {
         "integer" | "auto_number" => {
             format!("CAST({alias}.value_integer AS TEXT)")
         }
-        "decimal" => format!("CAST({alias}.value_real AS TEXT)"),
+        "decimal" | "formula" => format!("CAST({alias}.value_real AS TEXT)"),
         "boolean" => {
             format!("CASE {alias}.value_boolean WHEN 1 THEN 'true' WHEN 0 THEN 'false' ELSE '' END")
         }
@@ -1125,7 +1125,7 @@ fn detailed_records_csv(connection: &Connection, module_uid: &str) -> rusqlite::
                     .get::<_, Option<i64>>(4)?
                     .map(|value| value.to_string())
                     .unwrap_or_default(),
-                "decimal" => row
+                "decimal" | "formula" => row
                     .get::<_, Option<f64>>(5)?
                     .map(|value| value.to_string())
                     .unwrap_or_default(),

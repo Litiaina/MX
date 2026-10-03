@@ -18,6 +18,7 @@ use crate::{
         modules::{DEFAULT_MODULE_UID, module_can},
         mx::{
             attachment_fields::ensure_attachment_fields_schema,
+            formula::evaluate_expression,
             model::FileAttachment,
             schema::{
                 FieldDefinition, ensure_dynamic_schema, field_map_by_key,
@@ -128,6 +129,15 @@ impl NormalizedValue {
                     "0".to_string()
                 }
             }
+        }
+    }
+
+    fn as_number(&self) -> Option<f64> {
+        match self {
+            Self::Integer(value) => Some(*value as f64),
+            Self::Real(value) => Some(*value),
+            Self::Boolean(value) => Some(if *value { 1.0 } else { 0.0 }),
+            Self::Text(value) => value.trim().parse::<f64>().ok(),
         }
     }
 }
@@ -323,7 +333,7 @@ fn normalize_field_value(
             Ok(Some(NormalizedValue::Boolean(boolean)))
         }
 
-        "auto_number" | "attachments" => Ok(None),
+        "auto_number" | "attachments" | "formula" => Ok(None),
 
         _ => Err(format!(
             "{} has unsupported type '{}'.",
@@ -349,7 +359,10 @@ fn validate_payload(
     let mut normalized = BTreeMap::new();
 
     for field in fields {
-        if matches!(field.field_type.as_str(), "auto_number" | "attachments") {
+        if matches!(
+            field.field_type.as_str(),
+            "auto_number" | "attachments" | "formula"
+        ) {
             continue;
         }
 
@@ -387,7 +400,10 @@ fn validate_patch_payload(
             ));
         };
 
-        if matches!(field.field_type.as_str(), "auto_number" | "attachments") {
+        if matches!(
+            field.field_type.as_str(),
+            "auto_number" | "attachments" | "formula"
+        ) {
             return Err(format!(
                 "{} cannot be modified through the record field PATCH API.",
                 field.label
@@ -525,6 +541,156 @@ fn fill_auto_numbers(
     }
 
     Ok(())
+}
+
+fn apply_formula_values(
+    fields: &[FieldDefinition],
+    values: &mut BTreeMap<String, NormalizedValue>,
+) -> Result<(), String> {
+    let formula_fields = fields
+        .iter()
+        .filter(|field| field.field_type == "formula")
+        .collect::<Vec<_>>();
+    if formula_fields.is_empty() {
+        return Ok(());
+    }
+
+    // Re-evaluate several times so formulas may reference earlier or later
+    // computed fields. Blank numeric inputs are treated as zero.
+    for _ in 0..=formula_fields.len() {
+        for field in &formula_fields {
+            let mut variables = fields
+                .iter()
+                .map(|candidate| (candidate.key.to_ascii_lowercase(), 0.0))
+                .collect::<BTreeMap<_, _>>();
+            for (key, value) in values.iter() {
+                if let Some(number) = value.as_number() {
+                    variables.insert(key.to_ascii_lowercase(), number);
+                }
+            }
+            let expression = field
+                .config
+                .get("expression")
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            let decimals = field
+                .config
+                .get("decimals")
+                .and_then(Value::as_u64)
+                .unwrap_or(2)
+                .min(12) as i32;
+            let raw = evaluate_expression(expression, Some(&variables))
+                .map_err(|error| format!("{}: {error}", field.label))?;
+            let factor = 10_f64.powi(decimals);
+            values.insert(
+                field.key.clone(),
+                NormalizedValue::Real((raw * factor).round() / factor),
+            );
+        }
+    }
+    Ok(())
+}
+
+fn calculate_formula_json_values(
+    fields: &[FieldDefinition],
+    values: &mut BTreeMap<String, Value>,
+) -> Result<(), String> {
+    let mut normalized = BTreeMap::new();
+    for field in fields {
+        let Some(value) = values.get(&field.key) else {
+            continue;
+        };
+        let converted = match field.field_type.as_str() {
+            "integer" | "auto_number" => value.as_i64().map(NormalizedValue::Integer),
+            "decimal" | "formula" => value.as_f64().map(NormalizedValue::Real),
+            "boolean" => value.as_bool().map(NormalizedValue::Boolean),
+            _ => value
+                .as_str()
+                .map(|value| NormalizedValue::Text(value.to_string())),
+        };
+        if let Some(converted) = converted {
+            normalized.insert(field.key.clone(), converted);
+        }
+    }
+    apply_formula_values(fields, &mut normalized)?;
+    for field in fields.iter().filter(|field| field.field_type == "formula") {
+        if let Some(value) = normalized.get(&field.key) {
+            values.insert(field.key.clone(), normalized_to_json(value));
+        }
+    }
+    Ok(())
+}
+
+fn load_normalized_record_values(
+    transaction: &rusqlite::Transaction<'_>,
+    record_uid: &str,
+    fields: &[FieldDefinition],
+) -> rusqlite::Result<BTreeMap<String, NormalizedValue>> {
+    let mut values = BTreeMap::new();
+    for field in fields
+        .iter()
+        .filter(|field| field.field_type != "attachments")
+    {
+        let row = transaction
+            .query_row(
+                "SELECT value_text, value_integer, value_real, value_boolean FROM mx_record_values WHERE record_uid=?1 AND field_uid=?2",
+                params![record_uid, &field.uid],
+                |row| Ok((row.get::<_, Option<String>>(0)?, row.get::<_, Option<i64>>(1)?, row.get::<_, Option<f64>>(2)?, row.get::<_, Option<i64>>(3)?)),
+            )
+            .optional()?;
+        let value = match row {
+            Some((_, Some(value), _, _))
+                if matches!(field.field_type.as_str(), "integer" | "auto_number") =>
+            {
+                Some(NormalizedValue::Integer(value))
+            }
+            Some((_, _, Some(value), _))
+                if matches!(field.field_type.as_str(), "decimal" | "formula") =>
+            {
+                Some(NormalizedValue::Real(value))
+            }
+            Some((_, _, _, Some(value))) if field.field_type == "boolean" => {
+                Some(NormalizedValue::Boolean(value != 0))
+            }
+            Some((Some(value), _, _, _)) => Some(NormalizedValue::Text(value)),
+            _ => None,
+        };
+        if let Some(value) = value {
+            values.insert(field.key.clone(), value);
+        }
+    }
+    Ok(values)
+}
+
+pub(crate) fn recalculate_module_formulas(
+    connection: &rusqlite::Connection,
+    module_uid: &str,
+    actor_uid: &str,
+) -> rusqlite::Result<()> {
+    let fields = load_module_fields_db(connection, module_uid, false)?;
+    if !fields.iter().any(|field| field.field_type == "formula") {
+        return Ok(());
+    }
+    let record_uids = connection
+        .prepare("SELECT uid FROM mx_records WHERE module_uid=?1 AND deleted_at IS NULL")?
+        .query_map(params![module_uid], |row| row.get::<_, String>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    let transaction = connection.unchecked_transaction()?;
+    for record_uid in record_uids {
+        let mut values = load_normalized_record_values(&transaction, &record_uid, &fields)?;
+        apply_formula_values(&fields, &mut values)
+            .map_err(|error| rusqlite::Error::InvalidParameterName(format!("MX_CONFIG:{error}")))?;
+        for field in fields.iter().filter(|field| field.field_type == "formula") {
+            let Some(value) = values.get(&field.key) else {
+                continue;
+            };
+            write_single_dynamic_value(&transaction, &record_uid, field, Some(value))?;
+            let revision =
+                current_field_revision(&transaction, &record_uid, &field.uid)?.saturating_add(1);
+            set_field_revision(&transaction, &record_uid, &field.uid, revision, actor_uid)?;
+        }
+    }
+    transaction.commit()
 }
 
 fn insert_record_value(
@@ -1004,6 +1170,27 @@ fn patch_record_db(
             new_revisions.insert(key.clone(), next_revision);
         }
 
+        let mut calculated_values = load_normalized_record_values(&transaction, &uid, &fields)?;
+        apply_formula_values(&fields, &mut calculated_values).map_err(|error| {
+            rusqlite::Error::InvalidParameterName(format!("MX_FORMULA:{error}"))
+        })?;
+        for field in fields.iter().filter(|field| field.field_type == "formula") {
+            let Some(value) = calculated_values.get(&field.key) else {
+                continue;
+            };
+            let current = current_field_value(&transaction, &uid, field)?;
+            let next = normalized_to_json(value);
+            if current.as_f64() == next.as_f64() {
+                continue;
+            }
+            write_single_dynamic_value(&transaction, &uid, field, Some(value))?;
+            let next_revision =
+                current_field_revision(&transaction, &uid, &field.uid)?.saturating_add(1);
+            set_field_revision(&transaction, &uid, &field.uid, next_revision, &actor_uid)?;
+            changed_values.insert(field.key.clone(), next);
+            new_revisions.insert(field.key.clone(), next_revision);
+        }
+
         if !changed_values.is_empty() {
             capture_record_version(&transaction, &uid, &module_uid, "updated", &actor_uid)?;
         }
@@ -1091,6 +1278,9 @@ fn create_record_db(
         let mut values = request_values;
 
         fill_auto_numbers(&transaction, &fields, &mut values)?;
+        apply_formula_values(&fields, &mut values).map_err(|error| {
+            rusqlite::Error::InvalidParameterName(format!("MX_FORMULA:{error}"))
+        })?;
 
         let date = value_as_text(&values, "date", "");
         let office = value_as_text(&values, "office", "");
@@ -1199,6 +1389,9 @@ fn update_record_db(
         // If a new auto-number field was added after this record existed,
         // assign it on the first edit of the historical record.
         fill_auto_numbers(&transaction, &fields, &mut values)?;
+        apply_formula_values(&fields, &mut values).map_err(|error| {
+            rusqlite::Error::InvalidParameterName(format!("MX_FORMULA:{error}"))
+        })?;
 
         let field_map = field_map_by_key(&fields);
 
@@ -1284,7 +1477,7 @@ fn value_from_row(
 ) -> Value {
     match field_type {
         "integer" | "auto_number" => integer.map_or(Value::Null, |value| json!(value)),
-        "decimal" => real.map_or(Value::Null, |value| json!(value)),
+        "decimal" | "formula" => real.map_or(Value::Null, |value| json!(value)),
         "boolean" => boolean.map_or(Value::Null, |value| json!(value != 0)),
         _ => text.map_or(Value::Null, |value| json!(value)),
     }
@@ -1421,6 +1614,7 @@ fn sql_value_expression(alias: &str) -> String {
             WHEN 'integer' THEN CAST({alias}.value_integer AS TEXT)
             WHEN 'auto_number' THEN CAST({alias}.value_integer AS TEXT)
             WHEN 'decimal' THEN CAST({alias}.value_real AS TEXT)
+            WHEN 'formula' THEN CAST({alias}.value_real AS TEXT)
             WHEN 'boolean' THEN CASE {alias}.value_boolean WHEN 1 THEN 'true' ELSE 'false' END
             ELSE COALESCE({alias}.value_text, '')
         END"#
@@ -1594,7 +1788,7 @@ fn build_order_clause(query: &DynamicListQuery, fields: &[FieldDefinition]) -> S
 
     let value_column = match field.field_type.as_str() {
         "integer" | "auto_number" => "rv.value_integer",
-        "decimal" => "rv.value_real",
+        "decimal" | "formula" => "rv.value_real",
         "boolean" => "rv.value_boolean",
         _ => "rv.value_text COLLATE NOCASE",
     };
@@ -1667,6 +1861,12 @@ fn list_records_db(
         let mut revisions = load_field_revisions(connection, &record_uids)?;
         let mut attachments = load_attachments(connection, &record_uids)?;
 
+        for record_values in values.values_mut() {
+            calculate_formula_json_values(&fields, record_values).map_err(|error| {
+                rusqlite::Error::InvalidParameterName(format!("MX_FORMULA:{error}"))
+            })?;
+        }
+
         let data = record_uids
             .into_iter()
             .map(|uid| DynamicRecord {
@@ -1710,12 +1910,17 @@ fn get_record_db(module_uid: String, uid: String) -> Result<DynamicRecord, Sqlit
         }
 
         let record_uids = vec![uid.clone()];
+        let fields = load_module_fields_db(connection, &module_uid, false)?;
         let mut values = load_record_values(connection, &record_uids)?;
         let mut revisions = load_field_revisions(connection, &record_uids)?;
         let mut attachments = load_attachments(connection, &record_uids)?;
 
+        let mut record_values = values.remove(&uid).unwrap_or_default();
+        calculate_formula_json_values(&fields, &mut record_values).map_err(|error| {
+            rusqlite::Error::InvalidParameterName(format!("MX_FORMULA:{error}"))
+        })?;
         Ok(DynamicRecord {
-            values: values.remove(&uid).unwrap_or_default(),
+            values: record_values,
             field_revisions: revisions.remove(&uid).unwrap_or_default(),
             attached_files: attachments.remove(&uid).unwrap_or_default(),
             uid,
@@ -1730,9 +1935,10 @@ fn database_error_response(error: SqliteDatabaseError) -> Response {
             json!({ "response": "MX record was not found." }),
         ),
 
-        SqliteDatabaseError::Sqlite(rusqlite::Error::InvalidParameterName(message)) => {
-            api_json(StatusCode::BAD_REQUEST, json!({ "response": message }))
-        }
+        SqliteDatabaseError::Sqlite(rusqlite::Error::InvalidParameterName(message)) => api_json(
+            StatusCode::BAD_REQUEST,
+            json!({ "response": message.strip_prefix("MX_FORMULA:").unwrap_or(&message) }),
+        ),
 
         SqliteDatabaseError::Sqlite(rusqlite::Error::SqliteFailure(error, _))
             if error.code == rusqlite::ErrorCode::ConstraintViolation =>

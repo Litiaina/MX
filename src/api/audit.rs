@@ -503,10 +503,10 @@ pub(crate) fn ensure_audit_schema(
 
     // Builds before the module-scoped route classifier was added still wrote
     // authoritative record versions, but omitted the corresponding audit row.
-    // Reconstruct only older lifecycle entries and skip any event already
-    // represented by the live audit middleware. The stable event UID makes
-    // this migration idempotent.
-    let backfill_cutoff = chrono::Utc::now().timestamp_millis() - 5 * 60 * 1000;
+    // Reconstruct any lifecycle entry missing from the request audit. The
+    // NOT EXISTS match and stable event UID make this safe to run immediately;
+    // waiting several minutes made fresh work disappear from performance
+    // reports when a request-level audit write had been missed.
     connection.execute(
         r#"
         INSERT OR IGNORE INTO mx_audit_log (
@@ -543,7 +543,6 @@ pub(crate) fn ensure_audit_schema(
         FROM mx_record_versions version
         JOIN users user ON user.uid = version.actor_uid
         WHERE version.event IN ('created','updated','deleted','restored','version_restored')
-          AND version.created_at <= ?1
           AND NOT EXISTS (
               SELECT 1
               FROM mx_audit_log audit
@@ -560,7 +559,7 @@ pub(crate) fn ensure_audit_schema(
                 )
           )
         "#,
-        params![backfill_cutoff],
+        [],
     )?;
 
     Ok(())

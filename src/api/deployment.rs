@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 use crate::{
     api::{
         live::publish_live_event,
-        mx::handler::{n1_access_token, n1_download, n1_ensure_directory, n1_upload_one_shot},
+        mx::handler::{n1_access_token, n1_download, n1_ensure_directory, n1_upload},
     },
     db::connector::{SqliteDatabaseError, with_sql_connection},
     middleware::auth::Claims,
@@ -279,7 +279,7 @@ pub async fn upload_deployment_logo(claims: Claims, mut multipart: Multipart) ->
     };
     if n1_ensure_directory("__mx", &token).await.is_err()
         || n1_ensure_directory("__mx/branding", &token).await.is_err()
-        || n1_upload_one_shot(&object_key, mime_type, bytes.clone(), &token)
+        || n1_upload(&object_key, mime_type, bytes.clone(), &token)
             .await
             .is_err()
     {

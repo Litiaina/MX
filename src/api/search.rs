@@ -68,6 +68,7 @@ fn search_records(
                     WHEN 'integer' THEN CAST(value.value_integer AS TEXT)
                     WHEN 'auto_number' THEN CAST(value.value_integer AS TEXT)
                     WHEN 'decimal' THEN CAST(value.value_real AS TEXT)
+                    WHEN 'formula' THEN CAST(value.value_real AS TEXT)
                     WHEN 'boolean' THEN CASE value.value_boolean WHEN 1 THEN 'Yes' ELSE 'No' END
                     ELSE NULLIF(TRIM(value.value_text), '')
                 END
@@ -84,6 +85,7 @@ fn search_records(
                     WHEN 'integer' THEN CAST(value.value_integer AS TEXT)
                     WHEN 'auto_number' THEN CAST(value.value_integer AS TEXT)
                     WHEN 'decimal' THEN CAST(value.value_real AS TEXT)
+                    WHEN 'formula' THEN CAST(value.value_real AS TEXT)
                     WHEN 'boolean' THEN CASE value.value_boolean WHEN 1 THEN 'Yes' ELSE 'No' END
                     ELSE COALESCE(value.value_text, '')
                 END
@@ -96,6 +98,7 @@ fn search_records(
                     WHEN 'integer' THEN CAST(value.value_integer AS TEXT)
                     WHEN 'auto_number' THEN CAST(value.value_integer AS TEXT)
                     WHEN 'decimal' THEN CAST(value.value_real AS TEXT)
+                    WHEN 'formula' THEN CAST(value.value_real AS TEXT)
                     WHEN 'boolean' THEN CASE value.value_boolean WHEN 1 THEN 'true' ELSE 'false' END
                     ELSE COALESCE(value.value_text, '')
                   END) LIKE LOWER(?2) ESCAPE '!'
@@ -129,6 +132,7 @@ fn search_records(
                       WHEN 'integer' THEN CAST(value.value_integer AS TEXT)
                       WHEN 'auto_number' THEN CAST(value.value_integer AS TEXT)
                       WHEN 'decimal' THEN CAST(value.value_real AS TEXT)
+                      WHEN 'formula' THEN CAST(value.value_real AS TEXT)
                       WHEN 'boolean' THEN CASE value.value_boolean WHEN 1 THEN 'true' ELSE 'false' END
                       ELSE COALESCE(value.value_text, '')
                     END) LIKE LOWER(?2) ESCAPE '!'

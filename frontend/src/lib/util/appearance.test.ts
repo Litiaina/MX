@@ -17,7 +17,7 @@ describe('appearanceScale', () => {
   });
 
   it('clamps persisted values to the supported ranges', () => {
-    expect(appearanceScale(500, 10)).toMatchObject({ interfaceRatio: 1.6, fontRatio: .85 });
+    expect(appearanceScale(500, 10)).toMatchObject({ interfaceRatio: 1.6, fontRatio: .625 });
   });
 });
 

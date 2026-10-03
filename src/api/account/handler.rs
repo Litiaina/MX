@@ -23,7 +23,7 @@ use crate::{
     api::{
         live::publish_live_event,
         mx::handler::{
-            n1_access_token, n1_download, n1_ensure_directory, n1_soft_delete, n1_upload_one_shot,
+            n1_access_token, n1_download, n1_ensure_directory, n1_soft_delete, n1_upload,
         },
     },
     db::connector::{SqliteDatabaseError, with_sql_connection},
@@ -160,7 +160,7 @@ pub async fn upload_profile_photo(claims: Claims, mut multipart: Multipart) -> R
                 .into_response();
         }
     }
-    if n1_upload_one_shot(&object_key, mime_type, bytes.clone(), &token)
+    if n1_upload(&object_key, mime_type, bytes.clone(), &token)
         .await
         .is_err()
     {

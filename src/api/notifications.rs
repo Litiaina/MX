@@ -271,6 +271,14 @@ pub async fn notify_module_readers(
     let Ok(Ok(recipients)) = recipients else {
         return;
     };
+    let dedup_key = if kind == "record.updated" || kind.starts_with("attachment.") {
+        Some(format!(
+            "record-activity:{module_uid}:{target_uid}:{actor_uid}:{}",
+            chrono::Utc::now().timestamp() / 300
+        ))
+    } else {
+        None
+    };
     for recipient_uid in recipients {
         let _ = notify_user(NewNotification {
             recipient_uid,
@@ -282,7 +290,7 @@ pub async fn notify_module_readers(
             target_uid: Some(target_uid.clone()),
             module_uid: Some(module_uid.clone()),
             data: data.clone(),
-            dedup_key: None,
+            dedup_key: dedup_key.clone(),
             mandatory: false,
         })
         .await;

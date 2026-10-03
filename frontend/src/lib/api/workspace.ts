@@ -71,17 +71,29 @@ export async function download(path: string, fallbackName: string) {
   URL.revokeObjectURL(url);
 }
 
-export async function previewAttachment(recordUid: string, attachmentUid: string) {
-  const response = await apiFetch(`/mx/v1/records/${encodeURIComponent(recordUid)}/attachments/${encodeURIComponent(attachmentUid)}/preview`);
+export async function previewAttachment(recordUid: string, attachmentUid: string, fileName = '', mimeType = '') {
+  const path = `/mx/v1/records/${encodeURIComponent(recordUid)}/attachments/${encodeURIComponent(attachmentUid)}/preview`;
+  if (!/\.(docx?|xlsx?|pptx?|odt|ods|odp)$/i.test(fileName)) {
+    const ticket = await issueRecordAttachmentPreviewTicket(recordUid, attachmentUid);
+    return { url: ticket.url, fileName: ticket.file_name || fileName, mimeType: ticket.mime_type || mimeType || 'application/octet-stream' };
+  }
+  const response = await apiFetch(path);
   if (!response.ok) throw new Error((await response.json().catch(() => null))?.response || 'Preview failed.');
   const disposition = response.headers.get('content-disposition') || '';
   const blob = await response.blob();
   return {
     blob,
+    url: undefined,
     fileName: /filename="?([^";]+)"?/i.exec(disposition)?.[1] || '',
     mimeType: response.headers.get('content-type') || blob.type || 'application/octet-stream'
   };
 }
+
+export const issueRecordAttachmentPreviewTicket = (recordUid: string, attachmentUid: string) =>
+  apiJson<{ url: string; file_name: string; mime_type: string; expires_in_seconds: number }>(
+    `/mx/v1/records/${encodeURIComponent(recordUid)}/attachments/${encodeURIComponent(attachmentUid)}/preview-ticket`,
+    { method: 'POST' }
+  );
 
 export const loadDashboardConfig = () => apiJson<DashboardConfigResponse>('/mx/v1/dashboard/config');
 export const saveDashboardConfig = (widgets: DashboardWidget[], showUserPerformance: boolean) =>
@@ -183,6 +195,23 @@ export async function previewMessageFile(fileUid: string) {
     blob,
     fileName: /filename="?([^";]+)"?/i.exec(disposition)?.[1] || '',
     mimeType: response.headers.get('content-type') || blob.type || 'application/octet-stream'
+  };
+}
+export const issueMessageFilePreviewTicket = (fileUid: string) =>
+  apiJson<{ url: string; file_name: string; mime_type: string; expires_in_seconds: number }>(
+    `/mx/v1/collaboration/files/${encodeURIComponent(fileUid)}/preview-ticket`,
+    { method: 'POST' }
+  );
+
+export async function prepareMessageFilePreview(fileUid: string, fileName: string) {
+  if (/\.(docx?|xlsx?|pptx?|odt|ods|odp)$/i.test(fileName)) {
+    return previewMessageFile(fileUid);
+  }
+  const ticket = await issueMessageFilePreviewTicket(fileUid);
+  return {
+    url: ticket.url,
+    fileName: ticket.file_name || fileName,
+    mimeType: ticket.mime_type || 'application/octet-stream'
   };
 }
 export const loadUsers = async () => (await apiJson<{ users: UserSummary[] }>('/mx/v1/auth/get', jsonRequest('POST', { filter: 'all', value: '' }))).users;

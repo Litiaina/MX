@@ -1,4 +1,5 @@
 pub mod attachment_fields;
+pub mod formula;
 pub mod handler;
 pub mod model;
 pub mod records;

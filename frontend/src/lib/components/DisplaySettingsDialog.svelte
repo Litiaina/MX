@@ -93,7 +93,7 @@
       <label>Content width<select bind:value={contentWidth} onchange={onAppearanceChange}><option value="">Use administrator default</option><option value="standard">Standard</option><option value="wide">Wide</option><option value="full">Full width</option></select></label>
       <label class="checkbox setting-checkbox"><input type="checkbox" bind:checked={autoScale} onchange={onScaleChange} /> Automatically fit the interface to this screen</label>
       <label>Interface size: {autoScale ? `${recommendedScale()}% recommended` : `${scale}%`}<input type="range" min="85" max="160" step="5" bind:value={scale} disabled={autoScale} oninput={onScaleChange} /><small>Changes control height, spacing, and navigation geometry without shrinking the workspace.</small></label>
-      <label>Font size: {fontScale}%<input type="range" min="85" max="150" step="5" bind:value={fontScale} oninput={onScaleChange} /><small>Changes text only; interface dimensions remain independent.</small></label>
+      <label>Font size<input class="font-size-input" type="number" min="10" max="24" step="1" bind:value={fontScale} oninput={onScaleChange} /><small>Set an exact base size from 10 px to 24 px. For example, change 10 to 11 just like a document editor.</small></label>
       <label class="checkbox setting-checkbox"><input type="checkbox" bind:checked={reducedMotion} onchange={onAppearanceChange} /> Reduce animation and motion</label>
       <label>Automatic data refresh<select bind:value={autoRefresh}><option value={0}>Off — live updates only</option><option value={30}>Every 30 seconds</option><option value={60}>Every minute</option><option value={300}>Every 5 minutes</option><option value={900}>Every 15 minutes</option></select></label>
 

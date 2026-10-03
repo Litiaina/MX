@@ -37,7 +37,8 @@ pub fn init_default_config<P: AsRef<Path>>(path: P) -> io::Result<()> {
         .set("fragment", "")
         .set("insecure_tls", "true")
         .set("attachment_max_size_mb", "50")
-        .set("collaboration_file_max_size_mb", "100");
+        .set("collaboration_file_max_size_mb", "100")
+        .set("multipart_part_size_mb", "16");
 
     conf.write_to_file(path).map_err(io::Error::other)
 }

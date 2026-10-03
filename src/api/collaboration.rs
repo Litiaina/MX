@@ -1,9 +1,19 @@
+use std::{
+    collections::HashMap,
+    sync::{Mutex, OnceLock},
+    time::{Duration, Instant},
+};
+
 use axum::{
     Json,
+    body::Body,
     extract::{Multipart, Path, Query},
     http::{
-        HeaderValue, StatusCode,
-        header::{CONTENT_DISPOSITION, CONTENT_TYPE},
+        HeaderMap, HeaderValue, StatusCode,
+        header::{
+            ACCEPT_RANGES, CACHE_CONTROL, CONTENT_DISPOSITION, CONTENT_LENGTH, CONTENT_RANGE,
+            CONTENT_TYPE, ETAG, LAST_MODIFIED, RANGE,
+        },
     },
     response::{IntoResponse, Response},
 };
@@ -22,7 +32,7 @@ use crate::{
         modules::module_can,
         mx::handler::{
             generate_office_pdf_preview, inline_attachment_response, n1_access_token, n1_download,
-            n1_ensure_directory, n1_soft_delete, n1_upload_one_shot, office_preview_supported,
+            n1_ensure_directory, n1_soft_delete, n1_stream, n1_upload, office_preview_supported,
         },
         mx::model::FileAttachment,
         notifications::{NewNotification, ensure_notification_schema, notify_user},
@@ -35,6 +45,21 @@ use crate::{
 type MessageInsertResult =
     Result<(ChatMessage, Vec<(String, String)>, Vec<String>), SqliteDatabaseError>;
 type ChannelReadAdvance = (ChannelReadState, Vec<(String, String)>, bool, usize);
+
+const MEDIA_TICKET_TTL: Duration = Duration::from_secs(5 * 60);
+
+#[derive(Debug, Clone)]
+struct MediaTicket {
+    file_uid: String,
+    user_uid: String,
+    expires_at: Instant,
+}
+
+static MEDIA_TICKETS: OnceLock<Mutex<HashMap<String, MediaTicket>>> = OnceLock::new();
+
+fn media_tickets() -> &'static Mutex<HashMap<String, MediaTicket>> {
+    MEDIA_TICKETS.get_or_init(|| Mutex::new(HashMap::new()))
+}
 
 #[derive(Debug, Serialize)]
 struct ChannelSummary {
@@ -136,6 +161,7 @@ struct ChatMessage {
     sender_name: String,
     sender_profile_photo_updated_at: Option<i64>,
     body: String,
+    event_kind: Option<String>,
     reply_to_uid: Option<String>,
     reply_preview: Option<MessageReplyPreview>,
     created_at: i64,
@@ -273,6 +299,7 @@ pub(crate) fn ensure_collaboration_schema(
             created_at    INTEGER NOT NULL,
             edited_at     INTEGER,
             deleted_at    INTEGER,
+            event_kind    TEXT,
             FOREIGN KEY(channel_uid) REFERENCES mx_channels(uid) ON DELETE CASCADE,
             FOREIGN KEY(sender_uid) REFERENCES users(uid) ON DELETE RESTRICT,
             FOREIGN KEY(reply_to_uid) REFERENCES mx_messages(uid) ON DELETE SET NULL
@@ -360,6 +387,14 @@ pub(crate) fn ensure_collaboration_schema(
             "ALTER TABLE mx_channel_members ADD COLUMN last_read_message_id INTEGER NOT NULL DEFAULT 0",
             [],
         )?;
+    }
+    let has_event_kind: bool = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('mx_messages') WHERE name = 'event_kind')",
+        [],
+        |row| row.get(0),
+    )?;
+    if !has_event_kind {
+        connection.execute("ALTER TABLE mx_messages ADD COLUMN event_kind TEXT", [])?;
     }
     connection.execute(
         r#"
@@ -705,6 +740,7 @@ fn load_record_links(
                     WHEN 'integer' THEN CAST(value.value_integer AS TEXT)
                     WHEN 'auto_number' THEN CAST(value.value_integer AS TEXT)
                     WHEN 'decimal' THEN CAST(value.value_real AS TEXT)
+                    WHEN 'formula' THEN CAST(value.value_real AS TEXT)
                     WHEN 'boolean' THEN CASE value.value_boolean WHEN 1 THEN 'Yes' ELSE 'No' END
                     ELSE NULLIF(TRIM(value.value_text), '')
                 END
@@ -757,7 +793,7 @@ fn load_message(
         r#"
         SELECT m.uid, m.channel_uid, m.sender_uid, u.name, photo.updated_at,
                m.body, m.reply_to_uid, m.created_at, m.edited_at, m.deleted_at, m.rowid,
-               pin.pinned_at, pin.pinned_by, pin_user.name
+               pin.pinned_at, pin.pinned_by, pin_user.name, m.event_kind
         FROM mx_messages m
         JOIN users u ON u.uid = m.sender_uid
         LEFT JOIN mx_user_profile_photos photo ON photo.user_uid = m.sender_uid
@@ -774,6 +810,7 @@ fn load_message(
                 sender_name: row.get(3)?,
                 sender_profile_photo_updated_at: row.get(4)?,
                 body: row.get(5)?,
+                event_kind: row.get(14)?,
                 reply_to_uid: row.get(6)?,
                 reply_preview: None,
                 created_at: row.get(7)?,
@@ -826,6 +863,37 @@ fn load_message(
         message.mentions = load_mentions(connection, uid)?;
     }
     Ok(message)
+}
+
+fn insert_membership_event(
+    connection: &rusqlite::Connection,
+    channel_uid: &str,
+    actor_uid: &str,
+    target_uid: &str,
+    event_kind: &str,
+    access_level: i64,
+) -> rusqlite::Result<ChatMessage> {
+    let actor_name: String = connection.query_row(
+        "SELECT name FROM users WHERE uid=?1",
+        params![actor_uid],
+        |row| row.get(0),
+    )?;
+    let target_name: String = connection.query_row(
+        "SELECT name FROM users WHERE uid=?1",
+        params![target_uid],
+        |row| row.get(0),
+    )?;
+    let body = match event_kind {
+        "member_added" => format!("{target_name} was added by {actor_name}."),
+        "member_left" => format!("{target_name} left the space."),
+        _ => format!("{target_name} was removed by {actor_name}."),
+    };
+    let uid = Uuid::new_v4().to_string();
+    connection.execute(
+        "INSERT INTO mx_messages(uid,channel_uid,sender_uid,body,event_kind,created_at) VALUES (?1,?2,?3,?4,?5,?6)",
+        params![uid, channel_uid, actor_uid, body, event_kind, chrono::Utc::now().timestamp_millis()],
+    )?;
+    load_message(connection, &uid, access_level)
 }
 
 fn load_pinned_messages(
@@ -1200,12 +1268,13 @@ pub async fn remove_channel_member(
     claims: Claims,
     Path((channel_uid, target_uid)): Path<(String, String)>,
 ) -> Response {
+    let access_level = claims.access_level;
     let actor_uid = claims.uid;
     let db_actor_uid = actor_uid.clone();
     let event_channel_uid = channel_uid.clone();
     let event_target_uid = target_uid.clone();
     let result = tokio::task::spawn_blocking(
-        move || -> Result<Vec<(String, String)>, SqliteDatabaseError> {
+        move || -> Result<(ChatMessage, Vec<(String, String)>), SqliteDatabaseError> {
             with_sql_connection(|connection| {
                 ensure_collaboration_schema(connection)?;
                 let actor_role = member_role(connection, &channel_uid, &db_actor_uid)?
@@ -1234,13 +1303,27 @@ pub async fn remove_channel_member(
                     "DELETE FROM mx_channel_members WHERE channel_uid = ?1 AND user_uid = ?2",
                     params![channel_uid, target_uid],
                 )?;
-                channel_members(connection, &channel_uid)
+                let event_kind = if db_actor_uid == target_uid {
+                    "member_left"
+                } else {
+                    "member_removed"
+                };
+                let message = insert_membership_event(
+                    connection,
+                    &channel_uid,
+                    &db_actor_uid,
+                    &target_uid,
+                    event_kind,
+                    access_level,
+                )?;
+                Ok((message, channel_members(connection, &channel_uid)?))
             })
         },
     )
     .await;
     match result {
-        Ok(Ok(members)) => {
+        Ok(Ok((message, members))) => {
+            let message_payload = serde_json::to_value(&message).unwrap_or_default();
             publish_user_event(
                 &event_target_uid,
                 "channel.member_removed",
@@ -1248,6 +1331,12 @@ pub async fn remove_channel_member(
                 json!({"channel_uid":event_channel_uid}),
             );
             for (member_uid, _) in members {
+                publish_user_event(
+                    &member_uid,
+                    "message.created",
+                    Some(&actor_uid),
+                    message_payload.clone(),
+                );
                 publish_user_event(
                     &member_uid,
                     "channel.member_removed",
@@ -1958,13 +2047,14 @@ pub async fn add_channel_member(
             json!({"response":"role must be owner, admin, or member"}),
         );
     }
+    let access_level = claims.access_level;
     let actor_uid = claims.uid.clone();
     let event_actor_uid = claims.uid;
     let user_uid = request.user_uid;
     let event_user_uid = user_uid.clone();
     let channel_for_event = channel_uid.clone();
     let role_value = request.role;
-    let result = tokio::task::spawn_blocking(move || -> Result<(ChannelMember, bool, Vec<(String, String)>), SqliteDatabaseError> { with_sql_connection(|connection| {
+    let result = tokio::task::spawn_blocking(move || -> Result<(ChannelMember, bool, Vec<(String, String)>, Option<ChatMessage>), SqliteDatabaseError> { with_sql_connection(|connection| {
         ensure_collaboration_schema(connection)?;
         let actor_role = member_role(connection, &channel_uid, &actor_uid)?.ok_or(rusqlite::Error::QueryReturnedNoRows)?;
         let (kind, invite_policy): (String, String) = connection.query_row("SELECT kind, invite_policy FROM mx_channels WHERE uid = ?1", params![channel_uid], |row| Ok((row.get(0)?, row.get(1)?)))?;
@@ -1998,16 +2088,29 @@ pub async fn add_channel_member(
             .into_iter()
             .find(|member| member.user_uid == user_uid)
             .ok_or(rusqlite::Error::QueryReturnedNoRows)?;
-        Ok((member, added, channel_members(connection, &channel_uid)?))
+        let message = if added {
+            Some(insert_membership_event(connection, &channel_uid, &actor_uid, &user_uid, "member_added", access_level)?)
+        } else {
+            None
+        };
+        Ok((member, added, channel_members(connection, &channel_uid)?, message))
     })}).await;
     match result {
-        Ok(Ok((member, added, members))) => {
+        Ok(Ok((member, added, members, message))) => {
             let event_kind = if added {
                 "channel.member_added"
             } else {
                 "channel.member_updated"
             };
             for (member_uid, _) in members {
+                if let Some(message) = message.as_ref() {
+                    publish_user_event(
+                        &member_uid,
+                        "message.created",
+                        Some(&event_actor_uid),
+                        serde_json::to_value(message).unwrap_or_default(),
+                    );
+                }
                 publish_user_event(
                     &member_uid,
                     event_kind,
@@ -2158,7 +2261,7 @@ pub async fn upload_message_file(
             );
         }
     }
-    if n1_upload_one_shot(&object_key, &mime_type, bytes.clone().to_vec(), &token)
+    if n1_upload(&object_key, &mime_type, bytes.clone().to_vec(), &token)
         .await
         .is_err()
     {
@@ -2224,6 +2327,158 @@ pub async fn upload_message_file(
         });
     let _ = join_all(deliveries).await;
     api_json(StatusCode::CREATED, json!({"file":file}))
+}
+
+fn accessible_message_file(
+    connection: &rusqlite::Connection,
+    file_uid: &str,
+    user_uid: &str,
+) -> rusqlite::Result<(String, String, String, String)> {
+    let value = connection.query_row(
+        "SELECT f.object_key, f.file_name, f.mime_type, m.channel_uid FROM mx_message_files f JOIN mx_messages m ON m.uid = f.message_uid WHERE f.uid = ?1 AND f.deleted_at IS NULL",
+        params![file_uid],
+        |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, String>(3)?)),
+    )?;
+    if member_role(connection, &value.3, user_uid)?.is_none() {
+        return Err(rusqlite::Error::QueryReturnedNoRows);
+    }
+    Ok(value)
+}
+
+pub async fn issue_message_file_preview_ticket(
+    claims: Claims,
+    Path(file_uid): Path<String>,
+) -> Response {
+    let user_uid = claims.uid;
+    let lookup_file_uid = file_uid.clone();
+    let lookup_user_uid = user_uid.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        with_sql_connection(|connection| {
+            ensure_collaboration_schema(connection)?;
+            accessible_message_file(connection, &lookup_file_uid, &lookup_user_uid)
+        })
+    })
+    .await;
+
+    let (_, file_name, mime_type, _) = match result {
+        Ok(Ok(value)) => value,
+        _ => {
+            return api_json(
+                StatusCode::NOT_FOUND,
+                json!({"response":"shared file was not found"}),
+            );
+        }
+    };
+
+    let ticket = Uuid::new_v4().to_string();
+    let expires_at = Instant::now() + MEDIA_TICKET_TTL;
+    if let Ok(mut tickets) = media_tickets().lock() {
+        let now = Instant::now();
+        tickets.retain(|_, item| item.expires_at > now);
+        tickets.insert(
+            ticket.clone(),
+            MediaTicket {
+                file_uid,
+                user_uid,
+                expires_at,
+            },
+        );
+    } else {
+        return api_json(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            json!({"response":"preview ticket service is unavailable"}),
+        );
+    }
+
+    api_json(
+        StatusCode::CREATED,
+        json!({
+            "url": format!("/mx/v1/collaboration/media/{ticket}"),
+            "file_name": file_name,
+            "mime_type": mime_type,
+            "expires_in_seconds": MEDIA_TICKET_TTL.as_secs(),
+        }),
+    )
+}
+
+pub async fn stream_message_file(Path(ticket): Path<String>, headers: HeaderMap) -> Response {
+    let ticket_data = if let Ok(mut tickets) = media_tickets().lock() {
+        let now = Instant::now();
+        tickets.retain(|_, item| item.expires_at > now);
+        tickets.get_mut(&ticket).map(|item| {
+            item.expires_at = now + MEDIA_TICKET_TTL;
+            item.clone()
+        })
+    } else {
+        None
+    };
+    let Some(ticket_data) = ticket_data else {
+        return api_json(
+            StatusCode::NOT_FOUND,
+            json!({"response":"preview link expired; reopen the file"}),
+        );
+    };
+
+    let file_uid = ticket_data.file_uid;
+    let user_uid = ticket_data.user_uid;
+    let result = tokio::task::spawn_blocking(move || {
+        with_sql_connection(|connection| {
+            ensure_collaboration_schema(connection)?;
+            accessible_message_file(connection, &file_uid, &user_uid)
+        })
+    })
+    .await;
+    let (object_key, file_name, mime_type, _) = match result {
+        Ok(Ok(value)) => value,
+        _ => {
+            return api_json(
+                StatusCode::NOT_FOUND,
+                json!({"response":"shared file was not found"}),
+            );
+        }
+    };
+
+    let requested_range = headers.get(RANGE).and_then(|value| value.to_str().ok());
+    let upstream = match n1_stream(&object_key, requested_range).await {
+        Ok(response) => response,
+        Err(error) => {
+            crate::report_error!(format!("{error:?}"), "n1", "stream_message_file()");
+            return api_json(
+                StatusCode::BAD_GATEWAY,
+                json!({"response":"N1 could not stream the shared file"}),
+            );
+        }
+    };
+
+    let status = upstream.status();
+    let upstream_headers = upstream.headers().clone();
+    let mut response = Response::new(Body::from_stream(upstream.bytes_stream()));
+    *response.status_mut() = status;
+    response.headers_mut().insert(
+        CONTENT_TYPE,
+        HeaderValue::from_str(&mime_type)
+            .unwrap_or_else(|_| HeaderValue::from_static("application/octet-stream")),
+    );
+    response.headers_mut().insert(
+        CACHE_CONTROL,
+        HeaderValue::from_static("private, max-age=300"),
+    );
+    for header in [
+        ACCEPT_RANGES,
+        CONTENT_RANGE,
+        CONTENT_LENGTH,
+        ETAG,
+        LAST_MODIFIED,
+    ] {
+        if let Some(value) = upstream_headers.get(&header).cloned() {
+            response.headers_mut().insert(header, value);
+        }
+    }
+    let safe_name = file_name.replace('"', "_");
+    if let Ok(value) = HeaderValue::from_str(&format!("inline; filename=\"{safe_name}\"")) {
+        response.headers_mut().insert(CONTENT_DISPOSITION, value);
+    }
+    response
 }
 
 pub async fn download_message_file(claims: Claims, Path(file_uid): Path<String>) -> Response {

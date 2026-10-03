@@ -8,8 +8,8 @@
   import { notificationPresentation } from '../util/notificationKinds';
   import NotificationKindIcon from './NotificationKindIcon.svelte';
 
-  let { revision = 0, onUnread = (_count: number) => undefined, onClose = () => undefined }:
-    { revision?: number; onUnread?: (count: number) => void; onClose?: () => void } = $props();
+  let { revision = 0, onUnread = (_count: number) => undefined, onOpen = (_item: MxNotification) => undefined, onClose = () => undefined }:
+    { revision?: number; onUnread?: (count: number) => void; onOpen?: (item: MxNotification) => void; onClose?: () => void } = $props();
   let notifications = $state<MxNotification[]>([]);
   let unread = $state(0);
   let loading = $state(true);
@@ -30,23 +30,15 @@
     } finally { loading = false; }
   }
 
-  async function read(item: MxNotification) {
+  function read(item: MxNotification) {
     if (!item.read_at) {
-      await markNotificationRead(item.uid);
       item.read_at = Date.now();
       unread = Math.max(0, unread - 1);
       onUnread(unread);
+      void markNotificationRead(item.uid).catch(() => undefined);
     }
-    if (item.target_type === 'record' && item.module_uid && item.target_uid) {
-      location.hash = `module/${encodeURIComponent(item.module_uid)}?record=${encodeURIComponent(item.target_uid)}`;
-      onClose();
-    } else if (item.target_type === 'channel' && item.target_uid) {
-      location.hash = `collaboration?channel=${encodeURIComponent(item.target_uid)}`;
-      onClose();
-    } else if (item.module_uid) {
-      location.hash = `module/${encodeURIComponent(item.module_uid)}`;
-      onClose();
-    }
+    onOpen(item);
+    onClose();
   }
 
   async function readAll() {

@@ -2,34 +2,28 @@
   import { onMount } from 'svelte';
   import ImageIcon from '@lucide/svelte/icons/image';
   import type { MessageFile } from '../api/domain';
-  import { previewMessageFile } from '../api/workspace';
+  import { issueMessageFilePreviewTicket } from '../api/workspace';
 
   let { file, onOpen }: { file: MessageFile; onOpen: () => void } = $props();
-  let objectUrl = $state('');
+  let imageUrl = $state('');
   let ready = $state(false);
   let failed = $state(false);
 
   onMount(() => {
     let active = true;
-    void previewMessageFile(file.uid)
-      .then(({ blob }) => {
+    void issueMessageFilePreviewTicket(file.uid)
+      .then(({ url }) => {
         if (!active) return;
-        objectUrl = URL.createObjectURL(blob);
+        imageUrl = url;
       })
       .catch(() => { if (active) failed = true; });
-    return () => {
-      active = false;
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
-    };
+    return () => { active = false; };
   });
 
   function imageFailed() {
     failed = true;
     ready = false;
-    if (objectUrl) {
-      URL.revokeObjectURL(objectUrl);
-      objectUrl = '';
-    }
+    imageUrl = '';
   }
 </script>
 
@@ -37,7 +31,7 @@
   {#if failed}
     <span class="shared-image-fallback"><ImageIcon size={24} /><strong>{file.file_name}</strong><small>Open image preview</small></span>
   {:else}
-    {#if objectUrl}<img class:ready src={objectUrl} alt={file.file_name} onload={() => ready = true} onerror={imageFailed} />{/if}
+    {#if imageUrl}<img class:ready src={imageUrl} alt={file.file_name} onload={() => ready = true} onerror={imageFailed} />{/if}
     {#if !ready}<span class="shared-image-ghost" aria-label={`Loading thumbnail for ${file.file_name}`}><i></i><i></i><i></i></span>{/if}
     <span class="shared-image-caption"><strong>{file.file_name}</strong><small>{ready ? 'Image · Open preview' : 'Loading image…'}</small></span>
   {/if}

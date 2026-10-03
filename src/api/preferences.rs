@@ -18,7 +18,7 @@ use crate::{
     api::{
         live::publish_user_event,
         mx::handler::{
-            n1_access_token, n1_download, n1_ensure_directory, n1_soft_delete, n1_upload_one_shot,
+            n1_access_token, n1_download, n1_ensure_directory, n1_soft_delete, n1_upload,
         },
     },
     db::connector::{SqliteDatabaseError, with_sql_connection},
@@ -76,6 +76,8 @@ pub struct UserPreferences {
     pub accent_color: Option<String>,
     pub auto_scale: Option<bool>,
     pub ui_scale_percent: Option<u16>,
+    pub font_size_px: Option<u16>,
+    #[serde(default)]
     pub font_scale_percent: Option<u16>,
     pub density: Option<String>,
     pub content_width: Option<String>,
@@ -165,6 +167,12 @@ fn validate(preferences: &UserPreferences) -> Result<(), &'static str> {
         .is_some_and(|value| !(85..=160).contains(&value))
     {
         return Err("interface scale must be between 85 and 160 percent");
+    }
+    if preferences
+        .font_size_px
+        .is_some_and(|value| !(10..=24).contains(&value))
+    {
+        return Err("font size must be between 10 and 24 pixels");
     }
     if preferences
         .font_scale_percent
@@ -343,7 +351,7 @@ pub async fn upload_notification_sound(claims: Claims, mut multipart: Multipart)
             );
         }
     }
-    if n1_upload_one_shot(&object_key, mime_type, bytes.clone(), &token)
+    if n1_upload(&object_key, mime_type, bytes.clone(), &token)
         .await
         .is_err()
     {
@@ -696,6 +704,7 @@ mod tests {
         preferences.theme = Some("dark".to_string());
         preferences.accent_color = Some("#2563eb".to_string());
         preferences.ui_scale_percent = Some(100);
+        preferences.font_size_px = Some(16);
         preferences.font_scale_percent = Some(110);
         assert!(validate(&preferences).is_ok());
 

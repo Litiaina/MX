@@ -1,6 +1,6 @@
 [package]
 name = "litiaina-mx"
-version = "2.1.0"
+version = "2.2.0"
 edition = "2024"
 
 [profile.release]
@@ -40,7 +40,7 @@ anyhow = "1"
 argon2 = "0.5"
 rust-ini = "0.21.3"
 regex = "1.12.4"
-reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
+reqwest = { version = "0.12", features = ["json", "rustls-tls", "stream"] }
 rustls = { version = "0.23.31", features = ["ring"] }
 rusqlite = { version = "0.40", features = ["bundled", "chrono"] }
 r2d2 = "0.8"

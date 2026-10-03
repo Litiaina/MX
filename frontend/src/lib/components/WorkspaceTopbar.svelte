@@ -21,7 +21,8 @@
     onToggleTheme,
     onOpenAccount,
     onSignOut,
-    onUnread
+    onUnread,
+    onOpenNotification
   }: {
     productName: string;
     viewTitle: string;
@@ -36,10 +37,22 @@
     onOpenAccount: () => void;
     onSignOut: () => void;
     onUnread: (count: number) => void;
+    onOpenNotification: (item: import('../api/domain').MxNotification) => void;
   } = $props();
 
   let notificationsOpen = $state(false);
+  let notificationAnchor = $state<HTMLDivElement>();
+
+  function dismissNotifications(event: PointerEvent) {
+    if (!notificationsOpen || !(event.target instanceof Node) || notificationAnchor?.contains(event.target)) return;
+    notificationsOpen = false;
+  }
+  function notificationKeydown(event: KeyboardEvent) {
+    if (notificationsOpen && event.key === 'Escape') { event.preventDefault(); notificationsOpen = false; }
+  }
 </script>
+
+<svelte:window onpointerdown={dismissNotifications} onkeydown={notificationKeydown} />
 
 <header class="workspace-topbar">
   <div class="topbar-context">
@@ -49,11 +62,11 @@
   <div class="desktop-actions">
     <span class:online={live} class="topbar-live" title={live ? 'Live sync connected' : 'Reconnecting'}><i></i><span>{live ? 'Live' : 'Reconnecting'}</span></span>
     <button class="topbar-tool refresh-button" type="button" title="Refresh current workspace" aria-label="Refresh current workspace" onclick={onRefresh}><RefreshCw size={17} /></button>
-    <div class="notification-anchor">
+    <div class="notification-anchor" bind:this={notificationAnchor}>
       <button class="topbar-tool notification-button" type="button" title="Notifications" aria-label={`Notifications${unreadNotifications ? `, ${unreadNotifications} unread` : ''}`} aria-expanded={notificationsOpen} onclick={() => notificationsOpen = !notificationsOpen}>
         <Bell size={17} />{#if unreadNotifications}<span>{unreadNotifications > 99 ? '99+' : unreadNotifications}</span>{/if}
       </button>
-      {#if notificationsOpen}<NotificationCenter revision={notificationRevision} onUnread={onUnread} onClose={() => notificationsOpen = false} />{/if}
+      {#if notificationsOpen}<NotificationCenter revision={notificationRevision} onUnread={onUnread} onOpen={onOpenNotification} onClose={() => notificationsOpen = false} />{/if}
     </div>
     <span class="topbar-divider"></span>
     <button class="topbar-tool settings-button" type="button" title="Personal settings" aria-label="Personal settings" onclick={onOpenSettings}><Settings size={17} /></button>

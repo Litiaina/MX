@@ -3,7 +3,7 @@ use std::{
     env, fs,
     path::PathBuf,
     process::Command,
-    sync::OnceLock,
+    sync::{Mutex, OnceLock},
     time::{Duration, Instant},
 };
 
@@ -12,8 +12,11 @@ use axum::{
     body::Body,
     extract::{Multipart, Path, Query},
     http::{
-        HeaderValue, StatusCode,
-        header::{CONTENT_DISPOSITION, CONTENT_TYPE},
+        HeaderMap, HeaderValue, StatusCode,
+        header::{
+            ACCEPT_RANGES, CACHE_CONTROL, CONTENT_DISPOSITION, CONTENT_LENGTH, CONTENT_RANGE,
+            CONTENT_TYPE, ETAG, LAST_MODIFIED, RANGE,
+        },
     },
     response::{IntoResponse, Response},
 };
@@ -62,6 +65,22 @@ const MAX_PAGE_LIMIT: usize = 256;
 
 static N1_CLIENT: OnceLock<Client> = OnceLock::new();
 static N1_TOKEN_CACHE: OnceLock<RwLock<Option<CachedN1Token>>> = OnceLock::new();
+
+const RECORD_MEDIA_TICKET_TTL: Duration = Duration::from_secs(5 * 60);
+
+#[derive(Debug, Clone)]
+struct RecordMediaTicket {
+    record_uid: String,
+    attachment_uid: String,
+    access_level: i64,
+    expires_at: Instant,
+}
+
+static RECORD_MEDIA_TICKETS: OnceLock<Mutex<HashMap<String, RecordMediaTicket>>> = OnceLock::new();
+
+fn record_media_tickets() -> &'static Mutex<HashMap<String, RecordMediaTicket>> {
+    RECORD_MEDIA_TICKETS.get_or_init(|| Mutex::new(HashMap::new()))
+}
 
 #[derive(Debug)]
 pub enum MxOperationError {
@@ -131,6 +150,20 @@ struct N1AuthRequest<'a> {
 struct N1AuthResponse {
     access_token: String,
     expires_in: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct N1MultipartParameters {
+    content_type: String,
+    total_size_bytes: u64,
+    expected_parts: u64,
+    part_size_bytes: u64,
+}
+
+#[derive(Debug, Deserialize)]
+struct N1MultipartSession {
+    session_id: String,
+    version_id: String,
 }
 
 #[derive(Debug)]
@@ -642,6 +675,146 @@ pub(crate) async fn n1_upload_one_shot(
     Ok(())
 }
 
+fn multipart_plan(total_size: usize, configured_part_size_mb: usize) -> (usize, usize) {
+    let part_size = configured_part_size_mb
+        .clamp(5, 100)
+        .saturating_mul(1024 * 1024)
+        .max(1);
+    let expected_parts = total_size.div_ceil(part_size).max(1);
+    (part_size, expected_parts)
+}
+
+async fn n1_cancel_multipart(base_url: &str, object_key: &str, version_id: &str, token: &str) {
+    if let Ok(client) = n1_client() {
+        let _ = client
+            .delete(format!("{base_url}/noa/v1/upload/multipart/{version_id}"))
+            .bearer_auth(token)
+            .query(&[("object_key", object_key)])
+            .send()
+            .await;
+    }
+}
+
+pub(crate) async fn n1_upload_multipart(
+    object_key: &str,
+    mime_type: &str,
+    bytes: Vec<u8>,
+    token: &str,
+) -> Result<(), MxOperationError> {
+    let base_url = n1_base_url()?;
+    let (part_size, expected_parts) = multipart_plan(bytes.len(), CONFIG.n1.multipart_part_size_mb);
+    let parameters = N1MultipartParameters {
+        content_type: mime_type.to_string(),
+        total_size_bytes: bytes.len() as u64,
+        expected_parts: expected_parts as u64,
+        part_size_bytes: part_size as u64,
+    };
+
+    let response = n1_client()?
+        .post(format!(
+            "{base_url}/noa/v1/upload/multipart/init/{object_key}"
+        ))
+        .bearer_auth(token)
+        .json(&parameters)
+        .send()
+        .await
+        .map_err(|error| {
+            MxOperationError::N1(format!(
+                "failed to initialize multipart upload for '{object_key}': {error}"
+            ))
+        })?;
+
+    let status = response.status();
+    if !status.is_success() {
+        let text = response.text().await.unwrap_or_default();
+        return Err(MxOperationError::N1(format!(
+            "N1 multipart initialization failed for '{object_key}' with HTTP {status}: {text}"
+        )));
+    }
+
+    let session = response
+        .json::<N1MultipartSession>()
+        .await
+        .map_err(|error| {
+            MxOperationError::N1(format!(
+                "N1 returned an invalid multipart session for '{object_key}': {error}"
+            ))
+        })?;
+
+    for (part_index, part) in bytes.chunks(part_size).enumerate() {
+        let response = match n1_client()?
+            .put(format!(
+                "{base_url}/noa/v1/upload/multipart/{}/{part_index}",
+                session.version_id
+            ))
+            .bearer_auth(token)
+            .header(CONTENT_TYPE, "application/octet-stream")
+            .header(reqwest::header::CONTENT_LENGTH, part.len())
+            .body(part.to_vec())
+            .send()
+            .await
+        {
+            Ok(response) => response,
+            Err(error) => {
+                n1_cancel_multipart(&base_url, object_key, &session.version_id, token).await;
+                return Err(MxOperationError::N1(format!(
+                    "failed to upload multipart part {part_index} for '{object_key}': {error}"
+                )));
+            }
+        };
+
+        let status = response.status();
+        if !status.is_success() {
+            let text = response.text().await.unwrap_or_default();
+            n1_cancel_multipart(&base_url, object_key, &session.version_id, token).await;
+            return Err(MxOperationError::N1(format!(
+                "N1 multipart part {part_index} failed for '{object_key}' with HTTP {status}: {text}"
+            )));
+        }
+    }
+
+    let response = n1_client()?
+        .post(format!(
+            "{base_url}/noa/v1/upload/multipart/{}/{}/finalize",
+            session.version_id, session.session_id
+        ))
+        .bearer_auth(token)
+        .query(&[("object_key", object_key)])
+        .json(&parameters)
+        .send()
+        .await
+        .map_err(|error| {
+            MxOperationError::N1(format!(
+                "failed to finalize multipart upload for '{object_key}': {error}"
+            ))
+        })?;
+
+    let status = response.status();
+    if !status.is_success() {
+        let text = response.text().await.unwrap_or_default();
+        n1_cancel_multipart(&base_url, object_key, &session.version_id, token).await;
+        return Err(MxOperationError::N1(format!(
+            "N1 multipart finalization failed for '{object_key}' with HTTP {status}: {text}"
+        )));
+    }
+
+    Ok(())
+}
+
+pub(crate) async fn n1_upload(
+    object_key: &str,
+    mime_type: &str,
+    bytes: Vec<u8>,
+    token: &str,
+) -> Result<(), MxOperationError> {
+    let (part_size, _) = multipart_plan(bytes.len(), CONFIG.n1.multipart_part_size_mb);
+    if bytes.len() > part_size {
+        n1_upload_multipart(object_key, mime_type, bytes, token).await
+    } else {
+        n1_upload_one_shot(object_key, mime_type, bytes, token).await
+    }
+}
+
 pub(crate) async fn n1_soft_delete(object_key: &str) -> Result<(), MxOperationError> {
     let base_url = n1_base_url()?;
     let token = n1_access_token().await?;
@@ -774,6 +947,35 @@ pub(crate) async fn n1_download(
     })?;
 
     Ok(bytes.to_vec())
+}
+
+pub(crate) async fn n1_stream(
+    object_key: &str,
+    range: Option<&str>,
+) -> Result<reqwest::Response, MxOperationError> {
+    let base_url = n1_base_url()?;
+    let token = n1_access_token().await?;
+    let mut request = n1_client()?
+        .get(format!("{base_url}/noa/v1/objects/stream/{object_key}"))
+        .bearer_auth(token);
+
+    if let Some(range) = range.filter(|value| !value.trim().is_empty()) {
+        request = request.header(reqwest::header::RANGE, range);
+    }
+
+    let response = request.send().await.map_err(|error| {
+        MxOperationError::N1(format!("failed to stream '{object_key}' from N1: {error}"))
+    })?;
+    let status = response.status();
+
+    if status.is_success() || status == StatusCode::RANGE_NOT_SATISFIABLE {
+        return Ok(response);
+    }
+
+    let text = response.text().await.unwrap_or_default();
+    Err(MxOperationError::N1(format!(
+        "N1 stream failed for '{object_key}' with HTTP {status}: {text}"
+    )))
 }
 
 fn attachment_extension(file_name: &str) -> Option<String> {
@@ -2281,7 +2483,7 @@ pub async fn execute_upload_mx_attachment(
     let size = bytes.len() as u64;
     let token = n1_access_token().await?;
     n1_prepare_directory_path(&directory_path, &token).await?;
-    n1_upload_one_shot(&object_key, &mime_type, bytes, &token).await?;
+    n1_upload(&object_key, &mime_type, bytes, &token).await?;
 
     let attachment = FileAttachment {
         uid: Uuid::new_v4().to_string(),
@@ -2679,9 +2881,138 @@ pub async fn delete_mx_attachment(
     }
 }
 
+pub async fn issue_mx_attachment_preview_ticket(
+    claims: Claims,
+    Path((record_uid, attachment_uid)): Path<(String, String)>,
+) -> Response {
+    if !claims.can_read_records()
+        || record_module_permission(record_uid.clone(), claims.access_level, "read")
+            .await
+            .is_none()
+    {
+        return mx_access_denied();
+    }
+
+    let attachment = match execute_get_attachment(record_uid.clone(), attachment_uid.clone()).await
+    {
+        Ok(attachment) => attachment,
+        Err(error) => {
+            return map_mx_error(MxOperationError::Sqlite(error));
+        }
+    };
+
+    let ticket = Uuid::new_v4().to_string();
+    let expires_at = Instant::now() + RECORD_MEDIA_TICKET_TTL;
+    if let Ok(mut tickets) = record_media_tickets().lock() {
+        let now = Instant::now();
+        tickets.retain(|_, item| item.expires_at > now);
+        tickets.insert(
+            ticket.clone(),
+            RecordMediaTicket {
+                record_uid,
+                attachment_uid,
+                access_level: claims.access_level,
+                expires_at,
+            },
+        );
+    } else {
+        return api_json(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            json!({"response":"preview ticket service is unavailable"}),
+        );
+    }
+
+    api_json(
+        StatusCode::CREATED,
+        json!({
+            "url": format!("/mx/v1/records/media/{ticket}"),
+            "file_name": attachment.file_name,
+            "mime_type": attachment.mime_type,
+            "expires_in_seconds": RECORD_MEDIA_TICKET_TTL.as_secs(),
+        }),
+    )
+}
+
+async fn stream_record_attachment_bytes(
+    attachment: FileAttachment,
+    headers: &HeaderMap,
+) -> Response {
+    let requested_range = headers.get(RANGE).and_then(|value| value.to_str().ok());
+    let upstream = match n1_stream(&attachment.object_key, requested_range).await {
+        Ok(response) => response,
+        Err(error) => return map_mx_error(error),
+    };
+    let status = upstream.status();
+    let upstream_headers = upstream.headers().clone();
+    let mut response = Response::new(Body::from_stream(upstream.bytes_stream()));
+    *response.status_mut() = status;
+    response.headers_mut().insert(
+        CONTENT_TYPE,
+        HeaderValue::from_str(&attachment.mime_type)
+            .unwrap_or_else(|_| HeaderValue::from_static("application/octet-stream")),
+    );
+    response.headers_mut().insert(
+        CACHE_CONTROL,
+        HeaderValue::from_static("private, max-age=300"),
+    );
+    for header in [
+        ACCEPT_RANGES,
+        CONTENT_RANGE,
+        CONTENT_LENGTH,
+        ETAG,
+        LAST_MODIFIED,
+    ] {
+        if let Some(value) = upstream_headers.get(&header).cloned() {
+            response.headers_mut().insert(header, value);
+        }
+    }
+    let safe_name = attachment.file_name.replace('"', "_");
+    if let Ok(value) = HeaderValue::from_str(&format!("inline; filename=\"{safe_name}\"")) {
+        response.headers_mut().insert(CONTENT_DISPOSITION, value);
+    }
+    response
+}
+
+pub async fn stream_mx_attachment(Path(ticket): Path<String>, headers: HeaderMap) -> Response {
+    let ticket_data = if let Ok(mut tickets) = record_media_tickets().lock() {
+        let now = Instant::now();
+        tickets.retain(|_, item| item.expires_at > now);
+        tickets.get_mut(&ticket).map(|item| {
+            item.expires_at = now + RECORD_MEDIA_TICKET_TTL;
+            item.clone()
+        })
+    } else {
+        None
+    };
+    let Some(ticket_data) = ticket_data else {
+        return api_json(
+            StatusCode::NOT_FOUND,
+            json!({"response":"preview link expired; reopen the file"}),
+        );
+    };
+
+    if record_module_permission(
+        ticket_data.record_uid.clone(),
+        ticket_data.access_level,
+        "read",
+    )
+    .await
+    .is_none()
+    {
+        return mx_access_denied();
+    }
+    let attachment =
+        match execute_get_attachment(ticket_data.record_uid, ticket_data.attachment_uid).await {
+            Ok(attachment) => attachment,
+            Err(error) => return map_mx_error(MxOperationError::Sqlite(error)),
+        };
+    stream_record_attachment_bytes(attachment, &headers).await
+}
+
 pub async fn preview_mx_attachment(
     claims: Claims,
     Path((entry_uid, attachment_uid)): Path<(String, String)>,
+    headers: HeaderMap,
 ) -> Response {
     if !claims.can_read_records()
         || record_module_permission(entry_uid.clone(), claims.access_level, "read")
@@ -2699,14 +3030,14 @@ pub async fn preview_mx_attachment(
         }
     };
 
-    let original_bytes = match n1_download(&attachment.object_key, &attachment.file_name).await {
-        Ok(bytes) => bytes,
-        Err(error) => {
-            return map_mx_error(error);
-        }
-    };
-
     if office_preview_supported(&attachment.file_name) {
+        let original_bytes = match n1_download(&attachment.object_key, &attachment.file_name).await
+        {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                return map_mx_error(error);
+            }
+        };
         let attachment_for_preview = attachment.clone();
 
         let preview_result = tokio::task::spawn_blocking(move || {
@@ -2753,7 +3084,7 @@ pub async fn preview_mx_attachment(
         return inline_attachment_response(pdf_bytes, "application/pdf", &preview_name);
     }
 
-    inline_attachment_response(original_bytes, &attachment.mime_type, &attachment.file_name)
+    stream_record_attachment_bytes(attachment, &headers).await
 }
 
 pub async fn download_mx_attachment(

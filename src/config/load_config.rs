@@ -40,6 +40,7 @@ pub struct N1Config {
     pub insecure_tls: bool,
     pub attachment_max_size_mb: usize,
     pub collaboration_file_max_size_mb: usize,
+    pub multipart_part_size_mb: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -436,6 +437,29 @@ pub static CONFIG: LazyLock<Config> = LazyLock::new(|| {
         );
     }
 
+    let multipart_part_size_mb_value = n1_section.get("multipart_part_size_mb").unwrap_or("16");
+
+    let multipart_part_size_mb = multipart_part_size_mb_value
+        .parse::<usize>()
+        .unwrap_or_else(|error| {
+            crate::fatal_error!(
+                format!(
+                    "invalid value '{}' for 'multipart_part_size_mb' in section '[n1]': {}",
+                    multipart_part_size_mb_value, error
+                ),
+                "static",
+                "CONFIG"
+            )
+        });
+
+    if !(5..=100).contains(&multipart_part_size_mb) {
+        crate::fatal_error!(
+            "'multipart_part_size_mb' in section '[n1]' must be between 5 and 100",
+            "static",
+            "CONFIG"
+        );
+    }
+
     /*
      * Final configuration
      */
@@ -472,6 +496,7 @@ pub static CONFIG: LazyLock<Config> = LazyLock::new(|| {
             insecure_tls: n1_insecure_tls,
             attachment_max_size_mb,
             collaboration_file_max_size_mb,
+            multipart_part_size_mb,
         },
     }
 });

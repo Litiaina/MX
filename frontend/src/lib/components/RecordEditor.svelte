@@ -1,8 +1,12 @@
 <script lang="ts">
-  import { onDestroy, tick } from 'svelte';
+  import { tick } from 'svelte';
   import ArrowLeft from '@lucide/svelte/icons/arrow-left';
+  import DownloadIcon from '@lucide/svelte/icons/download';
+  import Eye from '@lucide/svelte/icons/eye';
   import HistoryIcon from '@lucide/svelte/icons/history';
+  import Pencil from '@lucide/svelte/icons/pencil';
   import Upload from '@lucide/svelte/icons/upload';
+  import Trash2 from '@lucide/svelte/icons/trash-2';
   import X from '@lucide/svelte/icons/x';
   import { ApiError } from '../api/client';
   import type { FieldConflict, FieldDefinition, JsonValue, MxRecord, RecordVersionDetail, RecordVersionSummary, SchemaResponse } from '../api/domain';
@@ -10,25 +14,21 @@
   import { requestConfirmation } from '../confirmation';
   import { cloneJson } from '../util/json';
   import { createRecord, deleteAttachment, deleteRecord, download, getRecord, getRecordVersion, listRecordVersions, patchRecord, previewAttachment, restoreRecordVersion, uploadAttachments } from '../api/workspace';
+  import FilePreview from './FilePreview.svelte';
+  import RecordAttachmentThumbnail from './RecordAttachmentThumbnail.svelte';
 
-  let { schema, moduleUid = '', record, canWrite, canDelete, liveMessage = null, focusAttachments = false, recordLabel = 'Record', onClose, onSaved }:
-    { schema: SchemaResponse; moduleUid?: string; record: MxRecord | null; canWrite: boolean; canDelete: boolean; liveMessage?: LiveMessage | null; focusAttachments?: boolean; recordLabel?: string; onClose: () => void; onSaved: () => Promise<void> } = $props();
+  let { schema, moduleUid = '', record, canWrite, canDelete, allowEdit = false, liveMessage = null, focusAttachments = false, recordLabel = 'Record', onEdit = () => undefined, onClose, onSaved }:
+    { schema: SchemaResponse; moduleUid?: string; record: MxRecord | null; canWrite: boolean; canDelete: boolean; allowEdit?: boolean; liveMessage?: LiveMessage | null; focusAttachments?: boolean; recordLabel?: string; onEdit?: () => void; onClose: () => void; onSaved: () => Promise<void> } = $props();
+
+  type PreviewEntry = { key: string; name: string; mimeType: string; detail: string; storedUid?: string; pendingFile?: File };
 
   let values = $state<Record<string, JsonValue>>({});
   let original = $state<Record<string, JsonValue>>({});
   let pending = $state<Record<string, File[]>>({});
   let busy = $state(false);
   let error = $state('');
-  let previewUrl = $state('');
   let previewOpen = $state(false);
-  let previewStage = $state<'loading' | 'ready' | 'error'>('loading');
-  let previewStatus = $state('Preparing preview…');
-  let previewError = $state('');
-  let previewName = $state('');
-  let previewDownloadName = $state('');
-  let previewMime = $state('');
-  let previewText = $state('');
-  let previewKind = $state<'image' | 'pdf' | 'video' | 'audio' | 'text' | 'unknown'>('unknown');
+  let previewKey = $state('');
   let persisted = $state<MxRecord | null>(null);
   let conflicts = $state<FieldConflict[]>([]);
   let liveNotice = $state('');
@@ -49,23 +49,39 @@
   let focusedAttachments = false;
   const current = $derived(persisted || record);
   const attachmentCount = $derived(current?.attached_files.length || 0);
+  const previewEntries = $derived.by(() => {
+    const entries: PreviewEntry[] = [];
+    for (const file of current?.attached_files || []) entries.push({ key: `stored:${file.uid}`, name: file.file_name, mimeType: file.mime_type || 'application/octet-stream', detail: `${file.attachment_field_label || 'Attachment'} · ${file.mime_type || 'application/octet-stream'} · ${bytes(file.size)}`, storedUid: file.uid });
+    for (const files of Object.values(pending)) for (const file of files) entries.push({ key: `pending:${fileKey(file)}`, name: file.name, mimeType: file.type || 'application/octet-stream', detail: `Queued · ${file.type || 'application/octet-stream'} · ${bytes(file.size)}`, pendingFile: file });
+    return entries;
+  });
+  const previewIndex = $derived(Math.max(0, previewEntries.findIndex((item) => item.key === previewKey)));
+  const activePreview = $derived(previewEntries[previewIndex] || null);
   const MAX_ATTACHMENT_SIZE = 50 * 1024 * 1024;
-
-  onDestroy(() => { if (previewUrl) URL.revokeObjectURL(previewUrl); });
 
   $effect(() => {
     const source = record?.values || {};
-    const initial = cloneJson(source);
+    const base = cloneJson(source);
     if (!record && schema.fields.some((field) => field.active && field.key === 'date' && field.field_type === 'date')) {
       const now = new Date();
-      initial.date = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+      base.date = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
     }
+    const initial = cloneJson(base);
+    let restoredDraft = false;
+    try {
+      const saved = canWrite ? JSON.parse(sessionStorage.getItem(draftStorageKey()) || 'null') as { values?: Record<string, JsonValue> } | null : null;
+      if (saved?.values && typeof saved.values === 'object') {
+        const editable = new Set(schema.fields.filter((field) => field.active && !['attachments', 'auto_number', 'formula'].includes(field.field_type)).map((field) => field.key));
+        for (const [key, value] of Object.entries(saved.values)) if (editable.has(key)) initial[key] = value;
+        restoredDraft = JSON.stringify(initial) !== JSON.stringify(base);
+      }
+    } catch { /* A malformed or unavailable session store should not block the editor. */ }
     values = initial;
-    original = cloneJson(initial);
+    original = cloneJson(base);
     pending = {};
     persisted = null;
     conflicts = [];
-    liveNotice = '';
+    liveNotice = restoredDraft ? 'Your unsaved entries from this tab were restored.' : '';
     deletedRemotely = false;
     uploadProgress = 0;
     uploadLabel = '';
@@ -114,6 +130,24 @@
     else if (field.field_type === 'integer') values[field.key] = target.value === '' ? null : Number.parseInt(target.value, 10);
     else if (field.field_type === 'decimal') values[field.key] = target.value === '' ? null : Number(target.value);
     else values[field.key] = target.value || null;
+    persistDraft();
+  }
+
+  function draftStorageKey() {
+    return `mx-record-draft:${moduleUid || 'mx-default-records'}:${record?.uid || 'new'}`;
+  }
+
+  function clearDraft() {
+    try { sessionStorage.removeItem(draftStorageKey()); } catch { /* Ignore restricted storage. */ }
+  }
+
+  function persistDraft() {
+    if (!canWrite) return;
+    const changed = schema.fields.some((field) => !['attachments', 'auto_number', 'formula'].includes(field.field_type) && JSON.stringify(values[field.key] ?? null) !== JSON.stringify(original[field.key] ?? null));
+    try {
+      if (changed) sessionStorage.setItem(draftStorageKey(), JSON.stringify({ values: cloneJson(values), saved_at: Date.now() }));
+      else sessionStorage.removeItem(draftStorageKey());
+    } catch { /* The editor continues even when private browsing blocks storage. */ }
   }
 
   function filesFor(field: FieldDefinition) {
@@ -213,7 +247,7 @@
   }
   function fileKey(file: File) { return `${file.name}\u0000${file.size}\u0000${file.lastModified}`; }
   function removePending(fieldUid: string, index: number) { const file = pending[fieldUid]?.[index]; if (file) delete fileProgress[fileKey(file)]; pending[fieldUid] = (pending[fieldUid] || []).filter((_, item) => item !== index); }
-  function resetForm() { values = cloneJson(original); pending = {}; fileProgress = {}; uploadProgress = 0; uploadLabel = ''; conflicts = []; error = ''; liveNotice = ''; }
+  function resetForm() { values = cloneJson(original); pending = {}; fileProgress = {}; uploadProgress = 0; uploadLabel = ''; conflicts = []; error = ''; liveNotice = ''; clearDraft(); }
   async function copyRecordLink() {
     if (!current) return;
     const module = moduleUid || 'mx-default-records';
@@ -239,7 +273,7 @@
         const changes: Record<string, JsonValue> = {};
         const base: Record<string, number> = {};
         for (const field of fields) {
-          if (['attachments', 'auto_number'].includes(field.field_type)) continue;
+          if (['attachments', 'auto_number', 'formula'].includes(field.field_type)) continue;
           if (JSON.stringify(values[field.key] ?? null) !== JSON.stringify(original[field.key] ?? null)) {
             changes[field.key] = values[field.key] ?? null;
             base[field.key] = current.field_revisions[field.key] || 0;
@@ -250,7 +284,7 @@
         saved = Object.keys(changes).length ? await patchRecord(current.uid, changes, base, moduleUid || undefined) : cloneJson(current);
       } else {
         const payload: Record<string, JsonValue> = {};
-        for (const field of fields) if (!['attachments', 'auto_number'].includes(field.field_type)) payload[field.key] = values[field.key] ?? null;
+        for (const field of fields) if (!['attachments', 'auto_number', 'formula'].includes(field.field_type)) payload[field.key] = values[field.key] ?? null;
         saved = await createRecord(payload, moduleUid || undefined);
       }
       persisted = saved;
@@ -280,6 +314,7 @@
           delete fileProgress[key];
         }
       }
+      clearDraft();
       await onSaved();
       onClose();
     } catch (reason) {
@@ -372,46 +407,29 @@
     finally { busy = false; }
   }
 
-  function previewType(mimeType: string, fileName: string): typeof previewKind {
-    const type = mimeType.toLowerCase(); const name = fileName.toLowerCase();
-    if (type.startsWith('image/')) return 'image';
-    if (type === 'application/pdf' || name.endsWith('.pdf')) return 'pdf';
-    if (type.startsWith('video/')) return 'video';
-    if (type.startsWith('audio/')) return 'audio';
-    if (type.startsWith('text/') || /(json|xml|javascript)/.test(type) || /\.(txt|csv|json|xml|md|log|ini|conf|yaml|yml|toml|rs|js|ts|css|html)$/i.test(name)) return 'text';
-    return 'unknown';
+  function showPreview(uid: string) { previewKey = `stored:${uid}`; previewOpen = true; }
+  function showPending(file: File) { previewKey = `pending:${fileKey(file)}`; previewOpen = true; }
+  function closePreview() { previewOpen = false; previewKey = ''; }
+  function navigatePreview(index: number) {
+    const entry = previewEntries[index];
+    if (entry) previewKey = entry.key;
   }
-
-  async function presentPreview(blob: Blob, title: string, downloadName: string, mimeType: string) {
-    if (previewUrl) URL.revokeObjectURL(previewUrl);
-    previewName = title;
-    previewDownloadName = downloadName || title;
-    previewMime = mimeType || blob.type || 'application/octet-stream';
-    previewKind = previewType(previewMime, previewDownloadName);
-    previewUrl = URL.createObjectURL(blob);
-    if (previewKind === 'text') {
-      try { previewText = await blob.text(); }
-      catch { previewText = 'Unable to decode this file as text.'; }
-    }
-    previewStage = 'ready'; previewStatus = '';
+  async function loadPreview(entry: PreviewEntry) {
+    if (entry.pendingFile) return { blob: entry.pendingFile, fileName: entry.name, mimeType: entry.pendingFile.type || 'application/octet-stream' };
+    if (!current || !entry.storedUid) throw new Error('This attachment is no longer available.');
+    const result = await previewAttachment(current.uid, entry.storedUid, entry.name, entry.mimeType);
+    return { blob: result.blob, url: result.url, fileName: result.fileName || entry.name, mimeType: result.mimeType };
   }
-
-  async function showPreview(uid: string, name: string) {
-    if (!current) return;
-    closePreview(); previewOpen = true; previewName = name; previewDownloadName = name;
-    previewKind = /\.(docx?|xlsx?|pptx?|odt|ods|odp)$/i.test(name) ? 'pdf' : previewType('', name);
-    previewStage = 'loading'; previewStatus = previewKind === 'pdf' && !name.toLowerCase().endsWith('.pdf') ? 'Converting document to a browser preview…' : 'Loading preview…';
-    await tick();
-    try { const result = await previewAttachment(current.uid, uid); await presentPreview(result.blob, name, result.fileName || name, result.mimeType); }
-    catch (reason) { previewStage = 'error'; previewError = reason instanceof Error ? reason.message : 'Preview failed.'; }
-  }
-
-  function showPending(file: File) { closePreview(); previewOpen = true; void presentPreview(file, file.name, file.name, file.type); }
-  function closePreview() { if (previewUrl) URL.revokeObjectURL(previewUrl); previewOpen = false; previewUrl = ''; previewName = ''; previewDownloadName = ''; previewMime = ''; previewText = ''; previewKind = 'unknown'; previewStage = 'loading'; previewStatus = 'Preparing preview…'; previewError = ''; }
-  function openPreview() { if (previewUrl) window.open(previewUrl, '_blank', 'noopener,noreferrer'); }
-  function downloadPreview() { if (!previewUrl) return; const link = document.createElement('a'); link.href = previewUrl; link.download = previewDownloadName || previewName; link.click(); }
   function jumpToAttachments() { dialogElement?.querySelector<HTMLElement>('.attachment-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
-  function attemptClose() { if (busy) { error = 'Wait for the record save and attachment upload to finish.'; return; } onClose(); }
+  function attemptClose() {
+    if (busy) { error = 'Wait for the record save and attachment upload to finish.'; return; }
+    if (Object.values(pending).some((files) => files.length)) {
+      error = 'Queued local files cannot be retained by the browser. Save the record or remove them before closing.';
+      return;
+    }
+    persistDraft();
+    onClose();
+  }
 </script>
 
 <svelte:window onkeydown={handleDialogKeydown} />
@@ -420,7 +438,7 @@
   <div bind:this={dialogElement} class="dialog record-dialog" role="dialog" aria-modal="true" aria-labelledby="record-title">
     <header class="dialog-head">
       <div><p class="eyebrow">{current ? (canWrite ? 'Edit existing' : 'View existing') : 'Create new'}</p><h2 id="record-title">{current ? `${canWrite ? 'Edit' : 'View'} ${recordLabel}` : `New ${recordLabel}`}</h2>{#if current}<p class="muted record-dialog-context">{canWrite ? 'Editing' : 'Viewing'} {recordIdentity(current)}</p>{/if}</div>
-      <div class="inline-actions">{#if current}<button class="button small" type="button" onclick={copyRecordLink}>Copy link</button><button bind:this={historyButtonElement} class="button small icon-label" type="button" onclick={openHistory}><HistoryIcon size={15} />History</button>{/if}{#if fields.some((field) => field.field_type === 'attachments') || unassignedFiles.length}<button class="button small attachment-shortcut" type="button" onclick={jumpToAttachments}>Attachments{current ? ` · ${attachmentCount}` : ''}</button>{/if}<button class="icon-button" type="button" onclick={attemptClose} aria-label="Close"><X size={18} /></button></div>
+      <div class="inline-actions">{#if current && allowEdit && !canWrite}<button class="button primary small icon-label" type="button" onclick={onEdit}><Pencil size={14} />Edit {recordLabel.toLowerCase()}</button>{/if}{#if current}<button class="button small" type="button" onclick={copyRecordLink}>Copy link</button><button bind:this={historyButtonElement} class="button small icon-label" type="button" onclick={openHistory}><HistoryIcon size={15} />History</button>{/if}{#if fields.some((field) => field.field_type === 'attachments') || unassignedFiles.length}<button class="button small attachment-shortcut" type="button" onclick={jumpToAttachments}>Attachments{current ? ` · ${attachmentCount}` : ''}</button>{/if}<button class="icon-button" type="button" onclick={attemptClose} aria-label="Close"><X size={18} /></button></div>
     </header>
     {#if error}<div class="notice error">{error}</div>{/if}
     {#if liveNotice}<div class="notice live-notice">{liveNotice}</div>{/if}
@@ -434,17 +452,19 @@
             <p class="muted attachment-field-meta">N1: <code>records/&lt;configured folders&gt;/{String(field.config.storage_name || field.label)}/file.ext</code>{#if attachmentLimit(field) > 0} · maximum {attachmentLimit(field)} file{attachmentLimit(field) === 1 ? '' : 's'}{/if}</p>
             {#if !filesFor(field).length && !(pending[field.uid]?.length)}<p class="muted attachment-empty">No stored files in this attachment field.</p>{/if}
             {#each filesFor(field) as file}
-              <div class="file-row"><span>{file.file_name} <small>{file.mime_type || 'application/octet-stream'} · {bytes(file.size)}</small></span><div class="inline-actions">
-                <button class="link-button" type="button" onclick={() => showPreview(file.uid, file.file_name)}>Preview</button>
-                <button class="link-button" type="button" onclick={() => download(`/mx/v1/records/${current?.uid}/attachments/${file.uid}/download`, file.file_name)}>Download</button>
-                {#if canDelete}<button class="link-button danger-text" type="button" onclick={() => removeFile(file.uid)}>Delete</button>{/if}
+              <div class="file-row record-file-row"><RecordAttachmentThumbnail recordUid={current!.uid} {file} onOpen={() => showPreview(file.uid)} /><span class="record-file-copy"><strong>{file.file_name}</strong><small>{file.mime_type || 'application/octet-stream'} · {bytes(file.size)}</small></span><div class="inline-actions">
+                <button class="file-action-icon" type="button" onclick={() => showPreview(file.uid)} aria-label={`Preview ${file.file_name}`} title="Preview"><Eye size={15} /></button>
+                <button class="file-action-icon" type="button" onclick={() => download(`/mx/v1/records/${current?.uid}/attachments/${file.uid}/download`, file.file_name)} aria-label={`Download ${file.file_name}`} title="Download"><DownloadIcon size={15} /></button>
+                {#if canDelete}<button class="file-action-icon danger-text" type="button" onclick={() => removeFile(file.uid)} aria-label={`Delete ${file.file_name}`} title="Delete"><Trash2 size={15} /></button>{/if}
               </div></div>
             {/each}
-            {#each pending[field.uid] || [] as file, index}{@const progress = fileProgress[fileKey(file)] || { percent: 0, label: 'Ready — uploads when you save' }}<div class="file-row pending-file"><span>{file.name} <small>{file.type || 'application/octet-stream'} · {bytes(file.size)}</small><span class="file-progress"><i><b style={`width:${progress.percent}%`}></b></i><em>{progress.label}</em></span></span><div class="inline-actions"><button class="link-button" type="button" onclick={() => showPending(file)}>Preview</button><button class="link-button danger-text" type="button" disabled={busy} onclick={() => removePending(field.uid, index)}>Remove</button></div></div>{/each}
+            {#each pending[field.uid] || [] as file, index}{@const progress = fileProgress[fileKey(file)] || { percent: 0, label: 'Ready — uploads when you save' }}<div class="file-row pending-file"><span>{file.name} <small>{file.type || 'application/octet-stream'} · {bytes(file.size)}</small><span class="file-progress"><i><b style={`width:${progress.percent}%`}></b></i><em>{progress.label}</em></span></span><div class="inline-actions"><button class="file-action-icon" type="button" onclick={() => showPending(file)} aria-label={`Preview ${file.name}`} title="Preview"><Eye size={15} /></button><button class="file-action-icon danger-text" type="button" disabled={busy} onclick={() => removePending(field.uid, index)} aria-label={`Remove ${file.name}`} title="Remove"><X size={15} /></button></div></div>{/each}
             {#if canWrite}<label class:drag-active={dragAttachmentField === field.uid} class="file-picker" ondragenter={(event) => { event.preventDefault(); dragAttachmentField = field.uid; }} ondragover={(event) => { event.preventDefault(); dragAttachmentField = field.uid; }} ondragleave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) dragAttachmentField = ''; }} ondrop={(event) => { event.preventDefault(); dragAttachmentField = ''; if (event.dataTransfer?.files) queueFiles(field, event.dataTransfer.files); }}><span class="file-picker-icon" aria-hidden="true"><Upload size={19} /></span><span class="file-picker-copy"><strong>Drop {field.config.multiple === false ? 'a file' : 'files'} here or browse</strong><small>Up to 50 MiB per file{attachmentLimit(field) > 0 ? ` · ${attachmentLimit(field)} maximum` : ''}</small></span><input type="file" multiple={field.config.multiple !== false} onchange={(event) => { if (event.currentTarget.files) queueFiles(field, event.currentTarget.files); event.currentTarget.value = ''; }} /></label>{/if}
           </fieldset>
         {:else if field.field_type === 'auto_number'}
           <label>{field.label}<input value={autoNumberValue(field)} disabled placeholder="Assigned automatically when saved" /></label>
+        {:else if field.field_type === 'formula'}
+          <label><span>{field.label}<small class="field-kind-hint">Calculated</small></span><input value={String(fieldValue(field))} disabled placeholder="Calculated when saved" /></label>
         {:else if field.field_type === 'long_text'}
           <label class="full"><span>{field.label}{#if field.required}<b class="required-mark"> *</b>{/if}</span><textarea rows="4" required={field.required} disabled={!canWrite} value={String(fieldValue(field))} oninput={(event) => setValue(field, event.currentTarget)}></textarea></label>
         {:else if field.field_type === 'select'}
@@ -455,7 +475,7 @@
           <label><span>{field.label}{#if field.required}<b class="required-mark"> *</b>{/if}</span><input type={field.field_type === 'date' ? 'date' : field.field_type === 'integer' || field.field_type === 'decimal' ? 'number' : 'text'} step={field.field_type === 'decimal' ? 'any' : field.field_type === 'integer' ? 1 : undefined} required={field.required} disabled={!canWrite} value={String(fieldValue(field))} oninput={(event) => setValue(field, event.currentTarget)} /></label>
         {/if}
       {/each}
-      {#if unassignedFiles.length}<fieldset class="field-block full attachment-section"><legend>Unassigned legacy attachments</legend><p class="muted small">These files predate File Attachment fields. They remain available for preview and download.</p>{#each unassignedFiles as file}<div class="file-row"><span>{file.file_name} <small>{file.mime_type || 'application/octet-stream'} · {bytes(file.size)}</small></span><div class="inline-actions"><button class="link-button" type="button" onclick={() => showPreview(file.uid, file.file_name)}>Preview</button><button class="link-button" type="button" onclick={() => download(`/mx/v1/records/${current?.uid}/attachments/${file.uid}/download`, file.file_name)}>Download</button>{#if canDelete}<button class="link-button danger-text" type="button" onclick={() => removeFile(file.uid)}>Delete</button>{/if}</div></div>{/each}</fieldset>{/if}
+      {#if unassignedFiles.length}<fieldset class="field-block full attachment-section"><legend>Unassigned legacy attachments</legend><p class="muted small">These files predate File Attachment fields. They remain available for preview and download.</p>{#each unassignedFiles as file}<div class="file-row record-file-row"><RecordAttachmentThumbnail recordUid={current!.uid} {file} onOpen={() => showPreview(file.uid)} /><span class="record-file-copy"><strong>{file.file_name}</strong><small>{file.mime_type || 'application/octet-stream'} · {bytes(file.size)}</small></span><div class="inline-actions"><button class="file-action-icon" type="button" onclick={() => showPreview(file.uid)} aria-label={`Preview ${file.file_name}`} title="Preview"><Eye size={15} /></button><button class="file-action-icon" type="button" onclick={() => download(`/mx/v1/records/${current?.uid}/attachments/${file.uid}/download`, file.file_name)} aria-label={`Download ${file.file_name}`} title="Download"><DownloadIcon size={15} /></button>{#if canDelete}<button class="file-action-icon danger-text" type="button" onclick={() => removeFile(file.uid)} aria-label={`Delete ${file.file_name}`} title="Delete"><Trash2 size={15} /></button>{/if}</div></div>{/each}</fieldset>{/if}
       {#if uploadLabel}<section class="upload-progress-panel full" aria-live="polite"><div><strong>{uploadLabel}</strong><span>{uploadProgress}%</span></div><div class="upload-progress-track"><i style={`width:${uploadProgress}%`}></i></div><small>Keep this window open until every queued file finishes.</small></section>{/if}
       <footer class="dialog-actions">
         {#if current && canDelete}<button class="button danger" type="button" onclick={removeRecord} disabled={busy}>Delete {recordLabel.toLowerCase()}</button>{/if}
@@ -466,8 +486,8 @@
   </div>
 </div>
 
-{#if previewOpen}
-  <div class="overlay preview-overlay" role="presentation" onclick={(event) => event.target === event.currentTarget && closePreview()}><div class="dialog preview-dialog" role="dialog" aria-modal="true" aria-labelledby="preview-title"><header class="dialog-head"><div><h2 id="preview-title">{previewName}</h2><p class="muted preview-meta">{previewStage === 'loading' ? previewStatus : previewMime}{previewStage === 'ready' && previewDownloadName !== previewName ? ` · generated preview: ${previewDownloadName}` : ''}</p></div><div class="inline-actions">{#if previewStage === 'ready'}<button class="button small" onclick={openPreview}>Open in new tab</button><button class="button small" onclick={downloadPreview}>{previewDownloadName !== previewName ? 'Download preview' : 'Download'}</button>{/if}<button class="icon-button" aria-label="Close preview" onclick={closePreview}><X size={18} /></button></div></header><div class="preview-content">{#if previewStage === 'loading'}<div class="ghost-document" aria-live="polite"><aside><i></i><i></i><i></i><i></i></aside><main><div class="ghost-page"><b></b><span></span><span></span><span></span><em></em><span></span><span></span></div><p><strong>{previewStatus}</strong><small>MX is preparing the file inside this preview. You can close it without changing the attachment.</small></p></main></div>{:else if previewStage === 'error'}<div class="preview-fallback"><h3>Preview unavailable</h3><p class="muted">{previewError}</p><button class="button" onclick={closePreview}>Close</button></div>{:else if previewKind === 'image'}<img src={previewUrl} alt={previewName} />{:else if previewKind === 'pdf'}<iframe title={`Preview of ${previewName}`} src={previewUrl}></iframe>{:else if previewKind === 'video'}<video src={previewUrl} controls><track kind="captions" /></video>{:else if previewKind === 'audio'}<audio src={previewUrl} controls><track kind="captions" /></audio>{:else if previewKind === 'text'}<pre>{previewText}</pre>{:else}<div class="preview-fallback"><h3>Browser preview unavailable</h3><p class="muted">This file type cannot be rendered safely in the browser. Download it to open it with the appropriate application.</p><button class="button primary" onclick={downloadPreview}>Download {previewName}</button></div>{/if}</div></div></div>
+{#if previewOpen && activePreview}
+  {#key activePreview.key}<FilePreview fileName={activePreview.name} load={() => loadPreview(activePreview)} navigationItems={previewEntries} activeIndex={previewIndex} onNavigate={navigatePreview} onClose={closePreview} />{/key}
 {/if}
 
 {#if historyOpen}

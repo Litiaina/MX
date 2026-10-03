@@ -723,7 +723,7 @@ fn render_record_field_value(
                         }
                     }),
 
-                    "decimal" => real.map(|value| value.to_string()),
+                    "decimal" | "formula" => real.map(|value| value.to_string()),
 
                     "boolean" => boolean.map(|value| {
                         if value != 0 {

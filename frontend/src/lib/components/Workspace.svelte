@@ -8,6 +8,7 @@
   import { appearanceScale, primaryForeground, validAccentColor } from '../util/appearance';
   import { decodeNotificationSound, playNotificationSound, unlockNotificationAudio } from '../util/notificationAudio';
   import { notificationPresentation } from '../util/notificationKinds';
+  import { recordNotificationIntent } from '../util/interactions';
   import AccountSecurity from './AccountSecurity.svelte';
   import AdminView from './AdminView.svelte';
   import CollaborationView from './CollaborationView.svelte';
@@ -32,10 +33,12 @@
   let modules = $state<ModuleDefinition[]>([]);
   let selectedModuleUid = $state('mx-default-records');
   let linkedRecordUid = $state('');
+  let linkedRecordFocusAttachments = $state(false);
+  let linkedRecordRequestRevision = $state(0);
   let linkedChannelUid = $state('');
   let lastRecordEvent = $state<LiveMessage | null>(null);
   let lastCollaborationEvent = $state<LiveMessage | null>(null);
-  let autoScale = $state(true); let scale = $state(100); let fontScale = $state(100); let autoRefresh = $state(0); let theme = $state(''); let accentColor = $state('');
+  let autoScale = $state(true); let scale = $state(100); let fontScale = $state(16); let autoRefresh = $state(0); let theme = $state(''); let accentColor = $state('');
   let density = $state(''); let contentWidth = $state(''); let reducedMotion = $state(false); let settingsBusy = $state(false); let settingsError = $state('');
   let notificationToasts = $state<MxNotification[]>([]);
   let customNotificationSound: AudioBuffer | null = null;
@@ -84,6 +87,7 @@
     const match = location.hash.match(/^#\/?module\/([^/?#]+)/);
     if (!match) {
       linkedRecordUid = '';
+      linkedRecordFocusAttachments = false;
       const raw = location.hash.replace(/^#\/?/, '');
       linkedChannelUid = raw.split('?')[0] === 'collaboration' ? new URLSearchParams(raw.split('?')[1] || '').get('channel') || '' : '';
       return;
@@ -92,7 +96,9 @@
     const uid = decodeURIComponent(match[1]);
     if (!modules.length || modules.some((module) => module.uid === uid)) selectedModuleUid = uid;
     const query = location.hash.split('?')[1] || '';
-    linkedRecordUid = new URLSearchParams(query).get('record') || '';
+    const parameters = new URLSearchParams(query);
+    linkedRecordUid = parameters.get('record') || '';
+    linkedRecordFocusAttachments = parameters.get('attachments') === '1';
   }
 
   $effect(() => {
@@ -212,7 +218,16 @@
   function openNotification(item: MxNotification) {
     dismissToast(item.uid);
     if (!item.read_at) { item.read_at = Date.now(); unreadNotifications = Math.max(0, unreadNotifications - 1); notificationRevision += 1; void markNotificationRead(item.uid); }
-    if (item.target_type === 'record' && item.module_uid && item.target_uid) location.hash = `module/${encodeURIComponent(item.module_uid)}?record=${encodeURIComponent(item.target_uid)}`;
+    const recordIntent = recordNotificationIntent(item);
+    if (recordIntent) {
+      selectedModuleUid = recordIntent.moduleUid;
+      linkedRecordUid = recordIntent.recordUid;
+      linkedRecordFocusAttachments = recordIntent.focusAttachments;
+      linkedRecordRequestRevision += 1;
+      view = 'records';
+      mobileOpen = false;
+      location.hash = `module/${encodeURIComponent(recordIntent.moduleUid)}?record=${encodeURIComponent(recordIntent.recordUid)}${recordIntent.focusAttachments ? '&attachments=1' : ''}`;
+    }
     else if (item.target_type === 'channel' && item.target_uid) location.hash = `collaboration?channel=${encodeURIComponent(item.target_uid)}`;
     else if (item.module_uid) location.hash = `module/${encodeURIComponent(item.module_uid)}`;
   }
@@ -257,7 +272,8 @@
   }
   function applyScale() {
     const value = autoScale ? recommendedScale() : Math.min(160, Math.max(85, Number(scale) || 100));
-    const font = Math.min(150, Math.max(85, Number(fontScale) || 100));
+    const fontPixels = Math.min(24, Math.max(10, Number(fontScale) || 16));
+    const font = fontPixels / 16 * 100;
     // Typography and interface density are separate preferences. Previously
     // both values were multiplied into the root font size, making the two
     // controls behave identically.
@@ -300,7 +316,8 @@
       accentColor = preferences.accent_color || '';
       autoScale = preferences.auto_scale ?? true;
       scale = preferences.ui_scale_percent ?? 100;
-      fontScale = preferences.font_scale_percent ?? 100;
+      fontScale = preferences.font_size_px
+        ?? Math.round(16 * (preferences.font_scale_percent ?? 100) / 100);
       autoRefresh = preferences.auto_refresh_seconds ?? 0;
       density = preferences.density || '';
       contentWidth = preferences.content_width || '';
@@ -321,7 +338,7 @@
   }
   async function saveDisplaySettings() {
     scale = Math.min(160, Math.max(85, Number(scale) || 100));
-    fontScale = Math.min(150, Math.max(85, Number(fontScale) || 100));
+    fontScale = Math.min(24, Math.max(10, Number(fontScale) || 16));
     autoRefresh = Math.max(0, Number(autoRefresh) || 0);
     settingsBusy = true; settingsError = '';
     try {
@@ -330,7 +347,7 @@
         ...current.preferences,
         theme: (theme || null) as UserPreferences['theme'], auto_scale: autoScale,
         accent_color: validAccentColor(accentColor) ? accentColor : null,
-        ui_scale_percent: scale, font_scale_percent: fontScale,
+        ui_scale_percent: scale, font_size_px: fontScale, font_scale_percent: null,
         density: (density || null) as UserPreferences['density'],
         content_width: (contentWidth || null) as UserPreferences['content_width'],
         reduced_motion: reducedMotion, auto_refresh_seconds: autoRefresh,
@@ -347,9 +364,9 @@
 <div class="application">
   <WorkspaceSidebar {deployment} {session} {modules} {view} {selectedModuleUid} {selectedModule} {live} open={mobileOpen} onToggle={() => mobileOpen = !mobileOpen} onNavigate={go} onNavigateModule={goModule} onExport={() => exportReport('records', undefined, '', '', selectedModule?.uid || 'mx-default-records')} />
   <main class="main-stage">
-    <WorkspaceTopbar productName={deployment.branding.display_name} {viewTitle} {live} navigationOpen={mobileOpen} {notificationRevision} {unreadNotifications} onToggleNavigation={() => mobileOpen = !mobileOpen} onRefresh={refreshCurrent} onOpenSettings={() => settingsOpen = true} onToggleTheme={toggleTheme} onOpenAccount={() => go('account')} onSignOut={() => onSessionEnded('Signed out.')} onUnread={(count) => unreadNotifications = count} />
+    <WorkspaceTopbar productName={deployment.branding.display_name} {viewTitle} {live} navigationOpen={mobileOpen} {notificationRevision} {unreadNotifications} onToggleNavigation={() => mobileOpen = !mobileOpen} onRefresh={refreshCurrent} onOpenSettings={() => settingsOpen = true} onToggleTheme={toggleTheme} onOpenAccount={() => go('account')} onSignOut={() => onSessionEnded('Signed out.')} onUnread={(count) => unreadNotifications = count} onOpenNotification={openNotification} />
     {#if view === 'dashboard'}<DashboardView isAdmin={session.access_level === 0} revision={dashboardRevision} dashboardLabel={deployment.terminology.dashboard_label} recordSingular={deployment.terminology.record_singular} recordPlural={deployment.terminology.record_plural} />
-    {:else if view === 'records'}{#key selectedModuleUid}<RecordsView accessLevel={session.access_level} moduleUid={selectedModule?.uid || ''} modulePermission={selectedModulePermission} openRecordUid={linkedRecordUid} revision={recordRevision} liveMessage={lastRecordEvent} recordSingular={selectedModule?.singular_name || deployment.terminology.record_singular} recordPlural={selectedModule?.name || deployment.terminology.record_plural} />{/key}
+    {:else if view === 'records'}{#key selectedModuleUid}<RecordsView accessLevel={session.access_level} moduleUid={selectedModule?.uid || ''} modulePermission={selectedModulePermission} openRecordUid={linkedRecordUid} openRequestRevision={linkedRecordRequestRevision} focusLinkedAttachments={linkedRecordFocusAttachments} revision={recordRevision} liveMessage={lastRecordEvent} recordSingular={selectedModule?.singular_name || deployment.terminology.record_singular} recordPlural={selectedModule?.name || deployment.terminology.record_plural} />{/key}
     {:else if view === 'collaboration'}<CollaborationView {session} openChannelUid={linkedChannelUid} revision={collaborationRevision} connected={live} liveEvent={lastCollaborationEvent} onChannelChanged={setActiveCollaborationChannel} />
     {:else if view === 'admin' && session.access_level === 0}{#key adminRevision}<AdminView {session} administrationLabel={deployment.terminology.administration_label} dashboardLabel={deployment.terminology.dashboard_label} />{/key}
     {:else}<AccountSecurity {session} {onSessionChanged} {onSessionEnded} />{/if}

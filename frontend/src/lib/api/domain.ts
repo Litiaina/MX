@@ -4,7 +4,7 @@ export interface FieldDefinition {
   uid: string;
   key: string;
   label: string;
-  field_type: 'text' | 'long_text' | 'integer' | 'decimal' | 'date' | 'boolean' | 'select' | 'auto_number' | 'attachments';
+  field_type: 'text' | 'long_text' | 'integer' | 'decimal' | 'date' | 'boolean' | 'select' | 'auto_number' | 'attachments' | 'formula';
   required: boolean;
   unique_value: boolean;
   searchable: boolean;
@@ -210,6 +210,7 @@ export interface UserPreferences {
   accent_color: string | null;
   auto_scale: boolean | null;
   ui_scale_percent: number | null;
+  font_size_px: number | null;
   font_scale_percent: number | null;
   density: 'compact' | 'normal' | 'comfortable' | null;
   content_width: 'standard' | 'wide' | 'full' | null;
@@ -271,6 +272,7 @@ export interface MessageMention { uid: string; name: string }
 
 export interface ChatMessage {
   uid: string; channel_uid: string; sender_uid: string; sender_name: string; body: string;
+  event_kind?: 'member_added' | 'member_left' | 'member_removed' | null;
   sender_profile_photo_updated_at?: number | null;
   reply_to_uid: string | null; reply_preview?: MessageReplyPreview | null; created_at: number; edited_at: number | null;
   deleted_at: number | null; sequence: number; files: MessageFile[]; record_links: MessageRecordLink[]; reactions?: MessageReaction[]; mentions?: MessageMention[];

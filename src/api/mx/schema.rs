@@ -16,7 +16,9 @@ use crate::{
         live::publish_live_event,
         modules::{DEFAULT_MODULE_UID, ensure_module_schema, load_module_db, module_can},
         mx::{
+            formula::{referenced_fields, validate_expression},
             handler::ensure_mx_record_schema,
+            records::recalculate_module_formulas,
             storage::{ensure_storage_layout_schema, field_used_by_storage_layout_db},
         },
     },
@@ -193,7 +195,7 @@ fn normalize_type(value: &str) -> Result<String, String> {
 
     match field_type.as_str() {
         "text" | "long_text" | "integer" | "decimal" | "date" | "boolean" | "select"
-        | "auto_number" | "attachments" => Ok(field_type),
+        | "auto_number" | "attachments" | "formula" => Ok(field_type),
 
         _ => Err(format!("Unsupported MX field type '{field_type}'.")),
     }
@@ -298,6 +300,24 @@ fn validate_config(field_type: &str, config: &Value) -> Result<Value, String> {
             }))
         }
 
+        "formula" => {
+            let expression = config
+                .get("expression")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .trim();
+            if expression.len() > 1_000 {
+                return Err("Formula expressions cannot exceed 1,000 characters.".to_string());
+            }
+            validate_expression(expression)?;
+            let decimals = config
+                .get("decimals")
+                .and_then(Value::as_u64)
+                .unwrap_or(2)
+                .min(12);
+            Ok(json!({ "expression": expression, "decimals": decimals }))
+        }
+
         "attachments" => {
             let storage_name = config
                 .get("storage_name")
@@ -336,6 +356,41 @@ fn validate_config(field_type: &str, config: &Value) -> Result<Value, String> {
         }
 
         _ => Ok(json!({})),
+    }
+}
+
+fn validate_formula_references(
+    connection: &rusqlite::Connection,
+    module_uid: &str,
+    field_key: &str,
+    config: &Value,
+) -> rusqlite::Result<()> {
+    let expression = config
+        .get("expression")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let references = referenced_fields(expression);
+    if references.contains(&field_key.to_ascii_lowercase()) {
+        return Err(rusqlite::Error::InvalidParameterName(
+            "MX_CONFIG:A formula cannot reference itself.".to_string(),
+        ));
+    }
+    let available = connection
+        .prepare("SELECT LOWER(COALESCE(module_key,field_key)) FROM mx_fields WHERE module_uid=?1 AND active=1")?
+        .query_map(params![module_uid], |row| row.get::<_, String>(0))?
+        .collect::<Result<HashSet<_>, _>>()?;
+    let unknown = references
+        .into_iter()
+        .filter(|field| !available.contains(field))
+        .collect::<Vec<_>>();
+    if unknown.is_empty() {
+        Ok(())
+    } else {
+        Err(rusqlite::Error::InvalidParameterName(format!(
+            "MX_CONFIG:Unknown field key{} in formula: {}.",
+            if unknown.len() == 1 { "" } else { "s" },
+            unknown.join(", ")
+        )))
     }
 }
 
@@ -1403,8 +1458,8 @@ pub async fn create_schema_field(
         )
     };
     let requested_position = request.position;
-    let required = request.required || field_type == "auto_number";
-    let unique_value = if field_type == "attachments" {
+    let required = field_type != "formula" && (request.required || field_type == "auto_number");
+    let unique_value = if matches!(field_type.as_str(), "attachments" | "formula") {
         false
     } else {
         request.unique_value || field_type == "auto_number"
@@ -1417,6 +1472,7 @@ pub async fn create_schema_field(
     let field_type_for_db = field_type.clone();
     let config_for_db = config.to_string();
     let uid_for_db = uid.clone();
+    let formula_actor_uid = claims.uid.clone();
 
     let database_result =
         tokio::task::spawn_blocking(move || -> Result<FieldDefinition, SqliteDatabaseError> {
@@ -1424,6 +1480,14 @@ pub async fn create_schema_field(
                 ensure_dynamic_schema(connection)?;
                 if load_module_db(connection, &module_uid_for_db)?.is_none() {
                     return Err(rusqlite::Error::QueryReturnedNoRows);
+                }
+                if field_type_for_db == "formula" {
+                    validate_formula_references(
+                        connection,
+                        &module_uid_for_db,
+                        &module_key_for_db,
+                        &config,
+                    )?;
                 }
 
                 let position = match requested_position {
@@ -1490,6 +1554,14 @@ pub async fn create_schema_field(
 
                 bump_schema_revision(connection)?;
 
+                if field_type_for_db == "formula" {
+                    recalculate_module_formulas(
+                        connection,
+                        &module_uid_for_db,
+                        &formula_actor_uid,
+                    )?;
+                }
+
                 connection.query_row(
                     r#"
                     SELECT
@@ -1542,6 +1614,15 @@ pub async fn create_schema_field(
             )
         }
 
+        Ok(Err(SqliteDatabaseError::Sqlite(rusqlite::Error::InvalidParameterName(message))))
+            if message.starts_with("MX_CONFIG:") =>
+        {
+            api_json(
+                StatusCode::BAD_REQUEST,
+                json!({ "response": message.trim_start_matches("MX_CONFIG:") }),
+            )
+        }
+
         Ok(Err(error)) => {
             crate::report_error!(format!("{error}"), "function", "create_schema_field()");
 
@@ -1585,6 +1666,7 @@ fn duplicate_value_exists(
                         WHEN 'integer' THEN CAST(rv.value_integer AS TEXT)
                         WHEN 'auto_number' THEN CAST(rv.value_integer AS TEXT)
                         WHEN 'decimal' THEN CAST(rv.value_real AS TEXT)
+                        WHEN 'formula' THEN CAST(rv.value_real AS TEXT)
                         WHEN 'boolean' THEN CAST(rv.value_boolean AS TEXT)
                         ELSE LOWER(TRIM(COALESCE(rv.value_text, '')))
                     END AS normalized,
@@ -1623,7 +1705,7 @@ fn rebuild_unique_values_for_field(
 
     let normalized_expression = match field.field_type.as_str() {
         "integer" => "CAST(rv.value_integer AS TEXT)",
-        "decimal" => "printf('%.12f', rv.value_real)",
+        "decimal" | "formula" => "printf('%.12f', rv.value_real)",
         "boolean" => "CAST(rv.value_boolean AS TEXT)",
         _ => "LOWER(TRIM(COALESCE(rv.value_text, '')))",
     };
@@ -2028,6 +2110,7 @@ pub async fn update_schema_field(
     }
 
     let uid_for_db = uid.clone();
+    let formula_actor_uid = claims.uid.clone();
 
     let database_result =
         tokio::task::spawn_blocking(move || -> Result<FieldDefinition, SqliteDatabaseError> {
@@ -2056,6 +2139,11 @@ pub async fn update_schema_field(
                     params![&uid_for_db],
                     row_to_field,
                 )?;
+                let module_uid: String = connection.query_row(
+                    "SELECT module_uid FROM mx_fields WHERE uid=?1",
+                    params![&uid_for_db],
+                    |row| row.get(0),
+                )?;
 
                 if request.active == Some(false) {
                     ensure_storage_layout_schema(connection)?;
@@ -2081,12 +2169,13 @@ pub async fn update_schema_field(
                     }
                 }
 
-                let next_unique = if existing.field_type == "attachments" {
-                    false
-                } else {
-                    request.unique_value.unwrap_or(existing.unique_value)
-                        || existing.field_type == "auto_number"
-                };
+                let next_unique =
+                    if matches!(existing.field_type.as_str(), "attachments" | "formula") {
+                        false
+                    } else {
+                        request.unique_value.unwrap_or(existing.unique_value)
+                            || existing.field_type == "auto_number"
+                    };
 
                 if next_unique
                     && !existing.unique_value
@@ -2133,6 +2222,14 @@ pub async fn update_schema_field(
                     }
                     None => existing.config.clone(),
                 };
+                if existing.field_type == "formula" {
+                    validate_formula_references(
+                        connection,
+                        &module_uid,
+                        &existing.key,
+                        &next_config,
+                    )?;
+                }
 
                 if existing.field_type == "attachments"
                     && next_config
@@ -2183,8 +2280,9 @@ pub async fn update_schema_field(
                     params![
                         &uid_for_db,
                         next_label,
-                        if request.required.unwrap_or(existing.required)
-                            || existing.field_type == "auto_number"
+                        if existing.field_type != "formula"
+                            && (request.required.unwrap_or(existing.required)
+                                || existing.field_type == "auto_number")
                         {
                             1_i64
                         } else {
@@ -2239,6 +2337,9 @@ pub async fn update_schema_field(
                 )?;
 
                 rebuild_unique_values_for_field(connection, &updated)?;
+                if updated.field_type == "formula" && updated.active {
+                    recalculate_module_formulas(connection, &module_uid, &formula_actor_uid)?;
+                }
 
                 Ok(updated)
             })

@@ -135,6 +135,7 @@ h3 { margin-bottom: .4rem; }
 .form-stack.compact { max-width: 29rem; }
 
 label { display: grid; gap: .4rem; color: var(--text-2); font-size: calc(.78rem * var(--font-scale)); font-weight: 700; letter-spacing: .02em; }
+.font-size-input { width: 7rem; font-variant-numeric: tabular-nums; }
 
 input, select, textarea {
   width: 100%;
@@ -1296,7 +1297,7 @@ button.message-reply-quote:hover { background: color-mix(in srgb, var(--primary)
 .module-scope-bar > label { min-width: 0; }
 .module-scope-bar > label select { width: 100%; }
 .module-new-button { align-self: end; white-space: nowrap; }
-.module-builder { margin-bottom: .7rem; }
+.module-builder { container: module-builder / inline-size; margin-bottom: .7rem; }
 .module-builder-heading { align-items: center; padding-bottom: .7rem; border-bottom: 1px solid var(--line); }
 .module-builder-heading .eyebrow, .storage-layout-panel .eyebrow { margin: 0 0 .12rem; color: var(--muted); font-size: calc(.57rem * var(--font-scale)); letter-spacing: .08em; }
 .module-builder-heading h2, .storage-layout-panel .panel-heading h2 { margin-block: 0 .2rem; }
@@ -1312,10 +1313,28 @@ button.message-reply-quote:hover { background: color-mix(in srgb, var(--primary)
 .module-editor > label:nth-child(5) { grid-column: span 4; }
 .module-editor > label:nth-child(6) { grid-column: span 2; }
 .module-editor .module-description { min-width: 0; grid-column: span 6; }
-.module-editor > .checkbox { grid-column: span 3; min-height: 2.8rem; align-self: end; padding: .7rem .8rem; border: 1px solid var(--line); border-radius: .65rem; background: var(--surface-2); }
+.module-editor > .checkbox { grid-column: span 3; min-height: 2.35rem; align-self: end; padding: .48rem .62rem; border: 1px solid var(--line); border-radius: .55rem; background: var(--surface-2); }
 .module-editor > .module-editor-actions { grid-column: span 3; display: flex; align-items: stretch; justify-content: flex-end; gap: .45rem; }
 .module-editor-actions > .button { min-width: 0; flex: 1 1 auto; }
 .module-editor-actions > .button.danger { flex: 0 0 auto; }
+
+@container module-builder (max-width: 56rem) {
+  .module-editor { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: end; }
+  .module-editor > label:nth-child(-n + 6) { grid-column: auto; }
+  .module-editor .module-description,
+  .module-editor > .module-editor-actions { grid-column: 1 / -1; }
+  .module-editor > .checkbox { grid-column: auto; }
+  .module-editor-actions { flex-wrap: wrap; }
+  .module-editor-actions > .button { flex: 0 1 auto; white-space: nowrap; }
+  .module-editor-actions > .button.primary { margin-left: auto; }
+}
+
+@container module-builder (max-width: 34rem) {
+  .module-editor { grid-template-columns: minmax(0, 1fr); }
+  .module-editor > * { grid-column: 1 / -1 !important; }
+  .module-editor-actions > .button { flex: 1 1 auto; }
+  .module-editor-actions > .button.primary { margin-left: 0; }
+}
 .module-section-panel { border-top: 3px solid color-mix(in srgb, var(--primary) 40%, var(--line)); }
 .module-local-heading { display: grid; gap: .14rem; margin-bottom: .75rem; padding-bottom: .65rem; border-bottom: 1px solid var(--line); }
 .module-local-heading > span { color: var(--primary-text); font-size: calc(.58rem * var(--font-scale)); font-weight: 850; letter-spacing: .07em; text-transform: uppercase; }
@@ -1537,14 +1556,24 @@ input[type="checkbox"], input[type="radio"] {
 
 /* Preview headers must remain usable with long filenames and narrow screens. */
 .preview-dialog > .dialog-head { min-width: 0; align-items: flex-start; padding-bottom: .75rem; }
+.preview-dialog { container: preview-dialog / inline-size; }
 .preview-heading,
 .preview-dialog > .dialog-head > div:first-child { min-width: 0; flex: 1 1 auto; }
 .preview-dialog > .dialog-head h2 { margin-bottom: .2rem; line-height: 1.2; overflow-wrap: anywhere; word-break: break-word; }
 .preview-dialog .preview-meta { max-width: 100%; overflow-wrap: anywhere; word-break: break-word; }
 .preview-actions,
 .preview-dialog > .dialog-head > .inline-actions:not(.preview-file-actions) { flex: none; justify-content: flex-end; }
-.preview-dialog > .preview-head { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; }
+.preview-dialog > .preview-head { display: grid; grid-template-columns: minmax(12rem, 1fr) auto auto auto; align-items: center; }
+.preview-view-controls,
+.preview-file-actions { min-width: 0; }
 .preview-file-actions { align-self: start; }
+
+@container preview-dialog (max-width: 50rem) {
+  .preview-dialog > .preview-head { grid-template-columns: minmax(0, 1fr) auto; }
+  .preview-head > .preview-close { grid-column: 2; grid-row: 1; }
+  .preview-view-controls { grid-column: 1; grid-row: 2; justify-self: start; }
+  .preview-file-actions { grid-column: 2; grid-row: 2; }
+}
 
 /* Shared MX confirmation dialog replaces browser-owned alert boxes. */
 .confirmation-overlay { z-index: 180; }
@@ -1575,7 +1604,8 @@ input[type="checkbox"], input[type="radio"] {
   .preview-dialog > .dialog-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .55rem; }
   .preview-dialog > .dialog-head h2 { font-size: calc(.92rem * var(--font-scale)); }
   .preview-dialog > .preview-head { grid-template-columns: minmax(0, 1fr) auto; }
-  .preview-file-actions { grid-column: 1 / -1; grid-row: 2; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); width: 100%; }
+  .preview-view-controls { grid-column: 1 / -1; grid-row: 2; justify-self: start; max-width: 100%; overflow-x: auto; }
+  .preview-file-actions { grid-column: 1 / -1; grid-row: 3; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); width: 100%; }
   .preview-file-actions .button { min-width: 0; white-space: normal; line-height: 1.2; }
   .preview-head > .preview-close { grid-column: 2; grid-row: 1; }
   .preview-actions,
@@ -1866,7 +1896,7 @@ input[type="checkbox"], input[type="radio"] {
 .details-files > div { max-height: 23rem; overflow: auto; }
 .details-load-more { width: 100%; margin-top: .45rem; }
 .manage-space-backdrop { z-index: 110; }
-.manage-space-dialog { width: min(100%, 46rem); max-height: calc(100dvh - 2rem); display: flex; flex-direction: column; overflow: visible; padding: 0; }
+.manage-space-dialog { width: min(100%, 46rem); max-height: calc(100dvh - 2rem); display: flex; flex-direction: column; overflow: auto; padding: 0; }
 .manage-space-dialog > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; padding: .9rem 1rem .75rem; border-bottom: 1px solid var(--line); }
 .manage-space-dialog > header > div { min-width: 0; }
 .manage-space-dialog > header .eyebrow { margin-bottom: .2rem; font-size: calc(.55rem * var(--font-scale)); }
@@ -1910,7 +1940,7 @@ input[type="checkbox"], input[type="radio"] {
 .manage-person-trigger > svg { flex: none; color: var(--muted); }
 .manage-person-trigger .message-avatar { width: 1.55rem; height: 1.55rem; flex: none; font-size: calc(.46rem * var(--font-scale)); }
 .picker-placeholder { overflow: hidden; color: var(--muted); font-size: calc(.64rem * var(--font-scale)); text-overflow: ellipsis; white-space: nowrap; }
-.manage-person-options { position: absolute; z-index: 8; top: calc(100% + .3rem); right: 0; left: 0; max-height: 12rem; overflow-y: auto; padding: .25rem; border: 1px solid var(--line); border-radius: .5rem; background: var(--surface-raised); box-shadow: var(--shadow-popover); }
+.manage-person-options { position: static; z-index: 8; max-height: 12rem; margin-top: .3rem; overflow-y: auto; padding: .25rem; border: 1px solid var(--line); border-radius: .5rem; background: var(--surface-raised); box-shadow: var(--shadow-popover); }
 .manage-person-options > button { width: 100%; min-height: 2.35rem; display: grid; grid-template-columns: 1.65rem minmax(0, 1fr) 1rem; align-items: center; gap: .45rem; padding: .3rem .4rem; border: 0; border-radius: .38rem; background: transparent; color: var(--text); font-size: calc(.64rem * var(--font-scale)); text-align: left; }
 .manage-person-options > button:hover, .manage-person-options > button.selected { background: var(--surface-2); }
 .manage-person-options .message-avatar { width: 1.55rem; height: 1.55rem; font-size: calc(.46rem * var(--font-scale)); }

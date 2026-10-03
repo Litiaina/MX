@@ -21,7 +21,7 @@ use uuid::Uuid;
 
 use crate::{
     api::mx::handler::{
-        n1_access_token, n1_download, n1_ensure_directory, n1_soft_delete, n1_upload_one_shot,
+        n1_access_token, n1_download, n1_ensure_directory, n1_soft_delete, n1_upload,
     },
     db::connector::{SqliteDatabaseError, with_sql_connection},
     middleware::auth::Claims,
@@ -515,9 +515,7 @@ pub async fn create_backup(claims: Claims) -> Response {
         return backup_error(StatusCode::BAD_GATEWAY, error);
     }
 
-    if let Err(error) =
-        n1_upload_one_shot(&object_key, "application/vnd.sqlite3", bytes, &token).await
-    {
+    if let Err(error) = n1_upload(&object_key, "application/vnd.sqlite3", bytes, &token).await {
         let _ = fs::remove_file(&temp_path);
 
         crate::report_error!(format!("{error:?}"), "backup", "create_backup()");

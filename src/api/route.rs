@@ -22,7 +22,8 @@ use crate::api::lifecycle::{
     restore_module_record_version, restore_trashed_record,
 };
 use crate::api::mx::handler::{
-    delete_mx_attachment, download_mx_attachment, preview_mx_attachment, upload_mx_attachment_field,
+    delete_mx_attachment, download_mx_attachment, issue_mx_attachment_preview_ticket,
+    preview_mx_attachment, stream_mx_attachment, upload_mx_attachment_field,
 };
 use crate::api::mx::records::{
     create_module_record, create_mx_record, get_module_record, get_mx_record, list_module_records,
@@ -43,10 +44,11 @@ use crate::api::audit::{audit_request, get_audit_log};
 use crate::api::backup::{create_backup, download_backup, list_backups, verify_backup};
 use crate::api::collaboration::{
     add_channel_member, create_channel, create_direct_channel, delete_message,
-    download_message_file, edit_message, list_channel_files, list_channel_members, list_channels,
-    list_collaboration_people, list_messages, mark_channel_read, pin_message, preview_message_file,
-    remove_channel_member, search_channel, send_message, toggle_message_reaction, unpin_message,
-    update_channel, upload_message_file,
+    download_message_file, edit_message, issue_message_file_preview_ticket, list_channel_files,
+    list_channel_members, list_channels, list_collaboration_people, list_messages,
+    mark_channel_read, pin_message, preview_message_file, remove_channel_member, search_channel,
+    send_message, stream_message_file, toggle_message_reaction, unpin_message, update_channel,
+    upload_message_file,
 };
 use crate::api::dashboard::get_records_revision;
 use crate::api::deployment::{
@@ -92,6 +94,11 @@ fn public_routes() -> Router {
         .route("/mx/v1/auth/refresh", post(refresh_access_token))
         .route("/mx/v1/deployment/config", get(get_deployment_config))
         .route("/mx/v1/deployment/logo", get(get_deployment_logo))
+        .route(
+            "/mx/v1/collaboration/media/{ticket}",
+            get(stream_message_file),
+        )
+        .route("/mx/v1/records/media/{ticket}", get(stream_mx_attachment))
         .route("/mx/v1/live", any(live_socket))
 }
 
@@ -246,6 +253,10 @@ fn user_routes() -> Router {
             "/mx/v1/collaboration/files/{uid}/preview",
             get(preview_message_file),
         )
+        .route(
+            "/mx/v1/collaboration/files/{uid}/preview-ticket",
+            post(issue_message_file_preview_ticket),
+        )
         .route("/mx/v1/account/profile", patch(update_profile))
         .route(
             "/mx/v1/account/profile-photo",
@@ -359,6 +370,10 @@ fn mx_routes() -> Router {
         .route(
             "/mx/v1/records/{record_uid}/attachments/{attachment_uid}/preview",
             get(preview_mx_attachment),
+        )
+        .route(
+            "/mx/v1/records/{record_uid}/attachments/{attachment_uid}/preview-ticket",
+            post(issue_mx_attachment_preview_ticket),
         )
         .route(
             "/mx/v1/records/{record_uid}/attachments/{attachment_uid}/download",

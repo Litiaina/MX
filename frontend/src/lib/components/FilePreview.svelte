@@ -1,13 +1,19 @@
 <script lang="ts">
   import { onDestroy, onMount, tick } from 'svelte';
+  import ChevronLeft from '@lucide/svelte/icons/chevron-left';
+  import ChevronRight from '@lucide/svelte/icons/chevron-right';
+  import FileText from '@lucide/svelte/icons/file-text';
   import Maximize2 from '@lucide/svelte/icons/maximize-2';
   import Minus from '@lucide/svelte/icons/minus';
   import Plus from '@lucide/svelte/icons/plus';
   import X from '@lucide/svelte/icons/x';
 
-  let { fileName, load, onClose }: {
+  let { fileName, load, navigationItems = [], activeIndex = 0, onNavigate = (_index: number) => undefined, onClose }: {
     fileName: string;
-    load: () => Promise<{ blob: Blob; fileName: string; mimeType: string }>;
+    load: () => Promise<{ blob?: Blob; url?: string; fileName: string; mimeType: string }>;
+    navigationItems?: { key: string; name: string; detail?: string }[];
+    activeIndex?: number;
+    onNavigate?: (index: number) => void;
     onClose: () => void;
   } = $props();
 
@@ -35,6 +41,7 @@
   const imageZoomLabel = $derived(`${Math.round(imageZoom * 100)}%`);
   const pdfZoomLabel = $derived(pdfZoom === 'page-width' ? 'Fit width' : `${pdfZoom}%`);
   const pdfSource = $derived(previewUrl ? `${previewUrl}#toolbar=1&navpanes=0&zoom=${pdfZoom}` : '');
+  const hasNavigation = $derived(navigationItems.length > 1);
 
   onMount(() => {
     previewName = fileName;
@@ -42,6 +49,16 @@
     void loadPreview();
     const keydown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') { event.preventDefault(); onClose(); return; }
+      if (hasNavigation && event.key === 'ArrowLeft' && !event.ctrlKey && !event.metaKey && !event.altKey) {
+        event.preventDefault();
+        navigate(activeIndex - 1);
+        return;
+      }
+      if (hasNavigation && event.key === 'ArrowRight' && !event.ctrlKey && !event.metaKey && !event.altKey) {
+        event.preventDefault();
+        navigate(activeIndex + 1);
+        return;
+      }
       if (stage !== 'ready' || event.ctrlKey || event.metaKey || event.altKey) return;
       if (event.key === '+' || event.key === '=') {
         event.preventDefault();
@@ -71,7 +88,8 @@
       window.removeEventListener('resize', resized);
     };
   });
-  onDestroy(() => { if (previewUrl) URL.revokeObjectURL(previewUrl); });
+  let ownsPreviewUrl = false;
+  onDestroy(() => { if (previewUrl && ownsPreviewUrl) URL.revokeObjectURL(previewUrl); });
 
   function previewType(mimeType: string, name: string): typeof previewKind {
     const type = mimeType.toLowerCase(); const lowerName = name.toLowerCase();
@@ -86,10 +104,24 @@
     try {
       const result = await load();
       previewName = result.fileName || fileName;
-      previewMime = result.mimeType || result.blob.type || 'application/octet-stream';
+      previewMime = result.mimeType || result.blob?.type || 'application/octet-stream';
       previewKind = previewType(previewMime, previewName);
-      previewUrl = URL.createObjectURL(result.blob);
-      if (previewKind === 'text') previewText = await result.blob.text();
+      if (result.url) {
+        previewUrl = result.url;
+        ownsPreviewUrl = false;
+      } else if (result.blob) {
+        previewUrl = URL.createObjectURL(result.blob);
+        ownsPreviewUrl = true;
+      } else {
+        throw new Error('MX did not return a preview resource.');
+      }
+      if (previewKind === 'text') {
+        const blob: Blob = result.blob ?? await fetch(previewUrl).then((response) => {
+          if (!response.ok) throw new Error('The text preview could not be loaded.');
+          return response.blob();
+        });
+        previewText = await blob.text();
+      }
       stage = 'ready';
     } catch (reason) {
       error = reason instanceof Error ? reason.message : 'Preview failed.';
@@ -158,15 +190,26 @@
   }
   function changePdfZoom(change: number) { pdfZoom = clamp(typeof pdfZoom === 'number' ? pdfZoom + change : 100 + change, 50, 300); }
   function changeTextZoom(change: number) { textZoom = clamp(Number((textZoom + change).toFixed(1)), .7, 2); }
+  function navigate(index: number) {
+    if (index < 0 || index >= navigationItems.length || index === activeIndex) return;
+    onNavigate(index);
+  }
 </script>
 
 <div class="overlay preview-overlay" role="presentation" onclick={(event) => event.target === event.currentTarget && onClose()}>
   <div class="dialog preview-dialog" role="dialog" aria-modal="true" aria-labelledby="collaboration-preview-title">
-    <header class="dialog-head preview-head">
+    <header class:has-navigation={hasNavigation} class="dialog-head preview-head">
       <div class="preview-heading">
         <h2 id="collaboration-preview-title">{fileName}</h2>
         <p class="muted preview-meta">{stage === 'loading' ? status : previewMime}{stage === 'ready' && previewName !== fileName ? ` · generated preview: ${previewName}` : ''}</p>
       </div>
+      {#if hasNavigation}
+        <div class="preview-navigation" role="toolbar" aria-label="Attachment navigation">
+          <button type="button" onclick={() => navigate(activeIndex - 1)} disabled={activeIndex <= 0} aria-label="Previous attachment" title="Previous attachment (Left arrow)"><ChevronLeft size={16} /></button>
+          <output aria-live="polite">{activeIndex + 1} of {navigationItems.length}</output>
+          <button type="button" onclick={() => navigate(activeIndex + 1)} disabled={activeIndex >= navigationItems.length - 1} aria-label="Next attachment" title="Next attachment (Right arrow)"><ChevronRight size={16} /></button>
+        </div>
+      {/if}
       {#if stage === 'ready' && (previewKind === 'image' || previewKind === 'pdf' || previewKind === 'text')}
         <div class="preview-view-controls" role="toolbar" aria-label={`${previewKind} preview controls`}>
           {#if previewKind === 'image'}
@@ -195,7 +238,14 @@
       {/if}
       <button class="icon-button preview-close" type="button" aria-label="Close preview" onclick={onClose}><X size={18} /></button>
     </header>
-    <div class:media-preview={stage === 'ready' && ['image', 'pdf', 'video'].includes(previewKind)} class:image-preview={previewKind === 'image'} class="preview-content">
+    <div class:with-navigator={hasNavigation} class="preview-workspace">
+      {#if hasNavigation}
+        <aside class="preview-navigator" aria-label="Record attachments">
+          <header><strong>Attachments</strong><span>{navigationItems.length}</span></header>
+          <div>{#each navigationItems as item, index (item.key)}<button class:active={index === activeIndex} type="button" aria-current={index === activeIndex ? 'true' : undefined} onclick={() => navigate(index)}><span><FileText size={15} /></span><span><strong>{item.name}</strong>{#if item.detail}<small>{item.detail}</small>{/if}</span><i>{index + 1}</i></button>{/each}</div>
+        </aside>
+      {/if}
+      <div class:media-preview={stage === 'ready' && ['image', 'pdf', 'video'].includes(previewKind)} class:image-preview={previewKind === 'image'} class="preview-content">
       {#if stage === 'loading'}<div class="ghost-document" aria-live="polite"><aside><i></i><i></i><i></i><i></i></aside><main><div class="ghost-page"><b></b><span></span><span></span><span></span><em></em><span></span><span></span></div><p><strong>{status}</strong><small>MX is preparing the shared file inside this preview. You can close it without interrupting the conversation.</small></p></main></div>
       {:else if stage === 'error'}<div class="preview-fallback"><h3>Preview unavailable</h3><p class="muted">{error}</p><button class="button" type="button" onclick={onClose}>Close</button></div>
       {:else if previewKind === 'image'}
@@ -212,6 +262,7 @@
       {:else if previewKind === 'audio'}<audio src={previewUrl} controls><track kind="captions" /></audio>
       {:else if previewKind === 'text'}<pre style={`font-size:${.76 * textZoom}rem`}>{previewText}</pre>
       {:else}<div class="preview-fallback"><h3>Browser preview unavailable</h3><p class="muted">This file type cannot be rendered safely in the browser. Use Download to open the original file with the appropriate application.</p></div>{/if}
+      </div>
     </div>
   </div>
 </div>

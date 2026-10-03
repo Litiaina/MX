@@ -18,7 +18,7 @@
 </div>
 
 <p align="center">
-  <strong>Current release: MX 2.1.0</strong>
+  <strong>Current release: MX 2.2.0</strong>
 </p>
 
 ---
@@ -122,7 +122,7 @@ assets in `frontend/dist` and served by the Rust process. It provides:
 - attachment preview
 - search and filtering
 - account management
-- personal theme, accent color, scale, density, refresh, and notification preferences
+- personal theme, accent color, exact font size, interface scale, density, refresh, and notification preferences
 - schema configuration
 - reporting and exports
 - real-time synchronization
@@ -172,7 +172,7 @@ The N1 object is authoritative for file content. Preview files are derived data 
 
 ## Real-Time Collaboration
 
-MX 2.1.0 includes authenticated real-time synchronization for multi-user deployments.
+MX 2.2.0 includes authenticated real-time synchronization for multi-user deployments.
 
 Connected browsers maintain a WebSocket session with the MX server. When records,
 attachments, schema configuration, dashboard configuration, deployment settings,
@@ -280,6 +280,7 @@ Text
 Long Text
 Integer
 Decimal
+Formula / Calculated
 Date
 Boolean
 Select
@@ -333,6 +334,12 @@ Each File Attachment field can define:
 - whether multiple files are allowed;
 - the maximum number of files;
 - whether the field is required.
+
+Large files are transferred to N1 in bounded multipart segments rather than as
+one oversized N1 part. Images receive record-level thumbnails, and the record
+viewer provides previous/next navigation across every attached file. Browser
+media previews use short-lived access tickets and forward HTTP byte ranges to
+N1 so video and audio can begin without downloading the complete object first.
 
 Because attachment fields are part of Record Structure, the same schema drives:
 
@@ -402,6 +409,37 @@ REQ-000001
 ```
 
 The browser does not allocate the authoritative sequence value.
+
+---
+
+## Formula Fields
+
+`Formula / Calculated` fields are server-computed numeric fields. A formula
+references the stable keys of other numeric fields and is recalculated whenever
+the record changes.
+
+For example, fields with keys `value` and `khw` can produce a `total` field:
+
+```text
+value * khw
+```
+
+Expressions support parentheses, the `+`, `-`, `*`, `/`, `%`, and `^`
+operators, the `pi` and `e` constants, and these functions:
+
+```text
+SUM       PRODUCT    AVERAGE / AVG
+MIN       MAX        ABS
+CEIL      FLOOR      SQRT
+LN        LOG10      EXP
+SIN       COS        TAN
+POWER     MOD        ROUND
+CLAMP
+```
+
+Formula fields are read-only in record forms and tables. The server validates
+the expression and field references, stores the calculated value, and includes
+it in search, sorting, reports, history, and exports.
 
 ---
 
@@ -1029,9 +1067,16 @@ DELETE /mx/v1/records/{record_uid}/attachments/{attachment_uid}
 
 GET /mx/v1/records/{record_uid}/attachments/{attachment_uid}/preview
 GET /mx/v1/records/{record_uid}/attachments/{attachment_uid}/download
+POST /mx/v1/records/{record_uid}/attachments/{attachment_uid}/preview-ticket
+
+GET /mx/v1/records/media/{short_lived_ticket}
 ```
 
-The upload route includes the File Attachment field UID so a record can contain multiple independent attachment fields.
+The upload route includes the File Attachment field UID so a record can contain
+multiple independent attachment fields. Preview tickets permit native browser
+media requests without exposing the user's session token; the media route
+streams N1 responses and preserves `Range`, `Content-Range`, `Accept-Ranges`,
+length, cache validator, and content metadata.
 
 ### Revision tracking
 
@@ -1050,16 +1095,33 @@ POST /mx/v1/collaboration/channels
 POST /mx/v1/collaboration/direct
 GET  /mx/v1/collaboration/channels/{channel_uid}/messages
 POST /mx/v1/collaboration/channels/{channel_uid}/messages
+GET  /mx/v1/collaboration/channels/{channel_uid}/members
+POST /mx/v1/collaboration/channels/{channel_uid}/members
+DELETE /mx/v1/collaboration/channels/{channel_uid}/members/{user_uid}
 PUT  /mx/v1/collaboration/messages/{message_uid}
 DELETE /mx/v1/collaboration/messages/{message_uid}
+PUT  /mx/v1/collaboration/messages/{message_uid}/pin
+DELETE /mx/v1/collaboration/messages/{message_uid}/pin
 POST /mx/v1/collaboration/messages/{message_uid}/files
+POST /mx/v1/collaboration/files/{file_uid}/preview-ticket
+GET  /mx/v1/collaboration/media/{short_lived_ticket}
 
 GET  /mx/v1/notifications
 POST /mx/v1/notifications/read-all
 POST /mx/v1/notifications/{uid}/read
 ```
 
-Messages, mentions, record links, channel membership, unread state, shared-file metadata, and notifications are durable SQLite state. Messages use administrator-sized cursor pages (256 by default) and older history loads automatically as the conversation scrolls upward. Edits are marked, while deletion keeps an immutable database row and exposes only a non-editable tombstone. Shared image files render authenticated in-conversation thumbnails with ghost loading; shared bytes remain in N1. Scoped WebSocket events provide immediate delivery without exposing one user's private events to other sockets.
+Messages, mentions, pins, record links, channel membership, unread state,
+shared-file metadata, and notifications are durable SQLite state. Adding,
+removing, or leaving a group produces a visible system event. Messages use
+administrator-sized cursor pages (256 by default), and older history loads
+automatically as the conversation scrolls upward. Enter sends a message while
+Shift+Enter inserts a new line. Edits are marked, while deletion keeps an
+immutable database row and exposes only a non-editable tombstone. Shared image
+files render authenticated in-conversation thumbnails with ghost loading;
+shared bytes remain in N1 and media previews support HTTP byte ranges. Scoped
+WebSocket events provide immediate delivery without exposing one user's private
+events to other sockets.
 
 ### Real-time synchronization and presence
 
@@ -1120,7 +1182,14 @@ fragment=<MX_FRAGMENT_HASH>
 insecure_tls=true
 attachment_max_size_mb=50
 collaboration_file_max_size_mb=100
+multipart_part_size_mb=16
 ```
+
+`attachment_max_size_mb` and `collaboration_file_max_size_mb` set the accepted
+file limits. `multipart_part_size_mb` controls each part sent from MX to N1 and
+must be between 5 and 100 MiB; it defaults to 16 MiB when omitted. The N1 server
+must allow a part at least this large. Increasing an upload limit does not
+require sending the complete object as one N1 part.
 
 N1 secret:
 
@@ -1140,8 +1209,8 @@ MX previews supported files directly where possible.
 Images       -> browser image viewer
 PDF          -> embedded PDF viewer
 Text         -> text viewer
-Audio        -> browser audio player
-Video        -> browser video player
+Audio        -> range-streamed browser audio player
+Video        -> range-streamed browser video player
 Office       -> LibreOffice -> PDF preview
 Other files  -> download
 ```
@@ -1234,6 +1303,7 @@ Run the production binary:
 
 ```text
 mx/
+├── CHANGELOG.md
 ├── Cargo.toml
 ├── mx.config
 ├── mx.env
@@ -1249,6 +1319,7 @@ mx/
     │   ├── admin/
     │   ├── mx/
     │   │   ├── attachment_fields.rs
+    │   │   ├── formula.rs
     │   │   ├── handler.rs
     │   │   ├── migration.rs
     │   │   ├── model.rs
@@ -1363,52 +1434,47 @@ MX follows these principles:
 ---
 
 
-## MX 2.1.0
+## MX 2.2.0
 
-MX 2.1 is the second-generation stable release of the MX general-purpose
-information-system platform.
+MX 2.2 advances the second-generation MX platform with calculated data,
+high-volume media handling, and faster record operations.
 
-The 2.1 line establishes the current platform contract around:
+The 2.2 release includes:
 
 ```text
-dynamic Record Structure
-independent configurable modules
-module-specific permissions and N1 layouts
-File Attachment fields
-configurable N1 storage layout
-Universal and Advanced Search
-server-side pagination and filtering
-custom dashboard/statistics builder
-CSV reporting and exports
-deployment Appearance & Identity
-role-based access
-per-user appearance and notification overrides
-durable notifications and scoped WebSocket delivery
-built-in channels, direct messages, groups, record links, and N1 file sharing
-record version history and recoverable Trash
-uploaded N1 deployment branding
-audit logging
-verified SQLite backups to N1
-real-time WebSocket synchronization
-online/offline account presence
-parallel field-level collaboration
-responsive light/dark interface
+Formula / Calculated record fields with server-side evaluation
+inline table editing for every editable field type
+deliberate view and edit modes in the record dialog
+attachment thumbnails and keyboard-accessible file navigation
+short-lived preview tickets and N1 byte-range streaming
+configurable multipart N1 uploads for large objects
+Enter-to-send collaboration messaging and durable membership events
+record and attachment notification routing with duplicate suppression
+immediate audit lifecycle repair for accurate actor performance reporting
+non-destructive live table refreshes that retain the current scroll position
+exact 10-24 px per-user font sizing independent of interface scale
+responsive record, preview, notification, and administration layouts
 ```
+
+Existing SQLite databases are upgraded in place by MX. Existing deployments may
+omit `multipart_part_size_mb` to use the 16 MiB default, but MX must be restarted
+after the new binary and frontend bundle are deployed so the 2.2 routes and
+schema migrations are active.
 
 Cargo package version:
 
 ```text
-2.1.0
+2.2.0
 ```
 
 Product/release name:
 
 ```text
-MX 2.1.0
+MX 2.2.0
 ```
 
-Future additions can evolve the platform without redefining the 2.1.0 identity:
-MX remains a schema-driven, self-hosted general-purpose information system.
+See [CHANGELOG.md](CHANGELOG.md) for the complete release notes. MX remains a
+schema-driven, self-hosted general-purpose information system.
 
 ---
 

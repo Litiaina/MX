@@ -5,7 +5,7 @@ export interface AppearanceScale {
 
 export function appearanceScale(interfacePercent: number, fontPercent: number): AppearanceScale {
   const interfaceRatio = Math.min(1.6, Math.max(.85, Number(interfacePercent) / 100 || 1));
-  const fontRatio = Math.min(1.5, Math.max(.85, Number(fontPercent) / 100 || 1));
+  const fontRatio = Math.min(1.5, Math.max(.625, Number(fontPercent) / 100 || 1));
 
   return {
     interfaceRatio,
