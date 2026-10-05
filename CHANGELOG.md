@@ -86,6 +86,9 @@ deployment maintainer's local date.
 - Remote microphone playback now uses a dedicated audio path, so rebinding a
   camera or screen-share view cannot interrupt voice audio. Unmuting a remote
   track also retries playback without rebuilding the peer connection.
+- Record tables now expose a persistent **Edit** action on every writable row;
+  users no longer need to open view mode or find an edit command in an overflow
+  menu. Destructive actions remain separated behind the row menu.
 - The call panel can now be dragged and safely clamped inside the viewport when
   it is not expanded.
 - Notification clicks now open the requested record even when it is already in

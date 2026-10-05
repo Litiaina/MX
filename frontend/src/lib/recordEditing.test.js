@@ -13,6 +13,13 @@ describe('stateless record editing', () => {
     expect(records).not.toContain('maintainEditLease');
   });
 
+  it('provides a visible row-level edit action without opening view mode first', () => {
+    expect(records).toContain('class="button record-primary-action"');
+    expect(records).toContain("openRecord(row, false, canUpdate)");
+    expect(records).toContain("<span>Edit</span>");
+    expect(records).toContain('<th class="record-actions-column">Actions</th>');
+  });
+
   it('submits only changed fields and supports field-level conflict decisions', () => {
     expect(editor).toContain('patchRecord(current.uid, changes, workingRevision');
     expect(editor).toContain('function useLatest(conflict: FieldConflict)');

@@ -607,16 +607,18 @@
     .records-table .long-text-cell-editor { min-width: 0; }
   }
 
-  /* A compact contextual menu replaces two permanent buttons in every row. */
+  /* Editing is always visible; destructive actions remain in a compact menu. */
   .records-table .record-actions-column {
-    width: 3.25rem;
-    min-width: 3.25rem;
-    max-width: 3.25rem;
+    width: 7.25rem;
+    min-width: 7.25rem;
+    max-width: 7.25rem;
     overflow: visible;
   }
   .records-table tbody tr { overflow: visible; }
   .records-table .record-actions-column:has(.record-actions-trigger[aria-expanded='true']) { z-index: 30; }
-  .record-row-actions { position: relative; }
+  .record-row-actions { position: relative; gap: .22rem; }
+  .records-table .record-primary-action { min-height: 1.9rem; display: inline-flex; align-items: center; justify-content: center; gap: .3rem; padding: .25rem .45rem; }
+  .records-table .record-primary-action > span { font-size: calc(.64rem * var(--font-scale)); font-weight: 720; }
   .record-actions-trigger {
     width: 1.9rem;
     height: 1.9rem;
@@ -661,7 +663,7 @@
   .record-row-menu button:hover:not(:disabled) { background: var(--surface-2); color: var(--text); }
   .record-row-menu button.danger-text:hover:not(:disabled) { background: var(--danger-surface); color: var(--danger) !important; }
   @media (min-width: 821px) {
-    .records-table tbody tr:nth-last-child(-n + 2) .record-row-menu { top: auto; bottom: calc(100% + .25rem); }
+    .records-table tbody tr:nth-last-child(-n + 2):not(:first-child) .record-row-menu { top: auto; bottom: calc(100% + .25rem); }
   }
 
   /* Conversation density is controlled with geometry, never smaller type. */
