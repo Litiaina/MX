@@ -17,8 +17,8 @@
   import FilePreview from './FilePreview.svelte';
   import RecordAttachmentThumbnail from './RecordAttachmentThumbnail.svelte';
 
-  let { schema, moduleUid = '', record, canWrite, canDelete, allowEdit = false, liveMessage = null, focusAttachments = false, recordLabel = 'Record', onEdit = () => undefined, onClose, onSaved }:
-    { schema: SchemaResponse; moduleUid?: string; record: MxRecord | null; canWrite: boolean; canDelete: boolean; allowEdit?: boolean; liveMessage?: LiveMessage | null; focusAttachments?: boolean; recordLabel?: string; onEdit?: () => void; onClose: () => void; onSaved: () => Promise<void> } = $props();
+  let { schema, moduleUid = '', record, canWrite, canDelete, canAttachments = true, allowEdit = false, liveMessage = null, focusAttachments = false, recordLabel = 'Record', onEdit = () => undefined, onClose, onSaved }:
+    { schema: SchemaResponse; moduleUid?: string; record: MxRecord | null; canWrite: boolean; canDelete: boolean; canAttachments?: boolean; allowEdit?: boolean; liveMessage?: LiveMessage | null; focusAttachments?: boolean; recordLabel?: string; onEdit?: () => void; onClose: () => void; onSaved: () => Promise<void> } = $props();
 
   type PreviewEntry = { key: string; name: string; mimeType: string; detail: string; storedUid?: string; pendingFile?: File };
 
@@ -38,6 +38,7 @@
   let uploadLabel = $state('');
   let fileProgress = $state<Record<string, { percent: number; label: string }>>({});
   let dragAttachmentField = $state('');
+  let workingRevision = $state(1);
   let historyOpen = $state(false);
   let historyLoading = $state(false);
   let historyError = $state('');
@@ -68,11 +69,19 @@
     }
     const initial = cloneJson(base);
     let restoredDraft = false;
+    let restoredRevision = record?.revision || 1;
     try {
-      const saved = canWrite ? JSON.parse(sessionStorage.getItem(draftStorageKey()) || 'null') as { values?: Record<string, JsonValue> } | null : null;
+      const saved = canWrite ? JSON.parse(sessionStorage.getItem(draftStorageKey()) || 'null') as { values?: Record<string, JsonValue>; original?: Record<string, JsonValue>; base_revision?: number } | null : null;
       if (saved?.values && typeof saved.values === 'object') {
         const editable = new Set(schema.fields.filter((field) => field.active && !['attachments', 'auto_number', 'formula'].includes(field.field_type)).map((field) => field.key));
-        for (const [key, value] of Object.entries(saved.values)) if (editable.has(key)) initial[key] = value;
+        for (const [key, value] of Object.entries(saved.values)) {
+          if (!editable.has(key)) continue;
+          const savedOriginal = saved.original?.[key] ?? null;
+          if (JSON.stringify(value ?? null) === JSON.stringify(savedOriginal)) continue;
+          initial[key] = value;
+          base[key] = cloneJson(savedOriginal);
+        }
+        restoredRevision = Number(saved.base_revision) > 0 && Number(saved.base_revision) <= restoredRevision ? Number(saved.base_revision) : 1;
         restoredDraft = JSON.stringify(initial) !== JSON.stringify(base);
       }
     } catch { /* A malformed or unavailable session store should not block the editor. */ }
@@ -80,6 +89,7 @@
     original = cloneJson(base);
     pending = {};
     persisted = null;
+    workingRevision = restoredRevision;
     conflicts = [];
     liveNotice = restoredDraft ? 'Your unsaved entries from this tab were restored.' : '';
     deletedRemotely = false;
@@ -97,12 +107,13 @@
 
   $effect(() => {
     const message = liveMessage;
-    if (!message || !current || !message.sequence || message.sequence <= handledSequence || busy) return;
+    if (!message || !message.sequence || message.sequence <= handledSequence) return;
+    if (!current || busy) return;
     handledSequence = message.sequence;
     void applyLiveMessage(message);
   });
 
-  const fields = $derived(schema.fields.filter((field) => field.active).sort((a, b) => a.position - b.position));
+  const fields = $derived(schema.fields.filter((field) => field.active && (canAttachments || field.field_type !== 'attachments')).sort((a, b) => a.position - b.position));
   const unassignedFiles = $derived(current?.attached_files.filter((file) => !file.attachment_field_uid) || []);
 
   function fieldValue(field: FieldDefinition): string | number | boolean {
@@ -145,7 +156,7 @@
     if (!canWrite) return;
     const changed = schema.fields.some((field) => !['attachments', 'auto_number', 'formula'].includes(field.field_type) && JSON.stringify(values[field.key] ?? null) !== JSON.stringify(original[field.key] ?? null));
     try {
-      if (changed) sessionStorage.setItem(draftStorageKey(), JSON.stringify({ values: cloneJson(values), saved_at: Date.now() }));
+      if (changed) sessionStorage.setItem(draftStorageKey(), JSON.stringify({ values: cloneJson(values), original: cloneJson(original), base_revision: workingRevision, saved_at: Date.now() }));
       else sessionStorage.removeItem(draftStorageKey());
     } catch { /* The editor continues even when private browsing blocks storage. */ }
   }
@@ -173,12 +184,6 @@
 
   function isDirty(key: string) { return JSON.stringify(values[key] ?? null) !== JSON.stringify(original[key] ?? null); }
   function upsertConflict(conflict: FieldConflict) { conflicts = [...conflicts.filter((item) => item.field_key !== conflict.field_key), conflict]; }
-  function updateCurrentRevision(key: string, revision: number) {
-    if (!current) return;
-    const next = cloneJson(persisted || current);
-    next.field_revisions[key] = revision;
-    persisted = next;
-  }
   async function applyLiveMessage(message: LiveMessage) {
     if (!current) return;
     if (message.type === 'sync.required') { await refreshOpenRecord('This record was resynchronized after the live connection recovered.'); return; }
@@ -192,15 +197,13 @@
     }
     if (message.type !== 'record.fields.updated') { if (message.type === 'record.updated') await refreshOpenRecord('This record was refreshed after another user updated it.'); return; }
     const changes = payload.changes && typeof payload.changes === 'object' ? payload.changes as Record<string, JsonValue> : {};
-    const revisions = payload.field_revisions && typeof payload.field_revisions === 'object' ? payload.field_revisions as Record<string, number> : {};
+    const hasDirtyFields = fields.some((field) => isDirty(field.key));
     for (const [key, latestValue] of Object.entries(changes)) {
-      const field = fields.find((item) => item.key === key);
-      if (!field) continue;
-      const latestRevision = Number(revisions[key] || current.field_revisions[key] || 0);
-      if (isDirty(key)) upsertConflict({ field_uid: field.uid, field_key: key, label: field.label, base_revision: current.field_revisions[key] || 0, current_revision: latestRevision, current_value: latestValue, your_value: values[key] ?? null });
-      else { values[key] = latestValue; original[key] = cloneJson(latestValue); updateCurrentRevision(key, latestRevision); }
+      if (!isDirty(key)) { values[key] = latestValue; original[key] = cloneJson(latestValue); }
     }
-    liveNotice = conflicts.length ? 'Another user changed fields you are editing. Choose which values to keep.' : 'This open record was updated with the latest saved values.';
+    const nextRevision = Number(payload.record_revision || 0);
+    if (!hasDirtyFields && nextRevision > 0) workingRevision = nextRevision;
+    liveNotice = hasDirtyFields ? 'Another user saved this record. Your unsaved input is preserved and will be merged safely when you save.' : 'This open record was updated with the latest saved values.';
   }
 
   async function refreshOpenRecord(message: string) {
@@ -210,28 +213,25 @@
       const latest = await getRecord(opened.uid, moduleUid || undefined);
       if (!current || current.uid !== opened.uid) return;
       const next = cloneJson(latest);
-      let conflictCount = 0;
+      let dirtyCount = 0;
       for (const field of fields.filter((item) => item.field_type !== 'attachments')) {
         const latestValue = latest.values[field.key] ?? null;
-        const latestRevision = latest.field_revisions[field.key] || 0;
-        const baseRevision = opened.field_revisions[field.key] || 0;
-        if (isDirty(field.key) && latestRevision !== baseRevision) {
-          upsertConflict({ field_uid: field.uid, field_key: field.key, label: field.label, base_revision: baseRevision, current_revision: latestRevision, current_value: latestValue, your_value: values[field.key] ?? null });
+        if (isDirty(field.key)) {
           next.values[field.key] = cloneJson(original[field.key] ?? null);
-          next.field_revisions[field.key] = baseRevision;
-          conflictCount += 1;
-        } else if (!isDirty(field.key)) {
+          dirtyCount += 1;
+        } else {
           values[field.key] = cloneJson(latestValue);
           original[field.key] = cloneJson(latestValue);
         }
       }
       persisted = next;
-      liveNotice = conflictCount ? `${conflictCount} field${conflictCount === 1 ? '' : 's'} changed elsewhere. Your unsaved input was preserved.` : message;
+      if (!dirtyCount) workingRevision = latest.revision;
+      liveNotice = dirtyCount ? `Saved data changed elsewhere. Your ${dirtyCount} unsaved field${dirtyCount === 1 ? '' : 's'} remain local and will be checked when you save.` : message;
     } catch { liveNotice = 'Live data changed, but this open record could not be refreshed yet. Saving will still check for conflicts.'; }
   }
 
-  function useLatest(conflict: FieldConflict) { values[conflict.field_key] = cloneJson(conflict.current_value); original[conflict.field_key] = cloneJson(conflict.current_value); updateCurrentRevision(conflict.field_key, conflict.current_revision); conflicts = conflicts.filter((item) => item.field_key !== conflict.field_key); }
-  function keepMine(conflict: FieldConflict) { updateCurrentRevision(conflict.field_key, conflict.current_revision); conflicts = conflicts.filter((item) => item.field_key !== conflict.field_key); liveNotice = 'Your value is ready to save over the latest revision.'; }
+  function useLatest(conflict: FieldConflict) { values[conflict.field_key] = cloneJson(conflict.current_value); original[conflict.field_key] = cloneJson(conflict.current_value); conflicts = conflicts.filter((item) => item.field_key !== conflict.field_key); if (!conflicts.length) error = ''; }
+  function keepMine(conflict: FieldConflict) { conflicts = conflicts.filter((item) => item.field_key !== conflict.field_key); if (!conflicts.length) error = ''; liveNotice = 'Your value is ready to save over the latest stored revision.'; }
   function queueFiles(field: FieldDefinition, list: FileList | File[]) {
     const queued = [...(pending[field.uid] || [])];
     const storedCount = filesFor(field).length;
@@ -271,23 +271,22 @@
       let saved: MxRecord;
       if (current) {
         const changes: Record<string, JsonValue> = {};
-        const base: Record<string, number> = {};
         for (const field of fields) {
           if (['attachments', 'auto_number', 'formula'].includes(field.field_type)) continue;
           if (JSON.stringify(values[field.key] ?? null) !== JSON.stringify(original[field.key] ?? null)) {
             changes[field.key] = values[field.key] ?? null;
-            base[field.key] = current.field_revisions[field.key] || 0;
           }
         }
         const hasPendingAttachments = fields.some((field) => field.field_type === 'attachments' && (pending[field.uid]?.length || 0) > 0);
         if (!Object.keys(changes).length && !hasPendingAttachments) { liveNotice = 'There are no changes to save.'; return; }
-        saved = Object.keys(changes).length ? await patchRecord(current.uid, changes, base, moduleUid || undefined) : cloneJson(current);
+        saved = Object.keys(changes).length ? await patchRecord(current.uid, changes, workingRevision, moduleUid || undefined) : cloneJson(current);
       } else {
         const payload: Record<string, JsonValue> = {};
         for (const field of fields) if (!['attachments', 'auto_number', 'formula'].includes(field.field_type)) payload[field.key] = values[field.key] ?? null;
         saved = await createRecord(payload, moduleUid || undefined);
       }
       persisted = saved;
+      workingRevision = saved.revision;
       original = cloneJson(saved.values);
       const uploadFields = fields.filter((item) => item.field_type === 'attachments' && pending[item.uid]?.length);
       const uploadBytes = uploadFields.reduce((sum, field) => sum + pending[field.uid].reduce((fieldSum, file) => fieldSum + file.size, 0), 0);
@@ -298,12 +297,13 @@
           uploadLabel = `Uploading ${file.name}…`;
           fileProgress[key] = { percent: 0, label: `Uploading to ${field.label}…` };
           try {
-            await uploadAttachments(saved.uid, field.uid, [file], (loaded, total) => {
+            const uploaded = await uploadAttachments(saved.uid, field.uid, [file], workingRevision, (loaded, total) => {
               const ratio = total > 0 ? Math.min(1, loaded / total) : 0;
               const percent = Math.round(ratio * 100);
               fileProgress[key] = { percent, label: percent >= 100 ? 'Processing…' : `Uploading · ${percent}%` };
               uploadProgress = uploadBytes ? Math.round((completedBytes + file.size * ratio) / uploadBytes * 100) : 100;
             });
+            if (uploaded.record_revision > 0) workingRevision = uploaded.record_revision;
           } catch (reason) {
             fileProgress[key] = { percent: fileProgress[key]?.percent || 0, label: 'Upload failed — save again to retry' };
             throw reason;
@@ -320,8 +320,9 @@
     } catch (reason) {
       error = reason instanceof Error ? reason.message : 'The record could not be saved.';
       if (reason instanceof ApiError && reason.status === 409 && reason.payload && typeof reason.payload === 'object') {
-        const payload = reason.payload as { conflicts?: FieldConflict[] };
+        const payload = reason.payload as { conflicts?: FieldConflict[]; current_record_revision?: number };
         if (Array.isArray(payload.conflicts)) conflicts = payload.conflicts;
+        if (Number(payload.current_record_revision) > 0) workingRevision = Number(payload.current_record_revision);
       }
       if (persisted) {
         try { persisted = await getRecord(persisted.uid, moduleUid || undefined); } catch { /* The save error remains authoritative. */ }
@@ -402,7 +403,7 @@
       confirmLabel: 'Delete attachment'
     })) return;
     busy = true;
-    try { await deleteAttachment(current.uid, uid); persisted = await getRecord(current.uid, moduleUid || undefined); await onSaved(); }
+    try { const result = await deleteAttachment(current.uid, uid, workingRevision); workingRevision = result.record_revision; persisted = await getRecord(current.uid, moduleUid || undefined); await onSaved(); }
     catch (reason) { error = reason instanceof Error ? reason.message : 'Delete failed.'; }
     finally { busy = false; }
   }

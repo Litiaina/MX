@@ -1,5 +1,8 @@
 use crate::{
-    config::load_config::CONFIG, db::connector::with_sql_connection, util::password::hash_password,
+    api::{modules::ensure_module_schema, mx::records::ensure_record_collaboration_schema},
+    config::load_config::CONFIG,
+    db::connector::with_sql_connection,
+    util::password::hash_password,
 };
 
 pub async fn initialize_sql_db() {
@@ -221,6 +224,14 @@ pub async fn initialize_sql_db() {
                     );
                 "#,
             )?;
+
+            // Run account/module access migration before the server accepts
+            // account creation requests. Existing accounts are granted their
+            // former role-based access once; accounts created after startup
+            // remain default-denied until an administrator explicitly grants
+            // modules.
+            ensure_module_schema(connection)?;
+            ensure_record_collaboration_schema(connection)?;
 
             let journal_mode: String =
                 connection.query_row("PRAGMA journal_mode;", [], |row| row.get(0))?;

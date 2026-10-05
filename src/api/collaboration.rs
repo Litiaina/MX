@@ -29,7 +29,7 @@ use crate::{
         deployment::collaboration_message_page_size,
         lifecycle::ensure_record_lifecycle_schema,
         live::publish_user_event,
-        modules::module_can,
+        modules::module_can_for_user,
         mx::handler::{
             generate_office_pdf_preview, inline_attachment_response, n1_access_token, n1_download,
             n1_ensure_directory, n1_soft_delete, n1_stream, n1_upload, office_preview_supported,
@@ -45,6 +45,19 @@ use crate::{
 type MessageInsertResult =
     Result<(ChatMessage, Vec<(String, String)>, Vec<String>), SqliteDatabaseError>;
 type ChannelReadAdvance = (ChannelReadState, Vec<(String, String)>, bool, usize);
+type MessagePage = (
+    Vec<ChatMessage>,
+    Vec<ChatMessage>,
+    Vec<ChannelReadState>,
+    bool,
+    usize,
+);
+type MemberSave = (
+    ChannelMember,
+    bool,
+    Vec<(String, String)>,
+    Option<ChatMessage>,
+);
 
 const MEDIA_TICKET_TTL: Duration = Duration::from_secs(5 * 60);
 
@@ -175,6 +188,15 @@ struct ChatMessage {
     pinned_at: Option<i64>,
     pinned_by_uid: Option<String>,
     pinned_by_name: Option<String>,
+}
+
+fn live_message_payload(message: &ChatMessage) -> Value {
+    let mut safe = message.clone();
+    // Record links are resolved per recipient when the conversation refreshes.
+    // A shared WebSocket payload must never carry a link authorized only for
+    // the sender or moderator who performed the action.
+    safe.record_links.clear();
+    serde_json::to_value(safe).unwrap_or_default()
 }
 
 #[derive(Debug, Deserialize)]
@@ -726,6 +748,7 @@ fn load_files(
 fn load_record_links(
     connection: &rusqlite::Connection,
     message_uid: &str,
+    user_uid: &str,
     access_level: i64,
 ) -> rusqlite::Result<Vec<MessageRecordLink>> {
     let mut statement = connection.prepare(
@@ -775,7 +798,13 @@ fn load_record_links(
     candidates
         .into_iter()
         .filter_map(|record| {
-            match module_can(connection, &record.module_uid, access_level, "read") {
+            match module_can_for_user(
+                connection,
+                &record.module_uid,
+                user_uid,
+                access_level,
+                "read",
+            ) {
                 Ok(true) => Some(Ok(record)),
                 Ok(false) => None,
                 Err(error) => Some(Err(error)),
@@ -787,6 +816,7 @@ fn load_record_links(
 fn load_message(
     connection: &rusqlite::Connection,
     uid: &str,
+    user_uid: &str,
     access_level: i64,
 ) -> rusqlite::Result<ChatMessage> {
     let mut message = connection.query_row(
@@ -858,7 +888,7 @@ fn load_message(
             }
         }
         message.files = load_files(connection, uid)?;
-        message.record_links = load_record_links(connection, uid, access_level)?;
+        message.record_links = load_record_links(connection, uid, user_uid, access_level)?;
         message.reactions = load_reactions(connection, uid)?;
         message.mentions = load_mentions(connection, uid)?;
     }
@@ -871,6 +901,7 @@ fn insert_membership_event(
     actor_uid: &str,
     target_uid: &str,
     event_kind: &str,
+    viewer_uid: &str,
     access_level: i64,
 ) -> rusqlite::Result<ChatMessage> {
     let actor_name: String = connection.query_row(
@@ -893,12 +924,13 @@ fn insert_membership_event(
         "INSERT INTO mx_messages(uid,channel_uid,sender_uid,body,event_kind,created_at) VALUES (?1,?2,?3,?4,?5,?6)",
         params![uid, channel_uid, actor_uid, body, event_kind, chrono::Utc::now().timestamp_millis()],
     )?;
-    load_message(connection, &uid, access_level)
+    load_message(connection, &uid, viewer_uid, access_level)
 }
 
 fn load_pinned_messages(
     connection: &rusqlite::Connection,
     channel_uid: &str,
+    user_uid: &str,
     access_level: i64,
 ) -> rusqlite::Result<Vec<ChatMessage>> {
     let mut statement = connection.prepare(
@@ -908,7 +940,7 @@ fn load_pinned_messages(
         .query_map(params![channel_uid], |row| row.get::<_, String>(0))?
         .collect::<Result<Vec<_>, _>>()?;
     ids.iter()
-        .map(|uid| load_message(connection, uid, access_level))
+        .map(|uid| load_message(connection, uid, user_uid, access_level))
         .collect()
 }
 
@@ -979,6 +1011,7 @@ fn load_reactions(
 fn search_channel_messages_db(
     connection: &rusqlite::Connection,
     channel_uid: &str,
+    user_uid: &str,
     access_level: i64,
     needle: &str,
     limit: i64,
@@ -1006,7 +1039,7 @@ fn search_channel_messages_db(
         })?
         .collect::<Result<Vec<_>, _>>()?;
     ids.iter()
-        .map(|uid| load_message(connection, uid, access_level))
+        .map(|uid| load_message(connection, uid, user_uid, access_level))
         .collect()
 }
 
@@ -1207,8 +1240,7 @@ pub async fn update_channel(
                 if !matches!(role.as_str(), "owner" | "admin") {
                     return Err(rusqlite::Error::InvalidParameterName(
                         "space administrator access is required".to_string(),
-                    )
-                    .into());
+                    ));
                 }
                 let (kind, current_invite_policy): (String, String) = connection.query_row(
                     "SELECT kind, invite_policy FROM mx_channels WHERE uid = ?1 AND archived_at IS NULL",
@@ -1218,16 +1250,14 @@ pub async fn update_channel(
                 if kind == "direct" {
                     return Err(rusqlite::Error::InvalidParameterName(
                         "direct conversations cannot be edited".to_string(),
-                    )
-                    .into());
+                    ));
                 }
                 if invite_policy.as_deref().is_some_and(|policy| policy != current_invite_policy)
                     && role != "owner"
                 {
                     return Err(rusqlite::Error::InvalidParameterName(
                         "only the space owner can change who may add people".to_string(),
-                    )
-                    .into());
+                    ));
                 }
                 connection.execute(
                     "UPDATE mx_channels SET name = ?1, description = ?2, invite_policy = COALESCE(?3, invite_policy) WHERE uid = ?4",
@@ -1287,8 +1317,7 @@ pub async fn remove_channel_member(
                 if kind == "direct" {
                     return Err(rusqlite::Error::InvalidParameterName(
                         "direct conversation membership cannot be changed".to_string(),
-                    )
-                    .into());
+                    ));
                 }
                 let target_role = member_role(connection, &channel_uid, &target_uid)?
                     .ok_or(rusqlite::Error::QueryReturnedNoRows)?;
@@ -1314,6 +1343,7 @@ pub async fn remove_channel_member(
                     &db_actor_uid,
                     &target_uid,
                     event_kind,
+                    &db_actor_uid,
                     access_level,
                 )?;
                 Ok((message, channel_members(connection, &channel_uid)?))
@@ -1323,7 +1353,19 @@ pub async fn remove_channel_member(
     .await;
     match result {
         Ok(Ok((message, members))) => {
-            let message_payload = serde_json::to_value(&message).unwrap_or_default();
+            let message_payload = live_message_payload(&message);
+            let call_recipients = members
+                .iter()
+                .map(|(member_uid, _)| member_uid.clone())
+                .collect::<Vec<_>>();
+            crate::api::calls::evict_call_participant(
+                &event_channel_uid,
+                &event_target_uid,
+                &call_recipients,
+                Some(&actor_uid),
+                "membership_removed",
+                None,
+            );
             publish_user_event(
                 &event_target_uid,
                 "channel.member_removed",
@@ -1378,7 +1420,14 @@ pub async fn search_channel(
                 ensure_collaboration_schema(connection)?;
                 member_role(connection, &channel_uid, &user_uid)?
                     .ok_or(rusqlite::Error::QueryReturnedNoRows)?;
-                search_channel_messages_db(connection, &channel_uid, access_level, &needle, limit)
+                search_channel_messages_db(
+                    connection,
+                    &channel_uid,
+                    &user_uid,
+                    access_level,
+                    &needle,
+                    limit,
+                )
             })
         })
         .await;
@@ -1574,7 +1623,7 @@ pub async fn list_messages(
     let user_uid = claims.uid;
     let access_level = claims.access_level;
     let before = query.before.unwrap_or(i64::MAX);
-    let result = tokio::task::spawn_blocking(move || -> Result<(Vec<ChatMessage>, Vec<ChatMessage>, Vec<ChannelReadState>, bool, usize), SqliteDatabaseError> {
+    let result = tokio::task::spawn_blocking(move || -> Result<MessagePage, SqliteDatabaseError> {
         with_sql_connection(|connection| {
             ensure_collaboration_schema(connection)?;
             if member_role(connection, &channel_uid, &user_uid)?.is_none() { return Err(rusqlite::Error::QueryReturnedNoRows); }
@@ -1585,9 +1634,9 @@ pub async fn list_messages(
             let mut ids = statement.query_map(params![channel_uid, before, page_size.saturating_add(1) as i64], |row| row.get::<_, String>(0))?.collect::<Result<Vec<_>, _>>()?;
             let has_more = ids.len() > page_size;
             ids.truncate(page_size);
-            let mut messages = ids.iter().map(|uid| load_message(connection, uid, access_level)).collect::<Result<Vec<_>, _>>()?;
+            let mut messages = ids.iter().map(|uid| load_message(connection, uid, &user_uid, access_level)).collect::<Result<Vec<_>, _>>()?;
             messages.reverse();
-            let pinned_messages = load_pinned_messages(connection, &channel_uid, access_level)?;
+            let pinned_messages = load_pinned_messages(connection, &channel_uid, &user_uid, access_level)?;
             let read_states = channel_read_states(connection, &channel_uid)?;
             Ok((messages, pinned_messages, read_states, has_more, page_size))
         })
@@ -1658,19 +1707,19 @@ pub async fn send_message(
                 let Some(module_uid) = module_uid else {
                     return Err(rusqlite::Error::InvalidParameterName("a linked record was not found".to_string()));
                 };
-                if !module_can(&transaction, &module_uid, access_level, "read")? {
+                if !module_can_for_user(&transaction, &module_uid, &sender_uid, access_level, "read")? {
                     return Err(rusqlite::Error::InvalidParameterName("you cannot share a record you cannot access".to_string()));
                 }
                 transaction.execute("INSERT OR IGNORE INTO mx_message_record_links(message_uid, record_uid) VALUES (?1, ?2)", params![message_uid, record_uid])?;
             }
             transaction.commit()?;
-            let message = load_message(connection, &message_uid, access_level)?;
+            let message = load_message(connection, &message_uid, &sender_uid, access_level)?;
             Ok((message, members, mentions))
         })
     }).await;
     match result {
         Ok(Ok((message, members, mentions))) => {
-            let message_json = serde_json::to_value(&message).unwrap_or_default();
+            let message_json = live_message_payload(&message);
             for (member_uid, _) in &members {
                 publish_user_event(
                     member_uid,
@@ -1752,12 +1801,12 @@ pub async fn edit_message(
             member_role(connection, &channel_uid, &actor_uid)?.ok_or(rusqlite::Error::QueryReturnedNoRows)?;
             if sender_uid != actor_uid { return Err(rusqlite::Error::InvalidParameterName("only the sender may edit this message".to_string())); }
             connection.execute("UPDATE mx_messages SET body = ?1, edited_at = ?2 WHERE uid = ?3", params![body, chrono::Utc::now().timestamp_millis(), message_uid])?;
-            Ok((load_message(connection, &message_uid, access_level)?, channel_members(connection, &channel_uid)?))
+            Ok((load_message(connection, &message_uid, &actor_uid, access_level)?, channel_members(connection, &channel_uid)?))
         })
     }).await;
     match result {
         Ok(Ok((message, members))) => {
-            let payload = serde_json::to_value(&message).unwrap_or_default();
+            let payload = live_message_payload(&message);
             for (uid, _) in members {
                 publish_user_event(
                     &uid,
@@ -1820,12 +1869,12 @@ pub async fn toggle_message_reaction(
                     params![message_uid, actor_uid, emoji, chrono::Utc::now().timestamp_millis()],
                 )?;
             }
-            Ok((load_message(connection, &message_uid, access_level)?, channel_members(connection, &channel_uid)?))
+            Ok((load_message(connection, &message_uid, &actor_uid, access_level)?, channel_members(connection, &channel_uid)?))
         })
     }).await;
     match result {
         Ok(Ok((message, members))) => {
-            let payload = serde_json::to_value(&message).unwrap_or_default();
+            let payload = live_message_payload(&message);
             for (uid, _) in members {
                 publish_user_event(
                     &uid,
@@ -1874,15 +1923,13 @@ async fn set_message_pin(claims: Claims, message_uid: String, pinned: bool) -> R
                 if deleted_at.is_some() {
                     return Err(rusqlite::Error::InvalidParameterName(
                         "deleted messages cannot be pinned".to_string(),
-                    )
-                    .into());
+                    ));
                 }
                 if !can_pin_message(&channel_kind, &actor_role) {
                     return Err(rusqlite::Error::InvalidParameterName(
                         "only the space owner or an administrator can manage pinned messages"
                             .to_string(),
-                    )
-                    .into());
+                    ));
                 }
                 if pinned {
                     connection.execute(
@@ -1907,7 +1954,7 @@ async fn set_message_pin(claims: Claims, message_uid: String, pinned: bool) -> R
                     )?;
                 }
                 Ok((
-                    load_message(connection, &message_uid, access_level)?,
+                    load_message(connection, &message_uid, &actor_uid, access_level)?,
                     channel_members(connection, &channel_uid)?,
                 ))
             })
@@ -1916,7 +1963,7 @@ async fn set_message_pin(claims: Claims, message_uid: String, pinned: bool) -> R
     .await;
     match result {
         Ok(Ok((message, members))) => {
-            let payload = serde_json::to_value(&message).unwrap_or_default();
+            let payload = live_message_payload(&message);
             for (uid, _) in members {
                 publish_user_event(
                     &uid,
@@ -2054,7 +2101,7 @@ pub async fn add_channel_member(
     let event_user_uid = user_uid.clone();
     let channel_for_event = channel_uid.clone();
     let role_value = request.role;
-    let result = tokio::task::spawn_blocking(move || -> Result<(ChannelMember, bool, Vec<(String, String)>, Option<ChatMessage>), SqliteDatabaseError> { with_sql_connection(|connection| {
+    let result = tokio::task::spawn_blocking(move || -> Result<MemberSave, SqliteDatabaseError> { with_sql_connection(|connection| {
         ensure_collaboration_schema(connection)?;
         let actor_role = member_role(connection, &channel_uid, &actor_uid)?.ok_or(rusqlite::Error::QueryReturnedNoRows)?;
         let (kind, invite_policy): (String, String) = connection.query_row("SELECT kind, invite_policy FROM mx_channels WHERE uid = ?1", params![channel_uid], |row| Ok((row.get(0)?, row.get(1)?)))?;
@@ -2066,7 +2113,7 @@ pub async fn add_channel_member(
         if added && !can_invite_member(&actor_role, &invite_policy) {
             return Err(rusqlite::Error::InvalidParameterName(
                 "this space only allows its owner or administrators to add people".to_string(),
-            ).into());
+            ));
         }
         validate_member_save_permission(&actor_role, &role_value, existing_role.as_deref())
             .map_err(|message| rusqlite::Error::InvalidParameterName(message.to_string()))?;
@@ -2089,7 +2136,7 @@ pub async fn add_channel_member(
             .find(|member| member.user_uid == user_uid)
             .ok_or(rusqlite::Error::QueryReturnedNoRows)?;
         let message = if added {
-            Some(insert_membership_event(connection, &channel_uid, &actor_uid, &user_uid, "member_added", access_level)?)
+            Some(insert_membership_event(connection, &channel_uid, &actor_uid, &user_uid, "member_added", &actor_uid, access_level)?)
         } else {
             None
         };
@@ -2770,7 +2817,7 @@ mod tests {
             )
             .unwrap();
 
-        let message = load_message(&connection, "message", 0).unwrap();
+        let message = load_message(&connection, "message", "", 0).unwrap();
 
         assert_eq!(message.reactions.len(), 2);
         assert_eq!(message.reactions[0].emoji, "👍");
@@ -2806,7 +2853,7 @@ mod tests {
             )
             .unwrap();
 
-        let message = load_message(&connection, "message", 0).unwrap();
+        let message = load_message(&connection, "message", "", 0).unwrap();
 
         assert_eq!(message.mentions.len(), 1);
         assert_eq!(message.mentions[0].uid, "reader");
@@ -2840,12 +2887,12 @@ mod tests {
             )
             .unwrap();
 
-        let message = load_message(&connection, "message", 0).unwrap();
+        let message = load_message(&connection, "message", "", 0).unwrap();
         assert_eq!(message.pinned_at, Some(2500));
         assert_eq!(message.pinned_by_uid.as_deref(), Some("owner"));
         assert_eq!(message.pinned_by_name.as_deref(), Some("Space Owner"));
 
-        let pinned = load_pinned_messages(&connection, "channel", 0).unwrap();
+        let pinned = load_pinned_messages(&connection, "channel", "", 0).unwrap();
         assert_eq!(pinned.len(), 1);
         assert_eq!(pinned[0].uid, "message");
     }
@@ -2971,7 +3018,7 @@ mod tests {
             .unwrap();
         assert_eq!(stored_body, "Retained for audit");
 
-        let exposed = load_message(&connection, "message", 0).unwrap();
+        let exposed = load_message(&connection, "message", "", 0).unwrap();
         assert!(exposed.body.is_empty());
         assert_eq!(exposed.deleted_at, Some(3000));
         assert!(exposed.files.is_empty());
@@ -3012,7 +3059,8 @@ mod tests {
             )
             .unwrap();
 
-        let matches = search_channel_messages_db(&connection, "space", 0, "quarterly", 50).unwrap();
+        let matches =
+            search_channel_messages_db(&connection, "space", "", 0, "quarterly", 50).unwrap();
         assert_eq!(matches.len(), 2);
         assert!(matches.iter().any(|message| message.uid == "message-body"));
         assert!(matches.iter().any(|message| message.uid == "message-file"));
@@ -3023,7 +3071,7 @@ mod tests {
         );
 
         let literal_percent =
-            search_channel_messages_db(&connection, "space", 0, "100%", 50).unwrap();
+            search_channel_messages_db(&connection, "space", "", 0, "100%", 50).unwrap();
         assert_eq!(literal_percent.len(), 1);
         assert_eq!(literal_percent[0].uid, "message-file");
 
@@ -3149,7 +3197,7 @@ mod tests {
             )
             .unwrap();
 
-        let reply = load_message(&connection, "reply", 2).unwrap();
+        let reply = load_message(&connection, "reply", "member", 2).unwrap();
         let preview = reply.reply_preview.expect("reply preview");
         assert_eq!(preview.uid, "original");
         assert_eq!(preview.sender_name, "Original Sender");
@@ -3157,7 +3205,7 @@ mod tests {
         assert!(preview.deleted_at.is_none());
 
         tombstone_message(&connection, "original", 4000).unwrap();
-        let reply = load_message(&connection, "reply", 2).unwrap();
+        let reply = load_message(&connection, "reply", "member", 2).unwrap();
         let preview = reply.reply_preview.expect("deleted reply preview");
         assert_eq!(preview.deleted_at, Some(4000));
         assert!(preview.body.is_empty());

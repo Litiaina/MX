@@ -1360,7 +1360,7 @@ button.message-reply-quote:hover { background: color-mix(in srgb, var(--primary)
 .module-create-guidance strong { font-size: calc(.7rem * var(--font-scale)); }
 .module-create-guidance span { color: var(--muted); font-size: calc(.65rem * var(--font-scale)); line-height: 1.45; }
 .module-permissions { margin-top: .7rem; border: 1px solid var(--line); border-radius: .5rem; overflow: hidden; font-size: calc(.68rem * var(--font-scale)); }
-.module-permissions > div { display: grid; grid-template-columns: minmax(8rem, 1.4fr) repeat(5, minmax(4rem, .6fr)); align-items: center; min-height: 2.2rem; padding-inline: .65rem; border-bottom: 1px solid var(--line); }
+.module-permissions > div { display: grid; grid-template-columns: minmax(8rem, 1.4fr) repeat(7, minmax(4rem, .6fr)); align-items: center; min-height: 2.2rem; padding-inline: .65rem; border-bottom: 1px solid var(--line); }
 .module-permissions > div:last-child { border-bottom: 0; }
 .module-permissions .permission-head { background: var(--surface-2); color: var(--muted); font-weight: 800; }
 .module-permissions label { display: flex; justify-content: center; }
@@ -1471,7 +1471,7 @@ button.message-reply-quote:hover { background: color-mix(in srgb, var(--primary)
   .module-editor > * { grid-column: 1 / -1 !important; }
   .module-create-grid > * { grid-column: 1 / -1 !important; }
   .module-permissions .permission-head { display: none; }
-  .module-permissions > div { grid-template-columns: repeat(5, 1fr); gap: .4rem; padding-block: .55rem; }
+  .module-permissions > div { grid-template-columns: repeat(4, 1fr); gap: .4rem; padding-block: .55rem; }
   .module-permissions > div > strong { grid-column: 1 / -1; }
   .module-permissions label { display: grid; justify-items: center; gap: .2rem; }
   .module-permissions label span { display: inline; color: var(--muted); font-size: calc(.58rem * var(--font-scale)); }
@@ -2051,6 +2051,10 @@ input[type="checkbox"], input[type="radio"] {
 .account-security > span { width: 1.8rem; height: 1.8rem; display: grid; place-items: center; flex: none; border-radius: .5rem; background: color-mix(in srgb, currentColor 8%, var(--surface-2)); }
 .account-security strong, .account-role strong { overflow: hidden; color: var(--text-2); font-size: calc(.67rem * var(--font-scale)); text-overflow: ellipsis; white-space: nowrap; }
 .account-admin-dialog { width: min(100%, 40rem); }
+.module-access-empty { max-width: 38rem; display: grid; justify-items: start; gap: .65rem; margin: 2rem auto; }
+.module-access-empty h2, .module-access-empty p { margin: 0; }
+.module-access-empty p { color: var(--muted); line-height: 1.55; }
+.account-admin-dialog.account-access-dialog { width: min(100%, 70rem); max-height: min(54rem, calc(100vh - 2rem)); overflow: auto; }
 .account-admin-dialog > .dialog-head { align-items: center; padding-bottom: .85rem; border-bottom: 1px solid var(--line); }
 .account-create-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .account-create-form label > small { display: block; margin-top: .25rem; color: var(--muted); font-size: calc(.6rem * var(--font-scale)); font-weight: 500; }
@@ -2066,6 +2070,29 @@ input[type="checkbox"], input[type="radio"] {
 .account-management > section > .button { grid-column: 3; grid-row: 1 / span 2; align-self: end; }
 .account-recovery-actions { grid-column: 2 / -1; grid-row: 1 / span 2; align-self: center; display: flex; justify-content: flex-end; flex-wrap: wrap; gap: .45rem; }
 .account-management > .account-danger-zone { align-items: center; border-color: color-mix(in srgb, var(--danger) 35%, var(--line)); background: color-mix(in srgb, var(--danger) 3%, var(--surface)); }
+.account-management > section.account-module-access { display: grid; grid-template-columns: 1fr; align-items: stretch; gap: .7rem; }
+.account-access-heading { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: .6rem; }
+.account-access-heading > span { width: 2.1rem; height: 2.1rem; display: grid; place-items: center; border-radius: .5rem; background: var(--primary-soft); color: var(--primary); }
+.account-access-heading h3, .account-access-heading p { margin: 0; }
+.account-access-heading > small { color: var(--muted); font-size: calc(.58rem * var(--font-scale)); }
+.account-access-admin { display: flex; align-items: center; gap: .6rem; padding: .75rem; border: 1px solid color-mix(in srgb, var(--success) 35%, var(--line)); border-radius: .55rem; background: var(--success-surface); color: var(--success); }
+.account-access-admin > span { display: grid; gap: .1rem; }
+.account-access-admin small { color: var(--muted); font-size: calc(.6rem * var(--font-scale)); }
+.account-module-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(26rem, 100%), 1fr)); gap: .55rem; }
+.account-module-list > article { overflow: hidden; border: 1px solid var(--line-strong); border-radius: .6rem; background: var(--surface); }
+.account-module-list > article.disabled { border-color: var(--line); background: var(--surface-2); }
+.account-module-list article > header { min-height: 3.4rem; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: .55rem; padding: .55rem .65rem; }
+.module-access-icon { --module-color: var(--primary); width: 2rem; height: 2rem; display: grid; place-items: center; border-radius: .46rem; background: color-mix(in srgb, var(--module-color) 13%, var(--surface)); color: var(--module-color); }
+.account-module-list article > header > span:nth-child(2) { min-width: 0; display: grid; gap: .1rem; }
+.account-module-list article > header strong { overflow: hidden; font-size: calc(.68rem * var(--font-scale)); text-overflow: ellipsis; white-space: nowrap; }
+.account-module-list article > header small { color: var(--muted); font-size: calc(.56rem * var(--font-scale)); }
+.access-switch { display: flex; align-items: center; gap: .3rem; color: var(--muted); font-size: calc(.57rem * var(--font-scale)); font-weight: 750; }
+.module-capability-grid { display: grid; grid-template-columns: repeat(7, minmax(3.5rem, 1fr)); border-top: 1px solid var(--line); background: var(--surface-2); }
+.module-capability-grid label { min-height: 3.1rem; display: grid; place-items: center; align-content: center; gap: .24rem; padding: .35rem .2rem; border-right: 1px solid var(--line); color: var(--muted); font-size: calc(.53rem * var(--font-scale)); }
+.module-capability-grid label:last-child { border-right: 0; }
+.module-capability-grid input:disabled + span { opacity: .48; }
+.account-access-save { display: flex; align-items: center; justify-content: space-between; gap: .8rem; padding-top: .1rem; }
+.account-access-save > span { max-width: 44rem; color: var(--muted); font-size: calc(.57rem * var(--font-scale)); line-height: 1.4; }
 .account-danger-zone > div { min-width: 0; }
 .account-danger-zone > div h3, .account-danger-zone > div p { margin: 0; }
 .account-danger-zone > div p { margin-top: .15rem; }
@@ -2092,6 +2119,8 @@ input[type="checkbox"], input[type="radio"] {
   .account-create-form > * { grid-column: 1 !important; }
   .account-management > section { grid-template-columns: 1fr; }
   .account-management > section > h3, .account-management > section > p, .account-management > section > label, .account-management > section > .button, .account-recovery-actions, .account-danger-zone > .button { grid-column: 1; grid-row: auto; }
+  .module-capability-grid { grid-template-columns: repeat(4, 1fr); }
+  .account-access-save { align-items: stretch; flex-direction: column; }
   .account-recovery-actions { justify-content: stretch; }
   .account-recovery-actions .button { flex: 1; }
 }

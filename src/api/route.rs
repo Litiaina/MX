@@ -42,6 +42,10 @@ use crate::api::mx::storage::{
 
 use crate::api::audit::{audit_request, get_audit_log};
 use crate::api::backup::{create_backup, download_backup, list_backups, verify_backup};
+use crate::api::calls::{
+    get_call_state, join_call, leave_call, list_active_calls, relay_call_signal,
+    update_call_participant,
+};
 use crate::api::collaboration::{
     add_channel_member, create_channel, create_direct_channel, delete_message,
     download_message_file, edit_message, issue_message_file_preview_ticket, list_channel_files,
@@ -55,7 +59,10 @@ use crate::api::deployment::{
     get_deployment_config, get_deployment_logo, save_deployment_config, upload_deployment_logo,
 };
 use crate::api::live::{get_presence, issue_live_ticket, live_socket};
-use crate::api::modules::{create_module, delete_module, list_modules, update_module};
+use crate::api::modules::{
+    create_module, delete_module, get_account_module_grants, list_modules,
+    save_account_module_grants, update_module,
+};
 use crate::api::notifications::{
     list_notifications, mark_all_notifications_read, mark_notification_read,
 };
@@ -172,6 +179,10 @@ fn admin_routes() -> Router {
             "/mx/v1/admin/accounts/{uid}/security-reset",
             post(admin_reset_user_security),
         )
+        .route(
+            "/mx/v1/admin/accounts/{uid}/modules",
+            get(get_account_module_grants).put(save_account_module_grants),
+        )
         .route("/mx/v1/db/query", post(execute_query))
         .layer(axum::middleware::from_fn(auth))
 }
@@ -222,6 +233,18 @@ fn user_routes() -> Router {
         .route(
             "/mx/v1/collaboration/channels/{uid}/files",
             get(list_channel_files),
+        )
+        .route("/mx/v1/collaboration/calls", get(list_active_calls))
+        .route(
+            "/mx/v1/collaboration/channels/{uid}/call",
+            get(get_call_state)
+                .post(join_call)
+                .patch(update_call_participant)
+                .delete(leave_call),
+        )
+        .route(
+            "/mx/v1/collaboration/channels/{uid}/call/signal",
+            post(relay_call_signal).layer(DefaultBodyLimit::max(128 * 1024)),
         )
         .route(
             "/mx/v1/collaboration/messages/{uid}",

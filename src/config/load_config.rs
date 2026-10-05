@@ -44,12 +44,22 @@ pub struct N1Config {
 }
 
 #[derive(Debug, Clone)]
+pub struct WebRtcConfig {
+    pub stun_urls: Vec<String>,
+    pub turn_urls: Vec<String>,
+    pub turn_username: String,
+    pub turn_credential: String,
+    pub max_participants: usize,
+}
+
+#[derive(Debug, Clone)]
 pub struct Config {
     pub server: ServerConfigValues,
     pub database: DatabaseConfigValues,
     pub jwt_token_config: JwtTokenConfigValues,
     pub static_hosting: StaticHosting,
     pub n1: N1Config,
+    pub webrtc: WebRtcConfig,
 }
 
 pub static CONFIG: LazyLock<Config> = LazyLock::new(|| {
@@ -127,6 +137,11 @@ pub static CONFIG: LazyLock<Config> = LazyLock::new(|| {
             "CONFIG"
         )
     });
+
+    // WebRTC is optional so existing deployments remain valid. Host candidates
+    // work on reachable local networks; STUN/TURN should be configured for
+    // calls that must traverse NAT or restrictive firewalls.
+    let webrtc_section = configuration.section(Some("webrtc"));
 
     /*
      * Server values
@@ -460,6 +475,51 @@ pub static CONFIG: LazyLock<Config> = LazyLock::new(|| {
         );
     }
 
+    let parse_ice_urls = |key: &str| {
+        webrtc_section
+            .and_then(|section| section.get(key))
+            .unwrap_or("")
+            .split(',')
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+    };
+    let stun_urls = parse_ice_urls("stun_urls");
+    let turn_urls = parse_ice_urls("turn_urls");
+    let turn_username = webrtc_section
+        .and_then(|section| section.get("turn_username"))
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    let turn_credential = webrtc_section
+        .and_then(|section| section.get("turn_credential"))
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    let max_participants_value = webrtc_section
+        .and_then(|section| section.get("max_participants"))
+        .unwrap_or("12");
+    let max_participants = max_participants_value
+        .parse::<usize>()
+        .unwrap_or_else(|error| {
+            crate::fatal_error!(
+                format!(
+                    "invalid value '{}' for 'max_participants' in section '[webrtc]': {}",
+                    max_participants_value, error
+                ),
+                "static",
+                "CONFIG"
+            )
+        });
+    if !(2..=12).contains(&max_participants) {
+        crate::fatal_error!(
+            "'max_participants' in section '[webrtc]' must be between 2 and 12",
+            "static",
+            "CONFIG"
+        );
+    }
+
     /*
      * Final configuration
      */
@@ -497,6 +557,14 @@ pub static CONFIG: LazyLock<Config> = LazyLock::new(|| {
             attachment_max_size_mb,
             collaboration_file_max_size_mb,
             multipart_part_size_mb,
+        },
+
+        webrtc: WebRtcConfig {
+            stun_urls,
+            turn_urls,
+            turn_username,
+            turn_credential,
+            max_participants,
         },
     }
 });

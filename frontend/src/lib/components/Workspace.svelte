@@ -1,17 +1,26 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import Phone from '@lucide/svelte/icons/phone';
+  import PhoneIncoming from '@lucide/svelte/icons/phone-incoming';
+  import PhoneOff from '@lucide/svelte/icons/phone-off';
+  import UsersRound from '@lucide/svelte/icons/users-round';
+  import Video from '@lucide/svelte/icons/video';
   import X from '@lucide/svelte/icons/x';
-  import type { DeploymentConfig, ModuleDefinition, MxNotification, UserPreferences } from '../api/domain';
+  import type { ActiveCallSummary, CallMode, CallParticipant, CollaborationChannel, DeploymentConfig, ModuleDefinition, MxNotification, UserPreferences } from '../api/domain';
   import type { Session } from '../api/types';
-  import { exportReport, loadModules, loadNotificationSound, loadNotificationSoundInfo, loadNotifications, loadPreferences, markNotificationRead, savePreferences } from '../api/workspace';
+  import { exportReport, listActiveCalls, loadModules, loadNotificationSound, loadNotificationSoundInfo, loadNotifications, loadPreferences, markNotificationRead, savePreferences } from '../api/workspace';
   import { MxLiveClient, type LiveMessage } from '../live/client';
+  import { callDisplayName, callFromStartedPayload, mergeCallParticipant, removeCallParticipant } from '../call/activity';
+  import { callAlertStrategy, startCallAlertCadence } from '../call/alerts';
   import { appearanceScale, primaryForeground, validAccentColor } from '../util/appearance';
   import { decodeNotificationSound, playNotificationSound, unlockNotificationAudio } from '../util/notificationAudio';
   import { notificationPresentation } from '../util/notificationKinds';
   import { recordNotificationIntent } from '../util/interactions';
+  import { requestConfirmation } from '../confirmation';
   import AccountSecurity from './AccountSecurity.svelte';
   import AdminView from './AdminView.svelte';
   import CollaborationView from './CollaborationView.svelte';
+  import CollaborationCall from './CollaborationCall.svelte';
   import DashboardView from './DashboardView.svelte';
   import DisplaySettingsDialog from './DisplaySettingsDialog.svelte';
   import NotificationKindIcon from './NotificationKindIcon.svelte';
@@ -30,6 +39,7 @@
   let activeCollaborationChannelUid = $state('');
   let activeCollaborationNewestVisible = $state(false);
   let notificationPreferences = $state<UserPreferences['notifications']>(defaultNotificationPreferences());
+  let notificationPreferencesReady = false;
   let modules = $state<ModuleDefinition[]>([]);
   let selectedModuleUid = $state('mx-default-records');
   let linkedRecordUid = $state('');
@@ -38,27 +48,40 @@
   let linkedChannelUid = $state('');
   let lastRecordEvent = $state<LiveMessage | null>(null);
   let lastCollaborationEvent = $state<LiveMessage | null>(null);
+  let callEvents = $state<LiveMessage[]>([]);
+  let activeCall = $state<{ channelUid: string; channelName: string; channelKind: string; mode: CallMode; nonce: number } | null>(null);
+  let callSessionNotice = $state('');
+  let callSessionNoticeTimer: number | undefined;
+  let ongoingCalls = $state<ActiveCallSummary[]>([]);
+  let dismissedCallUids = $state<string[]>([]);
   let autoScale = $state(true); let scale = $state(100); let fontScale = $state(16); let autoRefresh = $state(0); let theme = $state(''); let accentColor = $state('');
   let density = $state(''); let contentWidth = $state(''); let reducedMotion = $state(false); let settingsBusy = $state(false); let settingsError = $state('');
   let notificationToasts = $state<MxNotification[]>([]);
   let customNotificationSound: AudioBuffer | null = null;
   const notificationToastTimers = new Map<string, number>();
+  const alertedCallKeys = new Set<string>();
+  const callBrowserNotifications = new Map<string, Notification>();
+  let ringingDirectCallKey = '';
+  let stopDirectCallRingtone: (() => void) | null = null;
   const accentPresets = ['#1d4ed8', '#047857', '#6d28d9', '#b45309', '#be123c', '#0e7490'];
   const selectedModule = $derived(modules.find((module) => module.uid === selectedModuleUid) || null);
-  const selectedModulePermission = $derived(selectedModule?.permissions.find((permission) => permission.access_level === session.access_level) || null);
+  const selectedModulePermission = $derived(selectedModule?.effective_permission || selectedModule?.permissions.find((permission) => permission.access_level === session.access_level) || null);
   const viewTitle = $derived(view === 'dashboard' ? deployment.terminology.dashboard_label : view === 'records' ? (selectedModule?.name || deployment.terminology.record_plural) : view === 'collaboration' ? 'Collaboration' : view === 'admin' ? deployment.terminology.administration_label : 'My account');
+  const incomingCall = $derived(ongoingCalls
+    .filter((call) => call.channel_uid !== activeCall?.channelUid && !call.participants.some((participant) => participant.user_uid === session.uid) && !dismissedCallUids.includes(call.channel_uid))
+    .sort((left, right) => right.started_at - left.started_at)[0] || null);
 
   onMount(() => {
     applyScale();
     applyPersonalAppearance();
-    void loadAccountPreferences();
+    void loadAccountPreferences().finally(() => { notificationPreferencesReady = true; void refreshOngoingCalls(); });
     void loadWorkspaceModules();
     const fromHash = hashView();
     view = fromHash || defaultView();
     if (!fromHash) history.replaceState(null, '', `#${view}`);
     const client = new MxLiveClient(handleLive, (connected) => {
       live = connected;
-      if (connected) dashboardRevision += 1;
+      if (connected) { dashboardRevision += 1; void refreshOngoingCalls(); }
     });
     client.start();
     const handleHash = () => { const next = hashView(); if (next) { view = next; selectModuleFromHash(); mobileOpen = false; } };
@@ -69,7 +92,8 @@
     window.addEventListener('pointerdown', unlockAudio, { once: true });
     window.addEventListener('keydown', unlockAudio, { once: true });
     if (navigator.userActivation?.hasBeenActive) unlockAudio();
-    return () => { client.stop(); live = false; window.removeEventListener('hashchange', handleHash); window.removeEventListener('resize', handleResize); window.removeEventListener('pointerdown', unlockAudio); window.removeEventListener('keydown', unlockAudio); for (const timer of notificationToastTimers.values()) window.clearTimeout(timer); resetPersonalAppearance(); };
+    const callRefreshTimer = window.setInterval(() => void refreshOngoingCalls(), 15_000);
+    return () => { client.stop(); live = false; window.clearInterval(callRefreshTimer); window.clearTimeout(callSessionNoticeTimer); window.removeEventListener('hashchange', handleHash); window.removeEventListener('resize', handleResize); window.removeEventListener('pointerdown', unlockAudio); window.removeEventListener('keydown', unlockAudio); for (const timer of notificationToastTimers.values()) window.clearTimeout(timer); stopIncomingCallAlert(); for (const notification of callBrowserNotifications.values()) notification.close(); callBrowserNotifications.clear(); resetPersonalAppearance(); };
   });
 
   async function loadWorkspaceModules() {
@@ -129,6 +153,13 @@
     }
     if (message.type === 'preferences.updated') { void loadAccountPreferences(); return; }
     if (message.type === 'profile.updated') { lastCollaborationEvent = message; collaborationRevision += 1; if (message.actor_uid === session.uid) void onSessionChanged(); return; }
+    if (message.type.startsWith('call.')) {
+      callEvents = [...callEvents.slice(-2047), message];
+      applyGlobalCallEvent(message);
+      lastCollaborationEvent = message;
+      collaborationRevision += 1;
+      return;
+    }
     if (message.type.startsWith('message.') || message.type.startsWith('channel.') || message.type.startsWith('file.')) { lastCollaborationEvent = message; collaborationRevision += 1; notificationRevision += 1; return; }
     if (message.type.startsWith('module.')) { void loadWorkspaceModules(); recordRevision += 1; dashboardRevision += 1; return; }
     if (message.type === 'presence.changed') { dashboardRevision += 1; collaborationRevision += 1; return; }
@@ -141,6 +172,151 @@
     if (message.type.startsWith('record.') || message.type.startsWith('attachment.') || message.type.startsWith('schema.')) { recordRevision += 1; lastRecordEvent = message; }
     if (message.type.startsWith('record.') || message.type.startsWith('attachment.') || message.type === 'dashboard.updated') dashboardRevision += 1;
     if (message.type === 'deployment.updated') void onDeploymentChanged();
+  }
+  async function startCollaborationCall(channel: CollaborationChannel, mode: CallMode) {
+    if (activeCall?.channelUid === channel.uid) return;
+    if (activeCall && !await requestConfirmation({
+      title: `Leave the call in ${activeCall.channelName}?`,
+      description: `MX can connect this browser to one call at a time. Starting a call in ${channel.name} will leave the current call.`,
+      confirmLabel: 'Switch call',
+      tone: 'primary'
+    })) return;
+    activeCall = { channelUid: channel.uid, channelName: channel.name, channelKind: channel.kind, mode, nonce: Date.now() };
+    stopIncomingCallAlert(channel.uid);
+    dismissedCallUids = dismissedCallUids.filter((uid) => uid !== channel.uid);
+  }
+  async function refreshOngoingCalls() {
+    try {
+      ongoingCalls = (await listActiveCalls()).calls;
+      if (ringingDirectCallKey && !ongoingCalls.some((call) => callAlertKey(call) === ringingDirectCallKey)) stopIncomingCallAlert();
+      const freshIncoming = newestIncomingCall(ongoingCalls);
+      if (freshIncoming) void deliverIncomingCallAlert(freshIncoming, freshIncoming.participants[0]?.user_name || freshIncoming.channel_name);
+    }
+    catch { /* Live call events continue to maintain state while MX retries. */ }
+  }
+  function applyGlobalCallEvent(message: LiveMessage) {
+    if (!message.payload || typeof message.payload !== 'object') return;
+    const payload = message.payload as Record<string, unknown>;
+    const channelUid = typeof payload.channel_uid === 'string' ? payload.channel_uid : '';
+    if (!channelUid) return;
+    if (message.type === 'call.started') {
+      const summary = callFromStartedPayload(payload, message.at || Date.now());
+      if (!summary) { void refreshOngoingCalls(); return; }
+      const participant = summary.participants[0];
+      ongoingCalls = [summary, ...ongoingCalls.filter((call) => call.channel_uid !== channelUid)];
+      dismissedCallUids = dismissedCallUids.filter((uid) => uid !== channelUid);
+      if (participant.user_uid !== session.uid) void deliverIncomingCallAlert(summary, participant.user_name);
+      return;
+    }
+    if (message.type === 'call.participant.joined' || message.type === 'call.participant.updated') {
+      if (!payload.participant || typeof payload.participant !== 'object') { void refreshOngoingCalls(); return; }
+      const participant = payload.participant as unknown as CallParticipant;
+      const existing = ongoingCalls.find((call) => call.channel_uid === channelUid);
+      if (!existing) { void refreshOngoingCalls(); return; }
+      ongoingCalls = mergeCallParticipant(ongoingCalls, channelUid, participant);
+      if (participant.user_uid === session.uid) stopIncomingCallAlert(channelUid);
+      return;
+    }
+    if (message.type === 'call.participant.left') {
+      const userUid = String(payload.user_uid || '');
+      ongoingCalls = removeCallParticipant(ongoingCalls, channelUid, userUid, String(payload.session_uid || ''));
+      if (!ongoingCalls.some((call) => call.channel_uid === channelUid)) stopIncomingCallAlert(channelUid);
+      return;
+    }
+    if (message.type === 'call.ended') {
+      ongoingCalls = ongoingCalls.filter((call) => call.channel_uid !== channelUid);
+      dismissedCallUids = dismissedCallUids.filter((uid) => uid !== channelUid);
+      stopIncomingCallAlert(channelUid);
+    }
+  }
+  async function answerOngoingCall(call: ActiveCallSummary, mode: CallMode) {
+    if (activeCall && activeCall.channelUid !== call.channel_uid && !await requestConfirmation({
+      title: `Leave the call in ${activeCall.channelName}?`,
+      description: `Joining ${call.channel_name} will disconnect this browser from the current call.`,
+      confirmLabel: 'Switch call',
+      tone: 'primary'
+    })) return;
+    stopIncomingCallAlert(call.channel_uid);
+    activeCall = { channelUid: call.channel_uid, channelName: callDisplayName(call, session.uid), channelKind: call.channel_kind, mode, nonce: Date.now() };
+    dismissedCallUids = dismissedCallUids.filter((uid) => uid !== call.channel_uid);
+  }
+  function dismissIncomingCall(channelUid: string) {
+    stopIncomingCallAlert(channelUid);
+    if (!dismissedCallUids.includes(channelUid)) dismissedCallUids = [...dismissedCallUids, channelUid];
+  }
+  function endLocalCall(reason?: 'replaced') {
+    activeCall = null;
+    if (reason !== 'replaced') return;
+    callSessionNotice = 'This call continued in another MX tab signed in to your account.';
+    window.clearTimeout(callSessionNoticeTimer);
+    callSessionNoticeTimer = window.setTimeout(() => callSessionNotice = '', 7000);
+  }
+  function callAlertKey(call: ActiveCallSummary) { return `${call.channel_uid}:${call.started_at}`; }
+  function newestIncomingCall(calls: ActiveCallSummary[]) {
+    return calls
+      .filter((call) => call.channel_uid !== activeCall?.channelUid && !call.participants.some((participant) => participant.user_uid === session.uid) && !dismissedCallUids.includes(call.channel_uid))
+      .sort((left, right) => right.started_at - left.started_at)[0] || null;
+  }
+  function stopIncomingCallAlert(channelUid = '') {
+    if (!channelUid || ringingDirectCallKey.startsWith(`${channelUid}:`)) {
+      stopDirectCallRingtone?.();
+      stopDirectCallRingtone = null;
+      ringingDirectCallKey = '';
+    }
+    for (const [key, notification] of callBrowserNotifications) {
+      if (channelUid && !key.startsWith(`${channelUid}:`)) continue;
+      notification.close();
+      callBrowserNotifications.delete(key);
+    }
+  }
+  async function deliverIncomingCallAlert(call: ActiveCallSummary, callerName: string) {
+    if (!notificationPreferencesReady) return;
+    const alertKey = callAlertKey(call);
+    if (alertedCallKeys.has(alertKey)) return;
+    alertedCallKeys.add(alertKey);
+    if (alertedCallKeys.size > 256) alertedCallKeys.delete(alertedCallKeys.values().next().value!);
+    const strategy = callAlertStrategy(call, callerName);
+    const elapsedMs = Math.max(0, Date.now() - call.started_at);
+    if (elapsedMs >= strategy.audibleWindowMs) return;
+
+    // Prefer the visible tab when one account is signed in more than once.
+    const claimDelay = document.visibilityState === 'visible' && document.hasFocus()
+      ? Math.floor(Math.random() * 40)
+      : 120 + Math.floor(Math.random() * 100);
+    await new Promise((resolve) => window.setTimeout(resolve, claimDelay));
+    const current = ongoingCalls.find((item) => callAlertKey(item) === alertKey);
+    if (!current || current.participants.some((participant) => participant.user_uid === session.uid) || dismissedCallUids.includes(call.channel_uid)) return;
+    const claimKey = `mx-call-alert:${alertKey}`;
+    try {
+      if (localStorage.getItem(claimKey)) return;
+      const claim = `${Date.now()}:${crypto.randomUUID()}`;
+      localStorage.setItem(claimKey, claim);
+      window.setTimeout(() => { if (localStorage.getItem(claimKey) === claim) localStorage.removeItem(claimKey); }, strategy.audibleWindowMs);
+    } catch { /* Alert this tab when storage is unavailable. */ }
+    if (notificationPreferences.sound_enabled && !inQuietHours(notificationPreferences.quiet_hours_start, notificationPreferences.quiet_hours_end)) {
+      const sound = notificationPreferences.sound_source === 'custom' ? customNotificationSound : null;
+      const tone = strategy.kind === 'direct' ? 'direct-call' : 'group-call';
+      const cadence = sound && strategy.repeatMs !== null
+        ? { ...strategy, repeatMs: Math.max(strategy.repeatMs, Math.ceil(sound.duration * 1000) + 500) }
+        : strategy;
+      if (strategy.kind === 'direct') stopDirectCallRingtone?.();
+      const stop = startCallAlertCadence(cadence, () => playNotificationSound(sound, notificationPreferences.sound_volume ?? 70, tone), elapsedMs);
+      if (strategy.kind === 'direct') {
+        ringingDirectCallKey = alertKey;
+        stopDirectCallRingtone = stop;
+      }
+    }
+    if (!notificationPreferences.browser_enabled || !('Notification' in window) || Notification.permission !== 'granted') return;
+    const notification = new Notification(strategy.title, {
+      body: strategy.body,
+      icon: deployment.branding.logo_url || '/images/system-icon.png',
+      tag: `mx-call-${alertKey}`,
+      requireInteraction: strategy.requireInteraction,
+      silent: true
+    });
+    callBrowserNotifications.set(alertKey, notification);
+    notification.onclick = () => { window.focus(); stopIncomingCallAlert(call.channel_uid); location.hash = `collaboration?channel=${encodeURIComponent(call.channel_uid)}`; };
+    notification.onclose = () => callBrowserNotifications.delete(alertKey);
   }
   function inQuietHours(start: string | null, end: string | null) {
     if (!start || !end) return false;
@@ -366,13 +542,29 @@
   <main class="main-stage">
     <WorkspaceTopbar productName={deployment.branding.display_name} {viewTitle} {live} navigationOpen={mobileOpen} {notificationRevision} {unreadNotifications} onToggleNavigation={() => mobileOpen = !mobileOpen} onRefresh={refreshCurrent} onOpenSettings={() => settingsOpen = true} onToggleTheme={toggleTheme} onOpenAccount={() => go('account')} onSignOut={() => onSessionEnded('Signed out.')} onUnread={(count) => unreadNotifications = count} onOpenNotification={openNotification} />
     {#if view === 'dashboard'}<DashboardView isAdmin={session.access_level === 0} revision={dashboardRevision} dashboardLabel={deployment.terminology.dashboard_label} recordSingular={deployment.terminology.record_singular} recordPlural={deployment.terminology.record_plural} />
-    {:else if view === 'records'}{#key selectedModuleUid}<RecordsView accessLevel={session.access_level} moduleUid={selectedModule?.uid || ''} modulePermission={selectedModulePermission} openRecordUid={linkedRecordUid} openRequestRevision={linkedRecordRequestRevision} focusLinkedAttachments={linkedRecordFocusAttachments} revision={recordRevision} liveMessage={lastRecordEvent} recordSingular={selectedModule?.singular_name || deployment.terminology.record_singular} recordPlural={selectedModule?.name || deployment.terminology.record_plural} />{/key}
-    {:else if view === 'collaboration'}<CollaborationView {session} openChannelUid={linkedChannelUid} revision={collaborationRevision} connected={live} liveEvent={lastCollaborationEvent} onChannelChanged={setActiveCollaborationChannel} />
+    {:else if view === 'records' && selectedModule}{#key selectedModuleUid}<RecordsView {session} accessLevel={session.access_level} moduleUid={selectedModule.uid} modulePermission={selectedModulePermission} openRecordUid={linkedRecordUid} openRequestRevision={linkedRecordRequestRevision} focusLinkedAttachments={linkedRecordFocusAttachments} revision={recordRevision} liveMessage={lastRecordEvent} recordSingular={selectedModule.singular_name} recordPlural={selectedModule.name} />{/key}
+    {:else if view === 'records'}<section class="panel module-access-empty"><h2>No module access</h2><p>Your account has not been granted access to any active record module. Ask an MX administrator to assign the modules needed for your work.</p><button class="button" type="button" onclick={() => go('collaboration')}>Open collaboration</button></section>
+    {:else if view === 'collaboration'}<CollaborationView {session} openChannelUid={linkedChannelUid} revision={collaborationRevision} connected={live} liveEvent={lastCollaborationEvent} {callEvents} activeCalls={ongoingCalls} activeCallChannelUid={activeCall?.channelUid || ''} onStartCall={startCollaborationCall} onChannelChanged={setActiveCollaborationChannel} />
     {:else if view === 'admin' && session.access_level === 0}{#key adminRevision}<AdminView {session} administrationLabel={deployment.terminology.administration_label} dashboardLabel={deployment.terminology.dashboard_label} />{/key}
     {:else}<AccountSecurity {session} {onSessionChanged} {onSessionEnded} />{/if}
   </main>
   {#if mobileOpen}<button class="sidebar-scrim" aria-label="Close menu" onclick={() => mobileOpen = false}></button>{/if}
 </div>
+
+{#if incomingCall}
+  {@const caller = incomingCall.participants[0]}
+  {@const privateCall = incomingCall.channel_kind === 'direct'}
+  <div class:direct-call={privateCall} class:group-call={!privateCall} class="incoming-call-card" role="dialog" tabindex="-1" aria-live={privateCall ? 'assertive' : 'polite'} aria-label={privateCall ? `Incoming private call from ${caller?.user_name || incomingCall.channel_name}` : `Group call in ${incomingCall.channel_name}`}>
+    <header><span class="incoming-call-icon">{#if privateCall}<PhoneIncoming size={20} />{:else}<UsersRound size={20} />{/if}</span><span><small>{privateCall ? 'Incoming private call' : 'Group call available'}</small><strong>{privateCall ? (caller?.user_name || incomingCall.channel_name) : incomingCall.channel_name}</strong><em>{privateCall ? `${incomingCall.mode === 'video' ? 'Video' : 'Voice'} call` : `${caller?.user_name || 'A member'} started it · ${incomingCall.participants.length} connected`}</em></span><button type="button" onclick={() => dismissIncomingCall(incomingCall.channel_uid)} aria-label={privateCall ? 'Decline private call' : 'Dismiss group call notification'}><X size={16} /></button></header>
+    <footer><button class:danger={privateCall} class="button incoming-call-dismiss" type="button" onclick={() => dismissIncomingCall(incomingCall.channel_uid)}><PhoneOff size={15} /> {privateCall ? 'Decline' : 'Not now'}</button><button class="button" type="button" onclick={() => void answerOngoingCall(incomingCall, 'voice')}><Phone size={15} /> {privateCall ? 'Answer voice' : 'Join voice'}</button><button class="button primary" type="button" onclick={() => void answerOngoingCall(incomingCall, 'video')}><Video size={15} /> {privateCall ? 'Answer video' : 'Join video'}</button></footer>
+  </div>
+{/if}
+
+{#if activeCall}
+  {#key activeCall.nonce}<CollaborationCall {session} channelUid={activeCall.channelUid} channelName={activeCall.channelName} channelKind={activeCall.channelKind} initialMode={activeCall.mode} connected={live} {callEvents} onEnded={endLocalCall} />{/key}
+{/if}
+
+{#if callSessionNotice}<div class="call-session-notice" role="status"><span>{callSessionNotice}</span><button type="button" onclick={() => callSessionNotice = ''} aria-label="Dismiss call notice"><X size={15} /></button></div>{/if}
 
 {#if notificationToasts.length}
   <section class="notification-toast-stack" aria-label="New notifications" aria-live="polite">

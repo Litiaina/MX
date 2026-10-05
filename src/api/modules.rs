@@ -11,7 +11,7 @@ use uuid::Uuid;
 
 use crate::{
     api::{
-        live::publish_live_event,
+        live::{publish_live_event, publish_user_event},
         mx::handler::{ensure_mx_record_schema, n1_recover, n1_soft_delete},
     },
     db::connector::{SqliteDatabaseError, with_sql_connection},
@@ -34,6 +34,8 @@ pub struct ModuleDefinition {
     pub active: bool,
     pub config: Value,
     pub permissions: Vec<ModulePermission>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub effective_permission: Option<ModulePermission>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -44,6 +46,71 @@ pub struct ModulePermission {
     pub can_update: bool,
     pub can_delete: bool,
     pub can_configure: bool,
+    #[serde(default)]
+    pub can_report: bool,
+    #[serde(default)]
+    pub can_attachments: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AccountModuleGrant {
+    pub module_uid: String,
+    pub can_read: bool,
+    pub can_create: bool,
+    pub can_update: bool,
+    pub can_delete: bool,
+    pub can_configure: bool,
+    pub can_report: bool,
+    pub can_attachments: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SaveAccountModuleGrantsRequest {
+    pub revision: i64,
+    #[serde(default)]
+    pub grants: Vec<AccountModuleGrant>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AccountModuleGrantView {
+    pub module_uid: String,
+    pub module_name: String,
+    pub module_icon: String,
+    pub module_color: String,
+    pub module_active: bool,
+    pub role_permission: ModulePermission,
+    pub grant: AccountModuleGrant,
+}
+
+#[derive(Debug)]
+enum SaveAccountGrantsOutcome {
+    Saved(i64),
+    RevisionConflict(i64),
+    AccountNotFound,
+    Administrator,
+}
+
+fn claim_module_access_revision(
+    connection: &rusqlite::Connection,
+    user_uid: &str,
+    expected_revision: i64,
+) -> rusqlite::Result<Result<i64, i64>> {
+    let next = connection
+        .query_row(
+            "UPDATE mx_module_access_revisions SET revision=revision+1 WHERE user_uid=?1 AND revision=?2 RETURNING revision",
+            params![user_uid,expected_revision],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()?;
+    if let Some(next) = next {
+        return Ok(Ok(next));
+    }
+    let current = connection.query_row(
+        "SELECT revision FROM mx_module_access_revisions WHERE user_uid=?1",
+        params![user_uid],
+        |row| row.get::<_, i64>(0),
+    )?;
+    Ok(Err(current))
 }
 
 #[derive(Debug, Deserialize)]
@@ -152,8 +219,51 @@ pub(crate) fn ensure_module_schema(connection: &rusqlite::Connection) -> rusqlit
             PRIMARY KEY(module_uid, access_level),
             FOREIGN KEY(module_uid) REFERENCES mx_modules(uid) ON DELETE CASCADE
         );
+
+        CREATE TABLE IF NOT EXISTS mx_module_account_permissions (
+            module_uid      TEXT NOT NULL,
+            user_uid        TEXT NOT NULL,
+            can_read        INTEGER NOT NULL DEFAULT 0 CHECK(can_read IN (0,1)),
+            can_create      INTEGER NOT NULL DEFAULT 0 CHECK(can_create IN (0,1)),
+            can_update      INTEGER NOT NULL DEFAULT 0 CHECK(can_update IN (0,1)),
+            can_delete      INTEGER NOT NULL DEFAULT 0 CHECK(can_delete IN (0,1)),
+            can_configure   INTEGER NOT NULL DEFAULT 0 CHECK(can_configure IN (0,1)),
+            can_report      INTEGER NOT NULL DEFAULT 0 CHECK(can_report IN (0,1)),
+            can_attachments INTEGER NOT NULL DEFAULT 0 CHECK(can_attachments IN (0,1)),
+            updated_by      TEXT,
+            updated_at      INTEGER NOT NULL,
+            PRIMARY KEY(module_uid, user_uid),
+            FOREIGN KEY(module_uid) REFERENCES mx_modules(uid) ON DELETE CASCADE,
+            FOREIGN KEY(user_uid) REFERENCES users(uid) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS mx_module_access_revisions (
+            user_uid TEXT PRIMARY KEY NOT NULL,
+            revision INTEGER NOT NULL DEFAULT 0,
+            FOREIGN KEY(user_uid) REFERENCES users(uid) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS mx_module_access_meta (
+            meta_key TEXT PRIMARY KEY NOT NULL,
+            meta_value TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_mx_module_account_permissions_user
+        ON mx_module_account_permissions(user_uid, module_uid);
         "#,
     )?;
+    if !table_has_column(connection, "mx_module_permissions", "can_report")? {
+        connection.execute(
+            "ALTER TABLE mx_module_permissions ADD COLUMN can_report INTEGER NOT NULL DEFAULT 1 CHECK(can_report IN (0,1))",
+            [],
+        )?;
+    }
+    if !table_has_column(connection, "mx_module_permissions", "can_attachments")? {
+        connection.execute(
+            "ALTER TABLE mx_module_permissions ADD COLUMN can_attachments INTEGER NOT NULL DEFAULT 1 CHECK(can_attachments IN (0,1))",
+            [],
+        )?;
+    }
     let now = chrono::Utc::now().timestamp_millis();
     connection.execute(
         r#"
@@ -173,9 +283,47 @@ pub(crate) fn ensure_module_schema(connection: &rusqlite::Connection) -> rusqlit
         (3, 1, 0, 0, 0, 0),
     ] {
         connection.execute(
-            "INSERT OR IGNORE INTO mx_module_permissions(module_uid, access_level, can_read, can_create, can_update, can_delete, can_configure) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT OR IGNORE INTO mx_module_permissions(module_uid, access_level, can_read, can_create, can_update, can_delete, can_configure, can_report, can_attachments) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?3, ?3)",
             params![DEFAULT_MODULE_UID, level, read, create, update, delete, configure],
         )?;
+    }
+
+    let account_grants_migrated = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM mx_module_access_meta WHERE meta_key='account_grants_v1')",
+        [],
+        |row| row.get::<_, bool>(0),
+    )?;
+    // Some focused tests and older installations can expose a legacy `users`
+    // table before the access-level migration has run.  Seeding must be
+    // schema-aware: merely finding a table called `users` is not enough.
+    if !account_grants_migrated
+        && table_exists(connection, "users")?
+        && table_has_column(connection, "users", "uid")?
+        && table_has_column(connection, "users", "access_level")?
+    {
+        let transaction = connection.unchecked_transaction()?;
+        transaction.execute_batch(
+            r#"
+            INSERT OR IGNORE INTO mx_module_account_permissions(
+                module_uid,user_uid,can_read,can_create,can_update,can_delete,
+                can_configure,can_report,can_attachments,updated_by,updated_at
+            )
+            SELECT permission.module_uid,user.uid,permission.can_read,permission.can_create,
+                   permission.can_update,permission.can_delete,permission.can_configure,
+                   permission.can_report,permission.can_attachments,NULL,
+                   CAST(strftime('%s','now') AS INTEGER) * 1000
+            FROM users user
+            JOIN mx_module_permissions permission ON permission.access_level=user.access_level
+            WHERE user.access_level<>0;
+
+            INSERT OR IGNORE INTO mx_module_access_revisions(user_uid, revision)
+            SELECT uid, 0 FROM users WHERE access_level<>0;
+
+            INSERT INTO mx_module_access_meta(meta_key,meta_value)
+            VALUES('account_grants_v1','seeded-existing-accounts');
+            "#,
+        )?;
+        transaction.commit()?;
     }
 
     if !table_has_column(connection, "mx_records", "module_uid")? {
@@ -257,7 +405,7 @@ fn load_permissions(
     connection: &rusqlite::Connection,
     module_uid: &str,
 ) -> rusqlite::Result<Vec<ModulePermission>> {
-    let mut statement = connection.prepare("SELECT access_level, can_read, can_create, can_update, can_delete, can_configure FROM mx_module_permissions WHERE module_uid = ?1 ORDER BY access_level")?;
+    let mut statement = connection.prepare("SELECT access_level, can_read, can_create, can_update, can_delete, can_configure, can_report, can_attachments FROM mx_module_permissions WHERE module_uid = ?1 ORDER BY access_level")?;
     statement
         .query_map(params![module_uid], |row| {
             Ok(ModulePermission {
@@ -267,6 +415,8 @@ fn load_permissions(
                 can_update: row.get::<_, i64>(3)? != 0,
                 can_delete: row.get::<_, i64>(4)? != 0,
                 can_configure: row.get::<_, i64>(5)? != 0,
+                can_report: row.get::<_, i64>(6)? != 0,
+                can_attachments: row.get::<_, i64>(7)? != 0,
             })
         })?
         .collect()
@@ -280,6 +430,7 @@ fn row_to_module(
     let text: String = row.get(9)?;
     Ok(ModuleDefinition {
         permissions: load_permissions(connection, &uid)?,
+        effective_permission: None,
         uid,
         slug: row.get(1)?,
         name: row.get(2)?,
@@ -306,41 +457,92 @@ pub(crate) fn load_module_db(
     }
 }
 
-pub(crate) fn module_can(
+pub(crate) fn effective_module_permission(
     connection: &rusqlite::Connection,
     module_uid: &str,
+    user_uid: &str,
     access_level: i64,
-    capability: &str,
-) -> rusqlite::Result<bool> {
+) -> rusqlite::Result<Option<ModulePermission>> {
     ensure_module_schema(connection)?;
     if access_level == 0 {
-        return connection
+        let active = connection
             .query_row(
-                "SELECT active FROM mx_modules WHERE uid = ?1",
+                "SELECT active FROM mx_modules WHERE uid=?1",
                 params![module_uid],
                 |row| row.get::<_, i64>(0),
             )
-            .optional()
-            .map(|value| value.unwrap_or(0) != 0);
+            .optional()?
+            .unwrap_or(0)
+            != 0;
+        return Ok(active.then_some(ModulePermission {
+            access_level,
+            can_read: true,
+            can_create: true,
+            can_update: true,
+            can_delete: true,
+            can_configure: true,
+            can_report: true,
+            can_attachments: true,
+        }));
     }
-    let column = match capability {
-        "read" => "can_read",
-        "create" => "can_create",
-        "update" => "can_update",
-        "delete" => "can_delete",
-        "configure" => "can_configure",
-        _ => return Ok(false),
+    connection
+        .query_row(
+            r#"
+            SELECT
+                role.can_read AND account.can_read,
+                role.can_create AND account.can_create,
+                role.can_update AND account.can_update,
+                role.can_delete AND account.can_delete,
+                role.can_configure AND account.can_configure,
+                role.can_report AND account.can_report,
+                role.can_attachments AND account.can_attachments
+            FROM mx_modules module
+            JOIN mx_module_permissions role
+              ON role.module_uid=module.uid AND role.access_level=?3
+            JOIN mx_module_account_permissions account
+              ON account.module_uid=module.uid AND account.user_uid=?2
+            WHERE module.uid=?1 AND module.active=1
+            "#,
+            params![module_uid, user_uid, access_level],
+            |row| {
+                Ok(ModulePermission {
+                    access_level,
+                    can_read: row.get::<_, i64>(0)? != 0,
+                    can_create: row.get::<_, i64>(1)? != 0,
+                    can_update: row.get::<_, i64>(2)? != 0,
+                    can_delete: row.get::<_, i64>(3)? != 0,
+                    can_configure: row.get::<_, i64>(4)? != 0,
+                    can_report: row.get::<_, i64>(5)? != 0,
+                    can_attachments: row.get::<_, i64>(6)? != 0,
+                })
+            },
+        )
+        .optional()
+}
+
+pub(crate) fn module_can_for_user(
+    connection: &rusqlite::Connection,
+    module_uid: &str,
+    user_uid: &str,
+    access_level: i64,
+    capability: &str,
+) -> rusqlite::Result<bool> {
+    let Some(permission) =
+        effective_module_permission(connection, module_uid, user_uid, access_level)?
+    else {
+        return Ok(false);
     };
-    let sql = format!(
-        "SELECT p.{column} FROM mx_module_permissions p JOIN mx_modules m ON m.uid = p.module_uid WHERE p.module_uid = ?1 AND p.access_level = ?2 AND m.active = 1"
-    );
-    Ok(connection
-        .query_row(&sql, params![module_uid, access_level], |row| {
-            row.get::<_, i64>(0)
-        })
-        .optional()?
-        .unwrap_or(0)
-        != 0)
+    let allowed = match capability {
+        "read" => permission.can_read,
+        "create" => permission.can_read && permission.can_create,
+        "update" => permission.can_read && permission.can_update,
+        "delete" => permission.can_read && permission.can_delete,
+        "configure" => permission.can_configure,
+        "report" => permission.can_read && permission.can_report,
+        "attachments" => permission.can_read && permission.can_attachments,
+        _ => false,
+    };
+    Ok(allowed)
 }
 
 fn api_json(status: StatusCode, body: Value) -> Response {
@@ -349,20 +551,306 @@ fn api_json(status: StatusCode, body: Value) -> Response {
 
 pub async fn list_modules(claims: Claims) -> Response {
     let access_level = claims.access_level;
+    let user_uid = claims.uid;
     let result = tokio::task::spawn_blocking(move || with_sql_connection(|connection| {
         ensure_module_schema(connection)?;
-        let sql = "SELECT m.uid, m.slug, m.name, m.singular_name, m.description, m.icon, m.color, m.position, m.active, m.config_json FROM mx_modules m JOIN mx_module_permissions p ON p.module_uid = m.uid AND p.access_level = ?1 WHERE (p.can_read = 1 OR p.can_configure = 1) AND (m.active = 1 OR ?1 = 0) ORDER BY m.active DESC, m.position, m.name COLLATE NOCASE";
+        let sql = "SELECT uid, slug, name, singular_name, description, icon, color, position, active, config_json FROM mx_modules WHERE active=1 OR ?1=0 ORDER BY active DESC, position, name COLLATE NOCASE";
         let mut statement = connection.prepare(sql)?;
         let mut rows = statement.query(params![access_level])?;
         let mut modules = Vec::new();
-        while let Some(row) = rows.next()? { modules.push(row_to_module(connection, row)?); }
-        Ok(modules)
+        while let Some(row) = rows.next()? {
+            modules.push(row_to_module(connection, row)?);
+        }
+        drop(rows);
+        drop(statement);
+
+        let mut visible_modules = Vec::with_capacity(modules.len());
+        for mut module in modules {
+            if access_level == 0 {
+                module.effective_permission = Some(ModulePermission {
+                    access_level,
+                    can_read: true,
+                    can_create: true,
+                    can_update: true,
+                    can_delete: true,
+                    can_configure: true,
+                    can_report: true,
+                    can_attachments: true,
+                });
+                visible_modules.push(module);
+                continue;
+            }
+            let permission = effective_module_permission(connection, &module.uid, &user_uid, access_level)?;
+            if permission.as_ref().is_some_and(|item| item.can_read || item.can_configure) {
+                module.effective_permission = permission;
+                visible_modules.push(module);
+            }
+        }
+        Ok(visible_modules)
     })).await;
     match result {
         Ok(Ok(modules)) => api_json(StatusCode::OK, json!({"modules":modules})),
+        Ok(Err(error)) => {
+            crate::report_error!(format!("{error}"), "modules", "list_modules()");
+            api_json(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                json!({"response":"failed to load modules"}),
+            )
+        }
+        Err(error) => {
+            crate::report_error!(format!("{error}"), "modules", "list_modules()");
+            api_json(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                json!({"response":"module list task failed"}),
+            )
+        }
+    }
+}
+
+pub async fn get_account_module_grants(claims: Claims, Path(user_uid): Path<String>) -> Response {
+    if !claims.can_manage_accounts() {
+        return api_json(
+            StatusCode::FORBIDDEN,
+            json!({"response":"administrator access is required"}),
+        );
+    }
+    let result = tokio::task::spawn_blocking(move || {
+        with_sql_connection(|connection| {
+            ensure_module_schema(connection)?;
+            let account = connection
+                .query_row(
+                    "SELECT name, access_level FROM users WHERE uid=?1",
+                    params![user_uid],
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
+                )
+                .optional()?;
+            let Some((account_name, access_level)) = account else {
+                return Ok(None);
+            };
+            connection.execute(
+                "INSERT OR IGNORE INTO mx_module_access_revisions(user_uid,revision) VALUES(?1,0)",
+                params![user_uid],
+            )?;
+            let revision = connection.query_row(
+                "SELECT revision FROM mx_module_access_revisions WHERE user_uid=?1",
+                params![user_uid],
+                |row| row.get::<_, i64>(0),
+            )?;
+            let mut statement = connection.prepare(
+                "SELECT uid,name,icon,color,active FROM mx_modules ORDER BY active DESC,position,name COLLATE NOCASE",
+            )?;
+            let modules = statement
+                .query_map([], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, i64>(4)? != 0,
+                    ))
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            let mut views = Vec::with_capacity(modules.len());
+            for (module_uid, module_name, module_icon, module_color, module_active) in modules {
+                let role_permission = load_permissions(connection, &module_uid)?
+                    .into_iter()
+                    .find(|permission| permission.access_level == access_level)
+                    .unwrap_or(ModulePermission {
+                        access_level,
+                        can_read: false,
+                        can_create: false,
+                        can_update: false,
+                        can_delete: false,
+                        can_configure: false,
+                        can_report: false,
+                        can_attachments: false,
+                    });
+                let grant = connection
+                    .query_row(
+                        "SELECT can_read,can_create,can_update,can_delete,can_configure,can_report,can_attachments FROM mx_module_account_permissions WHERE module_uid=?1 AND user_uid=?2",
+                        params![module_uid,user_uid],
+                        |row| Ok(AccountModuleGrant {
+                            module_uid: module_uid.clone(),
+                            can_read: row.get::<_,i64>(0)? != 0,
+                            can_create: row.get::<_,i64>(1)? != 0,
+                            can_update: row.get::<_,i64>(2)? != 0,
+                            can_delete: row.get::<_,i64>(3)? != 0,
+                            can_configure: row.get::<_,i64>(4)? != 0,
+                            can_report: row.get::<_,i64>(5)? != 0,
+                            can_attachments: row.get::<_,i64>(6)? != 0,
+                        }),
+                    )
+                    .optional()?
+                    .unwrap_or(AccountModuleGrant {
+                        module_uid: module_uid.clone(),
+                        can_read: false,
+                        can_create: false,
+                        can_update: false,
+                        can_delete: false,
+                        can_configure: false,
+                        can_report: false,
+                        can_attachments: false,
+                    });
+                views.push(AccountModuleGrantView {
+                    module_uid,
+                    module_name,
+                    module_icon,
+                    module_color,
+                    module_active,
+                    role_permission,
+                    grant,
+                });
+            }
+            Ok(Some((account_name, access_level, revision, views)))
+        })
+    })
+    .await;
+    match result {
+        Ok(Ok(Some((account_name, access_level, revision, modules)))) => api_json(
+            StatusCode::OK,
+            json!({"account_name":account_name,"access_level":access_level,"revision":revision,"modules":modules}),
+        ),
+        Ok(Ok(None)) => api_json(
+            StatusCode::NOT_FOUND,
+            json!({"response":"account was not found"}),
+        ),
         _ => api_json(
             StatusCode::INTERNAL_SERVER_ERROR,
-            json!({"response":"failed to load modules"}),
+            json!({"response":"module access could not be loaded"}),
+        ),
+    }
+}
+
+pub async fn save_account_module_grants(
+    claims: Claims,
+    Path(user_uid): Path<String>,
+    Json(request): Json<SaveAccountModuleGrantsRequest>,
+) -> Response {
+    if !claims.can_manage_accounts() {
+        return api_json(
+            StatusCode::FORBIDDEN,
+            json!({"response":"administrator access is required"}),
+        );
+    }
+    if request.revision < 0 || request.grants.len() > 512 {
+        return api_json(
+            StatusCode::BAD_REQUEST,
+            json!({"response":"the module access request is invalid"}),
+        );
+    }
+    let unique = request
+        .grants
+        .iter()
+        .map(|grant| grant.module_uid.trim())
+        .collect::<std::collections::HashSet<_>>();
+    if unique.len() != request.grants.len() || unique.iter().any(|uid| uid.is_empty()) {
+        return api_json(
+            StatusCode::BAD_REQUEST,
+            json!({"response":"each module may appear only once"}),
+        );
+    }
+    let actor_uid = claims.uid;
+    let event_actor_uid = actor_uid.clone();
+    let event_user_uid = user_uid.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        with_sql_connection(|connection| {
+            ensure_module_schema(connection)?;
+            let account_level = connection
+                .query_row(
+                    "SELECT access_level FROM users WHERE uid=?1",
+                    params![user_uid],
+                    |row| row.get::<_, i64>(0),
+                )
+                .optional()?;
+            let Some(access_level) = account_level else {
+                return Ok(SaveAccountGrantsOutcome::AccountNotFound);
+            };
+            if access_level == 0 {
+                return Ok(SaveAccountGrantsOutcome::Administrator);
+            }
+            let transaction = connection.unchecked_transaction()?;
+            transaction.execute(
+                "INSERT OR IGNORE INTO mx_module_access_revisions(user_uid,revision) VALUES(?1,0)",
+                params![user_uid],
+            )?;
+            let next_revision = match claim_module_access_revision(
+                &transaction,
+                &user_uid,
+                request.revision,
+            )? {
+                Ok(revision) => revision,
+                Err(current) => {
+                    return Ok(SaveAccountGrantsOutcome::RevisionConflict(current));
+                }
+            };
+            transaction.execute(
+                "DELETE FROM mx_module_account_permissions WHERE user_uid=?1",
+                params![user_uid],
+            )?;
+            let now = chrono::Utc::now().timestamp_millis();
+            for grant in request.grants {
+                let module_uid = grant.module_uid.trim();
+                let role = transaction
+                    .query_row(
+                        "SELECT can_read,can_create,can_update,can_delete,can_configure,can_report,can_attachments FROM mx_module_permissions WHERE module_uid=?1 AND access_level=?2",
+                        params![module_uid,access_level],
+                        |row| Ok((
+                            row.get::<_,i64>(0)? != 0,row.get::<_,i64>(1)? != 0,
+                            row.get::<_,i64>(2)? != 0,row.get::<_,i64>(3)? != 0,
+                            row.get::<_,i64>(4)? != 0,row.get::<_,i64>(5)? != 0,
+                            row.get::<_,i64>(6)? != 0,
+                        )),
+                    )
+                    .optional()?;
+                let Some(role) = role else { continue; };
+                let values = (
+                    grant.can_read && role.0,
+                    grant.can_create && role.1,
+                    grant.can_update && role.2,
+                    grant.can_delete && role.3,
+                    grant.can_configure && role.4,
+                    grant.can_report && role.5,
+                    grant.can_attachments && role.6,
+                );
+                if !values.0 && !values.4 { continue; }
+                transaction.execute(
+                    "INSERT INTO mx_module_account_permissions(module_uid,user_uid,can_read,can_create,can_update,can_delete,can_configure,can_report,can_attachments,updated_by,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
+                    params![module_uid,user_uid,values.0 as i64,values.1 as i64,values.2 as i64,values.3 as i64,values.4 as i64,values.5 as i64,values.6 as i64,actor_uid,now],
+                )?;
+            }
+            transaction.commit()?;
+            Ok(SaveAccountGrantsOutcome::Saved(next_revision))
+        })
+    })
+    .await;
+    match result {
+        Ok(Ok(SaveAccountGrantsOutcome::Saved(revision))) => {
+            publish_user_event(
+                &event_user_uid,
+                "module.access.changed",
+                Some(&event_actor_uid),
+                json!({"user_uid":event_user_uid.clone(),"revision":revision}),
+            );
+            api_json(
+                StatusCode::OK,
+                json!({"response":"module access saved","revision":revision}),
+            )
+        }
+        Ok(Ok(SaveAccountGrantsOutcome::RevisionConflict(revision))) => api_json(
+            StatusCode::CONFLICT,
+            json!({"response":"Module access changed in another administrator session. Reload and review before saving.","revision":revision}),
+        ),
+        Ok(Ok(SaveAccountGrantsOutcome::AccountNotFound)) => api_json(
+            StatusCode::NOT_FOUND,
+            json!({"response":"account was not found"}),
+        ),
+        Ok(Ok(SaveAccountGrantsOutcome::Administrator)) => api_json(
+            StatusCode::BAD_REQUEST,
+            json!({"response":"administrators always have access to every active module"}),
+        ),
+        _ => api_json(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            json!({"response":"module access could not be saved"}),
         ),
     }
 }
@@ -417,7 +905,7 @@ pub async fn create_module(claims: Claims, Json(request): Json<CreateModuleReque
         let mut candidate = base_slug.clone(); let mut suffix = 2; while transaction.query_row("SELECT EXISTS(SELECT 1 FROM mx_modules WHERE slug = ?1)", params![candidate], |row| row.get::<_,bool>(0))? { candidate = format!("{base_slug}-{suffix}"); suffix += 1; }
         let position = position.unwrap_or(transaction.query_row("SELECT COALESCE(MAX(position), -10) + 10 FROM mx_modules", [], |row| row.get(0))?);
         transaction.execute("INSERT INTO mx_modules(uid,slug,name,singular_name,description,icon,color,position,active,config_json,created_at,updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,1,?9,?10,?10)", params![uid,candidate,name,singular,description,icon,color,position,config_text,now])?;
-        for (level, read, create, update, delete, configure) in [(0,1,1,1,1,1),(1,1,1,1,1,0),(2,1,1,1,0,0),(3,1,0,0,0,0)] { transaction.execute("INSERT INTO mx_module_permissions(module_uid,access_level,can_read,can_create,can_update,can_delete,can_configure) VALUES (?1,?2,?3,?4,?5,?6,?7)", params![uid,level,read,create,update,delete,configure])?; }
+        for (level, read, create, update, delete, configure) in [(0,1,1,1,1,1),(1,1,1,1,1,0),(2,1,1,1,0,0),(3,1,0,0,0,0)] { transaction.execute("INSERT INTO mx_module_permissions(module_uid,access_level,can_read,can_create,can_update,can_delete,can_configure,can_report,can_attachments) VALUES (?1,?2,?3,?4,?5,?6,?7,?3,?3)", params![uid,level,read,create,update,delete,configure])?; }
         transaction.commit()?; load_module_db(connection, &uid)?.ok_or(rusqlite::Error::QueryReturnedNoRows)
     })}).await;
     match result {
@@ -469,7 +957,7 @@ pub async fn update_module(
         let description = request.description.as_deref().map(|value| clean(value,500)).unwrap_or(existing.description); let icon = request.icon.as_deref().map(|value| clean(value,12)).filter(|value| !value.is_empty()).unwrap_or(existing.icon);
         let color = request.color.filter(|value| valid_color(value)).unwrap_or(existing.color); let config = request.config.filter(Value::is_object).unwrap_or(existing.config);
         transaction.execute("UPDATE mx_modules SET name=?2,singular_name=?3,description=?4,icon=?5,color=?6,position=?7,active=?8,config_json=?9,updated_at=?10 WHERE uid=?1", params![db_uid,name,singular,description,icon,color,request.position.unwrap_or(existing.position),if request.active.unwrap_or(existing.active){1}else{0},config.to_string(),chrono::Utc::now().timestamp_millis()])?;
-        if let Some(permissions) = request.permissions { for permission in permissions { if !(0..=3).contains(&permission.access_level) { continue; } let administrator = permission.access_level == 0; transaction.execute("INSERT INTO mx_module_permissions(module_uid,access_level,can_read,can_create,can_update,can_delete,can_configure) VALUES (?1,?2,?3,?4,?5,?6,?7) ON CONFLICT(module_uid,access_level) DO UPDATE SET can_read=excluded.can_read,can_create=excluded.can_create,can_update=excluded.can_update,can_delete=excluded.can_delete,can_configure=excluded.can_configure", params![db_uid,permission.access_level,(administrator || permission.can_read) as i64,(administrator || permission.can_create) as i64,(administrator || permission.can_update) as i64,(administrator || permission.can_delete) as i64,(administrator || permission.can_configure) as i64])?; } }
+        if let Some(permissions) = request.permissions { for permission in permissions { if !(0..=3).contains(&permission.access_level) { continue; } let administrator = permission.access_level == 0; transaction.execute("INSERT INTO mx_module_permissions(module_uid,access_level,can_read,can_create,can_update,can_delete,can_configure,can_report,can_attachments) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9) ON CONFLICT(module_uid,access_level) DO UPDATE SET can_read=excluded.can_read,can_create=excluded.can_create,can_update=excluded.can_update,can_delete=excluded.can_delete,can_configure=excluded.can_configure,can_report=excluded.can_report,can_attachments=excluded.can_attachments", params![db_uid,permission.access_level,(administrator || permission.can_read) as i64,(administrator || permission.can_create) as i64,(administrator || permission.can_update) as i64,(administrator || permission.can_delete) as i64,(administrator || permission.can_configure) as i64,(administrator || permission.can_report) as i64,(administrator || permission.can_attachments) as i64])?; } }
         transaction.commit()?; load_module_db(connection,&db_uid)?.ok_or(rusqlite::Error::QueryReturnedNoRows)
     })}).await;
     match result {
@@ -682,18 +1170,17 @@ pub async fn delete_module(
                 let config_text = transaction
                     .query_row("SELECT config_json FROM mx_dashboard_config WHERE id = 1", [], |row| row.get::<_, String>(0))
                     .optional()?;
-                if let Some(config_text) = config_text {
-                    if let Ok(mut config) = serde_json::from_str::<Value>(&config_text) {
-                        if let Some(widgets) = config.get_mut("widgets").and_then(Value::as_array_mut) {
-                            let previous = widgets.len();
-                            widgets.retain(|widget| widget.get("module_uid").and_then(Value::as_str) != Some(delete_uid.as_str()));
-                            if widgets.len() != previous {
-                                transaction.execute(
-                                    "UPDATE mx_dashboard_config SET config_json = ?1, revision = revision + 1, updated_at = ?2 WHERE id = 1",
-                                    params![config.to_string(), chrono::Utc::now().timestamp_millis()],
-                                )?;
-                            }
-                        }
+                if let Some(config_text) = config_text
+                    && let Ok(mut config) = serde_json::from_str::<Value>(&config_text)
+                    && let Some(widgets) = config.get_mut("widgets").and_then(Value::as_array_mut)
+                {
+                    let previous = widgets.len();
+                    widgets.retain(|widget| widget.get("module_uid").and_then(Value::as_str) != Some(delete_uid.as_str()));
+                    if widgets.len() != previous {
+                        transaction.execute(
+                            "UPDATE mx_dashboard_config SET config_json = ?1, revision = revision + 1, updated_at = ?2 WHERE id = 1",
+                            params![config.to_string(), chrono::Utc::now().timestamp_millis()],
+                        )?;
                     }
                 }
             }
@@ -791,6 +1278,74 @@ mod tests {
             load_module_db(&connection, DEFAULT_MODULE_UID)
                 .unwrap()
                 .is_some()
+        );
+    }
+
+    #[test]
+    fn account_module_access_is_default_deny_and_cannot_exceed_the_role() {
+        let connection = rusqlite::Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE users(uid TEXT PRIMARY KEY NOT NULL, access_level INTEGER NOT NULL);",
+            )
+            .unwrap();
+        ensure_module_schema(&connection).unwrap();
+        connection
+            .execute(
+                "INSERT INTO users(uid,access_level) VALUES('editor-new',2)",
+                [],
+            )
+            .unwrap();
+
+        assert!(
+            effective_module_permission(&connection, DEFAULT_MODULE_UID, "editor-new", 2)
+                .unwrap()
+                .is_none()
+        );
+        connection
+            .execute(
+                "INSERT INTO mx_module_account_permissions(module_uid,user_uid,can_read,can_create,can_update,can_delete,can_configure,can_report,can_attachments,updated_at) VALUES(?1,'editor-new',1,1,1,1,1,1,1,0)",
+                params![DEFAULT_MODULE_UID],
+            )
+            .unwrap();
+        let effective =
+            effective_module_permission(&connection, DEFAULT_MODULE_UID, "editor-new", 2)
+                .unwrap()
+                .unwrap();
+        assert!(effective.can_read && effective.can_create && effective.can_update);
+        assert!(effective.can_report && effective.can_attachments);
+        assert!(!effective.can_delete && !effective.can_configure);
+    }
+
+    #[test]
+    fn module_access_revision_rejects_a_stale_administrator_write() {
+        let connection = rusqlite::Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE users(uid TEXT PRIMARY KEY NOT NULL, access_level INTEGER NOT NULL);",
+            )
+            .unwrap();
+        ensure_module_schema(&connection).unwrap();
+        connection
+            .execute(
+                "INSERT INTO users(uid,access_level) VALUES('editor-new',2)",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO mx_module_access_revisions(user_uid,revision) VALUES('editor-new',0)",
+                [],
+            )
+            .unwrap();
+
+        assert_eq!(
+            claim_module_access_revision(&connection, "editor-new", 0).unwrap(),
+            Ok(1)
+        );
+        assert_eq!(
+            claim_module_access_revision(&connection, "editor-new", 0).unwrap(),
+            Err(1)
         );
     }
 

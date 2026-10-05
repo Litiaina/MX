@@ -181,7 +181,7 @@
         </div>
       </div>
       <div class="module-permissions">
-        <div class="permission-head"><strong>Access level</strong><span>View</span><span>Create</span><span>Edit</span><span>Delete</span><span>Configure</span></div>
+        <div class="permission-head"><strong>Access level</strong><span>View</span><span>Create</span><span>Edit</span><span>Delete</span><span>Configure</span><span>Reports</span><span>Files</span></div>
         {#each modulePermissions as permission}
           <div>
             <strong>{['Administrator','Manager','Editor','Viewer'][permission.access_level] || `Level ${permission.access_level}`}</strong>
@@ -190,6 +190,8 @@
             <label><input type="checkbox" bind:checked={permission.can_update} disabled={permission.access_level === 0} /><span>Edit</span></label>
             <label><input type="checkbox" bind:checked={permission.can_delete} disabled={permission.access_level === 0} /><span>Delete</span></label>
             <label><input type="checkbox" bind:checked={permission.can_configure} disabled={permission.access_level === 0} /><span>Configure</span></label>
+            <label><input type="checkbox" bind:checked={permission.can_report} disabled={permission.access_level === 0} /><span>Reports</span></label>
+            <label><input type="checkbox" bind:checked={permission.can_attachments} disabled={permission.access_level === 0} /><span>Files</span></label>
           </div>
         {/each}
       </div>

@@ -488,11 +488,11 @@
           <form onsubmit={saveNotificationSettings}>
             <div class="notification-delivery-options">
               <label class="checkbox"><input type="checkbox" bind:checked={notifications.browser_enabled} /> Show operating-system notifications when MX is in the background</label>
-              <label class="checkbox"><input type="checkbox" bind:checked={notifications.sound_enabled} /> Play a sound for immediate notifications</label>
+              <label class="checkbox"><input type="checkbox" bind:checked={notifications.sound_enabled} /> Play sounds for immediate notifications and incoming calls</label>
             </div>
 
             <section class:disabled={!notifications.sound_enabled} class="notification-sound-card">
-              <div class="notification-sound-heading"><span><Volume2 size={20} /></span><div><strong>Notification sound</strong><small>The built-in chime works offline. A custom sound is stored privately in N1, preloaded into MX's server cache, and decoded once by this browser.</small></div></div>
+              <div class="notification-sound-heading"><span><Volume2 size={20} /></span><div><strong>Notification and call sound</strong><small>Private calls ring for up to 30 seconds; group calls chime once. A custom sound is stored privately in N1, preloaded into MX's server cache, and decoded once by this browser.</small></div></div>
               <div class="notification-sound-controls">
                 <label>Sound<select bind:value={notifications.sound_source} disabled={!notifications.sound_enabled}><option value="default">Built-in MX chime</option><option value="custom" disabled={!notificationSound.exists}>My custom sound{notificationSound.exists && notificationSound.file_name ? ` — ${notificationSound.file_name}` : ''}</option></select></label>
                 <label>Volume: {notifications.sound_volume}%<input type="range" min="0" max="100" step="5" bind:value={notifications.sound_volume} disabled={!notifications.sound_enabled} /></label>

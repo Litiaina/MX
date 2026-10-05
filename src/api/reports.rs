@@ -18,7 +18,7 @@ use crate::{
     api::audit::ensure_audit_schema,
     api::lifecycle::ensure_record_lifecycle_schema,
     api::live::publish_live_event,
-    api::modules::{DEFAULT_MODULE_UID, module_can},
+    api::modules::{DEFAULT_MODULE_UID, module_can_for_user},
     api::mx::{
         attachment_fields::ensure_attachment_fields_schema,
         schema::{FieldDefinition, ensure_dynamic_schema, load_module_fields_db},
@@ -180,9 +180,11 @@ fn report_module(query: &ReportQuery) -> &str {
         .unwrap_or(DEFAULT_MODULE_UID)
 }
 
-async fn can_read_report_module(module_uid: String, access_level: i64) -> bool {
+async fn can_read_report_module(module_uid: String, user_uid: String, access_level: i64) -> bool {
     tokio::task::spawn_blocking(move || {
-        with_sql_connection(|connection| module_can(connection, &module_uid, access_level, "read"))
+        with_sql_connection(|connection| {
+            module_can_for_user(connection, &module_uid, &user_uid, access_level, "report")
+        })
     })
     .await
     .ok()
@@ -528,7 +530,7 @@ fn attachment_presence_rows(
             report_error("attachment_field_uid was not found in this module or is archived")
         })?;
 
-    let mut bind: Vec<SqlValue> = vec![SqlValue::Text(module_uid)];
+    let mut bind: Vec<SqlValue> = vec![SqlValue::Text(module_uid.clone())];
     let (group_expr, group_join, date_already_joined, chronological) =
         report_grouping(connection, query, &mut bind)?;
 
@@ -875,27 +877,53 @@ pub async fn get_dashboard_config(claims: Claims) -> Response {
         return api_json(StatusCode::FORBIDDEN, json!({"response":"access denied"}));
     }
 
+    let access_level = claims.access_level;
+    let user_uid = claims.uid;
     let result = tokio::task::spawn_blocking(
-        move || -> Result<(i64, String, i64), SqliteDatabaseError> {
+        move || -> Result<(i64, Value, i64), SqliteDatabaseError> {
             with_sql_connection(|connection| {
                 ensure_reporting_schema(connection)?;
-                connection.query_row(
+                let (revision, text, updated_at) = connection.query_row(
                     "SELECT revision, config_json, updated_at FROM mx_dashboard_config WHERE id = 1",
                     [],
-                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-                )
+                    |row| Ok((row.get::<_,i64>(0)?, row.get::<_,String>(1)?, row.get::<_,i64>(2)?)),
+                )?;
+                let mut config = serde_json::from_str::<Value>(&text)
+                    .unwrap_or_else(|_| json!({"widgets":[]}));
+                if access_level != 0 {
+                    if let Some(widgets) = config.get_mut("widgets").and_then(Value::as_array_mut) {
+                        widgets.retain(|widget| {
+                            let module_uid = widget
+                                .get("module_uid")
+                                .and_then(Value::as_str)
+                                .filter(|value| !value.trim().is_empty())
+                                .unwrap_or(DEFAULT_MODULE_UID);
+                            module_can_for_user(
+                                connection,
+                                module_uid,
+                                &user_uid,
+                                access_level,
+                                "report",
+                            )
+                            .unwrap_or(false)
+                        });
+                    }
+                    if let Some(object) = config.as_object_mut() {
+                        object.insert("show_user_performance".to_string(), Value::Bool(false));
+                    }
+                }
+                Ok((revision,config,updated_at))
             })
         },
     )
     .await;
 
     match result {
-        Ok(Ok((revision, text, updated_at))) => api_json(
+        Ok(Ok((revision, config, updated_at))) => api_json(
             StatusCode::OK,
             json!({
                 "revision": revision,
-                "config": serde_json::from_str::<Value>(&text)
-                    .unwrap_or_else(|_| json!({"widgets":[]})),
+                "config": config,
                 "updated_at": updated_at
             }),
         ),
@@ -980,7 +1008,13 @@ pub async fn get_action_rate_report(claims: Claims, Query(query): Query<ReportQu
     if !claims.can_read_records() {
         return api_json(StatusCode::FORBIDDEN, json!({"response":"access denied"}));
     }
-    if !can_read_report_module(report_module(&query).to_string(), claims.access_level).await {
+    if !can_read_report_module(
+        report_module(&query).to_string(),
+        claims.uid.clone(),
+        claims.access_level,
+    )
+    .await
+    {
         return api_json(
             StatusCode::FORBIDDEN,
             json!({"response":"you cannot view reports for this module"}),
@@ -1076,13 +1110,11 @@ fn detailed_records_csv(connection: &Connection, module_uid: &str) -> rusqlite::
         params![module_uid],
         |row| row.get(0),
     )?;
-
     if count.max(0) as usize > MAX_EXPORT_ROWS {
         return Err(report_error(format!(
             "Detailed export is limited to {MAX_EXPORT_ROWS} records per file"
         )));
     }
-
     let mut uid_statement = connection.prepare(
         "SELECT uid FROM mx_records WHERE module_uid=?1 AND deleted_at IS NULL ORDER BY rowid ASC",
     )?;
@@ -1399,7 +1431,12 @@ pub async fn export_report_csv(claims: Claims, Query(query): Query<ExportQuery>)
     if matches!(
         kind.as_str(),
         "action_rate" | "records" | "detailed_records" | "attachments"
-    ) && !can_read_report_module(module_uid_for_export.clone(), claims.access_level).await
+    ) && !can_read_report_module(
+        module_uid_for_export.clone(),
+        claims.uid.clone(),
+        claims.access_level,
+    )
+    .await
     {
         return api_json(
             StatusCode::FORBIDDEN,

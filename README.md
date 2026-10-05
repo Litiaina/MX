@@ -18,7 +18,7 @@
 </div>
 
 <p align="center">
-  <strong>Current release: MX 2.2.0</strong>
+  <strong>Current release: MX 3.0.0</strong>
 </p>
 
 ---
@@ -147,7 +147,7 @@ The Rust server owns:
 - authenticated WebSocket sessions;
 - live change broadcasting;
 - account presence tracking;
-- field-level concurrency checks.
+- stateless optimistic record concurrency.
 
 ### SQLite
 
@@ -172,7 +172,7 @@ The N1 object is authoritative for file content. Preview files are derived data 
 
 ## Real-Time Collaboration
 
-MX 2.2.0 includes authenticated real-time synchronization for multi-user deployments.
+MX 3.0.0 includes authenticated real-time synchronization for multi-user deployments.
 
 Connected browsers maintain a WebSocket session with the MX server. When records,
 attachments, schema configuration, dashboard configuration, deployment settings,
@@ -191,6 +191,55 @@ stale.
 
 MX also uses heartbeat/liveness handling so long-running browser sessions can
 detect dead connections and recover.
+
+### Voice, video, and screen sharing
+
+Conversation members can start or join a voice call, enable a camera, and share
+a screen without leaving MX. The call dock remains available while the user
+navigates between records, dashboards, and collaboration. Media is transported
+between browsers with WebRTC; authenticated MX HTTP and private WebSocket events
+provide membership enforcement, room presence, and offer/answer/ICE signaling.
+
+Direct conversations produce an incoming private-call card; spaces produce a
+group-call card with the caller, space, participant count, and voice/video join
+actions. A private call rings for at most 30 seconds and uses a persistent
+operating-system alert when enabled; a group call uses one softer chime and a
+non-blocking alert. Answering, declining, joining from another signed-in tab, or
+the call ending stops the active alert. Ongoing calls are restored after page refresh or live reconnection and
+remain visible as call badges in the conversation list. The call dock includes
+mute, deafen, camera, screen sharing, input/output device selection, elapsed
+time, focused-video layout, and native full-screen viewing for shared screens.
+When the browser and selected capture source support it, screen sharing also
+transports tab/system audio on a sender independent from the microphone; users
+must enable the browser's **Share audio** option in the capture picker.
+Active microphone tracks drive live speaking rings on participant tiles, and the
+local device panel includes an outgoing preview, input-level meter, microphone
+and camera selection, browser-supported speaker routing, and an audible output
+test. These indicators are calculated locally from call media and do not send
+recorded audio to the MX server.
+
+Call access follows conversation membership. A removed member is immediately
+evicted from an active call, signaling is addressed only to joined members, and
+inactive participants expire automatically. MX reconnects call signaling and
+rejoins a participant after long background-tab timer throttling.
+
+Each browser join uses a separate call-session identifier. Quitting and
+rejoining creates fresh peer connections, while delayed leave or WebRTC
+signaling from the previous join is ignored. This prevents new microphone,
+camera, and screen-share tracks from attaching to a stale peer. Obsolete ICE
+candidates from an offer rollback or restart are discarded without failing the
+call; a genuinely failed connection triggers ICE restart and renegotiation.
+Peer pairs choose one deterministic initial offerer and use atomic browser
+offer/answer application so simultaneous discovery cannot produce negotiation
+glare during join or rejoin.
+
+Browser media APIs require a secure context. Use HTTPS for deployed MX instances
+(`localhost` is the browser's development exception). Direct/LAN candidates can
+work without an ICE service, but reliable calls across NAT, VPN boundaries, or
+restrictive firewalls require deployment-owned STUN/TURN configuration. This
+release uses a bounded peer mesh rather than an SFU, so `max_participants` is
+limited to 12 and deployments should choose a lower limit when client upload
+bandwidth is constrained.
 
 ### Account presence
 
@@ -223,9 +272,13 @@ User C -> uploads a supporting document
 Independent changes can be committed without forcing the users to wait for one
 another.
 
-Record editing uses partial field updates and field-level revision checks. A
-conflict is raised only when two users concurrently modify the same logical
-field from incompatible base revisions.
+When a record opens, the client retains its loaded record revision and edits
+locally without leases, presence heartbeats, or server editing sessions. Save
+sends only changed fields plus that base revision. The server atomically merges
+fields whose last change predates the base and returns a field conflict only
+when the same logical field changed. Conflict responses contain the stored and
+proposed values so the user can choose either one. Attachment additions merge;
+same-attachment operations are conflict checked and advance the same revision.
 
 This prevents silent lost updates while preserving parallel work on unrelated
 fields and attachments.
@@ -272,6 +325,33 @@ Each **Module Structure** is the source of truth for one part of a deployment's 
 A fresh installation can contain multiple independently configured modules, and each module can contain zero fields.
 
 Administrators add only what that deployment requires.
+
+### Account module isolation
+
+Module authorization is the intersection of two server-side layers:
+
+1. the account's system role defines the maximum capability ceiling; and
+2. an explicit account grant selects which modules and capabilities that person
+   actually receives.
+
+Non-administrator accounts are default-denied. A module without an explicit
+grant is absent from navigation and is rejected by its schema, record, search,
+report, attachment, notification, and collaboration-linked-record APIs.
+Administrators always retain full access to active modules so an accidental
+grant edit cannot lock the deployment out of configuration.
+
+Each account/module grant can independently allow view, create, edit,
+archive/delete, structure configuration, reports, and attachments. A grant can
+reduce its role's permissions but cannot exceed them. For example, an Editor
+grant requesting delete access is still denied because the Editor role ceiling
+does not allow record deletion.
+
+Module-access saves include an optimistic revision key. If two Administrator
+sessions edit the same account concurrently, exactly one save advances the
+revision; the stale save receives HTTP `409 Conflict` and must reload before it
+can overwrite the newer decision. Every successful access change is written to
+the audit log and sent only to the affected account so its navigation refreshes
+without exposing the assignment to other users.
 
 ### Supported field types
 
@@ -743,7 +823,10 @@ Audit Log
 
 ### Accounts
 
-Manage users and access levels.
+Manage users, system-role ceilings, account recovery, and explicit module
+grants. Newly created non-administrator accounts start with no module grants;
+an Administrator deliberately assigns the modules and capabilities required for
+that person's work.
 
 ### Modules & Fields
 
@@ -793,7 +876,10 @@ Release discovery and installation remain deliberately disabled until the signed
 | Editor | Defaults to read, create, edit, upload, and download; each module can override its matrix |
 | Viewer | Defaults to read, search, preview, and download; each module can override its matrix |
 
-Authorization is enforced by the backend rather than only by hiding interface controls.
+These role defaults are capability ceilings, not automatic module membership.
+A non-administrator must also have an explicit account grant for the module,
+and the effective permission is the intersection of both layers. Authorization
+is enforced by the backend rather than only by hiding interface controls.
 
 ---
 
@@ -908,6 +994,8 @@ Important MX tables include:
 mx_records
 mx_modules
 mx_module_permissions
+mx_module_account_permissions
+mx_module_access_revisions
 mx_schema_meta
 mx_fields
 mx_record_values
@@ -985,6 +1073,9 @@ Authenticator enrollment uses a pending secret. Password-only login remains poss
 GET  /mx/v1/modules
 POST /mx/v1/admin/modules
 PUT  /mx/v1/admin/modules/{module_uid}
+
+GET /mx/v1/admin/accounts/{account_uid}/modules
+PUT /mx/v1/admin/accounts/{account_uid}/modules
 
 GET  /mx/v1/modules/{module_uid}/schema
 POST /mx/v1/admin/modules/{module_uid}/fields
@@ -1091,6 +1182,7 @@ The lightweight revision endpoint remains useful for refresh/fallback logic.
 ```http
 GET  /mx/v1/collaboration/people
 GET  /mx/v1/collaboration/channels
+GET  /mx/v1/collaboration/calls
 POST /mx/v1/collaboration/channels
 POST /mx/v1/collaboration/direct
 GET  /mx/v1/collaboration/channels/{channel_uid}/messages
@@ -1098,6 +1190,11 @@ POST /mx/v1/collaboration/channels/{channel_uid}/messages
 GET  /mx/v1/collaboration/channels/{channel_uid}/members
 POST /mx/v1/collaboration/channels/{channel_uid}/members
 DELETE /mx/v1/collaboration/channels/{channel_uid}/members/{user_uid}
+GET  /mx/v1/collaboration/channels/{channel_uid}/call
+POST /mx/v1/collaboration/channels/{channel_uid}/call
+PATCH /mx/v1/collaboration/channels/{channel_uid}/call
+DELETE /mx/v1/collaboration/channels/{channel_uid}/call
+POST /mx/v1/collaboration/channels/{channel_uid}/call/signal
 PUT  /mx/v1/collaboration/messages/{message_uid}
 DELETE /mx/v1/collaboration/messages/{message_uid}
 PUT  /mx/v1/collaboration/messages/{message_uid}/pin
@@ -1190,6 +1287,23 @@ file limits. `multipart_part_size_mb` controls each part sent from MX to N1 and
 must be between 5 and 100 MiB; it defaults to 16 MiB when omitted. The N1 server
 must allow a part at least this large. Increasing an upload limit does not
 require sending the complete object as one N1 part.
+
+Example WebRTC configuration:
+
+```ini
+[webrtc]
+stun_urls=stun:stun.example.net:3478
+turn_urls=turn:turn.example.net:3478,turns:turn.example.net:5349
+turn_username=mx
+turn_credential=<TURN_CREDENTIAL>
+max_participants=12
+```
+
+The entire `[webrtc]` section is optional. URL lists are comma-separated and the
+participant limit must be from 2 through 12. Empty STUN/TURN values allow direct
+host candidates for reachable local networks. TURN credentials are delivered
+only to authenticated members requesting the call state, but they remain
+deployment secrets and should be scoped and rotated at the TURN service.
 
 N1 secret:
 
@@ -1330,6 +1444,7 @@ mx/
     │   ├── user/
     │   ├── audit.rs
     │   ├── backup.rs
+    │   ├── calls.rs
     │   ├── collaboration.rs
     │   ├── dashboard.rs
     │   ├── lifecycle.rs
@@ -1361,6 +1476,7 @@ handler.rs            record/attachment operations and N1 coordination
 reports.rs            statistics, dashboard reporting, CSV export
 dashboard.rs          dashboard support
 live.rs               WebSocket sessions, live events, and presence
+calls.rs              authorized WebRTC room state and private signaling
 collaboration.rs      channels, messages, N1 file shares, and record links
 notifications.rs      durable per-user notification delivery
 preferences.rs        per-user appearance and notification overrides
@@ -1428,18 +1544,20 @@ MX follows these principles:
 - keep the WebSocket layer as live invalidation/notification rather than durable state;
 - reconnect live clients indefinitely and resynchronize after outages;
 - allow parallel record work without whole-record locks;
-- protect same-field concurrent edits with field-level revision checks;
+- protect same-field concurrent edits with a record revision and per-field
+  last-change metadata, without edit locks or collaboration state;
 - avoid recompilation when a deployment changes its business record structure.
 
 ---
 
 
-## MX 2.2.0
+## MX 3.0.0
 
-MX 2.2 advances the second-generation MX platform with calculated data,
-high-volume media handling, and faster record operations.
+MX 3.0 is a major expansion of the schema-driven MX platform, adding isolated
+per-account module access, stateless multi-user record concurrency, calculated
+data, high-volume media handling, and integrated collaboration calls.
 
-The 2.2 release includes:
+The 3.0 release includes:
 
 ```text
 Formula / Calculated record fields with server-side evaluation
@@ -1449,28 +1567,34 @@ attachment thumbnails and keyboard-accessible file navigation
 short-lived preview tickets and N1 byte-range streaming
 configurable multipart N1 uploads for large objects
 Enter-to-send collaboration messaging and durable membership events
+joinable voice/video calls with camera, microphone, screen, and shared audio
 record and attachment notification routing with duplicate suppression
 immediate audit lifecycle repair for accurate actor performance reporting
 non-destructive live table refreshes that retain the current scroll position
 exact 10-24 px per-user font sizing independent of interface scale
 responsive record, preview, notification, and administration layouts
+default-deny per-account module isolation with role capability ceilings
+stateless record revisions with automatic unrelated-field merging
+same-field stored/proposed conflict resolution without editing locks
+attachment concurrency tied to normal record revisions and history
+robust private/group voice, video, screen sharing, and movable call controls
 ```
 
 Existing SQLite databases are upgraded in place by MX. Existing deployments may
 omit `multipart_part_size_mb` to use the 16 MiB default, but MX must be restarted
-after the new binary and frontend bundle are deployed so the 2.2 routes and
+after the new binary and frontend bundle are deployed so the 3.0 routes and
 schema migrations are active.
 
 Cargo package version:
 
 ```text
-2.2.0
+3.0.0
 ```
 
 Product/release name:
 
 ```text
-MX 2.2.0
+MX 3.0.0
 ```
 
 See [CHANGELOG.md](CHANGELOG.md) for the complete release notes. MX remains a

@@ -7,13 +7,15 @@
   import Pencil from '@lucide/svelte/icons/pencil';
   import Search from '@lucide/svelte/icons/search';
   import Trash2 from '@lucide/svelte/icons/trash-2';
+  import { ApiError } from '../api/client';
   import type { LiveMessage } from '../live/client';
   import { requestConfirmation } from '../confirmation';
-  import type { ModulePermission, MxRecord, SchemaResponse } from '../api/domain';
+  import type { FieldConflict, ModulePermission, MxRecord, SchemaResponse } from '../api/domain';
+  import type { Session } from '../api/types';
   import { deleteRecord, getRecord, listRecords, loadModuleSchema, loadSchema, patchRecord } from '../api/workspace';
   import RecordEditor from './RecordEditor.svelte';
 
-  let { accessLevel, moduleUid = '', modulePermission = null, openRecordUid = '', openRequestRevision = 0, focusLinkedAttachments = false, revision = 0, liveMessage = null, recordSingular = 'Record', recordPlural = 'Records' }: { accessLevel: number; moduleUid?: string; modulePermission?: ModulePermission | null; openRecordUid?: string; openRequestRevision?: number; focusLinkedAttachments?: boolean; revision?: number; liveMessage?: LiveMessage | null; recordSingular?: string; recordPlural?: string } = $props();
+  let { session, accessLevel, moduleUid = '', modulePermission = null, openRecordUid = '', openRequestRevision = 0, focusLinkedAttachments = false, revision = 0, liveMessage = null, recordSingular = 'Record', recordPlural = 'Records' }: { session: Session; accessLevel: number; moduleUid?: string; modulePermission?: ModulePermission | null; openRecordUid?: string; openRequestRevision?: number; focusLinkedAttachments?: boolean; revision?: number; liveMessage?: LiveMessage | null; recordSingular?: string; recordPlural?: string } = $props();
   let schema = $state<SchemaResponse | null>(null);
   let rows = $state<MxRecord[]>([]);
   let page = $state(1); let pageInput = $state(1); let pages = $state(0); let total = $state(0); let pageSize = $state(50);
@@ -29,6 +31,7 @@
   let editorWritable = $state(false);
   let cellEdit = $state<{ rowUid: string; fieldKey: string; value: string } | null>(null);
   let cellSaving = $state(false);
+  let cellConflict = $state<{ conflict: FieldConflict; recordRevision: number } | null>(null);
   let focusAttachments = $state(false);
   let lastRevision = $state(0);
   let columnOverrides = $state<{ shown: string[]; hidden: string[] }>({ shown: [], hidden: [] });
@@ -40,7 +43,8 @@
   const canCreate = $derived(modulePermission ? modulePermission.can_create : accessLevel <= 2);
   const canUpdate = $derived(modulePermission ? modulePermission.can_update : accessLevel <= 2);
   const canDelete = $derived(modulePermission ? modulePermission.can_delete : accessLevel <= 1);
-  const eligibleFields = $derived(schema?.fields.filter((field) => field.active).sort((a, b) => a.position - b.position) || []);
+  const canAttachments = $derived(modulePermission ? modulePermission.can_attachments : true);
+  const eligibleFields = $derived(schema?.fields.filter((field) => field.active && (canAttachments || field.field_type !== 'attachments')).sort((a, b) => a.position - b.position) || []);
   const visibleFields = $derived(eligibleFields.filter((field) => selectedKeys.includes(field.key)));
   const searchableFields = $derived(schema?.fields.filter((field) => field.active && field.searchable && field.field_type !== 'attachments').sort((a, b) => a.position - b.position) || []);
 
@@ -110,6 +114,7 @@
   function beginCellEdit(event: MouseEvent, row: MxRecord, field: SchemaResponse['fields'][number]) {
     if (!canEditCell(field)) return;
     event.preventDefault(); event.stopPropagation();
+    error = '';
     const raw = row.values[field.key];
     cellEdit = { rowUid: row.uid, fieldKey: field.key, value: field.field_type === 'boolean' ? String(raw === true) : raw == null ? '' : String(raw) };
     void tick().then(() => {
@@ -119,6 +124,23 @@
     });
   }
   function cancelCellEdit(event?: Event) { event?.stopPropagation(); cellEdit = null; }
+  function useStoredCellValue() {
+    if (!cellConflict || !cellEdit) return;
+    const { conflict, recordRevision } = cellConflict;
+    rows = rows.map((row) => row.uid === cellEdit!.rowUid ? { ...row, revision: recordRevision, values: { ...row.values, [conflict.field_key]: conflict.current_value } } : row);
+    cellConflict = null; cellEdit = null; error = '';
+  }
+  async function keepProposedCellValue() {
+    if (!cellConflict || !cellEdit || !schema) return;
+    const { recordRevision } = cellConflict;
+    const row = rows.find((item) => item.uid === cellEdit!.rowUid);
+    const field = schema.fields.find((item) => item.key === cellEdit!.fieldKey);
+    if (!row || !field) return;
+    const latest = { ...row, revision: recordRevision };
+    rows = rows.map((item) => item.uid === latest.uid ? latest : item);
+    cellConflict = null; error = '';
+    await commitCellEdit(latest, field);
+  }
   function cellEditValue(field: SchemaResponse['fields'][number], value: string) {
     if (value === '') return null;
     if (field.field_type === 'boolean') return value === 'true';
@@ -134,11 +156,15 @@
     if (JSON.stringify(nextValue) === JSON.stringify(row.values[field.key] ?? null)) { cellEdit = null; return; }
     cellSaving = true; error = '';
     try {
-      const saved = await patchRecord(row.uid, { [field.key]: nextValue }, { [field.key]: row.field_revisions[field.key] || 0 }, moduleUid || undefined);
+      const saved = await patchRecord(row.uid, { [field.key]: nextValue }, row.revision, moduleUid || undefined);
       rows = rows.map((item) => item.uid === saved.uid ? saved : item);
       cellEdit = null;
     } catch (reason) {
       error = reason instanceof Error ? reason.message : `The ${field.label.toLowerCase()} cell could not be saved.`;
+      if (reason instanceof ApiError && reason.status === 409 && reason.payload && typeof reason.payload === 'object') {
+        const payload = reason.payload as { conflicts?: FieldConflict[]; current_record_revision?: number };
+        if (payload.conflicts?.[0]) cellConflict = { conflict: payload.conflicts[0], recordRevision: Number(payload.current_record_revision || row.revision) };
+      }
     } finally { cellSaving = false; }
   }
   function cellEditorKeydown(event: KeyboardEvent, row: MxRecord, field: SchemaResponse['fields'][number]) {
@@ -163,7 +189,7 @@
   function resetColumns() { columnOverrides = { shown: [], hidden: [] }; selectedKeys = eligibleFields.filter((field) => field.table_visible).map((field) => field.key); saveColumnOverrides(); }
   async function changePageSize() { page = 1; await refresh(); }
   async function clearFilters() { filters = {}; search = ''; attachmentMode = ''; sortBy = ''; sortDir = 'asc'; page = 1; await refresh(); }
-  function openRecord(row: MxRecord, attachments = false, edit = false) { focusAttachments = attachments; editorWritable = edit && canUpdate; editor = row; }
+  function openRecord(row: MxRecord, attachments = false, edit = false) { if (cellEdit) cancelCellEdit(); focusAttachments = attachments; editorWritable = edit && canUpdate; editor = row; }
   function closeEditor() { focusAttachments = false; editorWritable = false; editor = undefined; if (openRecordUid) location.hash = `module/${encodeURIComponent(moduleUid || 'mx-default-records')}`; }
   async function removeRecord(row: MxRecord, event: MouseEvent) {
     event.stopPropagation();
@@ -183,12 +209,13 @@
 <section class="workspace-page records-page">
   <div class="toolbar">
     {#if canCreate}<button class="button primary records-new-button" onclick={() => { focusAttachments = false; editorWritable = true; editor = null; }}>+ New {recordSingular.toLowerCase()}</button>{/if}
-    <form class="search-form" onsubmit={searchSubmit}><label class="records-search-input"><Search size={16} aria-hidden="true" /><input bind:value={search} oninput={scheduleSearch} type="search" placeholder="Search configured fields and attachment filenames…" aria-label={`Search ${recordPlural.toLowerCase()}`} /></label><select bind:value={matchMode} onchange={() => { page = 1; void refresh(); }} aria-label="Search matching"><option value="contains">Contains</option><option value="prefix">Starts with</option><option value="exact">Exact</option></select><button class="button" type="submit">Search</button></form>
+    <form class="search-form" onsubmit={searchSubmit}><label class="records-search-input"><Search size={16} aria-hidden="true" /><input bind:value={search} oninput={scheduleSearch} type="search" placeholder={canAttachments ? 'Search configured fields and attachment filenames…' : 'Search configured fields…'} aria-label={`Search ${recordPlural.toLowerCase()}`} /></label><select bind:value={matchMode} onchange={() => { page = 1; void refresh(); }} aria-label="Search matching"><option value="contains">Contains</option><option value="prefix">Starts with</option><option value="exact">Exact</option></select><button class="button" type="submit">Search</button></form>
     <details class="toolbar-menu"><summary class="button">Columns</summary><div class="toolbar-popover">{#each eligibleFields as field}<label class="checkbox"><input type="checkbox" checked={selectedKeys.includes(field.key)} onchange={(event) => toggleColumn(field.key, event.currentTarget.checked)} /> {field.label}</label>{/each}<button class="button small" type="button" onclick={resetColumns}>Use administrator defaults</button><small>Only your overrides are saved, so new fields can follow the deployment defaults.</small></div></details>
     <button class="button" onclick={() => refresh(true)}>Refresh</button>
   </div>
-    <details class="advanced-search"><summary>Advanced filters and sorting</summary><form class="filter-grid" onsubmit={searchSubmit}>{#each searchableFields as field}<label>{field.label}{#if field.field_type === 'select'}<select value={filters[field.key] || ''} onchange={(event) => filters[field.key] = event.currentTarget.value}><option value="">Any value</option>{#each (field.config.options as (string | number | boolean)[] || []) as option}<option value={String(option)}>{String(option)}</option>{/each}</select>{:else if field.field_type === 'boolean'}<select value={filters[field.key] || ''} onchange={(event) => filters[field.key] = event.currentTarget.value}><option value="">Either</option><option value="true">Yes</option><option value="false">No</option></select>{:else}<input type={field.field_type === 'date' ? 'date' : ['integer', 'decimal', 'formula'].includes(field.field_type) ? 'number' : 'text'} value={filters[field.key] || ''} oninput={(event) => filters[field.key] = event.currentTarget.value} placeholder={field.field_type === 'date' ? undefined : 'Field contains…'} />{/if}</label>{/each}<label>Attachments<select bind:value={attachmentMode}><option value="">With or without files</option><option value="with">With attachments</option><option value="without">Without attachments</option></select></label><label>Sort field<select bind:value={sortBy}><option value="">Default order</option>{#each eligibleFields.filter((field) => field.sortable) as field}<option value={field.key}>{field.label}</option>{/each}</select></label><label>Sort direction<select bind:value={sortDir}><option value="asc">Ascending</option><option value="desc">Descending</option></select></label><div class="button-row"><button class="button primary">Apply filters</button><button class="button" type="button" onclick={clearFilters}>Clear all</button></div></form></details>
+    <details class="advanced-search"><summary>Advanced filters and sorting</summary><form class="filter-grid" onsubmit={searchSubmit}>{#each searchableFields as field}<label>{field.label}{#if field.field_type === 'select'}<select value={filters[field.key] || ''} onchange={(event) => filters[field.key] = event.currentTarget.value}><option value="">Any value</option>{#each (field.config.options as (string | number | boolean)[] || []) as option}<option value={String(option)}>{String(option)}</option>{/each}</select>{:else if field.field_type === 'boolean'}<select value={filters[field.key] || ''} onchange={(event) => filters[field.key] = event.currentTarget.value}><option value="">Either</option><option value="true">Yes</option><option value="false">No</option></select>{:else}<input type={field.field_type === 'date' ? 'date' : ['integer', 'decimal', 'formula'].includes(field.field_type) ? 'number' : 'text'} value={filters[field.key] || ''} oninput={(event) => filters[field.key] = event.currentTarget.value} placeholder={field.field_type === 'date' ? undefined : 'Field contains…'} />{/if}</label>{/each}{#if canAttachments}<label>Attachments<select bind:value={attachmentMode}><option value="">With or without files</option><option value="with">With attachments</option><option value="without">Without attachments</option></select></label>{/if}<label>Sort field<select bind:value={sortBy}><option value="">Default order</option>{#each eligibleFields.filter((field) => field.sortable) as field}<option value={field.key}>{field.label}</option>{/each}</select></label><label>Sort direction<select bind:value={sortDir}><option value="asc">Ascending</option><option value="desc">Descending</option></select></label><div class="button-row"><button class="button primary">Apply filters</button><button class="button" type="button" onclick={clearFilters}>Clear all</button></div></form></details>
   {#if error}<div class="notice error">{error}</div>{/if}
+  {#if cellConflict}<div class="notice record-cell-conflict"><div><strong>{cellConflict.conflict.label} changed elsewhere</strong><small>Stored: {String(cellConflict.conflict.current_value ?? 'Empty')} · Yours: {String(cellConflict.conflict.your_value ?? 'Empty')}</small></div><div class="inline-actions"><button class="button small" type="button" onclick={useStoredCellValue}>Use stored</button><button class="button primary small" type="button" onclick={() => void keepProposedCellValue()}>Keep mine</button></div></div>{/if}
   <div class="records-result-summary" aria-live="polite" aria-label={`${total.toLocaleString()} ${total === 1 ? recordSingular.toLowerCase() : recordPlural.toLowerCase()}`}><span><strong>{total.toLocaleString()}</strong> {total === 1 ? 'result' : 'results'}</span><small>{rows.length ? `Showing ${((page - 1) * pageSize + 1).toLocaleString()}–${Math.min(page * pageSize, total).toLocaleString()}` : 'No rows in this view'}</small></div>
   <div class="table-wrap records-table">
     <table>
@@ -235,4 +262,4 @@
   <div class="pagination records-pagination"><span>{rows.length ? `${((page - 1) * pageSize + 1).toLocaleString()}–${Math.min(page * pageSize, total).toLocaleString()} of ${total.toLocaleString()}` : 'No records'}</span><label>Rows<select bind:value={pageSize} onchange={changePageSize}><option value={25}>25</option><option value={50}>50</option><option value={100}>100</option><option value={256}>256</option></select></label><button class="button" disabled={page <= 1 || loading} onclick={() => movePage(1)}>First</button><button class="button" disabled={page <= 1 || loading} onclick={() => movePage(page - 1)}>Previous</button><form onsubmit={goToPage}><label>Page<input type="number" min="1" max={Math.max(1, pages)} bind:value={pageInput} /></label><button class="button" aria-label="Go to page">Go</button></form><span>of {pages}</span><button class="button" disabled={page >= pages || loading} onclick={() => movePage(page + 1)}>Next</button><button class="button" disabled={page >= pages || loading} onclick={() => movePage(pages)}>Last</button></div>
 </section>
 
-{#if editor !== undefined && schema}<RecordEditor {schema} {moduleUid} record={editor} canWrite={editor === null ? canCreate : editorWritable && canUpdate} canDelete={editorWritable && canDelete} allowEdit={editor !== null && canUpdate} {liveMessage} {focusAttachments} recordLabel={recordSingular} onEdit={() => editorWritable = true} onClose={closeEditor} onSaved={() => refresh(true)} />{/if}
+{#if editor !== undefined && schema}<RecordEditor {schema} {moduleUid} record={editor} canWrite={editor === null ? canCreate : editorWritable && canUpdate} canDelete={editorWritable && canDelete} {canAttachments} allowEdit={editor !== null && canUpdate} {liveMessage} {focusAttachments} recordLabel={recordSingular} onEdit={() => editorWritable = true} onClose={closeEditor} onSaved={() => refresh(true)} />{/if}

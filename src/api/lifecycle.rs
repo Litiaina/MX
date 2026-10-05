@@ -14,7 +14,7 @@ use uuid::Uuid;
 use crate::{
     api::{
         live::publish_live_event,
-        modules::{DEFAULT_MODULE_UID, module_can},
+        modules::{DEFAULT_MODULE_UID, module_can_for_user},
         mx::schema::ensure_dynamic_schema,
         notifications::notify_module_readers,
     },
@@ -238,7 +238,14 @@ fn can(
     claims: &Claims,
     capability: &str,
 ) -> bool {
-    module_can(connection, module_uid, claims.access_level, capability).unwrap_or(false)
+    module_can_for_user(
+        connection,
+        module_uid,
+        &claims.uid,
+        claims.access_level,
+        capability,
+    )
+    .unwrap_or(false)
 }
 
 async fn delete_for_module(claims: Claims, module_uid: String, uid: String) -> Response {
@@ -433,11 +440,16 @@ async fn restore_version_for_module(
             params![record_uid, version_uid],
         )?;
         let now = chrono::Utc::now().timestamp_millis();
-        transaction.execute("UPDATE mx_record_field_revisions SET revision=revision+1,updated_at=?2,updated_by=?3 WHERE record_uid=?1", params![record_uid,now,actor_uid])?;
+        let next_revision: i64 = transaction.query_row(
+            "UPDATE mx_records SET revision=revision+1 WHERE uid=?1 RETURNING revision",
+            params![record_uid],
+            |row| row.get(0),
+        )?;
+        transaction.execute("UPDATE mx_record_field_revisions SET revision=?2,updated_at=?3,updated_by=?4 WHERE record_uid=?1", params![record_uid,next_revision,now,actor_uid])?;
         transaction.execute(
             r#"INSERT OR IGNORE INTO mx_record_field_revisions(record_uid,field_uid,revision,updated_at,updated_by)
-               SELECT ?1,field_uid,1,?3,?4 FROM mx_record_version_values WHERE version_uid=?2"#,
-            params![record_uid,version_uid,now,actor_uid],
+               SELECT ?1,field_uid,?3,?4,?5 FROM mx_record_version_values WHERE version_uid=?2"#,
+            params![record_uid,version_uid,next_revision,now,actor_uid],
         )?;
         capture_record_version(&transaction,&record_uid,&module_uid,"version_restored",&actor_uid)?;
         transaction.commit()

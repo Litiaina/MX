@@ -257,8 +257,14 @@ pub async fn notify_module_readers(
             ensure_module_schema(connection)?;
             let mut statement = connection.prepare(
                 r#"SELECT u.uid FROM users u
-                   JOIN mx_module_permissions p ON p.access_level=u.access_level
-                   WHERE p.module_uid=?1 AND p.can_read=1 AND u.uid<>?2"#,
+                   JOIN mx_module_permissions role
+                     ON role.access_level=u.access_level AND role.module_uid=?1
+                   LEFT JOIN mx_module_account_permissions account
+                     ON account.module_uid=?1 AND account.user_uid=u.uid
+                   JOIN mx_modules module ON module.uid=?1 AND module.active=1
+                   WHERE role.can_read=1
+                     AND (u.access_level=0 OR account.can_read=1)
+                     AND u.uid<>?2"#,
             )?;
             statement
                 .query_map(params![lookup_module, lookup_actor], |row| {
@@ -302,12 +308,14 @@ pub async fn list_notifications(
     Query(query): Query<NotificationQuery>,
 ) -> Response {
     let uid = claims.uid;
+    let access_level = claims.access_level;
     let limit = query.limit.unwrap_or(50).clamp(1, 100);
     let unread_only = query.unread_only.unwrap_or(false);
     let before = query.before.unwrap_or(i64::MAX);
     let result = tokio::task::spawn_blocking(move || {
         with_sql_connection(|connection| {
             ensure_notification_schema(connection)?;
+            ensure_module_schema(connection)?;
             let sql = format!(
                 r#"
                 SELECT {} FROM mx_notifications n
@@ -315,6 +323,20 @@ pub async fn list_notifications(
                 WHERE n.recipient_uid = ?1
                   AND n.created_at < ?2
                   AND (?3 = 0 OR n.read_at IS NULL)
+                  AND (
+                    n.module_uid IS NULL OR ?5=0 OR EXISTS(
+                      SELECT 1
+                      FROM mx_module_permissions role
+                      JOIN mx_module_account_permissions account
+                        ON account.module_uid=role.module_uid AND account.user_uid=?1
+                      JOIN mx_modules module
+                        ON module.uid=role.module_uid AND module.active=1
+                      WHERE role.module_uid=n.module_uid
+                        AND role.access_level=?5
+                        AND role.can_read=1
+                        AND account.can_read=1
+                    )
+                  )
                 ORDER BY n.created_at DESC
                 LIMIT ?4
                 "#,
@@ -322,13 +344,28 @@ pub async fn list_notifications(
             );
             let mut statement = connection.prepare(&sql)?;
             let rows = statement.query_map(
-                params![uid, before, if unread_only { 1 } else { 0 }, limit as i64],
+                params![
+                    uid,
+                    before,
+                    if unread_only { 1 } else { 0 },
+                    limit as i64,
+                    access_level
+                ],
                 notification_from_row,
             )?;
             let notifications = rows.collect::<Result<Vec<_>, _>>()?;
             let unread: i64 = connection.query_row(
-                "SELECT COUNT(*) FROM mx_notifications WHERE recipient_uid = ?1 AND read_at IS NULL",
-                params![uid],
+                r#"SELECT COUNT(*) FROM mx_notifications n
+                    WHERE recipient_uid=?1 AND read_at IS NULL
+                      AND (n.module_uid IS NULL OR ?2=0 OR EXISTS(
+                        SELECT 1 FROM mx_module_permissions role
+                        JOIN mx_module_account_permissions account
+                          ON account.module_uid=role.module_uid AND account.user_uid=?1
+                        JOIN mx_modules module ON module.uid=role.module_uid AND module.active=1
+                        WHERE role.module_uid=n.module_uid AND role.access_level=?2
+                          AND role.can_read=1 AND account.can_read=1
+                      ))"#,
+                params![uid, access_level],
                 |row| row.get(0),
             )?;
             Ok((notifications, unread.max(0)))

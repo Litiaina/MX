@@ -40,6 +40,8 @@ export interface ModulePermission {
   can_update: boolean;
   can_delete: boolean;
   can_configure: boolean;
+  can_report: boolean;
+  can_attachments: boolean;
 }
 
 export interface ModuleDefinition {
@@ -54,6 +56,35 @@ export interface ModuleDefinition {
   active: boolean;
   config: Record<string, JsonValue>;
   permissions: ModulePermission[];
+  effective_permission?: ModulePermission;
+}
+
+export interface AccountModuleGrant {
+  module_uid: string;
+  can_read: boolean;
+  can_create: boolean;
+  can_update: boolean;
+  can_delete: boolean;
+  can_configure: boolean;
+  can_report: boolean;
+  can_attachments: boolean;
+}
+
+export interface AccountModuleGrantView {
+  module_uid: string;
+  module_name: string;
+  module_icon: string;
+  module_color: string;
+  module_active: boolean;
+  role_permission: ModulePermission;
+  grant: AccountModuleGrant;
+}
+
+export interface AccountModuleAccessResponse {
+  account_name: string;
+  access_level: number;
+  revision: number;
+  modules: AccountModuleGrantView[];
 }
 
 export interface FileAttachment {
@@ -70,8 +101,8 @@ export interface FileAttachment {
 
 export interface MxRecord {
   uid: string;
+  revision: number;
   values: Record<string, JsonValue>;
-  field_revisions: Record<string, number>;
   attached_files: FileAttachment[];
 }
 
@@ -243,6 +274,46 @@ export interface ChannelMember {
 
 export interface ChannelReadState {
   user_uid: string; user_name: string; last_read_at: number; last_read_message_id: number;
+}
+
+export type CallMode = 'voice' | 'video';
+export type CallSignalKind = 'offer' | 'answer' | 'ice';
+
+export interface CallParticipant {
+  user_uid: string;
+  session_uid: string;
+  user_name: string;
+  profile_photo_updated_at?: number | null;
+  audio_enabled: boolean;
+  video_enabled: boolean;
+  screen_sharing: boolean;
+  joined_at: number;
+}
+
+export interface CallIceServer {
+  urls: string[];
+  username?: string;
+  credential?: string;
+}
+
+export interface CallState {
+  channel_uid: string;
+  active: boolean;
+  started_at: number | null;
+  mode: CallMode | null;
+  participants: CallParticipant[];
+  ice_servers: CallIceServer[];
+  max_participants: number;
+  heartbeat_seconds: number;
+}
+
+export interface ActiveCallSummary {
+  channel_uid: string;
+  channel_name: string;
+  channel_kind: string;
+  mode: CallMode;
+  started_at: number;
+  participants: CallParticipant[];
 }
 
 export interface GlobalSearchResult {

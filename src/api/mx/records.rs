@@ -15,7 +15,7 @@ use crate::{
     api::{
         lifecycle::{capture_record_version, ensure_record_lifecycle_schema},
         live::publish_live_event,
-        modules::{DEFAULT_MODULE_UID, module_can},
+        modules::{DEFAULT_MODULE_UID, module_can_for_user},
         mx::{
             attachment_fields::ensure_attachment_fields_schema,
             formula::evaluate_expression,
@@ -63,7 +63,7 @@ pub struct DynamicPatchRequest {
     pub changes: BTreeMap<String, Value>,
 
     #[serde(default)]
-    pub base_revisions: BTreeMap<String, i64>,
+    pub base_revision: i64,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -80,21 +80,24 @@ pub struct FieldConflict {
 #[derive(Debug, Serialize, Clone)]
 struct PatchOutcome {
     changed_values: BTreeMap<String, Value>,
-    field_revisions: BTreeMap<String, i64>,
+    revision: i64,
 }
 
 #[derive(Debug)]
 enum PatchDbResult {
     Applied(PatchOutcome),
-    Conflict(Vec<FieldConflict>),
+    Conflict {
+        conflicts: Vec<FieldConflict>,
+        current_revision: i64,
+    },
     NotFound,
 }
 
 #[derive(Debug, Serialize, Clone)]
 pub struct DynamicRecord {
     pub uid: String,
+    pub revision: i64,
     pub values: BTreeMap<String, Value>,
-    pub field_revisions: BTreeMap<String, i64>,
     pub attached_files: Vec<FileAttachment>,
 }
 
@@ -384,7 +387,6 @@ fn validate_payload(
 fn validate_patch_payload(
     fields: &[FieldDefinition],
     raw_changes: &BTreeMap<String, Value>,
-    base_revisions: &BTreeMap<String, i64>,
 ) -> Result<BTreeMap<String, Option<NormalizedValue>>, String> {
     if raw_changes.is_empty() {
         return Ok(BTreeMap::new());
@@ -408,17 +410,6 @@ fn validate_patch_payload(
                 "{} cannot be modified through the record field PATCH API.",
                 field.label
             ));
-        }
-
-        let Some(base_revision) = base_revisions.get(key) else {
-            return Err(format!(
-                "Missing base revision for {}. Refresh this record and try again.",
-                field.label
-            ));
-        };
-
-        if *base_revision < 0 {
-            return Err(format!("Invalid base revision for {}.", field.label));
         }
 
         let value = normalize_field_value(field, raw_value)?;
@@ -789,7 +780,33 @@ pub(crate) fn ensure_record_collaboration_schema(
         CREATE INDEX IF NOT EXISTS idx_mx_record_field_revisions_record
         ON mx_record_field_revisions(record_uid);
         "#,
-    )
+    )?;
+    let has_record_revision = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('mx_records') WHERE name='revision')",
+        [],
+        |row| row.get::<_, bool>(0),
+    )?;
+    if !has_record_revision {
+        connection.execute(
+            "ALTER TABLE mx_records ADD COLUMN revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>=1)",
+            [],
+        )?;
+    }
+    connection.execute(
+        r#"UPDATE mx_records
+           SET revision=MAX(revision,COALESCE((
+             SELECT MAX(field_revision.revision)
+             FROM mx_record_field_revisions field_revision
+             WHERE field_revision.record_uid=mx_records.uid
+           ),1))
+           WHERE revision<COALESCE((
+             SELECT MAX(field_revision.revision)
+             FROM mx_record_field_revisions field_revision
+             WHERE field_revision.record_uid=mx_records.uid
+           ),1)"#,
+        [],
+    )?;
+    Ok(())
 }
 
 fn normalized_to_json(value: &NormalizedValue) -> Value {
@@ -882,6 +899,14 @@ fn current_field_value(
     })
 }
 
+fn field_changed_after_base(
+    current_record_revision: i64,
+    base_revision: i64,
+    field_revision: i64,
+) -> bool {
+    current_record_revision > base_revision && field_revision > base_revision
+}
+
 fn set_field_revision(
     transaction: &rusqlite::Transaction<'_>,
     record_uid: &str,
@@ -933,20 +958,14 @@ fn bump_all_field_revisions(
     transaction: &rusqlite::Transaction<'_>,
     record_uid: &str,
     fields: &[FieldDefinition],
+    revision: i64,
     actor_uid: &str,
 ) -> rusqlite::Result<()> {
     for field in fields
         .iter()
         .filter(|field| field.field_type != "attachments")
     {
-        let current = current_field_revision(transaction, record_uid, &field.uid)?;
-        set_field_revision(
-            transaction,
-            record_uid,
-            &field.uid,
-            current.saturating_add(1),
-            actor_uid,
-        )?;
+        set_field_revision(transaction, record_uid, &field.uid, revision, actor_uid)?;
     }
 
     Ok(())
@@ -1024,10 +1043,10 @@ fn update_legacy_mirror_field(
     Ok(())
 }
 
-fn load_field_revisions(
+fn load_record_revisions(
     connection: &rusqlite::Connection,
     record_uids: &[String],
-) -> rusqlite::Result<HashMap<String, BTreeMap<String, i64>>> {
+) -> rusqlite::Result<HashMap<String, i64>> {
     ensure_record_collaboration_schema(connection)?;
 
     if record_uids.is_empty() {
@@ -1043,44 +1062,12 @@ fn load_field_revisions(
         .map(SqlValue::Text)
         .collect::<Vec<_>>();
 
-    // First seed legacy values with revision 1.
-    let mut revisions: HashMap<String, BTreeMap<String, i64>> = HashMap::new();
-    let sql = format!(
-        r#"
-        SELECT rv.record_uid, COALESCE(f.module_key, f.field_key)
-        FROM mx_record_values rv
-        JOIN mx_fields f ON f.uid = rv.field_uid
-        WHERE rv.record_uid IN ({placeholders})
-        "#
-    );
+    let mut revisions = HashMap::new();
+    let sql = format!("SELECT uid,revision FROM mx_records WHERE uid IN ({placeholders})");
     let mut statement = connection.prepare(&sql)?;
     let mut rows = statement.query(params_from_iter(params.iter()))?;
     while let Some(row) = rows.next()? {
-        let record_uid: String = row.get(0)?;
-        let key: String = row.get(1)?;
-        revisions.entry(record_uid).or_default().insert(key, 1);
-    }
-
-    // Modern revision rows override the legacy seed and remain present even if
-    // the field value was cleared.
-    let sql = format!(
-        r#"
-        SELECT r.record_uid, COALESCE(f.module_key, f.field_key), r.revision
-        FROM mx_record_field_revisions r
-        JOIN mx_fields f ON f.uid = r.field_uid
-        WHERE r.record_uid IN ({placeholders})
-        "#
-    );
-    let mut statement = connection.prepare(&sql)?;
-    let mut rows = statement.query(params_from_iter(params.iter()))?;
-    while let Some(row) = rows.next()? {
-        let record_uid: String = row.get(0)?;
-        let key: String = row.get(1)?;
-        let revision: i64 = row.get(2)?;
-        revisions
-            .entry(record_uid)
-            .or_default()
-            .insert(key, revision.max(0));
+        revisions.insert(row.get::<_, String>(0)?, row.get::<_, i64>(1)?.max(1));
     }
 
     Ok(revisions)
@@ -1091,7 +1078,7 @@ fn patch_record_db(
     uid: String,
     changes: BTreeMap<String, Option<NormalizedValue>>,
     raw_changes: BTreeMap<String, Value>,
-    base_revisions: BTreeMap<String, i64>,
+    base_revision: i64,
     actor_uid: String,
 ) -> Result<PatchDbResult, SqliteDatabaseError> {
     with_sql_connection(|connection| {
@@ -1101,106 +1088,105 @@ fn patch_record_db(
 
         let fields = load_module_fields_db(connection, &module_uid, false)?;
         let field_map = field_map_by_key(&fields);
-        let transaction = connection.unchecked_transaction()?;
-
-        let exists = transaction.query_row(
-            "SELECT EXISTS(SELECT 1 FROM mx_records WHERE uid = ?1 AND module_uid = ?2 AND deleted_at IS NULL)",
-            params![&uid, module_uid],
-            |row| row.get::<_, i64>(0),
-        )? != 0;
-
-        if !exists {
-            return Ok(PatchDbResult::NotFound);
-        }
-
-        let mut conflicts = Vec::new();
-        let mut current_revisions = BTreeMap::new();
-
-        for key in changes.keys() {
-            let Some(field) = field_map.get(key) else {
-                continue;
+        for _ in 0..3 {
+            let transaction = rusqlite::Transaction::new_unchecked(
+                connection,
+                rusqlite::TransactionBehavior::Immediate,
+            )?;
+            let current_record_revision = transaction.query_row(
+                "SELECT revision FROM mx_records WHERE uid=?1 AND module_uid=?2 AND deleted_at IS NULL",
+                params![uid,module_uid],
+                |row| row.get::<_,i64>(0),
+            ).optional()?;
+            let Some(current_record_revision) = current_record_revision else {
+                return Ok(PatchDbResult::NotFound);
             };
+            if base_revision < 1 || base_revision > current_record_revision {
+                return Err(rusqlite::Error::InvalidParameterName(
+                    "MX_REVISION:The loaded record revision is invalid. Reload the record and try again.".to_string(),
+                ));
+            }
 
-            let current_revision = current_field_revision(&transaction, &uid, &field.uid)?;
-            current_revisions.insert(key.clone(), current_revision);
-
-            let base_revision = base_revisions.get(key).copied().unwrap_or(-1);
-            if base_revision != current_revision {
-                conflicts.push(FieldConflict {
-                    field_uid: field.uid.clone(),
-                    field_key: field.key.clone(),
-                    label: field.label.clone(),
-                    base_revision,
-                    current_revision,
-                    current_value: current_field_value(&transaction, &uid, field)?,
-                    your_value: raw_changes.get(key).cloned().unwrap_or(Value::Null),
+            let mut conflicts = Vec::new();
+            for key in changes.keys() {
+                let Some(field) = field_map.get(key) else {
+                    continue;
+                };
+                let field_revision = current_field_revision(&transaction, &uid, &field.uid)?;
+                if field_changed_after_base(current_record_revision, base_revision, field_revision)
+                {
+                    conflicts.push(FieldConflict {
+                        field_uid: field.uid.clone(),
+                        field_key: field.key.clone(),
+                        label: field.label.clone(),
+                        base_revision,
+                        current_revision: field_revision,
+                        current_value: current_field_value(&transaction, &uid, field)?,
+                        your_value: raw_changes.get(key).cloned().unwrap_or(Value::Null),
+                    });
+                }
+            }
+            if !conflicts.is_empty() {
+                return Ok(PatchDbResult::Conflict {
+                    conflicts,
+                    current_revision: current_record_revision,
                 });
             }
-        }
 
-        if !conflicts.is_empty() {
-            return Ok(PatchDbResult::Conflict(conflicts));
-        }
-
-        let mut changed_values = BTreeMap::new();
-        let mut new_revisions = BTreeMap::new();
-
-        for (key, value) in &changes {
-            let Some(field) = field_map.get(key) else {
-                continue;
-            };
-
-            write_single_dynamic_value(&transaction, &uid, field, value.as_ref())?;
-            update_legacy_mirror_field(&transaction, &uid, key, value.as_ref())?;
-
-            let next_revision = current_revisions
-                .get(key)
-                .copied()
-                .unwrap_or(0)
-                .saturating_add(1);
-            set_field_revision(&transaction, &uid, &field.uid, next_revision, &actor_uid)?;
-
-            changed_values.insert(
-                key.clone(),
-                value
-                    .as_ref()
-                    .map(normalized_to_json)
-                    .unwrap_or(Value::Null),
-            );
-            new_revisions.insert(key.clone(), next_revision);
-        }
-
-        let mut calculated_values = load_normalized_record_values(&transaction, &uid, &fields)?;
-        apply_formula_values(&fields, &mut calculated_values).map_err(|error| {
-            rusqlite::Error::InvalidParameterName(format!("MX_FORMULA:{error}"))
-        })?;
-        for field in fields.iter().filter(|field| field.field_type == "formula") {
-            let Some(value) = calculated_values.get(&field.key) else {
-                continue;
-            };
-            let current = current_field_value(&transaction, &uid, field)?;
-            let next = normalized_to_json(value);
-            if current.as_f64() == next.as_f64() {
+            let next_revision = current_record_revision.saturating_add(1);
+            let advanced = transaction.execute(
+                "UPDATE mx_records SET revision=?3 WHERE uid=?1 AND module_uid=?2 AND revision=?4 AND deleted_at IS NULL",
+                params![uid,module_uid,next_revision,current_record_revision],
+            )?;
+            if advanced == 0 {
+                drop(transaction);
                 continue;
             }
-            write_single_dynamic_value(&transaction, &uid, field, Some(value))?;
-            let next_revision =
-                current_field_revision(&transaction, &uid, &field.uid)?.saturating_add(1);
-            set_field_revision(&transaction, &uid, &field.uid, next_revision, &actor_uid)?;
-            changed_values.insert(field.key.clone(), next);
-            new_revisions.insert(field.key.clone(), next_revision);
-        }
 
-        if !changed_values.is_empty() {
+            let mut changed_values = BTreeMap::new();
+            for (key, value) in &changes {
+                let Some(field) = field_map.get(key) else {
+                    continue;
+                };
+                write_single_dynamic_value(&transaction, &uid, field, value.as_ref())?;
+                update_legacy_mirror_field(&transaction, &uid, key, value.as_ref())?;
+                set_field_revision(&transaction, &uid, &field.uid, next_revision, &actor_uid)?;
+                changed_values.insert(
+                    key.clone(),
+                    value
+                        .as_ref()
+                        .map(normalized_to_json)
+                        .unwrap_or(Value::Null),
+                );
+            }
+
+            let mut calculated_values = load_normalized_record_values(&transaction, &uid, &fields)?;
+            apply_formula_values(&fields, &mut calculated_values).map_err(|error| {
+                rusqlite::Error::InvalidParameterName(format!("MX_FORMULA:{error}"))
+            })?;
+            for field in fields.iter().filter(|field| field.field_type == "formula") {
+                let Some(value) = calculated_values.get(&field.key) else {
+                    continue;
+                };
+                let current = current_field_value(&transaction, &uid, field)?;
+                let next = normalized_to_json(value);
+                if current.as_f64() == next.as_f64() {
+                    continue;
+                }
+                write_single_dynamic_value(&transaction, &uid, field, Some(value))?;
+                set_field_revision(&transaction, &uid, &field.uid, next_revision, &actor_uid)?;
+                changed_values.insert(field.key.clone(), next);
+            }
             capture_record_version(&transaction, &uid, &module_uid, "updated", &actor_uid)?;
+            transaction.commit()?;
+            return Ok(PatchDbResult::Applied(PatchOutcome {
+                changed_values,
+                revision: next_revision,
+            }));
         }
-
-        transaction.commit()?;
-
-        Ok(PatchDbResult::Applied(PatchOutcome {
-            changed_values,
-            field_revisions: new_revisions,
-        }))
+        Err(rusqlite::Error::InvalidParameterName(
+            "MX_REVISION:The record kept changing while this save was processed. Retry using the latest revision.".to_string(),
+        ))
     })
 }
 
@@ -1431,6 +1417,13 @@ fn update_record_db(
             existing.5
         };
 
+        let current_revision: i64 = transaction.query_row(
+            "SELECT revision FROM mx_records WHERE uid=?1 AND module_uid=?2 AND deleted_at IS NULL",
+            params![&uid, &module_uid],
+            |row| row.get(0),
+        )?;
+        let next_revision = current_revision.saturating_add(1);
+
         let affected = transaction.execute(
             r#"
             UPDATE mx_records
@@ -1440,7 +1433,8 @@ fn update_record_db(
                 requestor = ?4,
                 subject = ?5,
                 routed_to_div = ?6,
-                remarks = ?7
+                remarks = ?7,
+                revision = ?9
             WHERE uid = ?1 AND module_uid = ?8 AND deleted_at IS NULL
             "#,
             params![
@@ -1452,6 +1446,7 @@ fn update_record_db(
                 routed_to_div,
                 remarks,
                 module_uid,
+                next_revision,
             ],
         )?;
 
@@ -1460,7 +1455,7 @@ fn update_record_db(
         }
 
         write_dynamic_values(&transaction, &uid, &fields, &values)?;
-        bump_all_field_revisions(&transaction, &uid, &fields, &actor_uid)?;
+        bump_all_field_revisions(&transaction, &uid, &fields, next_revision, &actor_uid)?;
         capture_record_version(&transaction, &uid, &module_uid, "updated", &actor_uid)?;
         transaction.commit()?;
 
@@ -1625,6 +1620,7 @@ fn build_where_clause(
     module_uid: &str,
     query: &DynamicListQuery,
     fields: &[FieldDefinition],
+    include_attachments: bool,
 ) -> Result<(String, Vec<SqlValue>), String> {
     let mut conditions: Vec<String> = vec![
         "e.module_uid = ?".to_string(),
@@ -1642,8 +1638,9 @@ fn build_where_clause(
     {
         let pattern = search_pattern(q, match_mode);
 
-        conditions.push(format!(
-            r#"(
+        conditions.push(if include_attachments {
+            format!(
+                r#"(
                 EXISTS (
                     SELECT 1
                     FROM mx_record_values rv
@@ -1661,9 +1658,21 @@ fn build_where_clause(
                       AND LOWER(af.file_name) LIKE LOWER(?) ESCAPE '!'
                 )
             )"#
-        ));
+            )
+        } else {
+            format!(
+                r#"EXISTS (
+                SELECT 1 FROM mx_record_values rv
+                JOIN mx_fields f ON f.uid=rv.field_uid
+                WHERE rv.record_uid=e.uid AND f.active=1 AND f.searchable=1
+                  AND LOWER({expression}) LIKE LOWER(?) ESCAPE '!'
+            )"#
+            )
+        });
 
-        sql_params.push(SqlValue::Text(pattern.clone()));
+        if include_attachments {
+            sql_params.push(SqlValue::Text(pattern.clone()));
+        }
         sql_params.push(SqlValue::Text(pattern));
     }
 
@@ -1723,6 +1732,14 @@ fn build_where_clause(
         }
     }
 
+    if !include_attachments
+        && query
+            .attachments
+            .as_deref()
+            .is_some_and(|value| !value.trim().is_empty())
+    {
+        return Err("Attachment access is required to filter by files.".to_string());
+    }
     match query
         .attachments
         .as_deref()
@@ -1807,6 +1824,7 @@ fn build_order_clause(query: &DynamicListQuery, fields: &[FieldDefinition]) -> S
 fn list_records_db(
     module_uid: String,
     query: DynamicListQuery,
+    include_attachments: bool,
 ) -> Result<DynamicPage, SqliteDatabaseError> {
     with_sql_connection(|connection| {
         ensure_dynamic_schema(connection)?;
@@ -1820,8 +1838,9 @@ fn list_records_db(
             .clamp(1, MAX_PAGE_LIMIT);
         let offset = page.saturating_sub(1).saturating_mul(limit);
 
-        let (where_clause, mut base_params) = build_where_clause(&module_uid, &query, &fields)
-            .map_err(rusqlite::Error::InvalidParameterName)?;
+        let (where_clause, mut base_params) =
+            build_where_clause(&module_uid, &query, &fields, include_attachments)
+                .map_err(rusqlite::Error::InvalidParameterName)?;
 
         let count_sql = format!(
             r#"
@@ -1858,8 +1877,12 @@ fn list_records_db(
             .collect::<Result<Vec<_>, _>>()?;
 
         let mut values = load_record_values(connection, &record_uids)?;
-        let mut revisions = load_field_revisions(connection, &record_uids)?;
-        let mut attachments = load_attachments(connection, &record_uids)?;
+        let mut revisions = load_record_revisions(connection, &record_uids)?;
+        let mut attachments = if include_attachments {
+            load_attachments(connection, &record_uids)?
+        } else {
+            HashMap::new()
+        };
 
         for record_values in values.values_mut() {
             calculate_formula_json_values(&fields, record_values).map_err(|error| {
@@ -1871,7 +1894,7 @@ fn list_records_db(
             .into_iter()
             .map(|uid| DynamicRecord {
                 values: values.remove(&uid).unwrap_or_default(),
-                field_revisions: revisions.remove(&uid).unwrap_or_default(),
+                revision: revisions.remove(&uid).unwrap_or(1),
                 attached_files: attachments.remove(&uid).unwrap_or_default(),
                 uid,
             })
@@ -1891,29 +1914,36 @@ fn list_records_db(
     })
 }
 
-fn get_record_db(module_uid: String, uid: String) -> Result<DynamicRecord, SqliteDatabaseError> {
+fn get_record_db(
+    module_uid: String,
+    uid: String,
+    include_attachments: bool,
+) -> Result<DynamicRecord, SqliteDatabaseError> {
     with_sql_connection(|connection| {
         ensure_dynamic_schema(connection)?;
         ensure_record_collaboration_schema(connection)?;
         ensure_record_lifecycle_schema(connection)?;
 
-        let exists = connection
+        let revision = connection
             .query_row(
-                "SELECT uid FROM mx_records WHERE uid = ?1 AND module_uid = ?2 AND deleted_at IS NULL",
+                "SELECT revision FROM mx_records WHERE uid = ?1 AND module_uid = ?2 AND deleted_at IS NULL",
                 params![&uid, module_uid],
-                |row| row.get::<_, String>(0),
+                |row| row.get::<_, i64>(0),
             )
             .optional()?;
 
-        if exists.is_none() {
+        let Some(revision) = revision else {
             return Err(rusqlite::Error::QueryReturnedNoRows);
-        }
+        };
 
         let record_uids = vec![uid.clone()];
         let fields = load_module_fields_db(connection, &module_uid, false)?;
         let mut values = load_record_values(connection, &record_uids)?;
-        let mut revisions = load_field_revisions(connection, &record_uids)?;
-        let mut attachments = load_attachments(connection, &record_uids)?;
+        let mut attachments = if include_attachments {
+            load_attachments(connection, &record_uids)?
+        } else {
+            HashMap::new()
+        };
 
         let mut record_values = values.remove(&uid).unwrap_or_default();
         calculate_formula_json_values(&fields, &mut record_values).map_err(|error| {
@@ -1921,7 +1951,7 @@ fn get_record_db(module_uid: String, uid: String) -> Result<DynamicRecord, Sqlit
         })?;
         Ok(DynamicRecord {
             values: record_values,
-            field_revisions: revisions.remove(&uid).unwrap_or_default(),
+            revision: revision.max(1),
             attached_files: attachments.remove(&uid).unwrap_or_default(),
             uid,
         })
@@ -1935,10 +1965,17 @@ fn database_error_response(error: SqliteDatabaseError) -> Response {
             json!({ "response": "MX record was not found." }),
         ),
 
-        SqliteDatabaseError::Sqlite(rusqlite::Error::InvalidParameterName(message)) => api_json(
-            StatusCode::BAD_REQUEST,
-            json!({ "response": message.strip_prefix("MX_FORMULA:").unwrap_or(&message) }),
-        ),
+        SqliteDatabaseError::Sqlite(rusqlite::Error::InvalidParameterName(message)) => {
+            let (status, prefix) = if message.starts_with("MX_REVISION:") {
+                (StatusCode::CONFLICT, "MX_REVISION:")
+            } else {
+                (StatusCode::BAD_REQUEST, "MX_FORMULA:")
+            };
+            api_json(
+                status,
+                json!({"response":message.strip_prefix(prefix).unwrap_or(&message)}),
+            )
+        }
 
         SqliteDatabaseError::Sqlite(rusqlite::Error::SqliteFailure(error, _))
             if error.code == rusqlite::ErrorCode::ConstraintViolation =>
@@ -1966,12 +2003,24 @@ fn database_error_response(error: SqliteDatabaseError) -> Response {
     }
 }
 
-async fn module_permission(module_uid: &str, access_level: i64, capability: &str) -> bool {
+async fn module_permission(
+    module_uid: &str,
+    user_uid: &str,
+    access_level: i64,
+    capability: &str,
+) -> bool {
     let module_uid = module_uid.to_string();
+    let user_uid = user_uid.to_string();
     let capability = capability.to_string();
     tokio::task::spawn_blocking(move || {
         with_sql_connection(|connection| {
-            module_can(connection, &module_uid, access_level, &capability)
+            module_can_for_user(
+                connection,
+                &module_uid,
+                &user_uid,
+                access_level,
+                &capability,
+            )
         })
     })
     .await
@@ -1986,10 +2035,12 @@ async fn create_record_for_module(
     request: DynamicRecordRequest,
 ) -> Response {
     if !claims.can_write_records()
-        || !module_permission(&module_uid, claims.access_level, "create").await
+        || !module_permission(&module_uid, &claims.uid, claims.access_level, "create").await
     {
         return access_denied();
     }
+    let include_attachments =
+        module_permission(&module_uid, &claims.uid, claims.access_level, "attachments").await;
     let schema = match load_active_module_schema(module_uid.clone()).await {
         Ok(schema) => schema,
         Err(error) => {
@@ -2023,7 +2074,7 @@ async fn create_record_for_module(
     };
     match tokio::task::spawn_blocking({
         let module_uid = module_uid.clone();
-        move || get_record_db(module_uid, uid)
+        move || get_record_db(module_uid, uid, include_attachments)
     })
     .await
     {
@@ -2059,10 +2110,12 @@ async fn update_record_for_module(
     request: DynamicRecordRequest,
 ) -> Response {
     if !claims.can_write_records()
-        || !module_permission(&module_uid, claims.access_level, "update").await
+        || !module_permission(&module_uid, &claims.uid, claims.access_level, "update").await
     {
         return access_denied();
     }
+    let include_attachments =
+        module_permission(&module_uid, &claims.uid, claims.access_level, "attachments").await;
     let schema = match load_active_module_schema(module_uid.clone()).await {
         Ok(schema) => schema,
         Err(_) => {
@@ -2095,7 +2148,7 @@ async fn update_record_for_module(
     }
     match tokio::task::spawn_blocking({
         let module_uid = module_uid.clone();
-        move || get_record_db(module_uid, uid)
+        move || get_record_db(module_uid, uid, include_attachments)
     })
     .await
     {
@@ -2126,11 +2179,15 @@ async fn update_record_for_module(
 
 async fn get_record_for_module(claims: Claims, module_uid: String, uid: String) -> Response {
     if !claims.can_read_records()
-        || !module_permission(&module_uid, claims.access_level, "read").await
+        || !module_permission(&module_uid, &claims.uid, claims.access_level, "read").await
     {
         return access_denied();
     }
-    match tokio::task::spawn_blocking(move || get_record_db(module_uid, uid)).await {
+    let include_attachments =
+        module_permission(&module_uid, &claims.uid, claims.access_level, "attachments").await;
+    match tokio::task::spawn_blocking(move || get_record_db(module_uid, uid, include_attachments))
+        .await
+    {
         Ok(Ok(record)) => api_json(StatusCode::OK, json!(record)),
         Ok(Err(error)) => database_error_response(error),
         Err(_) => api_json(
@@ -2147,10 +2204,12 @@ async fn patch_record_for_module(
     request: DynamicPatchRequest,
 ) -> Response {
     if !claims.can_write_records()
-        || !module_permission(&module_uid, claims.access_level, "update").await
+        || !module_permission(&module_uid, &claims.uid, claims.access_level, "update").await
     {
         return access_denied();
     }
+    let include_attachments =
+        module_permission(&module_uid, &claims.uid, claims.access_level, "attachments").await;
     let schema = match load_active_module_schema(module_uid.clone()).await {
         Ok(schema) => schema,
         Err(_) => {
@@ -2160,16 +2219,15 @@ async fn patch_record_for_module(
             );
         }
     };
-    let normalized =
-        match validate_patch_payload(&schema.fields, &request.changes, &request.base_revisions) {
-            Ok(values) => values,
-            Err(error) => return api_json(StatusCode::BAD_REQUEST, json!({"response":error})),
-        };
+    let normalized = match validate_patch_payload(&schema.fields, &request.changes) {
+        Ok(values) => values,
+        Err(error) => return api_json(StatusCode::BAD_REQUEST, json!({"response":error})),
+    };
     if normalized.is_empty() {
         return get_record_for_module(claims, module_uid, uid).await;
     }
     let raw_changes = request.changes.clone();
-    let base_revisions = request.base_revisions.clone();
+    let base_revision = request.base_revision;
     let actor_uid = claims.uid.clone();
     let db_uid = uid.clone();
     let db_module_uid = module_uid.clone();
@@ -2179,17 +2237,20 @@ async fn patch_record_for_module(
             db_uid,
             normalized,
             raw_changes,
-            base_revisions,
+            base_revision,
             actor_uid,
         )
     })
     .await
     {
         Ok(Ok(PatchDbResult::Applied(outcome))) => outcome,
-        Ok(Ok(PatchDbResult::Conflict(conflicts))) => {
+        Ok(Ok(PatchDbResult::Conflict {
+            conflicts,
+            current_revision,
+        })) => {
             return api_json(
                 StatusCode::CONFLICT,
-                json!({"error":"field_conflict","response":"One or more fields changed after you opened this record.","record_uid":uid,"conflicts":conflicts}),
+                json!({"error":"field_conflict","response":"One or more of the submitted fields changed after you opened this record.","record_uid":uid,"base_revision":request.base_revision,"current_record_revision":current_revision,"conflicts":conflicts}),
             );
         }
         Ok(Ok(PatchDbResult::NotFound)) => {
@@ -2209,7 +2270,7 @@ async fn patch_record_for_module(
     publish_live_event(
         "record.fields.updated",
         Some(&claims.uid),
-        json!({"record_uid":uid,"module_uid":module_uid,"changes":outcome.changed_values,"field_revisions":outcome.field_revisions}),
+        json!({"record_uid":uid,"module_uid":module_uid,"changes":outcome.changed_values,"record_revision":outcome.revision}),
     );
     tokio::spawn(notify_module_readers(
         module_uid.clone(),
@@ -2220,7 +2281,9 @@ async fn patch_record_for_module(
         uid.clone(),
         json!({"record_uid":uid,"module_uid":module_uid}),
     ));
-    match tokio::task::spawn_blocking(move || get_record_db(module_uid, uid)).await {
+    match tokio::task::spawn_blocking(move || get_record_db(module_uid, uid, include_attachments))
+        .await
+    {
         Ok(Ok(record)) => api_json(StatusCode::OK, json!(record)),
         Ok(Err(error)) => database_error_response(error),
         Err(_) => api_json(
@@ -2236,11 +2299,17 @@ async fn list_records_for_module(
     query: DynamicListQuery,
 ) -> Response {
     if !claims.can_read_records()
-        || !module_permission(&module_uid, claims.access_level, "read").await
+        || !module_permission(&module_uid, &claims.uid, claims.access_level, "read").await
     {
         return access_denied();
     }
-    match tokio::task::spawn_blocking(move || list_records_db(module_uid, query)).await {
+    let include_attachments =
+        module_permission(&module_uid, &claims.uid, claims.access_level, "attachments").await;
+    match tokio::task::spawn_blocking(move || {
+        list_records_db(module_uid, query, include_attachments)
+    })
+    .await
+    {
         Ok(Ok(page)) => api_json(StatusCode::OK, json!(page)),
         Ok(Err(error)) => database_error_response(error),
         Err(_) => api_json(
@@ -2309,4 +2378,91 @@ pub async fn list_module_records(
     Query(query): Query<DynamicListQuery>,
 ) -> Response {
     list_records_for_module(claims, module_uid, query).await
+}
+
+#[cfg(test)]
+mod concurrency_tests {
+    use super::field_changed_after_base;
+    use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
+
+    fn save_field(
+        connection: &Connection,
+        base_revision: i64,
+        field_uid: &str,
+    ) -> rusqlite::Result<Option<i64>> {
+        let transaction =
+            rusqlite::Transaction::new_unchecked(connection, TransactionBehavior::Immediate)?;
+        let current_revision: i64 = transaction.query_row(
+            "SELECT revision FROM records WHERE uid='record'",
+            [],
+            |row| row.get(0),
+        )?;
+        let field_revision = transaction
+            .query_row(
+                "SELECT revision FROM field_revisions WHERE field_uid=?1",
+                params![field_uid],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()?
+            .unwrap_or(0);
+        if field_changed_after_base(current_revision, base_revision, field_revision) {
+            return Ok(None);
+        }
+        let next_revision = current_revision + 1;
+        let affected = transaction.execute(
+            "UPDATE records SET revision=?1 WHERE uid='record' AND revision=?2",
+            params![next_revision, current_revision],
+        )?;
+        assert_eq!(affected, 1);
+        transaction.execute(
+            "INSERT INTO field_revisions(field_uid,revision) VALUES(?1,?2) ON CONFLICT(field_uid) DO UPDATE SET revision=excluded.revision",
+            params![field_uid, next_revision],
+        )?;
+        transaction.commit()?;
+        Ok(Some(next_revision))
+    }
+
+    #[test]
+    fn unrelated_field_changes_merge() {
+        assert!(!field_changed_after_base(8, 6, 5));
+        assert!(!field_changed_after_base(8, 6, 6));
+    }
+
+    #[test]
+    fn same_field_change_conflicts() {
+        assert!(field_changed_after_base(8, 6, 7));
+        assert!(field_changed_after_base(8, 6, 8));
+    }
+
+    #[test]
+    fn unchanged_record_never_conflicts() {
+        assert!(!field_changed_after_base(6, 6, 99));
+    }
+
+    #[test]
+    fn sqlite_commit_merges_unrelated_stale_edits_and_rejects_same_field() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE records(uid TEXT PRIMARY KEY,revision INTEGER NOT NULL);\
+                 CREATE TABLE field_revisions(field_uid TEXT PRIMARY KEY,revision INTEGER NOT NULL);\
+                 INSERT INTO records(uid,revision) VALUES('record',1);\
+                 INSERT INTO field_revisions(field_uid,revision) VALUES('status',1),('office',1);",
+            )
+            .unwrap();
+
+        assert_eq!(save_field(&connection, 1, "status").unwrap(), Some(2));
+        assert_eq!(save_field(&connection, 1, "office").unwrap(), Some(3));
+        assert_eq!(save_field(&connection, 1, "status").unwrap(), None);
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT revision FROM records WHERE uid='record'",
+                    [],
+                    |row| row.get::<_, i64>(0)
+                )
+                .unwrap(),
+            3
+        );
+    }
 }

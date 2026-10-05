@@ -3,8 +3,9 @@ import type {
   ActionRateRow, AuditPage, BackupEntry, DashboardConfigResponse, DashboardWidget,
   DeploymentConfig, DeploymentResponse, FieldDefinition, JsonValue, MxRecord, PresenceResponse,
   PreferencesResponse, RecordPage, SchemaResponse, StorageLayout, UserPerformanceRow, UserPreferences, UserSummary,
-  ChannelFile, ChannelMember, ChannelReadState, ChatMessage, CollaborationChannel, CollaborationPerson, MxNotification, ModuleDefinition, NotificationSoundInfo, RecordVersionDetail,
-  RecordVersionSummary, TrashRecord, TrashRecordDetail, GlobalSearchResult
+  ActiveCallSummary, CallMode, CallParticipant, CallSignalKind, CallState, ChannelFile, ChannelMember, ChannelReadState, ChatMessage, CollaborationChannel, CollaborationPerson, MxNotification, ModuleDefinition, NotificationSoundInfo, RecordVersionDetail,
+  RecordVersionSummary, TrashRecord, TrashRecordDetail, GlobalSearchResult,
+  AccountModuleAccessResponse, AccountModuleGrant
 } from './domain';
 
 export const loadDeployment = () => apiJson<DeploymentResponse>('/mx/v1/deployment/config', {}, false);
@@ -19,6 +20,10 @@ export const updateModule = (uid: string, changes: Partial<ModuleDefinition>) =>
   apiJson<{ module: ModuleDefinition }>(`/mx/v1/admin/modules/${encodeURIComponent(uid)}`, jsonRequest('PUT', changes));
 export const deleteModule = (uid: string, credentials: { confirmation: string; admin_password: string; admin_otp: string | null; admin_recovery_code: string | null }) =>
   apiJson<{ response: string; module_uid: string; module_name: string; records_deleted: number; attachments_moved_to_n1_trash: number }>(`/mx/v1/admin/modules/${encodeURIComponent(uid)}`, jsonRequest('DELETE', credentials));
+export const loadAccountModuleAccess = (uid: string) =>
+  apiJson<AccountModuleAccessResponse>(`/mx/v1/admin/accounts/${encodeURIComponent(uid)}/modules`);
+export const saveAccountModuleAccess = (uid: string, revision: number, grants: AccountModuleGrant[]) =>
+  apiJson<{ response: string; revision: number }>(`/mx/v1/admin/accounts/${encodeURIComponent(uid)}/modules`, jsonRequest('PUT', { revision, grants }));
 
 export function listRecords(query: { page?: number; limit?: number; q?: string; match?: 'contains' | 'prefix' | 'exact'; filters?: Record<string, string>; attachments?: 'with' | 'without' | ''; sort_by?: string; sort_dir?: string } = {}, moduleUid?: string) {
   const params = new URLSearchParams();
@@ -35,8 +40,8 @@ export function listRecords(query: { page?: number; limit?: number; q?: string; 
 }
 export const getRecord = (uid: string, moduleUid?: string) => apiJson<MxRecord>(moduleUid ? `/mx/v1/modules/${encodeURIComponent(moduleUid)}/records/${encodeURIComponent(uid)}` : `/mx/v1/records/${encodeURIComponent(uid)}`);
 export const createRecord = (values: Record<string, JsonValue>, moduleUid?: string) => apiJson<MxRecord>(moduleUid ? `/mx/v1/modules/${encodeURIComponent(moduleUid)}/records` : '/mx/v1/records', jsonRequest('POST', { values }));
-export const patchRecord = (uid: string, changes: Record<string, JsonValue>, base_revisions: Record<string, number>, moduleUid?: string) =>
-  apiJson<MxRecord>(moduleUid ? `/mx/v1/modules/${encodeURIComponent(moduleUid)}/records/${encodeURIComponent(uid)}` : `/mx/v1/records/${encodeURIComponent(uid)}`, jsonRequest('PATCH', { changes, base_revisions }));
+export const patchRecord = (uid: string, changes: Record<string, JsonValue>, base_revision: number, moduleUid?: string) =>
+  apiJson<MxRecord>(moduleUid ? `/mx/v1/modules/${encodeURIComponent(moduleUid)}/records/${encodeURIComponent(uid)}` : `/mx/v1/records/${encodeURIComponent(uid)}`, jsonRequest('PATCH', { changes, base_revision }));
 export const deleteRecord = async (uid: string, moduleUid?: string) => {
   const path = moduleUid ? `/mx/v1/modules/${encodeURIComponent(moduleUid)}/records/${encodeURIComponent(uid)}` : `/mx/v1/records/${encodeURIComponent(uid)}`;
   const response = await apiFetch(path, { method: 'DELETE' });
@@ -50,14 +55,16 @@ export const listTrash = () => apiJson<{ records: TrashRecord[] }>('/mx/v1/admin
 export const getTrashRecord = (uid: string) => apiJson<{ record: TrashRecordDetail }>(`/mx/v1/admin/trash/${encodeURIComponent(uid)}`);
 export const restoreTrashRecord = (uid: string) => apiJson<{ response: string; uid: string }>(`/mx/v1/admin/trash/${encodeURIComponent(uid)}/restore`, { method: 'POST' });
 
-export async function uploadAttachments(recordUid: string, fieldUid: string, files: File[], onProgress?: (loaded: number, total: number) => void) {
+export async function uploadAttachments(recordUid: string, fieldUid: string, files: File[], baseRevision: number, onProgress?: (loaded: number, total: number) => void) {
   const body = new FormData();
+  body.append('base_revision', String(baseRevision));
   for (const file of files) body.append('files', file);
-  return apiUpload<{ attachments: unknown[] }>(`/mx/v1/records/${encodeURIComponent(recordUid)}/attachments/fields/${encodeURIComponent(fieldUid)}`, body, onProgress);
+  return apiUpload<{ attachments: unknown[]; record_revision: number }>(`/mx/v1/records/${encodeURIComponent(recordUid)}/attachments/fields/${encodeURIComponent(fieldUid)}`, body, onProgress);
 }
-export const deleteAttachment = async (recordUid: string, attachmentUid: string) => {
-  const response = await apiFetch(`/mx/v1/records/${encodeURIComponent(recordUid)}/attachments/${encodeURIComponent(attachmentUid)}`, { method: 'DELETE' });
+export const deleteAttachment = async (recordUid: string, attachmentUid: string, baseRevision: number) => {
+  const response = await apiFetch(`/mx/v1/records/${encodeURIComponent(recordUid)}/attachments/${encodeURIComponent(attachmentUid)}?base_revision=${encodeURIComponent(baseRevision)}`, { method: 'DELETE' });
   if (!response.ok) throw new Error((await response.json().catch(() => null))?.response || 'Could not delete attachment.');
+  return response.json() as Promise<{ response: string; record_revision: number }>;
 };
 
 export async function download(path: string, fallbackName: string) {
@@ -182,6 +189,17 @@ export const setMessagePinned = (messageUid: string, pinned: boolean) =>
   apiJson<{ message: ChatMessage }>(`/mx/v1/collaboration/messages/${encodeURIComponent(messageUid)}/pin`, { method: pinned ? 'PUT' : 'DELETE' });
 export const markChannelRead = (channelUid: string) =>
   apiJson<{ read_state: ChannelReadState }>(`/mx/v1/collaboration/channels/${encodeURIComponent(channelUid)}/read`, { method: 'POST' });
+export const getCallState = (channelUid: string) =>
+  apiJson<CallState>(`/mx/v1/collaboration/channels/${encodeURIComponent(channelUid)}/call`);
+export const listActiveCalls = () => apiJson<{ calls: ActiveCallSummary[] }>('/mx/v1/collaboration/calls');
+export const joinCall = (channelUid: string, mode: CallMode, session_uid: string) =>
+  apiJson<CallState>(`/mx/v1/collaboration/channels/${encodeURIComponent(channelUid)}/call`, jsonRequest('POST', { mode, session_uid }));
+export const updateCallParticipant = (channelUid: string, session_uid: string, update: Partial<Pick<CallParticipant, 'audio_enabled' | 'video_enabled' | 'screen_sharing'>>) =>
+  apiJson<CallState>(`/mx/v1/collaboration/channels/${encodeURIComponent(channelUid)}/call`, jsonRequest('PATCH', { ...update, session_uid }));
+export const leaveCall = (channelUid: string, sessionUid: string) =>
+  apiJson<void>(`/mx/v1/collaboration/channels/${encodeURIComponent(channelUid)}/call?session_uid=${encodeURIComponent(sessionUid)}`, { method: 'DELETE', keepalive: true });
+export const sendCallSignal = (channelUid: string, recipient_uid: string, sender_session_uid: string, recipient_session_uid: string, kind: CallSignalKind, data: object) =>
+  apiJson<void>(`/mx/v1/collaboration/channels/${encodeURIComponent(channelUid)}/call/signal`, jsonRequest('POST', { recipient_uid, sender_session_uid, recipient_session_uid, kind, data }));
 export const uploadMessageFile = (messageUid: string, file: File, onProgress?: (loaded: number, total: number) => void) => {
   const body = new FormData(); body.append('file', file);
   return apiUpload<{ file: unknown }>(`/mx/v1/collaboration/messages/${encodeURIComponent(messageUid)}/files`, body, onProgress);

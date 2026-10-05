@@ -32,10 +32,11 @@ use crate::{
         api_error::SqliteError,
         lifecycle::{capture_record_lifecycle_event, ensure_record_lifecycle_schema},
         live::publish_live_event,
-        modules::module_can,
+        modules::module_can_for_user,
         mx::{
             attachment_fields::{ensure_attachment_fields_schema, load_attachment_field_db},
             model::{CreateEntryRequest, Entry, FileAttachment, UpdateEntryRequest},
+            records::ensure_record_collaboration_schema,
             storage::{ResolvedRecordStorage, StorageResolutionError, resolve_record_storage},
         },
         notifications::notify_module_readers,
@@ -72,6 +73,7 @@ const RECORD_MEDIA_TICKET_TTL: Duration = Duration::from_secs(5 * 60);
 struct RecordMediaTicket {
     record_uid: String,
     attachment_uid: String,
+    user_uid: String,
     access_level: i64,
     expires_at: Instant,
 }
@@ -122,6 +124,11 @@ pub struct MxListQuery {
     // Sorting.
     pub sort_by: Option<String>,
     pub sort_dir: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AttachmentMutationQuery {
+    pub base_revision: i64,
 }
 
 #[derive(Debug, Serialize)]
@@ -205,6 +212,7 @@ fn api_json(status: StatusCode, body: JsonValue) -> Response {
 
 async fn record_module_permission(
     record_uid: String,
+    user_uid: String,
     access_level: i64,
     capability: &'static str,
 ) -> Option<String> {
@@ -216,7 +224,15 @@ async fn record_module_permission(
                 params![record_uid],
                 |row| row.get::<_, String>(0),
             )?;
-            if module_can(connection, &module_uid, access_level, capability)? {
+            if module_can_for_user(connection, &module_uid, &user_uid, access_level, capability)?
+                && module_can_for_user(
+                    connection,
+                    &module_uid,
+                    &user_uid,
+                    access_level,
+                    "attachments",
+                )?
+            {
                 Ok(Some(module_uid))
             } else {
                 Ok(None)
@@ -2187,13 +2203,32 @@ async fn execute_attachment_object_key_exists(object_key: String) -> Result<bool
 async fn execute_insert_attachment(
     entry_uid: String,
     attachment: FileAttachment,
-) -> Result<(), SqliteError> {
+    base_revision: i64,
+) -> Result<i64, SqliteError> {
     let database_result =
-        tokio::task::spawn_blocking(move || -> Result<(), SqliteDatabaseError> {
+        tokio::task::spawn_blocking(move || -> Result<i64, SqliteDatabaseError> {
             with_sql_connection(|connection| {
                 ensure_mx_record_schema(connection)?;
                 ensure_attachment_fields_schema(connection)?;
-                connection.execute(
+                ensure_record_collaboration_schema(connection)?;
+                let transaction = rusqlite::Transaction::new_unchecked(
+                    connection,
+                    rusqlite::TransactionBehavior::Immediate,
+                )?;
+                let current_revision: i64 = transaction.query_row(
+                    "SELECT revision FROM mx_records WHERE uid=?1 AND deleted_at IS NULL",
+                    params![entry_uid],
+                    |row| row.get(0),
+                )?;
+                if base_revision < 1 || base_revision > current_revision {
+                    return Err(rusqlite::Error::InvalidParameterName("invalid attachment base revision".to_string()));
+                }
+                let revision: i64 = transaction.query_row(
+                    "UPDATE mx_records SET revision=revision+1 WHERE uid=?1 AND deleted_at IS NULL RETURNING revision",
+                    params![entry_uid],
+                    |row| row.get(0),
+                )?;
+                transaction.execute(
                     r#"
                         INSERT INTO mx_attachments (
                             uid,
@@ -2226,13 +2261,14 @@ async fn execute_insert_attachment(
                     ],
                 )?;
 
-                Ok(())
+                transaction.commit()?;
+                Ok(revision)
             })
         })
         .await;
 
     match database_result {
-        Ok(Ok(())) => Ok(()),
+        Ok(Ok(revision)) => Ok(revision),
 
         Ok(Err(SqliteDatabaseError::Sqlite(rusqlite::Error::SqliteFailure(error, _))))
             if error.code == rusqlite::ErrorCode::ConstraintViolation =>
@@ -2240,6 +2276,9 @@ async fn execute_insert_attachment(
             Err(SqliteError::Conflict)
         }
 
+        Ok(Err(SqliteDatabaseError::Sqlite(rusqlite::Error::InvalidParameterName(_)))) => {
+            Err(SqliteError::Conflict)
+        }
         Ok(Err(_)) => Err(SqliteError::SqliteDatabaseError),
         Err(_) => Err(SqliteError::JoinError),
     }
@@ -2308,12 +2347,26 @@ async fn execute_get_attachment(
 async fn execute_delete_attachment_metadata(
     entry_uid: String,
     attachment_uid: String,
-) -> Result<(), SqliteError> {
+    base_revision: i64,
+) -> Result<i64, SqliteError> {
     let database_result =
-        tokio::task::spawn_blocking(move || -> Result<(), SqliteDatabaseError> {
+        tokio::task::spawn_blocking(move || -> Result<i64, SqliteDatabaseError> {
             with_sql_connection(|connection| {
                 ensure_mx_record_schema(connection)?;
-                let affected = connection.execute(
+                ensure_record_collaboration_schema(connection)?;
+                let transaction = rusqlite::Transaction::new_unchecked(
+                    connection,
+                    rusqlite::TransactionBehavior::Immediate,
+                )?;
+                let current_revision: i64 = transaction.query_row(
+                    "SELECT revision FROM mx_records WHERE uid=?1 AND deleted_at IS NULL",
+                    params![entry_uid],
+                    |row| row.get(0),
+                )?;
+                if base_revision < 1 || base_revision > current_revision {
+                    return Err(rusqlite::Error::InvalidParameterName("invalid attachment base revision".to_string()));
+                }
+                let affected = transaction.execute(
                     r#"
                         DELETE FROM mx_attachments
                         WHERE uid = ?1
@@ -2325,19 +2378,27 @@ async fn execute_delete_attachment_metadata(
                 if affected == 0 {
                     return Err(rusqlite::Error::QueryReturnedNoRows);
                 }
-
-                Ok(())
+                let revision: i64 = transaction.query_row(
+                    "UPDATE mx_records SET revision=revision+1 WHERE uid=?1 AND deleted_at IS NULL RETURNING revision",
+                    params![entry_uid],
+                    |row| row.get(0),
+                )?;
+                transaction.commit()?;
+                Ok(revision)
             })
         })
         .await;
 
     match database_result {
-        Ok(Ok(())) => Ok(()),
+        Ok(Ok(revision)) => Ok(revision),
 
         Ok(Err(SqliteDatabaseError::Sqlite(rusqlite::Error::QueryReturnedNoRows))) => {
             Err(SqliteError::NotFound)
         }
 
+        Ok(Err(SqliteDatabaseError::Sqlite(rusqlite::Error::InvalidParameterName(_)))) => {
+            Err(SqliteError::Conflict)
+        }
         Ok(Err(_)) => Err(SqliteError::SqliteDatabaseError),
         Err(_) => Err(SqliteError::JoinError),
     }
@@ -2353,7 +2414,8 @@ pub async fn execute_upload_mx_attachment(
     file_name: String,
     mime_type: String,
     bytes: Vec<u8>,
-) -> Result<FileAttachment, MxOperationError> {
+    base_revision: i64,
+) -> Result<(FileAttachment, i64), MxOperationError> {
     if bytes.is_empty() {
         return Err(MxOperationError::InvalidRequest(
             "Attachment is empty.".to_string(),
@@ -2497,29 +2559,34 @@ pub async fn execute_upload_mx_attachment(
         attachment_field_storage_name: Some(field.storage_name.clone()),
     };
 
-    if let Err(error) = execute_insert_attachment(entry_uid, attachment.clone()).await {
-        let _ = n1_soft_delete(&object_key).await;
-        return Err(MxOperationError::Sqlite(error));
-    }
+    let revision =
+        match execute_insert_attachment(entry_uid, attachment.clone(), base_revision).await {
+            Ok(revision) => revision,
+            Err(error) => {
+                let _ = n1_soft_delete(&object_key).await;
+                return Err(MxOperationError::Sqlite(error));
+            }
+        };
 
-    Ok(attachment)
+    Ok((attachment, revision))
 }
 
 pub async fn execute_delete_mx_attachment(
     entry_uid: String,
     attachment_uid: String,
-) -> Result<(), MxOperationError> {
+    base_revision: i64,
+) -> Result<i64, MxOperationError> {
     let attachment = execute_get_attachment(entry_uid.clone(), attachment_uid.clone()).await?;
 
     n1_soft_delete(&attachment.object_key).await?;
 
-    if let Err(error) = execute_delete_attachment_metadata(entry_uid, attachment_uid).await {
-        let _ = n1_recover(&attachment.object_key).await;
-
-        return Err(MxOperationError::Sqlite(error));
+    match execute_delete_attachment_metadata(entry_uid, attachment_uid, base_revision).await {
+        Ok(revision) => Ok(revision),
+        Err(error) => {
+            let _ = n1_recover(&attachment.object_key).await;
+            Err(MxOperationError::Sqlite(error))
+        }
     }
-
-    Ok(())
 }
 
 /* -------------------------------------------------------------------------- */
@@ -2726,6 +2793,8 @@ async fn upload_mx_attachments_inner(
     mut multipart: Multipart,
 ) -> Response {
     let mut uploaded: Vec<FileAttachment> = Vec::new();
+    let mut record_revision = 1_i64;
+    let mut base_revision: Option<i64> = None;
 
     loop {
         let field = match multipart.next_field().await {
@@ -2739,9 +2808,23 @@ async fn upload_mx_attachments_inner(
             }
         };
 
+        if field.name() == Some("base_revision") {
+            base_revision = field
+                .text()
+                .await
+                .ok()
+                .and_then(|value| value.parse::<i64>().ok());
+            continue;
+        }
         if field.name() != Some("files") {
             continue;
         }
+        let Some(upload_base_revision) = base_revision else {
+            return api_json(
+                StatusCode::BAD_REQUEST,
+                json!({"response":"The loaded record revision is required before uploading attachments."}),
+            );
+        };
 
         let file_name = field
             .file_name()
@@ -2767,10 +2850,14 @@ async fn upload_mx_attachments_inner(
             file_name,
             mime_type,
             bytes,
+            upload_base_revision,
         )
         .await
         {
-            Ok(attachment) => uploaded.push(attachment),
+            Ok((attachment, revision)) => {
+                record_revision = revision;
+                uploaded.push(attachment);
+            }
             Err(error) => return map_mx_error(error),
         }
     }
@@ -2811,7 +2898,10 @@ async fn upload_mx_attachments_inner(
         ));
     }
 
-    api_json(StatusCode::CREATED, json!({"attachments":uploaded}))
+    api_json(
+        StatusCode::CREATED,
+        json!({"attachments":uploaded,"record_revision":record_revision}),
+    )
 }
 
 pub async fn upload_mx_attachment_field(
@@ -2822,8 +2912,13 @@ pub async fn upload_mx_attachment_field(
     if !claims.can_write_records() {
         return mx_access_denied();
     }
-    let Some(module_uid) =
-        record_module_permission(entry_uid.clone(), claims.access_level, "update").await
+    let Some(module_uid) = record_module_permission(
+        entry_uid.clone(),
+        claims.uid.clone(),
+        claims.access_level,
+        "update",
+    )
+    .await
     else {
         return mx_access_denied();
     };
@@ -2846,11 +2941,17 @@ pub async fn upload_mx_attachment_field(
 pub async fn delete_mx_attachment(
     claims: Claims,
     Path((entry_uid, attachment_uid)): Path<(String, String)>,
+    Query(query): Query<AttachmentMutationQuery>,
 ) -> Response {
     if !claims.can_delete_records()
-        || record_module_permission(entry_uid.clone(), claims.access_level, "delete")
-            .await
-            .is_none()
+        || record_module_permission(
+            entry_uid.clone(),
+            claims.uid.clone(),
+            claims.access_level,
+            "delete",
+        )
+        .await
+        .is_none()
     {
         return mx_access_denied();
     }
@@ -2858,8 +2959,8 @@ pub async fn delete_mx_attachment(
     let record_uid = entry_uid.clone();
     let deleted_attachment_uid = attachment_uid.clone();
 
-    match execute_delete_mx_attachment(entry_uid, attachment_uid).await {
-        Ok(()) => {
+    match execute_delete_mx_attachment(entry_uid, attachment_uid, query.base_revision).await {
+        Ok(record_revision) => {
             capture_record_lifecycle_event(
                 record_uid.clone(),
                 claims.uid.clone(),
@@ -2874,9 +2975,16 @@ pub async fn delete_mx_attachment(
                     "attachment_uid": deleted_attachment_uid,
                 }),
             );
-            StatusCode::NO_CONTENT.into_response()
+            api_json(
+                StatusCode::OK,
+                json!({"response":"attachment deleted","record_revision":record_revision}),
+            )
         }
 
+        Err(MxOperationError::Sqlite(SqliteError::NotFound)) => api_json(
+            StatusCode::CONFLICT,
+            json!({"error":"attachment_conflict","response":"This attachment was already removed or changed by another user. Refresh the record and try again."}),
+        ),
         Err(error) => map_mx_error(error),
     }
 }
@@ -2886,9 +2994,14 @@ pub async fn issue_mx_attachment_preview_ticket(
     Path((record_uid, attachment_uid)): Path<(String, String)>,
 ) -> Response {
     if !claims.can_read_records()
-        || record_module_permission(record_uid.clone(), claims.access_level, "read")
-            .await
-            .is_none()
+        || record_module_permission(
+            record_uid.clone(),
+            claims.uid.clone(),
+            claims.access_level,
+            "read",
+        )
+        .await
+        .is_none()
     {
         return mx_access_denied();
     }
@@ -2911,6 +3024,7 @@ pub async fn issue_mx_attachment_preview_ticket(
             RecordMediaTicket {
                 record_uid,
                 attachment_uid,
+                user_uid: claims.uid,
                 access_level: claims.access_level,
                 expires_at,
             },
@@ -2993,6 +3107,7 @@ pub async fn stream_mx_attachment(Path(ticket): Path<String>, headers: HeaderMap
 
     if record_module_permission(
         ticket_data.record_uid.clone(),
+        ticket_data.user_uid.clone(),
         ticket_data.access_level,
         "read",
     )
@@ -3015,9 +3130,14 @@ pub async fn preview_mx_attachment(
     headers: HeaderMap,
 ) -> Response {
     if !claims.can_read_records()
-        || record_module_permission(entry_uid.clone(), claims.access_level, "read")
-            .await
-            .is_none()
+        || record_module_permission(
+            entry_uid.clone(),
+            claims.uid.clone(),
+            claims.access_level,
+            "read",
+        )
+        .await
+        .is_none()
     {
         return mx_access_denied();
     }
@@ -3092,9 +3212,14 @@ pub async fn download_mx_attachment(
     Path((entry_uid, attachment_uid)): Path<(String, String)>,
 ) -> Response {
     if !claims.can_read_records()
-        || record_module_permission(entry_uid.clone(), claims.access_level, "read")
-            .await
-            .is_none()
+        || record_module_permission(
+            entry_uid.clone(),
+            claims.uid.clone(),
+            claims.access_level,
+            "read",
+        )
+        .await
+        .is_none()
     {
         return mx_access_denied();
     }

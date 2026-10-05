@@ -17,6 +17,7 @@
   import MessageCircle from '@lucide/svelte/icons/message-circle';
   import MessagesSquare from '@lucide/svelte/icons/messages-square';
   import Paperclip from '@lucide/svelte/icons/paperclip';
+  import Phone from '@lucide/svelte/icons/phone';
   import Pencil from '@lucide/svelte/icons/pencil';
   import Pin from '@lucide/svelte/icons/pin';
   import Plus from '@lucide/svelte/icons/plus';
@@ -32,18 +33,19 @@
   import UserPlus from '@lucide/svelte/icons/user-plus';
   import UserRound from '@lucide/svelte/icons/user-round';
   import UsersRound from '@lucide/svelte/icons/users-round';
+  import Video from '@lucide/svelte/icons/video';
   import X from '@lucide/svelte/icons/x';
-  import type { ChannelFile, ChannelMember, ChannelReadState, ChatMessage, CollaborationChannel, CollaborationPerson, MessageFile, MessageRecordLink, MessageReplyPreview } from '../api/domain';
+  import type { ActiveCallSummary, CallMode, CallParticipant, CallState, ChannelFile, ChannelMember, ChannelReadState, ChatMessage, CollaborationChannel, CollaborationPerson, MessageFile, MessageRecordLink, MessageReplyPreview } from '../api/domain';
   import type { Session } from '../api/types';
   import type { LiveMessage } from '../live/client';
-  import { createChannel, createDirectChannel, deleteMessage, download, editMessage, listChannelFiles, listChannelMembers, listChannels, listCollaborationPeople, listMessages, loadPresence, markChannelRead, prepareMessageFilePreview, removeChannelMember, saveChannelMember, searchChannel, sendMessage, setMessagePinned, toggleMessageReaction, updateChannel, uploadMessageFile } from '../api/workspace';
+  import { createChannel, createDirectChannel, deleteMessage, download, editMessage, getCallState, listChannelFiles, listChannelMembers, listChannels, listCollaborationPeople, listMessages, loadPresence, markChannelRead, prepareMessageFilePreview, removeChannelMember, saveChannelMember, searchChannel, sendMessage, setMessagePinned, toggleMessageReaction, updateChannel, uploadMessageFile } from '../api/workspace';
   import { requestConfirmation } from '../confirmation';
   import { shouldSendChatMessage } from '../util/interactions';
   import FilePreview from './FilePreview.svelte';
   import ProfileAvatar from './ProfileAvatar.svelte';
   import SharedImageThumbnail from './SharedImageThumbnail.svelte';
 
-  let { session, openChannelUid = '', revision = 0, connected = false, liveEvent = null, onChannelChanged = (_uid: string, _newestVisible: boolean) => undefined }: { session: Session; openChannelUid?: string; revision?: number; connected?: boolean; liveEvent?: LiveMessage | null; onChannelChanged?: (uid: string, newestVisible: boolean) => void } = $props();
+  let { session, openChannelUid = '', revision = 0, connected = false, liveEvent = null, callEvents = [], activeCalls = [], activeCallChannelUid = '', onStartCall = (_channel: CollaborationChannel, _mode: CallMode) => undefined, onChannelChanged = (_uid: string, _newestVisible: boolean) => undefined }: { session: Session; openChannelUid?: string; revision?: number; connected?: boolean; liveEvent?: LiveMessage | null; callEvents?: LiveMessage[]; activeCalls?: ActiveCallSummary[]; activeCallChannelUid?: string; onStartCall?: (channel: CollaborationChannel, mode: CallMode) => void | Promise<void>; onChannelChanged?: (uid: string, newestVisible: boolean) => void } = $props();
   type ConversationFilter = 'all' | 'direct' | 'spaces';
   type DeliveryReceipt = { seen: boolean; label: string; detail: string };
   type MessageTextSegment = { text: string; mention?: { uid: string; name: string } };
@@ -71,6 +73,8 @@
   let liveRefreshPromise: Promise<void> | null = null; let liveRefreshQueued = false;
   let conversationRequestSequence = 0;
   let sharedFileMaxBytes = $state(FALLBACK_SHARED_FILE_MAX_BYTES);
+  let selectedCallState = $state<CallState | null>(null); let callStateLoading = $state(false);
+  const handledCallEvents = new Set<number | string>();
   const pendingPreviewUrls = new Map<File, string>();
   const reactionChoices = ['👍', '❤️', '😂', '🎉', '😮', '😢'];
 
@@ -100,7 +104,11 @@
 
   onMount(() => {
     void initialize();
-    const handleVisibility = () => { if (document.visibilityState === 'visible' && selected) void refreshLive(); };
+    const handleVisibility = () => {
+      if (document.visibilityState !== 'visible' || !selected) return;
+      void refreshLive();
+      if (selectedCallState?.active) void loadSelectedCall(selected.uid, true);
+    };
     const handleOutsideMessageMenu = (event: PointerEvent) => {
       const target = event.target instanceof Element ? event.target : null;
       if (messageMenuUid) {
@@ -128,7 +136,11 @@
     document.addEventListener('visibilitychange', handleVisibility);
     document.addEventListener('pointerdown', handleOutsideMessageMenu);
     document.addEventListener('keydown', handleMessageMenuKey);
+    const callStateTimer = window.setInterval(() => {
+      if (selected?.uid && selectedCallState?.active) void loadSelectedCall(selected.uid, true);
+    }, 15_000);
     return () => {
+      window.clearInterval(callStateTimer);
       document.removeEventListener('visibilitychange', handleVisibility);
       document.removeEventListener('pointerdown', handleOutsideMessageMenu);
       document.removeEventListener('keydown', handleMessageMenuKey);
@@ -138,7 +150,16 @@
   $effect(() => {
     revision;
     const event = liveEvent;
-    if (!loading) untrack(() => { applyLiveEvent(event); void refreshLive(); });
+    if (!loading) untrack(() => { applyLiveEvent(event); if (!event?.type.startsWith('call.')) void refreshLive(); });
+  });
+  $effect(() => {
+    for (const event of callEvents) {
+      const key = event.sequence ?? `${event.type}:${event.at}:${JSON.stringify(event.payload)}`;
+      if (handledCallEvents.has(key)) continue;
+      handledCallEvents.add(key);
+      if (handledCallEvents.size > 1000) handledCallEvents.delete(handledCallEvents.values().next().value!);
+      applyCallEvent(event);
+    }
   });
   $effect(() => { if (!loading && openChannelUid && selected?.uid !== openChannelUid) { const channel = channels.find((item) => item.uid === openChannelUid); if (channel) void openConversation(channel); } });
 
@@ -223,15 +244,48 @@
       syncPinnedMessage(incoming);
     }
   }
+  async function loadSelectedCall(channelUid: string, silent = false) {
+    if (!silent) callStateLoading = true;
+    try {
+      const state = await getCallState(channelUid);
+      if (selected?.uid === channelUid) selectedCallState = state;
+    } catch {
+      if (selected?.uid === channelUid) selectedCallState = null;
+    } finally {
+      if (!silent && selected?.uid === channelUid) callStateLoading = false;
+    }
+  }
+  function applyCallEvent(event: LiveMessage) {
+    if (!event.type.startsWith('call.') || !event.payload || typeof event.payload !== 'object') return;
+    const payload = event.payload as { channel_uid?: string; user_uid?: string; session_uid?: string; participant?: CallParticipant };
+    if (!selected || payload.channel_uid !== selected.uid || event.type === 'call.signal') return;
+    if (event.type === 'call.ended') {
+      if (selectedCallState) selectedCallState = { ...selectedCallState, active: false, participants: [] };
+      return;
+    }
+    if (event.type === 'call.participant.joined' || event.type === 'call.participant.updated') {
+      if (!payload.participant) { void loadSelectedCall(selected.uid); return; }
+      if (!selectedCallState) { void loadSelectedCall(selected.uid); return; }
+      const participants = [...selectedCallState.participants.filter((item) => item.user_uid !== payload.participant!.user_uid), payload.participant]
+        .sort((left, right) => left.joined_at - right.joined_at || left.user_name.localeCompare(right.user_name));
+      selectedCallState = { ...selectedCallState, active: true, participants };
+    } else if (event.type === 'call.participant.left' && payload.user_uid && selectedCallState) {
+      const participants = selectedCallState.participants.filter((item) => (
+        item.user_uid !== payload.user_uid || (!!payload.session_uid && item.session_uid !== payload.session_uid)
+      ));
+      selectedCallState = { ...selectedCallState, active: participants.length > 0, participants };
+    }
+  }
   async function openConversation(channel: CollaborationChannel, revealThread = true) {
     const requestSequence = ++conversationRequestSequence;
     const channelUid = channel.uid;
     if (selected && selected.uid !== channel.uid) detailsOpen = false;
     if (revealThread) mobileThreadOpen = true;
-    selected = channel; messages = []; pinnedMessages = []; pinsOpen = false; readStates = []; hasMoreMessages = false; conversationLoading = true; error = ''; toolsOpen = false; mentionOpen = false; messageMenuUid = ''; reactionMenuUid = ''; editingMessageUid = ''; deleteCandidate = null; replyingTo = null; reachedBeginning = false;
+    selected = channel; messages = []; pinnedMessages = []; pinsOpen = false; readStates = []; hasMoreMessages = false; conversationLoading = true; error = ''; toolsOpen = false; mentionOpen = false; messageMenuUid = ''; reactionMenuUid = ''; editingMessageUid = ''; deleteCandidate = null; replyingTo = null; reachedBeginning = false; selectedCallState = null;
     onChannelChanged(channel.uid, false);
     closeConversationSearch(); channelFiles = []; channelFileTotal = 0; fileSearch = ''; filesLoaded = false; manageOpen = false; channelMembers = []; membersLoaded = false;
     if (channel.kind !== 'direct') void loadConversationMembers();
+    void loadSelectedCall(channelUid);
     try {
       const data = await listMessages(channelUid);
       if (requestSequence !== conversationRequestSequence || selected?.uid !== channelUid) return;
@@ -731,7 +785,7 @@
         <nav class="conversation-list" aria-label="Conversations">
           {#if loading}<div class="conversation-skeleton" aria-label="Loading conversations"><i></i><i></i><i></i></div>
           {:else if !visibleChannels.length}<div class="empty-state compact"><strong>Nothing here yet</strong><p>{conversationSearch ? 'Try a different search.' : section === 'spaces' ? 'Create a space for a team or project.' : 'Start a private message or create a space.'}</p></div>
-          {:else}{#each visibleChannels as channel}{@const directUser = channel.kind === 'direct' ? personByUid(channel.direct_user_uid) : null}<button class:active={selected?.uid === channel.uid} onclick={() => openConversation(channel)}><span class:direct={channel.kind === 'direct'} class="channel-glyph">{#if directUser}<ProfileAvatar userUid={directUser.uid} name={directUser.name} updatedAt={directUser.profile_photo_updated_at} online={isDirectOnline(channel)} />{:else if channel.kind === 'direct'}{initials(channel.name)}{:else if channel.kind === 'channel'}<Hash size={15} />{:else}<UsersRound size={15} />{/if}</span><span class="channel-summary"><strong>{channel.name}</strong><small class:online={isDirectOnline(channel)}>{channelKind(channel)}</small></span><span class="channel-state">{#if channel.unread_count}<b>{channel.unread_count > 99 ? '99+' : channel.unread_count}</b>{:else if channel.last_message_at}<time>{clock(channel.last_message_at)}</time>{/if}</span></button>{/each}{/if}
+          {:else}{#each visibleChannels as channel}{@const directUser = channel.kind === 'direct' ? personByUid(channel.direct_user_uid) : null}{@const channelCall = activeCalls.find((call) => call.channel_uid === channel.uid)}<button class:active={selected?.uid === channel.uid} class:call-active={!!channelCall} onclick={() => openConversation(channel)}><span class:direct={channel.kind === 'direct'} class="channel-glyph">{#if directUser}<ProfileAvatar userUid={directUser.uid} name={directUser.name} updatedAt={directUser.profile_photo_updated_at} online={isDirectOnline(channel)} />{:else if channel.kind === 'direct'}{initials(channel.name)}{:else if channel.kind === 'channel'}<Hash size={15} />{:else}<UsersRound size={15} />{/if}</span><span class="channel-summary"><strong>{channel.name}</strong><small class:online={isDirectOnline(channel)}>{channelCall ? `${channelCall.participants.length} in call` : channelKind(channel)}</small></span><span class="channel-state">{#if channelCall}<b class="channel-call-badge" title="Call in progress"><Phone size={11} /> {channelCall.participants.length}</b>{:else if channel.unread_count}<b>{channel.unread_count > 99 ? '99+' : channel.unread_count}</b>{:else if channel.last_message_at}<time>{clock(channel.last_message_at)}</time>{/if}</span></button>{/each}{/if}
         </nav>
       {/if}
     </aside>
@@ -741,7 +795,8 @@
         {#if error}<div class="collaboration-error notice error"><span>{error}</span><button onclick={() => error = ''} aria-label="Dismiss error"><X size={15} /></button></div>{/if}
         {#if selected}
           {@const directPerson = selected.kind === 'direct' ? personByUid(selected.direct_user_uid) : null}
-          <header><div class="conversation-title"><button class="collaboration-icon-button conversation-back" type="button" onclick={() => { mobileThreadOpen = false; detailsOpen = false; }} aria-label="Back to conversations"><ArrowLeft size={18} /></button>{#if directPerson}<button class="channel-glyph large direct person-trigger" type="button" onclick={() => openPersonCard(directPerson)} aria-label={`View ${directPerson.name}`}><ProfileAvatar userUid={directPerson.uid} name={directPerson.name} updatedAt={directPerson.profile_photo_updated_at} online={isDirectOnline(selected)} /></button>{:else}<span class:direct={selected.kind === 'direct'} class="channel-glyph large">{#if selected.kind === 'direct'}{initials(selected.name)}{:else if selected.kind === 'channel'}<Hash size={20} />{:else}<UsersRound size={20} />{/if}</span>{/if}<div><h2>{#if directPerson}<button class="conversation-person-name" type="button" onclick={() => openPersonCard(directPerson)}>{selected.name}</button>{:else}{selected.name}{/if}</h2><p class:online={isDirectOnline(selected)}>{channelSubtitle(selected)}</p></div></div><div class="conversation-actions"><span class:online={conversationPresenceIsOnline(selected)} class="live-label"><i></i>{conversationPresence(selected)}</span><div class="conversation-pins" data-conversation-pins><button class:active={pinsOpen} class="collaboration-icon-button" type="button" onclick={() => pinsOpen = !pinsOpen} title="Pinned messages" aria-label={`Pinned messages, ${pinnedMessages.length}`} aria-expanded={pinsOpen}><Pin size={15} />{#if pinnedMessages.length}<b>{pinnedMessages.length > 99 ? '99+' : pinnedMessages.length}</b>{/if}</button>{#if pinsOpen}<div class="pinned-message-panel"><header><span><Pin size={14} /><strong>Pinned messages</strong></span><small>{pinnedMessages.length} saved</small></header>{#if pinnedMessages.length}<div>{#each pinnedMessages as pinned}<button type="button" onclick={() => openPinnedMessage(pinned)}><span><strong>{pinned.sender_name}</strong><time>{clock(pinned.created_at)}</time></span><p>{pinned.body.trim() || 'Shared content'}</p><small>Pinned by {pinned.pinned_by_name || 'a moderator'}</small></button>{/each}</div>{:else}<p class="pinned-message-empty">Important messages pinned in this conversation will appear here.</p>{/if}</div>{/if}</div><button class:active={conversationSearchOpen} class="collaboration-icon-button" onclick={() => { conversationSearchOpen = !conversationSearchOpen; if (!conversationSearchOpen) closeConversationSearch(); }} title="Search this conversation" aria-label="Search this conversation"><Search size={15} /></button><button class="collaboration-icon-button refresh-conversation" onclick={() => void refreshLive()} title="Refresh conversation" aria-label="Refresh conversation"><RefreshCw size={15} /></button><button class:active={detailsOpen} class="collaboration-icon-button details-toggle" onclick={toggleDetails} title="Conversation details" aria-label="Toggle conversation details"><Info size={16} /></button></div></header>
+          <header><div class="conversation-title"><button class="collaboration-icon-button conversation-back" type="button" onclick={() => { mobileThreadOpen = false; detailsOpen = false; }} aria-label="Back to conversations"><ArrowLeft size={18} /></button>{#if directPerson}<button class="channel-glyph large direct person-trigger" type="button" onclick={() => openPersonCard(directPerson)} aria-label={`View ${directPerson.name}`}><ProfileAvatar userUid={directPerson.uid} name={directPerson.name} updatedAt={directPerson.profile_photo_updated_at} online={isDirectOnline(selected)} /></button>{:else}<span class:direct={selected.kind === 'direct'} class="channel-glyph large">{#if selected.kind === 'direct'}{initials(selected.name)}{:else if selected.kind === 'channel'}<Hash size={20} />{:else}<UsersRound size={20} />{/if}</span>{/if}<div><h2>{#if directPerson}<button class="conversation-person-name" type="button" onclick={() => openPersonCard(directPerson)}>{selected.name}</button>{:else}{selected.name}{/if}</h2><p class:online={isDirectOnline(selected)}>{channelSubtitle(selected)}</p></div></div><div class="conversation-actions"><span class:online={conversationPresenceIsOnline(selected)} class="live-label"><i></i>{conversationPresence(selected)}</span><span class="conversation-call-actions"><button class:active={activeCallChannelUid === selected.uid} class="collaboration-icon-button" type="button" onclick={() => onStartCall(selected!, 'voice')} title={activeCallChannelUid === selected.uid ? 'Call in progress' : 'Start voice call'} aria-label={activeCallChannelUid === selected.uid ? 'Voice call in progress' : `Start voice call in ${selected.name}`}><Phone size={15} /></button><button class:active={activeCallChannelUid === selected.uid} class="collaboration-icon-button" type="button" onclick={() => onStartCall(selected!, 'video')} title={activeCallChannelUid === selected.uid ? 'Call in progress' : 'Start video call'} aria-label={activeCallChannelUid === selected.uid ? 'Video call in progress' : `Start video call in ${selected.name}`}><Video size={16} /></button></span><div class="conversation-pins" data-conversation-pins><button class:active={pinsOpen} class="collaboration-icon-button" type="button" onclick={() => pinsOpen = !pinsOpen} title="Pinned messages" aria-label={`Pinned messages, ${pinnedMessages.length}`} aria-expanded={pinsOpen}><Pin size={15} />{#if pinnedMessages.length}<b>{pinnedMessages.length > 99 ? '99+' : pinnedMessages.length}</b>{/if}</button>{#if pinsOpen}<div class="pinned-message-panel"><header><span><Pin size={14} /><strong>Pinned messages</strong></span><small>{pinnedMessages.length} saved</small></header>{#if pinnedMessages.length}<div>{#each pinnedMessages as pinned}<button type="button" onclick={() => openPinnedMessage(pinned)}><span><strong>{pinned.sender_name}</strong><time>{clock(pinned.created_at)}</time></span><p>{pinned.body.trim() || 'Shared content'}</p><small>Pinned by {pinned.pinned_by_name || 'a moderator'}</small></button>{/each}</div>{:else}<p class="pinned-message-empty">Important messages pinned in this conversation will appear here.</p>{/if}</div>{/if}</div><button class:active={conversationSearchOpen} class="collaboration-icon-button" onclick={() => { conversationSearchOpen = !conversationSearchOpen; if (!conversationSearchOpen) closeConversationSearch(); }} title="Search this conversation" aria-label="Search this conversation"><Search size={15} /></button><button class="collaboration-icon-button refresh-conversation" onclick={() => void refreshLive()} title="Refresh conversation" aria-label="Refresh conversation"><RefreshCw size={15} /></button><button class:active={detailsOpen} class="collaboration-icon-button details-toggle" onclick={toggleDetails} title="Conversation details" aria-label="Toggle conversation details"><Info size={16} /></button></div></header>
+          {#if callStateLoading}<div class="conversation-call-status loading"><span class="loader"></span><span>Checking call status…</span></div>{:else if selectedCallState?.active && activeCallChannelUid !== selected.uid}<section class="conversation-call-status"><span class="call-status-glyph">{#if selected.kind === 'direct'}<Phone size={16} />{:else}<UsersRound size={16} />{/if}</span><span><strong>{selected.kind === 'direct' ? 'Private call in progress' : 'Group call in progress'}</strong><small>{selectedCallState.participants.length} {selectedCallState.participants.length === 1 ? 'person' : 'people'} connected</small></span><button class="button small" type="button" onclick={() => onStartCall(selected!, 'voice')}>Join voice</button><button class="button primary small" type="button" onclick={() => onStartCall(selected!, 'video')}>Join with video</button></section>{/if}
           {#if conversationSearchOpen}
             <section class="conversation-search-panel" aria-label="Search this conversation">
               <form onsubmit={runConversationSearch}><label><Search size={15} /><input bind:value={messageSearch} type="search" placeholder="Search messages and file names…" aria-label="Search messages and file names" /></label><button class="button primary small" disabled={messageSearching || !messageSearch.trim()}>{messageSearching ? 'Searching…' : 'Search'}</button><button class="icon-button" type="button" onclick={closeConversationSearch} aria-label="Close conversation search"><X size={16} /></button></form>

@@ -14,7 +14,7 @@ use uuid::Uuid;
 use crate::{
     api::{
         live::publish_live_event,
-        modules::{DEFAULT_MODULE_UID, ensure_module_schema, load_module_db, module_can},
+        modules::{DEFAULT_MODULE_UID, ensure_module_schema, load_module_db, module_can_for_user},
         mx::{
             formula::{referenced_fields, validate_expression},
             handler::ensure_mx_record_schema,
@@ -1315,6 +1315,26 @@ pub async fn get_record_schema(claims: Claims) -> Response {
     if !claims.can_read_records() {
         return read_denied();
     }
+    let user_uid = claims.uid.clone();
+    let access_level = claims.access_level;
+    let allowed = tokio::task::spawn_blocking(move || {
+        with_sql_connection(|connection| {
+            module_can_for_user(
+                connection,
+                DEFAULT_MODULE_UID,
+                &user_uid,
+                access_level,
+                "read",
+            )
+        })
+    })
+    .await
+    .ok()
+    .and_then(Result::ok)
+    .unwrap_or(false);
+    if !allowed {
+        return read_denied();
+    }
 
     match load_schema(false).await {
         Ok(schema) => api_json(StatusCode::OK, json!(schema)),
@@ -1336,9 +1356,16 @@ pub async fn get_module_record_schema(claims: Claims, Path(module_uid): Path<Str
     if !claims.can_manage_accounts() {
         let permission_module = module_uid.clone();
         let access_level = claims.access_level;
+        let user_uid = claims.uid.clone();
         let allowed = tokio::task::spawn_blocking(move || {
             with_sql_connection(|connection| {
-                module_can(connection, &permission_module, access_level, "read")
+                module_can_for_user(
+                    connection,
+                    &permission_module,
+                    &user_uid,
+                    access_level,
+                    "read",
+                )
             })
         })
         .await

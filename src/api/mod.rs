@@ -3,6 +3,7 @@ pub mod admin;
 pub mod api_error;
 pub mod audit;
 pub mod backup;
+pub mod calls;
 pub mod collaboration;
 pub mod dashboard;
 pub mod deployment;

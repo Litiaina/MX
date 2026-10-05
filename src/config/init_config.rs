@@ -40,5 +40,14 @@ pub fn init_default_config<P: AsRef<Path>>(path: P) -> io::Result<()> {
         .set("collaboration_file_max_size_mb", "100")
         .set("multipart_part_size_mb", "16");
 
+    // Optional WebRTC traversal. Leave blank for directly reachable/LAN peers;
+    // configure deployment-owned STUN/TURN endpoints for internet calls.
+    conf.with_section(Some("webrtc"))
+        .set("stun_urls", "")
+        .set("turn_urls", "")
+        .set("turn_username", "")
+        .set("turn_credential", "")
+        .set("max_participants", "12");
+
     conf.write_to_file(path).map_err(io::Error::other)
 }

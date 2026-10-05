@@ -430,7 +430,10 @@ async fn record_audit_event(write: AuditWrite) -> Result<(), String> {
 pub(crate) fn ensure_audit_schema(
     connection: &rusqlite::Connection,
 ) -> Result<(), rusqlite::Error> {
-    crate::api::mx::migration::migrate_legacy_schema(connection)?;
+    // Audit reconstruction queries record-version history. Make the audit
+    // schema independently safe on a new installation, even before anyone
+    // has opened or edited a record.
+    crate::api::lifecycle::ensure_record_lifecycle_schema(connection)?;
     connection.execute_batch(
         r#"
         CREATE TABLE IF NOT EXISTS mx_audit_log (
@@ -642,6 +645,21 @@ fn classify_action(method: &Method, path: &str) -> Option<AuditClassification> {
             action: "dashboard.config.update",
             target_type: Some("dashboard-config"),
             target_uid: None,
+        });
+    }
+
+    if segments.len() == 6
+        && segments[0] == "mx"
+        && segments[1] == "v1"
+        && segments[2] == "admin"
+        && segments[3] == "accounts"
+        && segments[5] == "modules"
+        && method == Method::PUT
+    {
+        return Some(AuditClassification {
+            action: "account.module-access.update",
+            target_type: Some("account"),
+            target_uid: segments.get(4).map(|value| value.to_string()),
         });
     }
 
@@ -994,5 +1012,13 @@ mod tests {
         assert!(
             classify_action(&Method::GET, "/mx/v1/modules/inventory/records/record-42").is_none()
         );
+    }
+
+    #[test]
+    fn classifies_account_module_access_changes() {
+        let event = classify_action(&Method::PUT, "/mx/v1/admin/accounts/user-42/modules")
+            .expect("module access changes must be audited");
+        assert_eq!(event.action, "account.module-access.update");
+        assert_eq!(event.target_uid.as_deref(), Some("user-42"));
     }
 }

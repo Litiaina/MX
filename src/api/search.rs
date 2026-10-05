@@ -48,6 +48,7 @@ fn like_pattern(value: &str) -> String {
 
 fn search_records(
     connection: &rusqlite::Connection,
+    user_uid: &str,
     access_level: i64,
     query: &str,
     limit: usize,
@@ -101,14 +102,16 @@ fn search_records(
                     WHEN 'formula' THEN CAST(value.value_real AS TEXT)
                     WHEN 'boolean' THEN CASE value.value_boolean WHEN 1 THEN 'true' ELSE 'false' END
                     ELSE COALESCE(value.value_text, '')
-                  END) LIKE LOWER(?2) ESCAPE '!'
+                  END) LIKE LOWER(?3) ESCAPE '!'
                 ORDER BY field.position, field.rowid
                 LIMIT 1
             ), (
                 SELECT 'File: ' || attachment.file_name
                 FROM mx_attachments attachment
                 WHERE attachment.entry_uid = record.uid
-                  AND LOWER(attachment.file_name) LIKE LOWER(?2) ESCAPE '!'
+                  AND permission.can_attachments=1
+                  AND (?1=0 OR account.can_attachments=1)
+                  AND LOWER(attachment.file_name) LIKE LOWER(?3) ESCAPE '!'
                 ORDER BY attachment.rowid
                 LIMIT 1
             ), 'Matched record')
@@ -118,8 +121,12 @@ fn search_records(
           ON permission.module_uid = record.module_uid
          AND permission.access_level = ?1
          AND permission.can_read = 1
+        LEFT JOIN mx_module_account_permissions account
+          ON account.module_uid=record.module_uid
+         AND account.user_uid=?2
         WHERE module.active = 1
           AND record.deleted_at IS NULL
+          AND (?1=0 OR account.can_read=1)
           AND (
               EXISTS (
                   SELECT 1
@@ -135,33 +142,38 @@ fn search_records(
                       WHEN 'formula' THEN CAST(value.value_real AS TEXT)
                       WHEN 'boolean' THEN CASE value.value_boolean WHEN 1 THEN 'true' ELSE 'false' END
                       ELSE COALESCE(value.value_text, '')
-                    END) LIKE LOWER(?2) ESCAPE '!'
+                    END) LIKE LOWER(?3) ESCAPE '!'
               )
               OR EXISTS (
                   SELECT 1
                   FROM mx_attachments attachment
                   WHERE attachment.entry_uid = record.uid
-                    AND LOWER(attachment.file_name) LIKE LOWER(?2) ESCAPE '!'
+                    AND permission.can_attachments=1
+                    AND (?1=0 OR account.can_attachments=1)
+                    AND LOWER(attachment.file_name) LIKE LOWER(?3) ESCAPE '!'
               )
           )
         ORDER BY record.rowid DESC
-        LIMIT ?3
+        LIMIT ?4
         "#,
     )?;
 
     statement
-        .query_map(params![access_level, pattern, limit as i64], |row| {
-            Ok(GlobalSearchResult {
-                uid: row.get(0)?,
-                module_uid: row.get(1)?,
-                module_name: row.get(2)?,
-                singular_name: row.get(3)?,
-                icon: row.get(4)?,
-                color: row.get(5)?,
-                label: row.get(6)?,
-                context: row.get(7)?,
-            })
-        })?
+        .query_map(
+            params![access_level, user_uid, pattern, limit as i64],
+            |row| {
+                Ok(GlobalSearchResult {
+                    uid: row.get(0)?,
+                    module_uid: row.get(1)?,
+                    module_name: row.get(2)?,
+                    singular_name: row.get(3)?,
+                    icon: row.get(4)?,
+                    color: row.get(5)?,
+                    label: row.get(6)?,
+                    context: row.get(7)?,
+                })
+            },
+        )?
         .collect()
 }
 
@@ -171,11 +183,12 @@ pub async fn global_search(claims: Claims, Query(query): Query<GlobalSearchQuery
         return api_json(StatusCode::OK, json!({"results":[]}));
     }
     let access_level = claims.access_level;
+    let user_uid = claims.uid;
     let limit = query.limit.unwrap_or(30).clamp(1, 50);
     let result = tokio::task::spawn_blocking(
         move || -> Result<Vec<GlobalSearchResult>, SqliteDatabaseError> {
             with_sql_connection(|connection| {
-                search_records(connection, access_level, &value, limit)
+                search_records(connection, &user_uid, access_level, &value, limit)
             })
         },
     )
@@ -210,6 +223,12 @@ mod tests {
         let connection = rusqlite::Connection::open_in_memory().unwrap();
         ensure_record_lifecycle_schema(&connection).unwrap();
         connection
+            .execute_batch(
+                "CREATE TABLE IF NOT EXISTS users(uid TEXT PRIMARY KEY, access_level INTEGER NOT NULL);\n\
+                 INSERT INTO users(uid,access_level) VALUES('viewer',3);",
+            )
+            .unwrap();
+        connection
             .execute(
                 r#"
                 INSERT INTO mx_fields(
@@ -233,9 +252,17 @@ mod tests {
                 [],
             )
             .unwrap();
+        connection
+            .execute(
+                "INSERT INTO mx_module_account_permissions(module_uid,user_uid,can_read,can_create,can_update,can_delete,can_configure,can_report,can_attachments,updated_at) VALUES(?1,'viewer',1,0,0,0,0,1,1,0)",
+                params![DEFAULT_MODULE_UID],
+            )
+            .unwrap();
 
         assert_eq!(
-            search_records(&connection, 3, "William", 10).unwrap().len(),
+            search_records(&connection, "viewer", 3, "William", 10)
+                .unwrap()
+                .len(),
             1
         );
         connection
@@ -245,7 +272,7 @@ mod tests {
             )
             .unwrap();
         assert!(
-            search_records(&connection, 3, "William", 10)
+            search_records(&connection, "viewer", 3, "William", 10)
                 .unwrap()
                 .is_empty()
         );
