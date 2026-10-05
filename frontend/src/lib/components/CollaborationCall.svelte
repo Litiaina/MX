@@ -22,7 +22,7 @@
   import { getCallState, joinCall, leaveCall, sendCallSignal, updateCallParticipant } from '../api/workspace';
   import { CallController, callPermissionMessage, type IncomingCallSignal, type LocalCallMedia, type RemoteCallMedia } from '../call/controller';
   import { monitorAudioLevel } from '../call/audioLevel';
-  import { callEventKey, callLeaveMatches, callPeerIdentities, callSessionWasReplaced, createCallSessionUid, historicalCallEventKeys } from '../call/session';
+  import { callEventKey, callLeaveMatches, callPeerIdentities, callSessionWasReplaced, createCallSessionUid, historicalCallEventKeys, reconcileCallParticipants } from '../call/session';
   import type { LiveMessage } from '../live/client';
   import CallMediaTile from './CallMediaTile.svelte';
 
@@ -103,9 +103,15 @@
 
   $effect(() => {
     if (!settingsPreview) return;
-    settingsPreview.srcObject = localMedia?.stream || null;
+    const previewTrack = localMedia?.stream.getVideoTracks()[0] || null;
+    const currentTrack = (settingsPreview.srcObject as MediaStream | null)?.getVideoTracks()[0] || null;
+    if (currentTrack === previewTrack) {
+      if (previewTrack && settingsPreview.paused) void settingsPreview.play().catch(() => undefined);
+      return;
+    }
+    settingsPreview.srcObject = previewTrack ? new MediaStream([previewTrack]) : null;
     settingsPreview.muted = true;
-    if (localMedia?.cameraEnabled || localMedia?.screenSharing) void settingsPreview.play().catch(() => undefined);
+    if (previewTrack) void settingsPreview.play().catch(() => undefined);
   });
 
   onMount(() => {
@@ -166,7 +172,7 @@
   }
 
   function applyState(state: CallState) {
-    participants = state.participants;
+    participants = reconcileCallParticipants(participants, state.participants);
     maxParticipants = state.max_participants || maxParticipants;
     if (state.started_at) callStartedAt = state.started_at;
     if (!focusedUserUid) focusedUserUid = participants.find((item) => item.screen_sharing && item.user_uid !== session.uid)?.user_uid || '';
@@ -175,8 +181,8 @@
   }
 
   function mergeParticipant(participant: CallParticipant) {
-    participants = [...participants.filter((item) => item.user_uid !== participant.user_uid), participant]
-      .sort((left, right) => left.joined_at - right.joined_at || left.user_name.localeCompare(right.user_name));
+    participants = reconcileCallParticipants(participants, [...participants.filter((item) => item.user_uid !== participant.user_uid), participant]
+      .sort((left, right) => left.joined_at - right.joined_at || left.user_name.localeCompare(right.user_name)));
     if (participant.screen_sharing && participant.user_uid !== session.uid) focusedUserUid = participant.user_uid;
     else if (!participant.screen_sharing && focusedUserUid === participant.user_uid) focusedUserUid = '';
   }

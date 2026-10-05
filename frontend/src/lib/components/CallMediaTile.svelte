@@ -8,6 +8,7 @@
   import AudioLines from '@lucide/svelte/icons/audio-lines';
   import type { CallParticipant } from '../api/domain';
   import { monitorAudioLevel, speakingFromLevel } from '../call/audioLevel';
+  import { shouldStageVideoHandoff, type CallVideoMode } from '../call/videoPresentation';
   import ProfileAvatar from './ProfileAvatar.svelte';
 
   let { participant, stream = null, local = false, deafened = false, focused = false, outputDeviceId = '', connectionState = 'new', onToggleFocus = () => undefined }: {
@@ -20,13 +21,26 @@
     connectionState?: RTCPeerConnectionState;
     onToggleFocus?: () => void;
   } = $props();
-  let video = $state<HTMLVideoElement>();
+  type FrameAwareVideo = HTMLVideoElement & {
+    requestVideoFrameCallback?: (callback: () => void) => number;
+    cancelVideoFrameCallback?: (handle: number) => void;
+  };
+  let primaryVideo = $state<HTMLVideoElement>();
+  let secondaryVideo = $state<HTMLVideoElement>();
   let audio = $state<HTMLAudioElement>();
   let tile = $state<HTMLElement>();
   let fullscreen = $state(false);
   let fullscreenPending = $state(false);
   let audioLevel = $state(0);
   let speaking = $state(false);
+  let videoReady = $state(false);
+  let mediaSwitching = $state(false);
+  let activeVideo: HTMLVideoElement | null = null;
+  let boundVideoTrack: MediaStreamTrack | null = null;
+  let boundVideoMode: CallVideoMode = 'off';
+  let videoSwitchVersion = 0;
+  let retireVideoTimer: number | undefined;
+  let cancelPendingVideoSwitch = () => undefined;
   const hasVideo = $derived(participant.video_enabled && !!stream?.getVideoTracks().length);
 
   $effect(() => {
@@ -52,22 +66,110 @@
     document.addEventListener('fullscreenerror', syncFullscreenState);
     syncFullscreenState();
     return () => {
+      cancelPendingVideoSwitch();
+      window.clearTimeout(retireVideoTimer);
+      if (primaryVideo) primaryVideo.srcObject = null;
+      if (secondaryVideo) secondaryVideo.srcObject = null;
       document.removeEventListener('fullscreenchange', syncFullscreenState);
       document.removeEventListener('fullscreenerror', syncFullscreenState);
     };
   });
 
+  function makeActiveVideo(next: HTMLVideoElement) {
+    const previous = activeVideo;
+    if (previous === next) return;
+    next.classList.add('active');
+    next.removeAttribute('aria-hidden');
+    previous?.classList.remove('active');
+    previous?.setAttribute('aria-hidden', 'true');
+    activeVideo = next;
+    videoReady = true;
+    mediaSwitching = false;
+    window.clearTimeout(retireVideoTimer);
+    if (previous) retireVideoTimer = window.setTimeout(() => {
+      if (activeVideo !== previous) previous.srcObject = null;
+    }, 220);
+  }
+
+  function stageVideoTrack(track: MediaStreamTrack) {
+    if (!primaryVideo || !secondaryVideo) return;
+    if (!activeVideo) {
+      activeVideo = primaryVideo;
+      primaryVideo.classList.add('active');
+      primaryVideo.removeAttribute('aria-hidden');
+    }
+    cancelPendingVideoSwitch();
+    window.clearTimeout(retireVideoTimer);
+    const version = ++videoSwitchVersion;
+    const candidate = activeVideo === primaryVideo ? secondaryVideo : primaryVideo;
+    const frameVideo = candidate as FrameAwareVideo;
+    let cancelled = false;
+    let frameRequest: number | undefined;
+    let fallbackTimer: number | undefined;
+    mediaSwitching = true;
+    candidate.classList.remove('active');
+    candidate.setAttribute('aria-hidden', 'true');
+    candidate.srcObject = new MediaStream([track]);
+    candidate.muted = true;
+
+    const removeReadinessListeners = () => {
+      candidate.removeEventListener('loadeddata', requestFrame);
+      candidate.removeEventListener('playing', requestFrame);
+      window.clearTimeout(fallbackTimer);
+      if (frameRequest !== undefined) frameVideo.cancelVideoFrameCallback?.(frameRequest);
+    };
+    const reveal = () => {
+      if (cancelled || version !== videoSwitchVersion || candidate.readyState < 2) return;
+      removeReadinessListeners();
+      makeActiveVideo(candidate);
+      cancelPendingVideoSwitch = () => undefined;
+    };
+    const requestFrame = () => {
+      if (cancelled || frameRequest !== undefined) return;
+      if (frameVideo.requestVideoFrameCallback) frameRequest = frameVideo.requestVideoFrameCallback(reveal);
+      else reveal();
+    };
+    candidate.addEventListener('loadeddata', requestFrame);
+    candidate.addEventListener('playing', requestFrame);
+    fallbackTimer = window.setTimeout(reveal, 1_500);
+    void candidate.play().then(requestFrame).catch(() => undefined);
+    cancelPendingVideoSwitch = () => {
+      if (cancelled) return;
+      cancelled = true;
+      removeReadinessListeners();
+      candidate.srcObject = null;
+      mediaSwitching = false;
+    };
+  }
+
   $effect(() => {
-    if (!video) return;
-    const mediaMode = participant.screen_sharing ? 'screen' : participant.video_enabled ? 'camera' : 'off';
+    if (!primaryVideo || !secondaryVideo) return;
+    const mediaMode: CallVideoMode = participant.screen_sharing ? 'screen' : participant.video_enabled ? 'camera' : 'off';
     const videoTrack = stream?.getVideoTracks()[0] || null;
-    // Chromium can retain the final display-capture frame after replaceTrack.
-    // Rebinding on the semantic screen/camera transition forces the element to
-    // consume the receiver's current frames without rebuilding the peer.
-    video.srcObject = null;
-    video.srcObject = videoTrack ? new MediaStream([videoTrack]) : null;
-    video.muted = true;
-    if (videoTrack && mediaMode !== 'off') void video.play().catch(() => undefined);
+    if (!videoTrack || mediaMode === 'off') {
+      if (boundVideoTrack === null && boundVideoMode === 'off') return;
+      boundVideoTrack = null;
+      boundVideoMode = 'off';
+      videoSwitchVersion += 1;
+      cancelPendingVideoSwitch();
+      window.clearTimeout(retireVideoTimer);
+      primaryVideo.srcObject = null;
+      secondaryVideo.srcObject = null;
+      videoReady = false;
+      mediaSwitching = false;
+      return;
+    }
+    // Participant heartbeats and microphone changes can replace the wrapper
+    // object or MediaStream while keeping the same video track. Preserve the
+    // existing decoder and frame in that case. A real camera/screen semantic
+    // transition is staged off-screen and revealed only after a decoded frame.
+    if (!shouldStageVideoHandoff(boundVideoTrack, boundVideoMode, videoTrack, mediaMode)) {
+      if (activeVideo?.paused) void activeVideo.play().catch(() => undefined);
+      return;
+    }
+    boundVideoTrack = videoTrack;
+    boundVideoMode = mediaMode;
+    stageVideoTrack(videoTrack);
   });
 
   $effect(() => {
@@ -116,10 +218,11 @@
   }
 </script>
 
-<article bind:this={tile} class:has-video={hasVideo} class:screen-share={participant.screen_sharing} class:focused class:speaking class:media-interrupted={fullscreen && !hasVideo} class="call-media-tile" data-speaking={speaking} ondblclick={() => (hasVideo || fullscreen) && void toggleFullscreen()}>
-  <video bind:this={video} autoplay playsinline muted aria-label={`${participant.user_name} call video`}></video>
+<article bind:this={tile} class:has-video={hasVideo && videoReady} class:screen-share={participant.screen_sharing} class:focused class:speaking class:media-switching={mediaSwitching} class:media-interrupted={fullscreen && !hasVideo} class="call-media-tile" data-speaking={speaking} ondblclick={() => (hasVideo || fullscreen) && void toggleFullscreen()}>
+  <video bind:this={primaryVideo} class="call-video-layer active" autoplay playsinline muted aria-label={`${participant.user_name} call video`}></video>
+  <video bind:this={secondaryVideo} class="call-video-layer" autoplay playsinline muted aria-hidden="true"></video>
   <audio bind:this={audio} autoplay aria-label={`${participant.user_name} call audio`}></audio>
-  {#if !hasVideo}
+  {#if !hasVideo || !videoReady}
     <div class="call-media-avatar"><ProfileAvatar userUid={participant.user_uid} name={participant.user_name} updatedAt={participant.profile_photo_updated_at} online /></div>
   {/if}
   {#if fullscreen && !hasVideo}<div class="call-media-interrupted"><strong>Media reconnecting…</strong><small>Fullscreen will stay open while MX restores the stream.</small></div>{/if}

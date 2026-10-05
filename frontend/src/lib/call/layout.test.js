@@ -34,11 +34,20 @@ describe('call layout safeguards', () => {
   });
 
   it('keeps remote microphone playback independent from camera and screen rendering', () => {
-    expect(mediaTile).toContain('<video bind:this={video} autoplay playsinline muted');
+    expect(mediaTile).toContain('<video bind:this={primaryVideo} class="call-video-layer active"');
+    expect(mediaTile).toContain('<video bind:this={secondaryVideo} class="call-video-layer"');
     expect(mediaTile).toContain('<audio bind:this={audio} autoplay');
-    expect(mediaTile).toContain('videoTrack ? new MediaStream([videoTrack]) : null');
     expect(mediaTile).toContain("currentStream?.addEventListener('addtrack', resumeAudio)");
     expect(css).toMatch(/\.call-media-tile\s*>\s*audio\s*\{[^}]*display:\s*none;/s);
+  });
+
+  it('hands camera and screen sources over only after the replacement produces a frame', () => {
+    expect(mediaTile).toContain('shouldStageVideoHandoff(boundVideoTrack, boundVideoMode, videoTrack, mediaMode)');
+    expect(mediaTile).toContain('requestVideoFrameCallback(reveal)');
+    expect(mediaTile).toContain('candidate.readyState < 2');
+    expect(mediaTile).not.toContain('video.srcObject = null');
+    expect(css).toMatch(/\.call-media-tile\s+\.call-video-layer\s*\{[^}]*opacity:\s*0;[^}]*transition:\s*opacity\s+\.18s/s);
+    expect(css).toMatch(/\.call-media-tile\s+\.call-video-layer\.active\s*\{[^}]*opacity:\s*1;/s);
   });
 
   it('uses MX collaboration colors for native call device controls in either theme', () => {

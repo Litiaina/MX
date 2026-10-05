@@ -218,6 +218,13 @@ and camera selection, browser-supported speaker routing, and an audible output
 test. These indicators are calculated locally from call media and do not send
 recorded audio to the MX server.
 
+Camera and screen-share playback stays attached to the current video track
+during unchanged participant heartbeats and microphone-only updates. When the
+video source changes, MX prepares the replacement in a second video layer and
+crossfades after a frame is available. The previous frame stays visible while
+the replacement starts, reducing black flashes during camera/screen switching.
+The device-panel video preview also avoids restarting for microphone-only changes.
+
 Call access follows conversation membership. A removed member is immediately
 evicted from an active call, signaling is addressed only to joined members, and
 inactive participants expire automatically. MX reconnects call signaling and
@@ -1597,8 +1604,10 @@ Product/release name:
 MX 3.0.0
 ```
 
-See [CHANGELOG.md](CHANGELOG.md) for the complete release notes. MX remains a
-schema-driven, self-hosted general-purpose information system.
+See [CHANGELOG.md](CHANGELOG.md) for the complete release notes. Fixes following
+the released MX 3.0.0 are listed under **Unreleased**, including the camera and
+screen-share playback improvements. MX remains a schema-driven, self-hosted
+general-purpose information system.
 
 ---
 

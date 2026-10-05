@@ -62,6 +62,15 @@ preferences remain authoritative. Automated frontend tests validate the media po
 signaling contract, while final deployment verification requires two real browser
 sessions because Node.js cannot emulate cameras, screen capture, or ICE routing.
 
+Call video presentation preserves its current decoder when the underlying track
+and camera/screen mode are unchanged. Source changes use two video layers: the
+replacement starts offscreen, then crossfades after a frame is available.
+Unchanged participant heartbeat responses reuse existing objects, and the
+device-panel preview compares video tracks so microphone-only changes do not
+restart video playback. These are post-3.0.0 fixes recorded under **Unreleased**
+in the root changelog. Deployment verification should include camera-to-screen-
+to-camera switching, microphone toggles, and several heartbeat intervals.
+
 Module navigation is server-derived in MX 3.0. The client renders only the
 effective modules and capabilities returned for the signed-in account; it does
 not treat a hidden control as authorization. Search, reporting, record routes,

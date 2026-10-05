@@ -3,6 +3,19 @@
 This file records user-visible changes to Litiaina MX. Release dates use the
 deployment maintainer's local date.
 
+## [Unreleased]
+
+### Fixed
+
+- Fixed avoidable black flashes in camera and screen-share tiles caused by
+  resetting video playback during participant heartbeats and microphone updates.
+  Source transitions now retain the current frame, prepare the replacement on a
+  second video layer, and crossfade after a frame is available.
+- Unchanged call heartbeat responses preserve participant object identity,
+  avoiding unnecessary media and audio-meter effect restarts.
+- The device-panel video preview no longer rebinds its source when only the
+  microphone or stream wrapper changes.
+
 ## [3.0.0] - 2026-10-05
 
 ### Added
