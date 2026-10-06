@@ -63,13 +63,44 @@ signaling contract, while final deployment verification requires two real browse
 sessions because Node.js cannot emulate cameras, screen capture, or ICE routing.
 
 Call video presentation preserves its current decoder when the underlying track
-and camera/screen mode are unchanged. Source changes use two video layers: the
-replacement starts offscreen, then crossfades after a frame is available.
+and camera/screen mode are unchanged. Each tile uses one playing video; source
+changes retain a still-frame overlay capped at 1280×720 until the replacement
+is decoded. No video opacity crossfade or second playing video is used.
 Unchanged participant heartbeat responses reuse existing objects, and the
 device-panel preview compares video tracks so microphone-only changes do not
 restart video playback. These are post-3.0.0 fixes recorded under **Unreleased**
 in the root changelog. Deployment verification should include camera-to-screen-
 to-camera switching, microphone toggles, and several heartbeat intervals.
+Remote media publishes a new stream wrapper when its track set changes so track
+arrival cannot be hidden by an earlier participant-state update. Group sender
+updates run concurrently across peers; pending negotiation survives an
+outstanding offer and resumes after the answer. A loaded first frame is enough
+to reveal a static screen share. Include three-person calls with each person
+sharing, delayed signaling to one viewer, and repeated stop/start in verification.
+Self screen-share preview defaults to hidden, supports explicit show/hide, and
+pauses in native fullscreen to break capture feedback. Screen sharing no longer
+automatically focuses the local tile, and the device panel hides shared-screen
+preview. Capture options request `selfBrowserSurface: 'exclude'` where supported.
+Remote playback attaches only audio tracks to its audio element and preserves
+that stream across video changes. Verification should also cover sharing the
+call tab itself, local preview toggling, repeated fullscreen cycles, microphone
+continuity, and remote fullscreen viewing.
+
+The self-capture regression test starts an isolated Vite server and three
+Chromium sessions, forces actual capture of the call tab, and checks hidden
+self-preview, share restarts, local and remote fullscreen, and a stable audio
+playback binding. It uses generated microphone audio and bypasses the live MX
+API; it does not modify accounts, records, or N1 data.
+
+```bash
+npx playwright install chromium
+npm run test:calls:browser
+```
+
+Set `MX_BROWSER_EXECUTABLE` to use an existing Chromium executable. The test
+prints its temporary screenshot directory. `MX_TEST_CAPTURE_SOURCE=synthetic`
+runs the same UI checks with a generated screen source when native tab capture
+is unavailable; native capture is the default.
 
 Module navigation is server-derived in MX 3.0. The client renders only the
 effective modules and capabilities returned for the signed-in account; it does

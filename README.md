@@ -220,10 +220,26 @@ recorded audio to the MX server.
 
 Camera and screen-share playback stays attached to the current video track
 during unchanged participant heartbeats and microphone-only updates. When the
-video source changes, MX prepares the replacement in a second video layer and
-crossfades after a frame is available. The previous frame stays visible while
-the replacement starts, reducing black flashes during camera/screen switching.
+video source changes, a bounded still frame covers the transition until the
+replacement is decoded. Each tile uses one playing video, avoiding overlapping
+video layers and fullscreen crossfade effects. The microphone uses a separate
+audio-only playback stream that is preserved when the video source changes.
 The device-panel video preview also avoids restarting for microphone-only changes.
+In group calls, each viewer receives source updates independently. A newly
+received video track updates its tile even if the sharing status arrived first;
+adding video to a voice call starts negotiation immediately, and queued changes
+resume when the current offer is answered. Static screen shares can be displayed
+from their first decoded frame without waiting for another screen change.
+
+Your own shared-screen preview is hidden by default; **Show my preview** and
+**Hide my preview** control local viewing without stopping the stream sent to
+others. Starting a share keeps the current call layout instead of automatically
+enlarging your own screen. Native fullscreen of your own share displays sharing
+status with the local preview paused, preventing the shared screen from
+recursively capturing its fullscreen video. Remote viewers can still watch the
+share in fullscreen. The capture picker requests exclusion of the current MX
+tab where the browser supports it, and the device panel hides shared-screen
+self-preview as well.
 
 Call access follows conversation membership. A removed member is immediately
 evicted from an active call, signaling is addressed only to joined members, and

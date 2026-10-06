@@ -36,7 +36,8 @@ interface PeerState {
   makingOffer: boolean;
   ignoreOffer: boolean;
   settingRemoteAnswer: boolean;
-  negotiationReady: boolean;
+  negotiationAllowed: boolean;
+  negotiationPending: boolean;
   pendingCandidates: RTCIceCandidateInit[];
   videoSender: RTCRtpSender | null;
   screenAudioSender: RTCRtpSender | null;
@@ -48,6 +49,15 @@ export function callMediaConstraints(mode: CallMode): MediaStreamConstraints {
     video: mode === 'video'
       ? { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 24, max: 30 }, facingMode: 'user' }
       : false
+  };
+}
+
+export function screenShareConstraints(): DisplayMediaStreamOptions & { selfBrowserSurface: 'exclude'; preferCurrentTab: false } {
+  return {
+    video: { frameRate: { ideal: 15, max: 30 } },
+    audio: true,
+    selfBrowserSurface: 'exclude',
+    preferCurrentTab: false
   };
 }
 
@@ -146,16 +156,21 @@ export class CallController {
       state.settingRemoteAnswer = description.type === 'answer';
       await connection.setRemoteDescription(description);
       state.settingRemoteAnswer = false;
-      state.negotiationReady = true;
+      state.negotiationAllowed = true;
       for (const candidate of state.pendingCandidates.splice(0)) {
         await this.#addRemoteCandidate(signal.senderUid, state, candidate);
       }
       if (description.type === 'offer') {
         // With a remote offer installed, the no-argument form atomically
         // creates and applies the correct answer for the current state.
+        // The answer includes local tracks already queued before it is built.
+        state.negotiationPending = false;
         await connection.setLocalDescription();
         if (connection.localDescription) await this.#signalDescription(signal.senderUid, connection.localDescription);
       }
+      // Track additions requested during an outstanding offer must resume as
+      // soon as its answer arrives, rather than waiting for participant refresh.
+      void this.#negotiate(signal.senderUid, state);
     } catch (reason) {
       state.settingRemoteAnswer = false;
       if (!state.ignoreOffer) this.onError(reason instanceof Error ? `Call negotiation failed: ${reason.message}` : 'Call negotiation failed.');
@@ -168,6 +183,7 @@ export class CallController {
     peer.connection.ontrack = null;
     peer.connection.onicecandidate = null;
     peer.connection.onnegotiationneeded = null;
+    peer.connection.onconnectionstatechange = null;
     peer.connection.close();
     peer.remoteStream.getTracks().forEach((track) => track.stop());
     this.#peers.delete(userUid);
@@ -241,7 +257,7 @@ export class CallController {
   async startScreenShare(): Promise<void> {
     if (!navigator.mediaDevices?.getDisplayMedia) throw new Error('Screen sharing is not supported by this browser.');
     if (this.#screenTrack) return;
-    const stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: 15, max: 30 } }, audio: true });
+    const stream = await navigator.mediaDevices.getDisplayMedia(screenShareConstraints());
     const track = stream.getVideoTracks()[0];
     if (!track) throw new Error('The browser did not provide a screen-sharing track.');
     this.#screenTrack = track;
@@ -321,8 +337,9 @@ export class CallController {
     if (existing && existing.sessionUid !== sessionUid) this.removePeer(userUid);
     const current = this.#peers.get(userUid);
     if (current) {
-      if (initiate) {
-        current.negotiationReady = true;
+      if (initiate && !current.makingOffer && !current.connection.localDescription && !current.connection.remoteDescription) {
+        current.negotiationAllowed = true;
+        current.negotiationPending = true;
         void this.#negotiate(userUid, current);
       }
       return current;
@@ -337,7 +354,8 @@ export class CallController {
       makingOffer: false,
       ignoreOffer: false,
       settingRemoteAnswer: false,
-      negotiationReady: initiate,
+      negotiationAllowed: initiate,
+      negotiationPending: initiate,
       pendingCandidates: [],
       videoSender: null,
       screenAudioSender: null
@@ -351,53 +369,78 @@ export class CallController {
       if (event.candidate) void this.sendSignal(userUid, state.sessionUid, 'ice', event.candidate.toJSON()).catch((reason) => this.onError(reason instanceof Error ? reason.message : 'Could not relay a network candidate.'));
     };
     connection.ontrack = (event) => {
-      const source = event.streams[0];
-      if (source) {
-        for (const track of source.getTracks()) if (!remoteStream.getTracks().some((item) => item.id === track.id)) remoteStream.addTrack(track);
-      } else if (!remoteStream.getTracks().some((item) => item.id === event.track.id)) remoteStream.addTrack(event.track);
-      event.track.onended = () => { remoteStream.removeTrack(event.track); this.#emitRemote(); };
+      if (this.#closed || this.#peers.get(userUid) !== state) return;
+      if (state.remoteStream.getTracks().includes(event.track)) return;
+      // Track events may arrive after the participant's screen-sharing state.
+      // Publish a new wrapper only when the track set changes so Svelte notices
+      // the media arrival, while ordinary heartbeats keep playback untouched.
+      const tracks = state.remoteStream.getTracks().filter((track) =>
+        track.id !== event.track.id && (event.track.kind !== 'video' || track.kind !== 'video'));
+      state.remoteStream = new MediaStream([...tracks, event.track]);
+      event.track.onended = () => {
+        if (this.#closed || this.#peers.get(userUid) !== state) return;
+        const remaining = state.remoteStream.getTracks().filter((track) => track.id !== event.track.id);
+        if (remaining.length === state.remoteStream.getTracks().length) return;
+        state.remoteStream = new MediaStream(remaining);
+        this.#emitRemote();
+      };
       this.#emitRemote();
     };
     connection.onconnectionstatechange = () => {
       if (connection.connectionState === 'failed') {
         connection.restartIce();
-        state.negotiationReady = true;
+        state.negotiationPending = true;
         void this.#negotiate(userUid, state);
       }
       this.#emitRemote();
     };
-    connection.onnegotiationneeded = () => { void this.#negotiate(userUid, state); };
+    connection.onnegotiationneeded = () => {
+      state.negotiationPending = true;
+      void this.#negotiate(userUid, state);
+    };
     this.#emitRemote();
     if (initiate && connection.signalingState === 'stable') void this.#negotiate(userUid, state);
     return state;
   }
 
   async #negotiate(userUid: string, state: PeerState): Promise<void> {
-    if (this.#closed || !state.negotiationReady || state.makingOffer || state.connection.signalingState !== 'stable') return;
+    if (this.#closed || this.#peers.get(userUid) !== state || !state.negotiationAllowed || !state.negotiationPending
+      || state.makingOffer || state.connection.signalingState !== 'stable') return;
+    let failed = false;
     try {
       state.makingOffer = true;
-      state.negotiationReady = false;
+      state.negotiationPending = false;
       // The no-argument form lets the browser choose offer/answer atomically
       // inside its signaling operation queue, avoiding a createOffer → remote
       // offer → setLocalDescription race.
       await state.connection.setLocalDescription();
       if (state.connection.localDescription) await this.#signalDescription(userUid, state.connection.localDescription);
     } catch (reason) {
-      state.negotiationReady = true;
+      failed = true;
+      state.negotiationPending = true;
       if (String(state.connection.signalingState) !== 'have-remote-offer') {
         this.onError(reason instanceof Error ? `Could not negotiate call media: ${reason.message}` : 'Could not negotiate call media.');
       }
     } finally {
       state.makingOffer = false;
+      // An answer can finish while the HTTP send of our offer is still pending.
+      // Resume a queued track change after both operations have completed.
+      if (!failed && state.negotiationPending && state.connection.signalingState === 'stable') {
+        queueMicrotask(() => { void this.#negotiate(userUid, state); });
+      }
     }
   }
 
   async #replaceOutgoingVideo(track: MediaStreamTrack | null, stream: MediaStream): Promise<void> {
-    for (const [userUid, peer] of this.#peers) {
-      if (peer.connection.connectionState === 'closed') continue;
+    await Promise.all([...this.#peers].map(async ([userUid, peer]) => {
+      if (peer.connection.connectionState === 'closed') return;
       try {
         if (peer.videoSender) await peer.videoSender.replaceTrack(track);
-        else if (track) peer.videoSender = peer.connection.addTrack(track, stream);
+        else if (track) {
+          peer.videoSender = peer.connection.addTrack(track, stream);
+          peer.negotiationPending = true;
+          void this.#negotiate(userUid, peer);
+        }
       } catch {
         // A sender can become unusable after an ICE restart or a suspended
         // display capture. Recreate only that sender and renegotiate instead
@@ -407,20 +450,20 @@ export class CallController {
           peer.videoSender = null;
         }
         if (track) peer.videoSender = peer.connection.addTrack(track, stream);
-        peer.negotiationReady = true;
+        peer.negotiationPending = true;
         void this.#negotiate(userUid, peer);
       }
-    }
+    }));
   }
 
   async #replaceOutgoingScreenAudio(track: MediaStreamTrack | null, stream: MediaStream): Promise<void> {
-    for (const [userUid, peer] of this.#peers) {
-      if (peer.connection.connectionState === 'closed') continue;
+    await Promise.all([...this.#peers].map(async ([userUid, peer]) => {
+      if (peer.connection.connectionState === 'closed') return;
       try {
         if (peer.screenAudioSender) await peer.screenAudioSender.replaceTrack(track);
         else if (track) {
           peer.screenAudioSender = peer.connection.addTrack(track, stream);
-          peer.negotiationReady = true;
+          peer.negotiationPending = true;
           void this.#negotiate(userUid, peer);
         }
       } catch {
@@ -429,10 +472,10 @@ export class CallController {
           peer.screenAudioSender = null;
         }
         if (track) peer.screenAudioSender = peer.connection.addTrack(track, stream);
-        peer.negotiationReady = true;
+        peer.negotiationPending = true;
         void this.#negotiate(userUid, peer);
       }
-    }
+    }));
   }
 
   async #addRemoteCandidate(userUid: string, state: PeerState, candidate: RTCIceCandidateInit): Promise<void> {
@@ -446,7 +489,7 @@ export class CallController {
       // connection-state handler and a fresh negotiation.
       if (state.connection.connectionState === 'failed') {
         state.connection.restartIce();
-        state.negotiationReady = true;
+        state.negotiationPending = true;
         void this.#negotiate(userUid, state);
       }
     }

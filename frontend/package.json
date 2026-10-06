@@ -12,10 +12,12 @@
     "build": "svelte-check --tsconfig ./tsconfig.app.json && vite build",
     "check": "svelte-check --tsconfig ./tsconfig.app.json",
     "test": "vitest run",
+    "test:calls:browser": "node tests/call-media.browser.mjs",
     "preview": "vite preview"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^7.3.0",
+    "playwright": "1.63.0",
     "svelte": "^5.57.1",
     "svelte-check": "^4.7.6",
     "typescript": "^6.0.3",

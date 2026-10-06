@@ -9,12 +9,31 @@ deployment maintainer's local date.
 
 - Fixed avoidable black flashes in camera and screen-share tiles caused by
   resetting video playback during participant heartbeats and microphone updates.
-  Source transitions now retain the current frame, prepare the replacement on a
-  second video layer, and crossfade after a frame is available.
+  Source transitions use one playing video and a bounded still-frame overlay
+  until the replacement frame is available, avoiding overlapping video layers
+  and fullscreen opacity compositing.
 - Unchanged call heartbeat responses preserve participant object identity,
   avoiding unnecessary media and audio-meter effect restarts.
 - The device-panel video preview no longer rebinds its source when only the
   microphone or stream wrapper changes.
+- Fixed group screen-share tiles remaining on an avatar when sharing state
+  arrives before the video track. Track additions, removals, and replacements
+  now notify the view immediately while unchanged tracks retain their decoder.
+- Group media updates run independently for each viewer. New video tracks
+  trigger negotiation immediately, and changes queued during an outstanding
+  offer resume after its answer rather than waiting for a participant refresh.
+- Static screen shares become visible when their first frame is decoded,
+  without waiting for another captured frame. Participant refreshes also
+  discover missed joins without repeatedly renegotiating healthy connections.
+- Self screen-share preview is hidden by default with explicit show/hide
+  controls, and is paused in native fullscreen to prevent recursive capture.
+  Starting a share no longer automatically enlarges the sharer's own tile, and
+  the device panel avoids rendering a second copy of the shared screen.
+- The capture picker requests exclusion of the current MX tab where supported.
+  Remote viewers retain their fullscreen video controls.
+- Remote audio playback binds only audio tracks and keeps the same stream when
+  video changes, preventing microphone interruptions and unnecessary video work
+  in audio elements.
 
 ## [3.0.0] - 2026-10-05
 

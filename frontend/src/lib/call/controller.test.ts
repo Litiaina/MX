@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { CallController, callMediaConstraints, callPermissionMessage, candidateMatchesRemoteDescription, isCallSignal } from './controller';
+import { CallController, callMediaConstraints, callPermissionMessage, candidateMatchesRemoteDescription, isCallSignal, screenShareConstraints, type RemoteCallMedia } from './controller';
 
 class FakeTrack {
   enabled = true;
@@ -64,6 +64,9 @@ class FakePeerConnection {
 afterEach(() => vi.unstubAllGlobals());
 
 describe('call media policy', () => {
+  it('requests the capture picker to exclude the call tab without disabling shared audio', () => {
+    expect(screenShareConstraints()).toMatchObject({ selfBrowserSurface: 'exclude', preferCurrentTab: false, audio: true });
+  });
   it('requests processed audio for every call and video only for video calls', () => {
     expect(callMediaConstraints('voice').audio).toMatchObject({ echoCancellation: true, noiseSuppression: true });
     expect(callMediaConstraints('voice').video).toBe(false);
@@ -358,5 +361,113 @@ describe('call device lifecycle', () => {
     controller.close();
     expect(secondMicrophone.stopped).toBe(true);
     expect(secondCamera.stopped).toBe(true);
+  });
+});
+
+describe('group screen sharing', () => {
+  function setup(mode: 'voice' | 'video' = 'voice') {
+    const microphone = new FakeTrack('audio', 'microphone');
+    const camera = new FakeTrack('video', 'camera');
+    const screen = new FakeTrack('video', 'screen');
+    FakePeerConnection.instances = [];
+    vi.stubGlobal('MediaStream', FakeStream);
+    vi.stubGlobal('RTCPeerConnection', FakePeerConnection);
+    vi.stubGlobal('navigator', { mediaDevices: {
+      getUserMedia: vi.fn(async () => new FakeStream(mode === 'video' ? [microphone, camera] : [microphone])),
+      getDisplayMedia: vi.fn(async () => new FakeStream([screen]))
+    } });
+    const signals: Array<{ uid: string; kind: string }> = [];
+    const remoteUpdates: RemoteCallMedia[][] = [];
+    const errors: string[] = [];
+    const controller = new CallController('a', 'a-session', [], async (uid, _session, kind) => { signals.push({ uid, kind }); },
+      (peers) => remoteUpdates.push(peers), () => undefined, (error) => errors.push(error), () => undefined);
+    const answer = (uid: string) => controller.handleSignal({ senderUid: uid, senderSessionUid: `${uid}-session`,
+      recipientSessionUid: 'a-session', kind: 'answer', data: { type: 'answer', sdp: 'answer' } });
+    return { controller, signals, remoteUpdates, errors, answer, screen };
+  }
+
+  it('negotiates the first screen video to both voice-only viewers without a heartbeat', async () => {
+    const { controller, signals, answer, errors } = setup();
+    await controller.start('voice');
+    controller.connectToExisting([{ userUid: 'm', sessionUid: 'm-session' }, { userUid: 'z', sessionUid: 'z-session' }]);
+    await vi.waitFor(() => expect(signals).toHaveLength(2));
+    await answer('m');
+    await answer('z');
+    signals.length = 0;
+
+    await controller.startScreenShare();
+    await vi.waitFor(() => expect(signals.filter((signal) => signal.kind === 'offer').map((signal) => signal.uid).sort()).toEqual(['m', 'z']));
+    expect(errors).toEqual([]);
+    controller.close();
+  });
+
+  it('retains a screen negotiation requested while an earlier offer awaits its answer', async () => {
+    const { controller, signals, answer, errors } = setup();
+    await controller.start('voice');
+    controller.connectToExisting([{ userUid: 'z', sessionUid: 'z-session' }]);
+    await vi.waitFor(() => expect(signals).toHaveLength(1));
+    await controller.startScreenShare();
+    expect(signals).toHaveLength(1);
+    await answer('z');
+    await vi.waitFor(() => expect(signals).toHaveLength(2));
+    expect(errors).toEqual([]);
+    controller.close();
+  });
+
+  it('does not renegotiate healthy connections on repeated participant refreshes', async () => {
+    const { controller, signals, answer } = setup();
+    await controller.start('voice');
+    const peers = [{ userUid: 'm', sessionUid: 'm-session' }, { userUid: 'z', sessionUid: 'z-session' }];
+    controller.connectToExisting(peers);
+    await vi.waitFor(() => expect(signals).toHaveLength(2));
+    await answer('m');
+    await answer('z');
+    signals.length = 0;
+    for (let refresh = 0; refresh < 20; refresh++) controller.connectToExisting(peers);
+    await Promise.resolve();
+    expect(signals).toEqual([]);
+    controller.close();
+  });
+
+  it('switches a healthy viewer while another viewer has a pending replaceTrack operation', async () => {
+    const { controller, answer, screen } = setup('video');
+    await controller.start('video');
+    controller.connectToExisting([{ userUid: 'm', sessionUid: 'm-session' }, { userUid: 'z', sessionUid: 'z-session' }]);
+    await vi.waitFor(() => expect(FakePeerConnection.instances[0].signalingState).toBe('have-local-offer'));
+    await answer('m');
+    await answer('z');
+    const [slow, healthy] = FakePeerConnection.instances.map((peer) => peer.getSenders().find((sender) => sender.track?.kind === 'video')!);
+    let release!: () => void;
+    vi.spyOn(slow, 'replaceTrack').mockImplementation(async (track) => {
+      await new Promise<void>((resolve) => release = resolve);
+      slow.track = track;
+    });
+    const sharing = controller.startScreenShare();
+    await vi.waitFor(() => expect(release).toBeTypeOf('function'));
+    try { expect(healthy.track).toBe(screen); }
+    finally { release(); await sharing; controller.close(); }
+  });
+
+  it('publishes a new stream when video arrives after screen state, and retires replaced video', async () => {
+    const { controller, remoteUpdates } = setup();
+    await controller.start('voice');
+    controller.connectToExisting([{ userUid: 'z', sessionUid: 'z-session' }]);
+    const peer = FakePeerConnection.instances[0];
+    const voice = new FakeTrack('audio', 'remote-mic');
+    peer.ontrack?.({ track: voice, streams: [new FakeStream([voice])] });
+    const voiceStream = remoteUpdates.at(-1)![0].stream;
+    const screen = new FakeTrack('video', 'remote-screen');
+    peer.ontrack?.({ track: screen, streams: [new FakeStream([screen])] });
+    const screenStream = remoteUpdates.at(-1)![0].stream;
+    expect(screenStream).not.toBe(voiceStream);
+    expect(screenStream.getTracks()).toEqual([voice, screen]);
+    const replacement = new FakeTrack('video', 'replacement-screen');
+    peer.ontrack?.({ track: replacement, streams: [new FakeStream([replacement])] });
+    expect(remoteUpdates.at(-1)![0].stream.getVideoTracks()).toEqual([replacement]);
+    screen.onended?.();
+    expect(remoteUpdates.at(-1)![0].stream.getVideoTracks()).toEqual([replacement]);
+    replacement.onended?.();
+    expect(remoteUpdates.at(-1)![0].stream.getTracks()).toEqual([voice]);
+    controller.close();
   });
 });

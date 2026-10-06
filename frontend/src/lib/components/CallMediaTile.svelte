@@ -8,7 +8,7 @@
   import AudioLines from '@lucide/svelte/icons/audio-lines';
   import type { CallParticipant } from '../api/domain';
   import { monitorAudioLevel, speakingFromLevel } from '../call/audioLevel';
-  import { shouldStageVideoHandoff, type CallVideoMode } from '../call/videoPresentation';
+  import { CallVideoPresentation, sameMediaTracks, type CallVideoMode } from '../call/videoPresentation';
   import ProfileAvatar from './ProfileAvatar.svelte';
 
   let { participant, stream = null, local = false, deafened = false, focused = false, outputDeviceId = '', connectionState = 'new', onToggleFocus = () => undefined }: {
@@ -21,12 +21,9 @@
     connectionState?: RTCPeerConnectionState;
     onToggleFocus?: () => void;
   } = $props();
-  type FrameAwareVideo = HTMLVideoElement & {
-    requestVideoFrameCallback?: (callback: () => void) => number;
-    cancelVideoFrameCallback?: (handle: number) => void;
-  };
-  let primaryVideo = $state<HTMLVideoElement>();
-  let secondaryVideo = $state<HTMLVideoElement>();
+  let video = $state<HTMLVideoElement>();
+  let snapshot = $state<HTMLCanvasElement>();
+  let presentation = $state<CallVideoPresentation | null>(null);
   let audio = $state<HTMLAudioElement>();
   let tile = $state<HTMLElement>();
   let fullscreen = $state(false);
@@ -34,14 +31,25 @@
   let audioLevel = $state(0);
   let speaking = $state(false);
   let videoReady = $state(false);
-  let mediaSwitching = $state(false);
-  let activeVideo: HTMLVideoElement | null = null;
-  let boundVideoTrack: MediaStreamTrack | null = null;
-  let boundVideoMode: CallVideoMode = 'off';
-  let videoSwitchVersion = 0;
-  let retireVideoTimer: number | undefined;
-  let cancelPendingVideoSwitch = () => undefined;
+  let snapshotVisible = $state(false);
+  let selfPreviewEnabled = $state(false);
   const hasVideo = $derived(participant.video_enabled && !!stream?.getVideoTracks().length);
+  const selfScreenShare = $derived(local && participant.screen_sharing);
+  const previewHidden = $derived(selfScreenShare && (!selfPreviewEnabled || fullscreen));
+
+  $effect(() => {
+    if (!selfScreenShare) selfPreviewEnabled = false;
+  });
+
+  $effect(() => {
+    if (!video || !snapshot) return;
+    const renderer = new CallVideoPresentation(video, snapshot, (state) => {
+      videoReady = state.ready;
+      snapshotVisible = state.snapshotVisible;
+    });
+    presentation = renderer;
+    return () => renderer.dispose();
+  });
 
   $effect(() => {
     const currentStream = stream;
@@ -66,118 +74,30 @@
     document.addEventListener('fullscreenerror', syncFullscreenState);
     syncFullscreenState();
     return () => {
-      cancelPendingVideoSwitch();
-      window.clearTimeout(retireVideoTimer);
-      if (primaryVideo) primaryVideo.srcObject = null;
-      if (secondaryVideo) secondaryVideo.srcObject = null;
+      if (audio) { audio.pause(); audio.srcObject = null; }
       document.removeEventListener('fullscreenchange', syncFullscreenState);
       document.removeEventListener('fullscreenerror', syncFullscreenState);
     };
   });
 
-  function makeActiveVideo(next: HTMLVideoElement) {
-    const previous = activeVideo;
-    if (previous === next) return;
-    next.classList.add('active');
-    next.removeAttribute('aria-hidden');
-    previous?.classList.remove('active');
-    previous?.setAttribute('aria-hidden', 'true');
-    activeVideo = next;
-    videoReady = true;
-    mediaSwitching = false;
-    window.clearTimeout(retireVideoTimer);
-    if (previous) retireVideoTimer = window.setTimeout(() => {
-      if (activeVideo !== previous) previous.srcObject = null;
-    }, 220);
-  }
-
-  function stageVideoTrack(track: MediaStreamTrack) {
-    if (!primaryVideo || !secondaryVideo) return;
-    if (!activeVideo) {
-      activeVideo = primaryVideo;
-      primaryVideo.classList.add('active');
-      primaryVideo.removeAttribute('aria-hidden');
-    }
-    cancelPendingVideoSwitch();
-    window.clearTimeout(retireVideoTimer);
-    const version = ++videoSwitchVersion;
-    const candidate = activeVideo === primaryVideo ? secondaryVideo : primaryVideo;
-    const frameVideo = candidate as FrameAwareVideo;
-    let cancelled = false;
-    let frameRequest: number | undefined;
-    let fallbackTimer: number | undefined;
-    mediaSwitching = true;
-    candidate.classList.remove('active');
-    candidate.setAttribute('aria-hidden', 'true');
-    candidate.srcObject = new MediaStream([track]);
-    candidate.muted = true;
-
-    const removeReadinessListeners = () => {
-      candidate.removeEventListener('loadeddata', requestFrame);
-      candidate.removeEventListener('playing', requestFrame);
-      window.clearTimeout(fallbackTimer);
-      if (frameRequest !== undefined) frameVideo.cancelVideoFrameCallback?.(frameRequest);
-    };
-    const reveal = () => {
-      if (cancelled || version !== videoSwitchVersion || candidate.readyState < 2) return;
-      removeReadinessListeners();
-      makeActiveVideo(candidate);
-      cancelPendingVideoSwitch = () => undefined;
-    };
-    const requestFrame = () => {
-      if (cancelled || frameRequest !== undefined) return;
-      if (frameVideo.requestVideoFrameCallback) frameRequest = frameVideo.requestVideoFrameCallback(reveal);
-      else reveal();
-    };
-    candidate.addEventListener('loadeddata', requestFrame);
-    candidate.addEventListener('playing', requestFrame);
-    fallbackTimer = window.setTimeout(reveal, 1_500);
-    void candidate.play().then(requestFrame).catch(() => undefined);
-    cancelPendingVideoSwitch = () => {
-      if (cancelled) return;
-      cancelled = true;
-      removeReadinessListeners();
-      candidate.srcObject = null;
-      mediaSwitching = false;
-    };
-  }
-
   $effect(() => {
-    if (!primaryVideo || !secondaryVideo) return;
+    if (!presentation) return;
     const mediaMode: CallVideoMode = participant.screen_sharing ? 'screen' : participant.video_enabled ? 'camera' : 'off';
     const videoTrack = stream?.getVideoTracks()[0] || null;
-    if (!videoTrack || mediaMode === 'off') {
-      if (boundVideoTrack === null && boundVideoMode === 'off') return;
-      boundVideoTrack = null;
-      boundVideoMode = 'off';
-      videoSwitchVersion += 1;
-      cancelPendingVideoSwitch();
-      window.clearTimeout(retireVideoTimer);
-      primaryVideo.srcObject = null;
-      secondaryVideo.srcObject = null;
-      videoReady = false;
-      mediaSwitching = false;
-      return;
-    }
-    // Participant heartbeats and microphone changes can replace the wrapper
-    // object or MediaStream while keeping the same video track. Preserve the
-    // existing decoder and frame in that case. A real camera/screen semantic
-    // transition is staged off-screen and revealed only after a decoded frame.
-    if (!shouldStageVideoHandoff(boundVideoTrack, boundVideoMode, videoTrack, mediaMode)) {
-      if (activeVideo?.paused) void activeVideo.play().catch(() => undefined);
-      return;
-    }
-    boundVideoTrack = videoTrack;
-    boundVideoMode = mediaMode;
-    stageVideoTrack(videoTrack);
+    presentation.setSource(previewHidden ? null : videoTrack, mediaMode);
   });
 
   $effect(() => {
     if (!audio) return;
     const audioElement = audio;
+    if (local) {
+      if (audioElement.srcObject) { audioElement.pause(); audioElement.srcObject = null; }
+      return;
+    }
     const currentStream = stream;
     const audioTracks = currentStream?.getAudioTracks() || [];
-    if (audioElement.srcObject !== currentStream) audioElement.srcObject = currentStream;
+    const boundAudioTracks = (audioElement.srcObject as MediaStream | null)?.getAudioTracks() || [];
+    if (!sameMediaTracks(boundAudioTracks, audioTracks)) audioElement.srcObject = audioTracks.length ? new MediaStream(audioTracks) : null;
     // Microphone mute is represented by the remote track itself. Do not mute
     // this element from participant.audio_enabled: it may also carry the
     // independently shared tab/system audio track.
@@ -218,13 +138,16 @@
   }
 </script>
 
-<article bind:this={tile} class:has-video={hasVideo && videoReady} class:screen-share={participant.screen_sharing} class:focused class:speaking class:media-switching={mediaSwitching} class:media-interrupted={fullscreen && !hasVideo} class="call-media-tile" data-speaking={speaking} ondblclick={() => (hasVideo || fullscreen) && void toggleFullscreen()}>
-  <video bind:this={primaryVideo} class="call-video-layer active" autoplay playsinline muted aria-label={`${participant.user_name} call video`}></video>
-  <video bind:this={secondaryVideo} class="call-video-layer" autoplay playsinline muted aria-hidden="true"></video>
+<article bind:this={tile} class:has-video={hasVideo && !previewHidden && (videoReady || snapshotVisible)} class:screen-share={participant.screen_sharing} class:focused class:speaking class:media-interrupted={fullscreen && !hasVideo} class="call-media-tile" data-speaking={speaking} ondblclick={() => (hasVideo || fullscreen) && void toggleFullscreen()}>
+  <video bind:this={video} class="call-video-layer" class:active={videoReady} autoplay playsinline muted aria-label={`${participant.user_name} call video`}></video>
+  <canvas bind:this={snapshot} class="call-video-snapshot" class:active={snapshotVisible} aria-hidden="true"></canvas>
   <audio bind:this={audio} autoplay aria-label={`${participant.user_name} call audio`}></audio>
-  {#if !hasVideo || !videoReady}
+  {#if previewHidden}
+    <div class="call-self-share-status"><MonitorUp size={28} /><strong>You’re sharing your screen</strong><small>{fullscreen ? 'Your preview is hidden in fullscreen to prevent screen feedback.' : 'Your preview is hidden. Others still receive your screen.'}</small>{#if !fullscreen}<button type="button" onclick={() => selfPreviewEnabled = true}>Show my preview</button>{/if}</div>
+  {:else if !hasVideo || (!videoReady && !snapshotVisible)}
     <div class="call-media-avatar"><ProfileAvatar userUid={participant.user_uid} name={participant.user_name} updatedAt={participant.profile_photo_updated_at} online /></div>
   {/if}
+  {#if selfScreenShare && !previewHidden}<button type="button" class="call-hide-self-preview" onclick={() => selfPreviewEnabled = false}>Hide my preview</button>{/if}
   {#if fullscreen && !hasVideo}<div class="call-media-interrupted"><strong>Media reconnecting…</strong><small>Fullscreen will stay open while MX restores the stream.</small></div>{/if}
   {#if hasVideo || fullscreen}<div class="call-tile-actions"><button type="button" onclick={onToggleFocus} title={focused ? 'Return to grid' : 'Focus this video'} aria-label={focused ? `Return ${participant.user_name} to the grid` : `Focus ${participant.user_name}`}><Focus size={14} /></button><button type="button" class:active={fullscreen} disabled={fullscreenPending} aria-pressed={fullscreen} onclick={() => void toggleFullscreen()} title={fullscreen ? 'Exit full screen' : 'View full screen'} aria-label={fullscreen ? `Exit ${participant.user_name} full screen` : `View ${participant.user_name} full screen`}>{#if fullscreen}<Minimize2 size={14} />{:else}<Maximize2 size={14} />{/if}</button></div>{/if}
   <footer>

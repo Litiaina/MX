@@ -103,12 +103,13 @@
 
   $effect(() => {
     if (!settingsPreview) return;
-    const previewTrack = localMedia?.stream.getVideoTracks()[0] || null;
+    const previewTrack = localMedia?.screenSharing ? null : localMedia?.stream.getVideoTracks()[0] || null;
     const currentTrack = (settingsPreview.srcObject as MediaStream | null)?.getVideoTracks()[0] || null;
     if (currentTrack === previewTrack) {
       if (previewTrack && settingsPreview.paused) void settingsPreview.play().catch(() => undefined);
       return;
     }
+    if (!previewTrack) settingsPreview.pause();
     settingsPreview.srcObject = previewTrack ? new MediaStream([previewTrack]) : null;
     settingsPreview.muted = true;
     if (previewTrack) void settingsPreview.play().catch(() => undefined);
@@ -177,7 +178,11 @@
     if (state.started_at) callStartedAt = state.started_at;
     if (!focusedUserUid) focusedUserUid = participants.find((item) => item.screen_sharing && item.user_uid !== session.uid)?.user_uid || '';
     if (callSessionWasReplaced(participants, session.uid, callSessionUid)) { void finish(false, 'replaced'); return; }
-    if (stage === 'active' && !participants.some((item) => item.user_uid === session.uid)) void finish(false);
+    if (stage === 'active' && !participants.some((item) => item.user_uid === session.uid)) { void finish(false); return; }
+    // A current state response can discover a viewer whose join event was
+    // missed; establish its media connection immediately without re-offering
+    // to already connected participants.
+    controller?.connectToExisting(callPeerIdentities(participants, session.uid));
   }
 
   function mergeParticipant(participant: CallParticipant) {
@@ -303,7 +308,7 @@
       if (localMedia.screenSharing) await controller.stopScreenShare();
       else await controller.startScreenShare();
       const state = controller.localState();
-      focusedUserUid = state.screenSharing ? session.uid : (focusedUserUid === session.uid ? '' : focusedUserUid);
+      if (focusedUserUid === session.uid) focusedUserUid = '';
       applyState(await updateCallParticipant(channelUid, callSessionUid, { video_enabled: state.cameraEnabled || state.screenSharing, screen_sharing: state.screenSharing }));
     } catch (reason) { error = callPermissionMessage(reason); }
     finally { mediaTransitionBusy = false; }
@@ -476,9 +481,9 @@
     {#if error}<div class="call-error" role="alert"><span>{error}</span><button type="button" onclick={() => error = ''} aria-label="Dismiss call error">×</button></div>{/if}
     {#if settingsOpen}<section class="call-device-settings" aria-label="Call device settings">
       <header><span><strong>Voice and video settings</strong><small>Check your devices before they matter.</small></span><button type="button" onclick={() => settingsOpen = false} aria-label="Close device settings">×</button></header>
-      <div class="call-device-preview" class:inactive={!localMedia?.cameraEnabled && !localMedia?.screenSharing}>
+      <div class="call-device-preview" class:inactive={localMedia?.screenSharing || !localMedia?.cameraEnabled}>
         <video bind:this={settingsPreview} autoplay playsinline muted aria-label="Outgoing video preview"></video>
-        {#if !localMedia?.cameraEnabled && !localMedia?.screenSharing}<span><Camera size={20} /><strong>Camera is off</strong><small>Turn it on to check framing.</small></span>{/if}
+        {#if localMedia?.screenSharing}<span><MonitorUp size={20} /><strong>Screen sharing is active</strong><small>Self-preview is hidden to prevent screen feedback.</small></span>{:else if !localMedia?.cameraEnabled}<span><Camera size={20} /><strong>Camera is off</strong><small>Turn it on to check framing.</small></span>{/if}
         <em>Outgoing video</em>
       </div>
       <div class="call-device-section">
