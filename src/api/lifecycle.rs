@@ -15,7 +15,7 @@ use crate::{
     api::{
         live::publish_live_event,
         modules::{DEFAULT_MODULE_UID, module_can_for_user},
-        mx::schema::ensure_dynamic_schema,
+        mx::{records::ensure_record_collaboration_schema, schema::ensure_dynamic_schema},
         notifications::notify_module_readers,
     },
     db::connector::{SqliteDatabaseError, with_sql_connection},
@@ -207,6 +207,35 @@ pub(crate) fn capture_record_version(
     Ok(version_uid)
 }
 
+// Deletion/restoration are revision boundaries too. A draft opened before
+// Trash must not silently overwrite the restored record, even for a formerly
+// empty field that has no existing field-revision metadata.
+fn advance_lifecycle_revision(
+    transaction: &rusqlite::Transaction<'_>,
+    uid: &str,
+    module_uid: &str,
+    actor_uid: &str,
+) -> rusqlite::Result<i64> {
+    let revision = transaction.query_row(
+        "UPDATE mx_records SET revision=revision+1 WHERE uid=?1 AND module_uid=?2 RETURNING revision",
+        params![uid, module_uid], |row| row.get::<_, i64>(0),
+    )?;
+    transaction.execute(
+        "INSERT INTO mx_record_field_revisions(record_uid,field_uid,revision,updated_at,updated_by)
+         SELECT ?1,uid,?3,?4,?5 FROM mx_fields WHERE module_uid=?2
+         ON CONFLICT(record_uid,field_uid) DO UPDATE SET
+         revision=excluded.revision,updated_at=excluded.updated_at,updated_by=excluded.updated_by",
+        params![
+            uid,
+            module_uid,
+            revision,
+            chrono::Utc::now().timestamp_millis(),
+            actor_uid
+        ],
+    )?;
+    Ok(revision)
+}
+
 pub(crate) async fn capture_record_lifecycle_event(
     record_uid: String,
     actor_uid: String,
@@ -255,10 +284,11 @@ async fn delete_for_module(claims: Claims, module_uid: String, uid: String) -> R
     let event_module = module_uid.clone();
     let result = tokio::task::spawn_blocking(move || with_sql_connection(|connection| {
         ensure_record_lifecycle_schema(connection)?;
+        ensure_record_collaboration_schema(connection)?;
         if !can(connection, &module_uid, &permission_claims, "delete") {
             return Err(rusqlite::Error::InvalidParameterName("forbidden".into()));
         }
-        let transaction = connection.unchecked_transaction()?;
+        let transaction = rusqlite::Transaction::new_unchecked(connection, rusqlite::TransactionBehavior::Immediate)?;
         let exists = transaction.query_row(
             "SELECT EXISTS(SELECT 1 FROM mx_records WHERE uid=?1 AND module_uid=?2 AND deleted_at IS NULL)",
             params![uid, module_uid], |row| row.get::<_, i64>(0),
@@ -268,6 +298,7 @@ async fn delete_for_module(claims: Claims, module_uid: String, uid: String) -> R
             "UPDATE mx_records SET deleted_at=?2, deleted_by=?3 WHERE uid=?1 AND deleted_at IS NULL",
             params![uid, chrono::Utc::now().timestamp_millis(), actor_uid],
         )?;
+        advance_lifecycle_revision(&transaction, &uid, &module_uid, &actor_uid)?;
         capture_record_version(&transaction, &uid, &module_uid, "deleted", &actor_uid)?;
         transaction.commit()
     })).await;
@@ -860,7 +891,11 @@ pub async fn restore_trashed_record(claims: Claims, Path(uid): Path<String>) -> 
     let result = tokio::task::spawn_blocking(move || {
         with_sql_connection(|connection| {
             ensure_record_lifecycle_schema(connection)?;
-            let transaction = connection.unchecked_transaction()?;
+            ensure_record_collaboration_schema(connection)?;
+            let transaction = rusqlite::Transaction::new_unchecked(
+                connection,
+                rusqlite::TransactionBehavior::Immediate,
+            )?;
             let module_uid = transaction.query_row(
                 "SELECT module_uid FROM mx_records WHERE uid=?1 AND deleted_at IS NOT NULL",
                 params![uid],
@@ -870,6 +905,7 @@ pub async fn restore_trashed_record(claims: Claims, Path(uid): Path<String>) -> 
                 "UPDATE mx_records SET deleted_at=NULL,deleted_by=NULL WHERE uid=?1",
                 params![uid],
             )?;
+            advance_lifecycle_revision(&transaction, &uid, &module_uid, &actor_uid)?;
             capture_record_version(&transaction, &uid, &module_uid, "restored", &actor_uid)?;
             transaction.commit()?;
             Ok(module_uid)
@@ -947,6 +983,64 @@ mod tests {
         assert_eq!(
             captured,
             ("test.pdf".to_string(), Some("n1-version".to_string()))
+        );
+    }
+
+    #[test]
+    fn trash_and_restore_invalidate_all_old_drafts_including_empty_fields() {
+        let connection = rusqlite::Connection::open_in_memory().unwrap();
+        ensure_record_lifecycle_schema(&connection).unwrap();
+        ensure_record_collaboration_schema(&connection).unwrap();
+        connection.execute("INSERT INTO mx_records(uid,control_year,control_no,date,office,requestor,subject,routed_to_div,remarks,module_uid) VALUES ('boundary-record',0,1,'','','','','','',?1)", params![DEFAULT_MODULE_UID]).unwrap();
+        connection.execute("INSERT INTO mx_fields(uid,field_key,label,field_type,module_uid,module_key) VALUES ('empty-field','empty','Empty','text',?1,'empty')", params![DEFAULT_MODULE_UID]).unwrap();
+        let transaction = connection.unchecked_transaction().unwrap();
+        assert_eq!(
+            advance_lifecycle_revision(
+                &transaction,
+                "boundary-record",
+                DEFAULT_MODULE_UID,
+                "deleting-user"
+            )
+            .unwrap(),
+            2
+        );
+        assert_eq!(
+            advance_lifecycle_revision(
+                &transaction,
+                "boundary-record",
+                DEFAULT_MODULE_UID,
+                "restoring-admin"
+            )
+            .unwrap(),
+            3
+        );
+        transaction.commit().unwrap();
+        let field: (i64, String) = connection.query_row("SELECT revision,updated_by FROM mx_record_field_revisions WHERE record_uid='boundary-record' AND field_uid='empty-field'", [], |row| Ok((row.get(0)?, row.get(1)?))).unwrap();
+        assert_eq!(field, (3, "restoring-admin".into()));
+        assert!(
+            field.0 > 1,
+            "A revision-1 draft must conflict after restoration"
+        );
+        // The revision boundary is atomic with the lifecycle transaction.
+        {
+            let transaction = connection.unchecked_transaction().unwrap();
+            advance_lifecycle_revision(
+                &transaction,
+                "boundary-record",
+                DEFAULT_MODULE_UID,
+                "rolled-back",
+            )
+            .unwrap();
+        }
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT revision FROM mx_records WHERE uid='boundary-record'",
+                    [],
+                    |row| row.get::<_, i64>(0)
+                )
+                .unwrap(),
+            3
         );
     }
 

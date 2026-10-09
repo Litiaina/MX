@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import LoginPanel from './lib/components/LoginPanel.svelte';
   import Workspace from './lib/components/Workspace.svelte';
+  import GuestDriveView from './lib/components/GuestDriveView.svelte';
   import ConfirmationDialogHost from './lib/components/ConfirmationDialogHost.svelte';
   import { AUTH_EXPIRED_EVENT } from './lib/api/client';
   import type { DeploymentConfig } from './lib/api/domain';
@@ -11,8 +12,10 @@
 
   let loading = $state(true);
   let authMessage = $state('');
+  let connectionError = $state('');
+  let guestToken = $state(location.hash.match(/^#\/?drive-share\/([a-f0-9]{64})$/i)?.[1] || '');
   const defaults: DeploymentConfig = {
-    branding: { display_name: 'MX', subtitle: "Litiaina's General-Purpose System", organization_name: '', logo_url: 'images/system-icon.png' },
+    branding: { display_name: 'MX', subtitle: "Litiaina's Digital Workplace Platform", organization_name: '', logo_url: 'images/system-icon.png' },
     appearance: { preset: 'blue', primary_color: '#1d4ed8', sidebar_color: '#0f172a', radius: 'rounded', density: 'normal', default_theme: 'light', content_width: 'wide' },
     terminology: { record_singular: 'Record', record_plural: 'Records', dashboard_label: 'Dashboard', administration_label: 'Administration' },
     navigation: { show_dashboard: true, show_records: true, show_quick_actions: true, default_workspace: 'dashboard' },
@@ -26,12 +29,14 @@
       sessionEnded(detail?.message || 'Your session has expired. Sign in again.');
     };
     window.addEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
+    const guestHash = () => { const next = location.hash.match(/^#\/?drive-share\/([a-f0-9]{64})$/i)?.[1] || ''; if (next !== guestToken) { guestToken = next; void initialize(); } };
+    window.addEventListener('hashchange', guestHash);
 
-    void Promise.allSettled([restoreSession(), reloadDeployment()]).finally(() => {
-      loading = false;
-    });
+    void initialize();
+    const reconnect = () => { if (connectionError && !loading) void initialize(); };
+    window.addEventListener('online', reconnect);
 
-    return () => window.removeEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
+    return () => { window.removeEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired); window.removeEventListener('online', reconnect); window.removeEventListener('hashchange', guestHash); };
   });
 
   $effect(() => {
@@ -62,6 +67,14 @@
     catch { deployment = defaults; }
   }
 
+  async function initialize() {
+    loading = true; connectionError = '';
+    if (guestToken) { await reloadDeployment(); loading = false; return; }
+    const [sessionResult] = await Promise.allSettled([restoreSession(), reloadDeployment()]);
+    if (sessionResult.status === 'rejected') connectionError = sessionResult.reason instanceof Error ? sessionResult.reason.message : 'MX is temporarily unavailable. Your session has been kept.';
+    loading = false;
+  }
+
   async function authenticated() {
     await reloadSession();
     authMessage = '';
@@ -77,6 +90,14 @@
   <main class="loading-page" aria-busy="true">
     <div class="loader"></div>
     <p>Loading MX…</p>
+  </main>
+{:else if guestToken}
+  {#key guestToken}<GuestDriveView token={guestToken} />{/key}
+{:else if connectionError}
+  <main class="loading-page" role="alert">
+    <h1>Connection interrupted</h1>
+    <p>{connectionError}</p><p>Your session has been kept. Reconnect to continue securely.</p>
+    <button class="button primary" onclick={() => void initialize()}>Reconnect</button>
   </main>
 {:else if !$currentSession}
   <LoginPanel message={authMessage} onAuthenticated={authenticated} {deployment} />

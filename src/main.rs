@@ -140,6 +140,7 @@ async fn server() {
     });
 
     initialize_sql_db().await;
+    tokio::spawn(crate::api::drive::run_cleanup());
 
     tokio::spawn(crate::api::preferences::warm_notification_sound_cache());
 

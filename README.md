@@ -10,22 +10,30 @@
   <h1>Litiaina MX</h1>
 
   <p>
-    <b>Self-hosted, fully customizable general-purpose information system</b><br>
-    Build the record structure, attachments, storage layout, dashboard, statistics,
-    and reporting model that each deployment actually needs.
+    <b>Self-hosted, modular digital workplace platform</b><br>
+    Bring configurable records, dashboards, collaboration, voice/video calls,
+    screen sharing, and personal file storage into one workspace.
   </p>
 
 </div>
 
 <p align="center">
-  <strong>Current release: MX 3.0.0</strong>
+  <strong>Current release: MX 4.0.0</strong>
 </p>
 
 ---
 
 ## Overview
 
-**MX** is a schema-driven information-system platform built for deployments that should not be locked to one predefined record format.
+**MX** is a self-hosted, modular digital workplace platform. It brings structured
+information management, team collaboration, real-time calls, and personal/shared
+file storage into one authenticated workspace.
+
+Its information-management core remains schema-driven: deployments are not locked
+to one predefined record format. Calling MX only a general-purpose information
+system no longer describes the full product; that is one capability within the
+broader workplace platform. MX is not a predefined ERP suite or a claim of Google
+Drive/Discord feature parity.
 
 A fresh MX deployment starts with a default Records module but **no mandatory business fields and no predefined dashboard statistics**. Administrators can add more modules, give each module its own fields and permissions, and build the information model through the application itself. Forms, record tables, search, attachment handling, N1 storage paths, dashboard widgets, statistics, and exports adapt to that configuration.
 
@@ -45,6 +53,8 @@ A deployment can use MX for:
 - other structured information systems that can be represented as records and fields.
 
 The core application stays the same while the deployment-defined schema changes.
+People also use the same workspace to message their teams, meet through private
+or group calls, share screens, and organize/share files through MX Drive.
 
 ---
 
@@ -62,6 +72,9 @@ MX platform
 ├── search
 ├── attachment handling
 ├── N1 object storage integration
+├── personal Drive and shared-file access
+├── team collaboration and membership
+├── call signaling and media controls
 ├── reporting
 ├── dashboard rendering
 ├── audit logging
@@ -102,10 +115,12 @@ Rust + Axum + Tokio
    │                users
    │                audit
    │                reports
+   │                Drive metadata, versions, quotas and sharing
    │                backup metadata
    │
    └──────────────► N1
                     attachment bytes
+                    immutable Drive file objects
                     verified database backups
 ```
 
@@ -128,6 +143,9 @@ assets in `frontend/dist` and served by the Rust process. It provides:
 - real-time synchronization
 - online/offline account presence
 - parallel multi-user record editing
+- personal/shared Drive, paginated folders, file versions, and upload queues
+- collaboration spaces, messaging, and file sharing
+- voice/video calls, screen sharing, and device controls
 
 ### MX Server
 
@@ -147,7 +165,9 @@ The Rust server owns:
 - authenticated WebSocket sessions;
 - live change broadcasting;
 - account presence tracking;
-- stateless optimistic record concurrency.
+- stateless optimistic record concurrency;
+- Drive ownership, sharing, quotas, versions, and durable cleanup jobs;
+- membership-scoped call state and signaling (browser WebRTC carries media).
 
 ### SQLite
 
@@ -162,6 +182,7 @@ N1 stores:
 - original uploaded attachment bytes;
 - attachment versions;
 - collaboration file shares;
+- immutable MX Drive file objects and versions;
 - the uploaded deployment logo;
 - verified SQLite backup objects.
 
@@ -172,7 +193,7 @@ The N1 object is authoritative for file content. Preview files are derived data 
 
 ## Real-Time Collaboration
 
-MX 3.0.0 includes authenticated real-time synchronization for multi-user deployments.
+MX includes authenticated real-time synchronization for multi-user deployments.
 
 Connected browsers maintain a WebSocket session with the MX server. When records,
 attachments, schema configuration, dashboard configuration, deployment settings,
@@ -191,6 +212,59 @@ stale.
 
 MX also uses heartbeat/liveness handling so long-running browser sessions can
 detect dead connections and recover.
+
+### Network failure and save recovery
+
+Temporary connection errors and server outages preserve session credentials.
+At startup, a failed session check shows a reconnect screen; only a definitive
+authentication rejection signs the user out. Live connections have a silent-link
+watchdog, an opening deadline, jittered reconnect backoff, and recovery triggers
+when the browser returns online or visible. Reconnection refreshes records,
+dashboards, modules, notifications, collaboration, preferences, and call discovery
+from the HTTP API. Existing record rows remain mounted during refresh.
+
+JSON API requests have finite deadlines covering headers and the response body.
+Reads retry transient failures up to three attempts. Other writes are not
+automatically replayed unless their endpoint explicitly supports it. Record and
+message creation carry a client operation UUID, bound to the account, target,
+and submitted payload in SQLite in the same transaction as the write. Replaying
+that operation returns the existing resource. Deploy the updated frontend and
+backend together; the replay guarantee requires the updated backend.
+
+Buffered downloads, document previews, profile photos, and custom sounds also
+detect a stalled response body (60 seconds without a chunk). Failed reads retry
+from the beginning, never treating a partial buffer as a complete file. Buffered
+transfers have a 30-minute total deadline; native video/range playback does not
+use this buffer or total deadline.
+
+A pending new-record operation is retained with its draft in the current tab's
+session storage. A lost save response does not mean the server failed to save:
+retry the retained operation to reconcile it. Inline cell editing keeps the
+original revision loaded when editing began, even after a background refresh.
+Concurrent edits still use the normal field-conflict decisions.
+
+Chat composers retain separate in-memory drafts per conversation. After an
+uncertain send, **Retry send** reconciles the original message operation;
+an attachment error does not create another base message. Switching conversations
+is paused only while a send is actively running. Chat drafts and local file
+selections are not a persistent outbox and do not survive a full page reload.
+
+Uploads have progress/stall and processing deadlines. MX retries transient N1
+standard-multipart failures at the same part index with identical bytes, and
+checks the committed version after an uncertain finalize response. This is not
+browser-to-MX resumable upload: after an interrupted attachment request, inspect
+the attachment list before retrying. Local file selections cannot be restored
+after a page reload. One-shot uploads and arbitrary mutations are not blindly
+replayed. N1 streams use a 60-second read-idle timeout, not a total video duration
+limit; connect/authentication (including waiting for a shared token refresh) and
+non-streaming mutations have separate bounds. Invalid HTML upload acknowledgements
+are reported as uncertain writes, never as a successful attachment.
+
+Call signaling retries lost offers and answers without rebuilding healthy media
+connections. Duplicate descriptions and obsolete sessions are ignored; candidate
+replay and staggered ICE restart handle interrupted negotiation/connectivity.
+This cannot replace a TURN relay on restrictive networks or guarantee usable
+audio/video while the underlying network is disconnected.
 
 ### Voice, video, and screen sharing
 
@@ -338,6 +412,183 @@ N1        -> authoritative attachment bytes
 ```
 
 This keeps reconnection and recovery deterministic.
+
+---
+
+## MX Drive
+
+**MX Drive** in the workspace navigation is personal file storage backed by N1.
+My Drive, Shared with me, Recent, Starred, and Trash provide folder browsing,
+search, list/grid layouts, file-type icons, image thumbnails, preview navigation,
+downloads, rename/move, file versions, and activity. The interface follows MX's
+neutral light/dark surfaces independently of the custom accent color.
+
+Use **Upload files** or **Upload folder** to queue files; folder uploads preserve
+the selected directory structure. You can also drop files or folders into Drive
+(or directly onto an owned folder), or paste an external clipboard image/file
+while Drive is open. Directory drops preserve nested and empty folders when the
+browser exposes directory entries; use **Upload folder** as a fallback.
+The queue admits two transfers at a time:
+multipart files use console's default 1–4 concurrent parts each; groups of up to 16 files
+of at most 1 MiB use N1's small-file batch endpoint. A failed batch entry does not
+roll back successful files. Pausing a grouped small-file batch pauses that group.
+
+Drive uploads use N1's restart-persistent **durable multipart** protocol. MX keeps
+the N1 session and unique object identity in SQLite, reconciles N1's stored part
+indices on resume, and sends only missing parts. Drive follows the console's
+default part sizing: below 16 MiB, one part; 16–<256 MiB, 4 MiB parts;
+256 MiB–1 GiB inclusive, 8 MiB parts; above 1 GiB, 50 MiB parts. N1 must
+permit 50 MiB parts. There is **no Drive per-file size cap**; available account
+quota and storage capacity still apply. Existing sessions retain their negotiated
+part size when resumed. Lost finalization acknowledgements are reconciled
+against the exact committed N1 version and size using N1's metadata endpoint.
+MX does **not** download the whole object again before publishing it.
+
+Like console, resumable uploading starts with a metadata-only session request and then
+bounded native Blob parts—**no whole-file hashing or pre-scan**, regardless of
+file size. Multipart quota is checked before reading/sending file bytes. N1 owns multipart
+validation; MX retains immutable per-part SHA-256 receipts to reject different
+bytes replayed into the same slot. Multipart versions do not claim a computed
+whole-file checksum. Small files (up to 1 MiB each) use bounded batches with
+per-entry quota enforcement. Scheduling does not allocate a queue entry for every part.
+The old buffered
+`POST /mx/v1/drive/upload` endpoint is retired (410); clients must use
+`POST /mx/v1/drive/uploads`, part PUTs, and finish.
+
+The upload panel is global to the authenticated workspace, fixed at the lower
+right, collapsible, and independent of custom accent colors. Switching modules
+or collaboration views does not abort its queue. It shows in-flight transferred
+bytes, smoothed **MB/s**, estimated time remaining, pause/resume, and per-file
+errors. Speed measures browser-to-MX transfer (decimal MB/s); N1 processing is
+shown separately as finalization, not falsely counted as a finished upload.
+Two files run at once, with up to eight part workers overall. Transient part
+failures retry the identical slot/body with bounded backoff.
+Each file's progress is a circular ring around its icon, not a linear bar.
+
+### File-manager controls
+
+Folders use server-side metadata pagination (50 items by default, selectable
+25/50/100), a result range, numbered pages, next/previous and a page jump for long
+lists. Name/date sorting and search run before SQL LIMIT/OFFSET, not on a loaded
+whole folder. Empty last pages clamp after concurrent moves or deletions. Pickers
+and public guest folders use bounded pages too. Selection is intentionally scoped
+to the displayed page; changing pages clears that selection.
+
+File previews have previous/next buttons and Left/Right shortcuts across page
+boundaries. Neighbor queries seek by sort key and stable item ID, return only the
+adjacent metadata, and load bytes only for the selected file. Text preview reads
+at most 256 KiB with HTTP Range; larger text stays available through Download.
+Images/video retain native streaming and range behavior. Visible image thumbnails
+remain original-image previews, not generated small thumbnails.
+
+Click once to select; double-click to open a folder or preview a file. Use the
+checkboxes, Ctrl/Cmd-click to toggle items, Shift-click for a range, or drag a
+rectangle from the blank area below the file rows. Ctrl/Cmd+A selects the current
+page (up to 100 visible items). Shortcuts do not intercept text fields or dialogs.
+
+Use **Copy** / **Cut**, or Ctrl/Cmd+C / Ctrl/Cmd+X, open the destination folder,
+then **Paste** or Ctrl/Cmd+V. The account-scoped clipboard survives switching MX
+modules but is cleared at signout. External files on the clipboard upload instead
+of pasting the internal selection. A move is owner-only and atomic across the
+selection; collisions or stale revisions reject the whole move. Copies receive
+new MX IDs and ownership, preserve the current file version (not the original's
+history/shares), and get a `(copy)` name on collisions, keeping the extension.
+At most 100 selected roots / 5,000 nested items may be copied per request.
+
+Right-click an item for contextual actions; right-click blank space to upload,
+create a folder, or paste. These menus exist only inside the Drive file area;
+other MX views retain their normal right-click behavior. The row's **More actions**
+button provides the same controls on touch devices. Escape closes the menu;
+arrow keys navigate it. F2 renames a single selection; Delete offers trash confirmation.
+
+**More actions → Versions and activity** separates version cards from a dated
+activity timeline. Versions have explicit Preview and Restore actions. Restoring
+creates a new normal version, keeps all previous history, checks quota and the
+loaded revision, and does not download the file through the browser.
+
+Pause/resume works while the file remains selected. Closing/reloading the page
+warns while transfers are active; signing out aborts and clears that account's
+in-memory queue. After reload, reselect the **original file** in the same
+destination to resume. MX recovers pending sessions by account, destination,
+name, size, type, and modification time, with N1 as the stored-part authority;
+this metadata identity is not a full-content checksum. No browser storage of
+durable session state or whole-file scan is needed. Inactive pending server
+reservations expire after one hour and queue cleanup; resuming after expiration
+may need a new upload. This is not an offline outbox or background browser service.
+Active-document credentials are retained in memory if browser storage is lost;
+explicit signout and rejected authentication clear them. A browser process crash
+can also invalidate selected file handles: reselect the original file to resume
+the acknowledged parts. MX never accepts a truncated part as a successful upload.
+
+### Metadata, ownership, and sharing
+
+MX owns names, folders, ownership, grants, revisions, and trash. N1 receives only
+immutable unique keys such as `__mx/drive/<owner-uuid>/<version-uuid>.MP4`.
+Each version preserves its uploaded filename's original extension and casing.
+Renaming/moving changes MX metadata only, never that key or the N1 object.
+Drive-to-Drive copies and version restores reuse immutable N1 content through
+independent MX version records. They never transfer the file's bytes or rename
+its original storage key. Logical copies/versions each count toward their owner's
+quota. Cleanup excludes every key still referenced by any Drive version, so
+purging one copy cannot delete another copy's content. A copied object's N1 key
+continues to identify its original upload, not the copy's new MX owner.
+Names must be unique within the same owner's folder, case-insensitively; use
+**New version** in the Versions tab when replacing an existing file.
+
+Files are private by default, including from other administrator accounts.
+Owners can share with authenticated MX users or active collaboration spaces/groups
+they belong to, as viewers or editors. Space grants follow current membership:
+new members inherit access; leaving, removal, archival or revocation removes that
+grant immediately, including already-issued media tickets. Independent user/space
+grants can still provide access; the strongest inherited role applies. Direct
+conversations are not group-share targets. Folder grants
+inherit to descendants. Viewers can preview/download; editors can rename and
+upload file versions. Moving, trashing, creating children, and managing sharing
+remain owner actions. Record-module grants do not grant access to private Drive
+files. Sharing changes are persisted in Drive activity and authenticated API audit.
+The Share dialog separates people, spaces, inherited folder access and public links
+and keeps identity/role/removal controls readable on desktop and mobile.
+If an open folder is deleted or its access is revoked, the next refresh clears
+the stale folder listing and returns to the current view's root with an explanation.
+
+Owners can also create read-only guest links, optionally expiring after a selected
+period. Anyone holding a link can read its shared file/folder subtree without
+signing in. Links are stored hashed, never disclose N1 credentials/object keys,
+and can be revoked. Trashing permanently revokes affected guest links; restoring
+does not reactivate them. Every media request rechecks access/expiry. Private
+preview tickets pin a version; guest requests reject a changed listing revision
+instead of mixing byte ranges from different file versions.
+
+**MX Drive** in the message composer and **Choose from MX Drive** on a record's
+attachment field attach independent copies through the existing attachment
+workflow. Trashing the original does not break those attachments. Destination
+permissions and attachment limits still apply. Copying currently downloads the
+file into the browser before uploading the new attachment; it is not zero-copy.
+
+### Trash, quotas, and scope
+
+Every account starts with **10 GB** (10 GiB). An administrator can assign a
+different allowance under **Administration → Accounts → Storage** for any
+account, including their own, or reset it to the deployment default. The panel
+shows committed usage and pending reservations. Set zero to prevent new bytes;
+lowering an allowance never deletes files. Quota changes are revision-checked
+and audited; uploads recheck the owner's current allowance atomically at commit,
+including versions uploaded by a shared editor. The Drive sidebar shows a storage
+meter, usage, allowance, and full-storage guidance.
+
+Moving to trash updates MX metadata only. **Delete permanently** / **Empty trash**
+atomically remove MX metadata and enqueue durable background jobs. Those jobs retry
+N1 **soft deletion**, including after restart/outage; only N1's TTL/GC physically
+reclaims bytes. No permanent-delete N1 endpoint is assumed. Existing versions and
+trash count toward the owner's quota; pending uploads reserve quota and commits
+recheck it atomically. Backup both MX SQLite metadata and N1 storage.
+
+Drive lists refresh quietly every 15 seconds while visible and no preview/dialog
+is open, and when coming
+online; this is not instant Drive-specific live synchronization. Native
+video/audio previews use range-capable streaming. Office previews reuse MX's
+server-side conversion setup. This implementation does not include Google
+Docs/Sheets editing, desktop sync, OCR/full-text indexing, or Google Drive parity.
 
 ---
 
@@ -1171,6 +1422,12 @@ POST /mx/v1/modules/{module_uid}/records/{uid}/versions/{version_uid}
 `PATCH` is the preferred path for collaborative editing because it sends only
 the fields actually changed by the client and participates in field-level
 revision checks. `PUT` remains available for full-record update behavior.
+It now requires the loaded `base_revision` alongside `values`: a missing base
+returns **428 Precondition Required**, and any intervening record change returns
+**409 Conflict** without modifying data. Fetch the record again before deliberately
+replacing it; use `PATCH` for independent field changes that should merge.
+Trash and restore also advance the record revision, so drafts opened before a
+deletion cannot silently overwrite a restored record.
 
 ### File Attachment fields
 
@@ -1311,6 +1568,42 @@ must be between 5 and 100 MiB; it defaults to 16 MiB when omitted. The N1 server
 must allow a part at least this large. Increasing an upload limit does not
 require sending the complete object as one N1 part.
 
+MX uses the N1 v4.0.0 `/noa/v1` fragment-scoped API. Storage layouts remain
+logical object-key prefixes: uploading an object creates its virtual parent
+prefixes automatically. MX does not call `posix/mkdir`, which N1 format 4
+rejects. This applies to record attachments, collaboration files, profile
+photos, notification sounds, deployment logos, and database backups.
+Multipart initiation, raw part uploads, finalization, and byte-range media
+streaming use the v4 contracts. Namespace mutations are checked for reported
+per-key conflicts and failures even when N1 returns HTTP 200.
+
+N1 storage format 4 does **not** automatically migrate older development
+roots. Updating MX's API integration does not migrate existing attachment
+bytes or change their stored object keys. Before switching an existing
+deployment, follow N1's storage-upgrade guidance and verify that the configured
+fragment and existing objects are available on the new instance.
+
+Optional Drive configuration (defaults shown; existing configuration files do
+not need this section to start):
+
+```ini
+[drive]
+quota_mb=10240
+public_links=true
+```
+
+`quota_mb` is the default per-account allowance in MiB; administrator assignments
+override it per user. Obsolete `max_file_size_mb` values are ignored: Drive has
+no per-file limit. Record/chat attachment limits remain separate and their Drive
+attachment copies are still buffered within those limits. Setting
+`public_links=false` immediately disables all guest listing/media routes.
+
+N1 authentication requires `[n1].fragment` to contain the SHA-256 identifier and
+`N1_MX_SECRET` to contain the raw secret. For older configurations that copied
+the same raw fragment into both, MX derives its identifier in memory and logs a
+credential-free configuration warning. Already-hashed identifiers are not
+hashed again, and other credential failures do not trigger fallback attempts.
+
 Example WebRTC configuration:
 
 ```ini
@@ -1400,6 +1693,24 @@ Strict warning-free check:
 RUSTFLAGS="-D warnings" cargo check
 ```
 
+Backend regression tests, including the N1 v4 HTTP-contract tests:
+
+```bash
+cargo test --locked
+```
+
+The opt-in N1 round-trip test requires a **disposable, isolated N1 v4 instance**
+and a fragment token in `MX_TEST_N1_TOKEN`, with its base URL in
+`MX_TEST_N1_URL`. It checks real one-shot/multipart uploads, downloads, valid
+byte ranges, rename/trash/recovery, and concurrent writes across MX storage
+prefixes. It writes unique test keys and soft-deletes them afterward; trash
+remains until N1 retention/GC or disposal of the test storage. The test allows
+self-signed TLS for this isolated instance. Do not point it at production.
+
+```bash
+cargo test --locked api::mx::n1::tests::real_n1_v4_round_trip -- --ignored
+```
+
 Install and validate the Svelte frontend with Node.js 24 or newer:
 
 ```bash
@@ -1410,6 +1721,121 @@ npm test
 npm run build
 cd ..
 ```
+
+Cross-browser UI and network-fault regressions (local mocks; no production data
+or N1 writes):
+
+Browser tests generate audio and substantial CPU load. Run them on a dedicated
+test machine/container, not while using the workstation for normal audio.
+They now refuse to launch without `MX_TEST_AUDIO_SINK` naming a verified
+PulseAudio/PipeWire `module-null-sink` output with an `mx_test_` prefix.
+Only test browser processes use that sink and its monitor; Chromium is also
+muted, and an ALSA-null configuration prevents hardware fallback. The guard does
+not change system volume, defaults, or restart audio services. For example,
+on an isolated Linux test host:
+
+```bash
+mx_test_audio_module_id=$(pactl load-module module-null-sink sink_name=mx_test_silent)
+# Prefix browser test commands below with MX_TEST_AUDIO_SINK=mx_test_silent.
+```
+
+```bash
+cd frontend
+npx playwright install --with-deps chromium firefox webkit
+MX_TEST_AUDIO_SINK=mx_test_silent npm run test:network:browser
+```
+
+The suite opens the real Svelte record editor/table, chat composer, and startup UI, and uses
+native browser WebRTC with synthetic camera/microphone/screen sources. It checks
+retained create identifiers after lost responses, menu visibility/hit testing in
+light/dark and narrow layouts, inline-edit revisions after refresh, chat retries
+after lost responses/file rejection, native file-body cancellation, dropped
+offers/answers/ICE, immediate rejoin, and mixed-engine three-person calls with
+signaling jitter. Media assertions inspect received RTP and changing pixels in
+the actual video elements. Artifacts and screenshots are saved to a temporary
+directory printed by the runner. `MX_TEST_BROWSERS=firefox` selects one engine;
+`MX_CHROMIUM_EXECUTABLE`, `MX_FIREFOX_EXECUTABLE`, and `MX_WEBKIT_EXECUTABLE`
+allow custom engine paths.
+Set `MX_TEST_UI_ONLY=1` to run the UI/file scenarios without media groups.
+`MX_TEST_DELETION_ONLY=1` exercises immediate row removal, stale refresh/module
+responses, explicit restores, out-of-order events, missed restores during an
+outage, and restarted server event counters in each selected browser.
+
+Eight-account real-server validation (build the backend first):
+
+```bash
+cargo build --locked
+cd frontend
+MX_TEST_AUDIO_SINK=mx_test_silent npm run test:eight-users:browser
+```
+
+This runner starts its own MX HTTPS server, SQLite database, generated credentials,
+and N1 v4 HTTP contract fixture. It never loads deployment `mx.env`/`mx.config` or
+modifies the N1 repository. It checks eight distinct authenticated editors,
+atomic unrelated-field merges, same-field conflicts, retried creates/messages,
+deleted records during module updates, stale drafts after restore, cleared cells,
+archived fields, eight concurrent 18-MiB multipart uploads with injected 503s,
+byte ranges, and independent record attachment additions. Its browser phase
+uses the production call UI and real HTTP/WebSocket signaling with synthetic
+capture: eight participants, 56 directed peer connections, every sender's screen
+and camera on every viewer, audio, leave/rejoin, same-account session replacement,
+device controls, fullscreen, reconnect, and final call cleanup. A failed assertion
+keeps diagnostics and marks the run failed; connection state alone is not proof
+of working media.
+
+`MX_TEST_API_ONLY=1` skips the browser phase. `MX_TEST_BROWSERS=chromium,firefox`
+selects that engine mix; omitted engines are **not** validated by that run.
+`MX_TEST_ARTIFACTS` selects the parent artifact directory and
+`MX_TEST_SOAK_SECONDS` changes the media soak duration (default 15 seconds).
+Generated artifact directories contain test credentials/private keys and should
+not be published. To run the real-server suites against disposable live N1,
+set `MX_TEST_N1_URL` and `MX_TEST_N1_CREDENTIALS_FILE`. The private credentials
+file contains `N1_MX_SECRET` and either `N1_FRAGMENT` (raw) or `N1_FRAGMENT_HASH`.
+The adapter never reads the deployment's `mx.env`; it injects transient part
+failures and cleans up only unique test objects by N1 soft deletion.
+
+MX Drive production UI/API tests include eight accounts, durable resume across
+MX restart and browser module switches, no file pre-scan/read-back, visible
+MB/s/ETA, pause/resume, lost finish/batch acknowledgements, guest ACL/range checks,
+folder uploads, and independent copies into collaboration/record attachments:
+
+```bash
+MX_TEST_N1_URL=https://127.0.0.1:50001 \
+MX_TEST_N1_CREDENTIALS_FILE=/private/path/n1-test.env \
+MX_TEST_N1_DROP_FINALIZE=1 \
+MX_TEST_AUDIO_SINK=mx_test_silent \
+npm run test:drive:browser
+```
+
+Run from `frontend` after `cargo build --locked` and `npm run build`.
+Without the live-N1 variables the runner uses an explicit HTTP contract fixture,
+not live storage. `MX_TEST_API_ONLY=1` skips browser checks; no UI validation is
+claimed for that mode. See [TESTING.md](TESTING.md) for retained results and gaps.
+
+For focused pagination/share/preview and file-manager regressions, use
+`npm run test:drive:polish` and `npm run test:drive:file-manager` with the same
+explicit test-only null sink. The polish runner seeds 135 isolated metadata items
+per browser over an HTTP-uploaded object, exercises page boundaries and group
+membership, and saves desktop/mobile screenshots. It is not a live N1 test unless
+the opt-in live credentials authenticate successfully.
+
+After all test browsers have exited, remove only the null sink created for them:
+
+```bash
+pactl unload-module "$mx_test_audio_module_id"
+```
+
+This does not certify physical devices, Safari/iOS, browser capture-picker audio,
+TURN deployments, or real UDP packet loss. Exercise those on the target devices
+and network before production rollout. The separate Chromium capture/fullscreen
+regression remains available with `npm run test:calls:browser`.
+
+Validation caveat (2026-10-08): repeated mixed-engine stress testing on the
+development host intermittently crashed the Linux Playwright WebKit page;
+subsequent reruns passed. The crash's root cause remains unconfirmed. Keep failed
+artifacts and do not treat a later green run as production/Safari certification.
+Earlier runs used Node.js 20.19.2. The subsequent checks, production build,
+cross-browser regression suites, and live N1 tests used Node.js 24.21.0.
 
 Run MX with the production frontend from `frontend/dist`:
 
@@ -1460,6 +1886,8 @@ mx/
     │   │   ├── handler.rs
     │   │   ├── migration.rs
     │   │   ├── model.rs
+    │   │   ├── n1.rs
+    │   │   ├── n1_tests.rs
     │   │   ├── records.rs
     │   │   ├── schema.rs
     │   │   └── storage.rs
@@ -1496,6 +1924,7 @@ records.rs            dynamic values, search, sorting, pagination
 attachment_fields.rs  File Attachment field behavior and metadata
 storage.rs            configurable and frozen N1 namespaces
 handler.rs            record/attachment operations and N1 coordination
+n1.rs                 N1 v4 object-key, multipart, and streaming transport
 reports.rs            statistics, dashboard reporting, CSV export
 dashboard.rs          dashboard support
 live.rs               WebSocket sessions, live events, and presence
@@ -1574,64 +2003,63 @@ MX follows these principles:
 ---
 
 
-## MX 3.0.0
+## MX 4.0.0
 
-MX 3.0 is a major expansion of the schema-driven MX platform, adding isolated
-per-account module access, stateless multi-user record concurrency, calculated
-data, high-volume media handling, and integrated collaboration calls.
+MX 4.0 expands the product into a **self-hosted modular digital workplace
+platform**. MX Drive joins the existing configurable records, dashboards,
+collaboration spaces, and voice/video/screen sharing in the same workspace.
+The release also brings N1 v4 integration, network recovery, safer record
+lifecycle/concurrency behavior, and call-media refinements.
 
-The 3.0 release includes:
+The 4.0 release includes:
 
-```text
-Formula / Calculated record fields with server-side evaluation
-inline table editing for every editable field type
-deliberate view and edit modes in the record dialog
-attachment thumbnails and keyboard-accessible file navigation
-short-lived preview tickets and N1 byte-range streaming
-configurable multipart N1 uploads for large objects
-Enter-to-send collaboration messaging and durable membership events
-joinable voice/video calls with camera, microphone, screen, and shared audio
-record and attachment notification routing with duplicate suppression
-immediate audit lifecycle repair for accurate actor performance reporting
-non-destructive live table refreshes that retain the current scroll position
-exact 10-24 px per-user font sizing independent of interface scale
-responsive record, preview, notification, and administration layouts
-default-deny per-account module isolation with role capability ceilings
-stateless record revisions with automatic unrelated-field merging
-same-field stored/proposed conflict resolution without editing locks
-attachment concurrency tied to normal record revisions and history
-robust private/group voice, video, screen sharing, and movable call controls
-```
+- personal/shared Drive with folders, search, stars, trash, versions and activity;
+- 25/50/100-item server-side pages, stable sorting and cross-page previews;
+- user/space/group sharing and expiring/revocable read-only guest links;
+- administrator-assigned storage allowances with a 10-GiB starting default;
+- metadata-first, resumable/batched uploads without a Drive per-file size cap;
+- a workspace-wide upload queue with circular progress, MB/s, ETA and pause/resume;
+- checkbox, Ctrl/Cmd/Shift and rectangle selection, copy/cut/paste and file/folder drops;
+- MX-owned metadata over immutable original-extension N1 objects, metadata-only
+  Drive copies/version restoration, and durable background soft-delete cleanup;
+- bounded network deadlines, replay-safe creates and reconnect reconciliation;
+- stale-list/lifecycle protections that keep deleted records from reappearing;
+- call transport recovery, independent microphone/shared audio and stable video presentation.
 
-Existing SQLite databases are upgraded in place by MX. Existing deployments may
-omit `multipart_part_size_mb` to use the 16 MiB default, but MX must be restarted
-after the new binary and frontend bundle are deployed so the 3.0 routes and
-schema migrations are active.
+Schema-driven modules, formulas, inline editing, stateless optimistic record
+merges, module isolation, reporting, attachment previews and team calls remain
+part of the platform. See [CHANGELOG.md](CHANGELOG.md) for the 4.0 changes and
+the historical 3.0 release notes.
 
-Cargo package version:
+### Upgrade and validation
 
-```text
-3.0.0
-```
+Rust and frontend package versions are both **4.0.0**. Deploy the matching binary
+and rebuilt `frontend/dist` together, then restart MX so the new routes and
+automatic SQLite schema migrations are active. Back up SQLite first; do not
+replace the existing database, environment, or deployment configuration. This
+release targets **N1 v4.0.0 / storage format 4**.
 
-Product/release name:
+Existing saved deployment branding is preserved. New defaults use “Litiaina's
+Digital Workplace Platform”; **Restore MX defaults** in Deployment identity
+changes the editor only until the administrator saves it.
 
-```text
-MX 3.0.0
-```
+API clients must send `base_revision` for full-record PUT, use durable multipart
+instead of the retired Drive one-request upload endpoint, and honor returned
+page limits/offsets rather than hard-coding 100-item pages.
 
-See [CHANGELOG.md](CHANGELOG.md) for the complete release notes. Fixes following
-the released MX 3.0.0 are listed under **Unreleased**, including the camera and
-screen-share playback improvements. MX remains a schema-driven, self-hosted
-general-purpose information system.
+Version 4.0.0 is not a blanket reliability certification. The known Linux WebKit
+large-upload crash, incomplete eight-person call validation, and current live-N1
+test-fragment blocker remain documented in [TESTING.md](TESTING.md).
 
 ---
 
 ## Philosophy
 
-**MX is an information-system engine, not a predefined information system.**
+**MX is a configurable digital workplace, not a fixed business application.**
 
-The platform provides the mechanisms required to store, search, secure, audit, visualize, and preserve information.
+The platform provides shared mechanisms for managing information, communicating,
+meeting, and storing/sharing files. Its record engine can store, search, secure,
+audit, visualize, and preserve deployment-defined information.
 
 The organization decides what that information means.
 
@@ -1645,7 +2073,10 @@ Define the dashboard.
 Define the statistics.
 Define the reports.
 
-MX becomes the information system the deployment needs.
+Connect people through collaboration spaces and calls.
+Organize and share files through MX Drive.
+
+MX becomes the digital workplace the deployment needs.
 ```
 
 That boundary allows the same MX core to serve very different organizations and workflows without rewriting the application for every deployment.

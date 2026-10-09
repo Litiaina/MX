@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 use crate::{
     api::{
         live::publish_live_event,
-        mx::handler::{n1_access_token, n1_download, n1_ensure_directory, n1_upload},
+        mx::handler::{n1_access_token, n1_download, n1_upload},
     },
     db::connector::{SqliteDatabaseError, with_sql_connection},
     middleware::auth::Claims,
@@ -22,7 +22,7 @@ use crate::{
 const DEFAULT_PRIMARY: &str = "#1d4ed8";
 const DEFAULT_SIDEBAR: &str = "#0f172a";
 const DEFAULT_DISPLAY_NAME: &str = "MX";
-const DEFAULT_SUBTITLE: &str = "Litiaina's General-Purpose System";
+const DEFAULT_SUBTITLE: &str = "Litiaina's Digital Workplace Platform";
 const DEFAULT_LOGO_URL: &str = "images/system-icon.png";
 const LEGACY_DGS_SUBTITLE: &str = "DGS Information System";
 const IDENTITY_DEFAULTS_VERSION: i64 = 1;
@@ -277,11 +277,9 @@ pub async fn upload_deployment_logo(claims: Claims, mut multipart: Multipart) ->
             );
         }
     };
-    if n1_ensure_directory("__mx", &token).await.is_err()
-        || n1_ensure_directory("__mx/branding", &token).await.is_err()
-        || n1_upload(&object_key, mime_type, bytes.clone(), &token)
-            .await
-            .is_err()
+    if n1_upload(&object_key, mime_type, bytes.clone(), &token)
+        .await
+        .is_err()
     {
         return api_json(
             StatusCode::BAD_GATEWAY,

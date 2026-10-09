@@ -633,11 +633,12 @@
   .record-actions-trigger:hover,
   .record-actions-trigger[aria-expanded='true'] { border-color: var(--line); background: var(--surface-3); color: var(--text); }
   .record-row-menu {
-    position: absolute;
-    z-index: 20;
-    top: calc(100% + .25rem);
-    right: 0;
+    position: fixed;
+    z-index: 250;
+    visibility: hidden;
     width: 10.5rem;
+    overflow: auto;
+    overscroll-behavior: contain;
     display: grid;
     gap: .1rem;
     padding: .3rem;
@@ -662,9 +663,6 @@
   }
   .record-row-menu button:hover:not(:disabled) { background: var(--surface-2); color: var(--text); }
   .record-row-menu button.danger-text:hover:not(:disabled) { background: var(--danger-surface); color: var(--danger) !important; }
-  @media (min-width: 821px) {
-    .records-table tbody tr:nth-last-child(-n + 2):not(:first-child) .record-row-menu { top: auto; bottom: calc(100% + .25rem); }
-  }
 
   /* Conversation density is controlled with geometry, never smaller type. */
   .conversation-sidebar > header,
@@ -879,7 +877,6 @@
       border: 0;
       background: transparent !important;
     }
-    .record-row-menu { top: calc(100% + .15rem); }
     .records-state-row { display: block; }
     .records-state-row .table-message { width: 100%; display: grid; place-items: center; border: 1px solid var(--line); border-radius: .6rem; background: var(--surface); }
     .records-pagination {
@@ -1115,3 +1112,4 @@
     .incoming-call-card > footer .incoming-call-dismiss { grid-column: 1 / -1; }
   }
 }
+.preview-navigation-error {margin:0;padding:.65rem 1rem;font-size:.8rem;background:var(--surface-2);color:var(--muted);border-bottom:1px solid var(--line);}

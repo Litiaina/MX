@@ -8,7 +8,9 @@ const workspace = readFileSync(new URL('./components/Workspace.svelte', import.m
 
 describe('stateless record editing', () => {
   it('opens table cells immediately and saves against the loaded record revision', () => {
-    expect(records).toContain("patchRecord(row.uid, { [field.key]: nextValue }, row.revision");
+    expect(records).toContain('baseRevision: row.revision');
+    expect(records).toContain('patchRecord(row.uid, { [field.key]: nextValue }, edit.baseRevision');
+    expect(records).not.toContain('patchRecord(row.uid, { [field.key]: nextValue }, row.revision');
     expect(records).not.toContain('claimRecordEdit');
     expect(records).not.toContain('maintainEditLease');
   });

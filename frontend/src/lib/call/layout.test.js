@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 const css = readFileSync(new URL('../../styles/workspaces.css', import.meta.url), 'utf8');
 const component = readFileSync(new URL('../components/CollaborationCall.svelte', import.meta.url), 'utf8');
 const mediaTile = readFileSync(new URL('../components/CallMediaTile.svelte', import.meta.url), 'utf8');
+const audioTrack = readFileSync(new URL('../components/CallAudioTrack.svelte', import.meta.url), 'utf8');
 const workspace = readFileSync(new URL('../components/Workspace.svelte', import.meta.url), 'utf8');
 const workspaceApi = readFileSync(new URL('../api/workspace.ts', import.meta.url), 'utf8');
 
@@ -36,8 +37,12 @@ describe('call layout safeguards', () => {
   it('keeps remote microphone playback independent from camera and screen rendering', () => {
     expect(mediaTile).toContain('<video bind:this={video} class="call-video-layer"');
     expect(mediaTile.match(/<video\b/g)).toHaveLength(1);
-    expect(mediaTile).toContain('<audio bind:this={audio} autoplay');
-    expect(mediaTile).toContain("currentStream?.addEventListener('addtrack', resumeAudio)");
+    expect(mediaTile).toContain('{#each audioTracks as track, index (track.id)}');
+    expect(mediaTile).toContain('<CallAudioTrack {track} {deafened} {outputDeviceId}');
+    expect(audioTrack).toContain('<audio bind:this={audio} autoplay');
+    expect(audioTrack).toContain('new MediaStream([currentTrack])');
+    expect(audioTrack).toContain('element.muted = deafened');
+    expect(audioTrack).toContain("currentTrack.addEventListener('unmute', resume)");
     expect(css).toMatch(/\.call-media-tile\s*>\s*audio\s*\{[^}]*display:\s*none;/s);
   });
 

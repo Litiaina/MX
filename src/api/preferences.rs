@@ -17,9 +17,7 @@ use tokio::sync::RwLock;
 use crate::{
     api::{
         live::publish_user_event,
-        mx::handler::{
-            n1_access_token, n1_download, n1_ensure_directory, n1_soft_delete, n1_upload,
-        },
+        mx::handler::{n1_access_token, n1_download, n1_soft_delete, n1_upload},
     },
     db::connector::{SqliteDatabaseError, with_sql_connection},
     middleware::auth::Claims,
@@ -339,18 +337,6 @@ pub async fn upload_notification_sound(claims: Claims, mut multipart: Multipart)
             );
         }
     };
-    for directory in [
-        "__mx".to_string(),
-        "__mx/notification-sounds".to_string(),
-        format!("__mx/notification-sounds/{user_uid}"),
-    ] {
-        if n1_ensure_directory(&directory, &token).await.is_err() {
-            return api_json(
-                StatusCode::BAD_GATEWAY,
-                json!({"response":"N1 could not prepare notification sound storage"}),
-            );
-        }
-    }
     if n1_upload(&object_key, mime_type, bytes.clone(), &token)
         .await
         .is_err()

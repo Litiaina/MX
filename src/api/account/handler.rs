@@ -22,9 +22,7 @@ use crate::{
     },
     api::{
         live::publish_live_event,
-        mx::handler::{
-            n1_access_token, n1_download, n1_ensure_directory, n1_soft_delete, n1_upload,
-        },
+        mx::handler::{n1_access_token, n1_download, n1_soft_delete, n1_upload},
     },
     db::connector::{SqliteDatabaseError, with_sql_connection},
     middleware::{auth::Claims, totp::verify_totp},
@@ -147,19 +145,6 @@ pub async fn upload_profile_photo(claims: Claims, mut multipart: Multipart) -> R
                 .into_response();
         }
     };
-    for directory in [
-        "__mx".to_string(),
-        "__mx/profile-photos".to_string(),
-        format!("__mx/profile-photos/{user_uid}"),
-    ] {
-        if n1_ensure_directory(&directory, &token).await.is_err() {
-            return (
-                StatusCode::BAD_GATEWAY,
-                Json(json!({"response":"N1 could not prepare profile photo storage"})),
-            )
-                .into_response();
-        }
-    }
     if n1_upload(&object_key, mime_type, bytes.clone(), &token)
         .await
         .is_err()

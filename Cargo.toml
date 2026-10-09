@@ -1,6 +1,7 @@
 [package]
 name = "litiaina-mx"
-version = "3.0.0"
+version = "4.0.0"
+description = "Self-hosted modular digital workplace platform"
 edition = "2024"
 
 [profile.release]

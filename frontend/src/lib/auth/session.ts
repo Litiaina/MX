@@ -1,5 +1,5 @@
 import { writable } from 'svelte/store';
-import { clearAuthTokens, hasAuthTokens } from '../api/client';
+import { ApiError, clearAuthTokens, hasAuthTokens } from '../api/client';
 import { loadSession } from '../api/auth';
 import type { Session } from '../api/types';
 
@@ -12,10 +12,11 @@ export async function restoreSession(): Promise<Session | null> {
     const session = await loadSession();
     currentSession.set(session);
     return session;
-  } catch {
-    clearAuthTokens();
-    currentSession.set(null);
-    return null;
+  } catch (reason) {
+    if (reason instanceof ApiError && [401, 403].includes(reason.status)) {
+      clearAuthTokens(); currentSession.set(null); return null;
+    }
+    throw reason;
   }
 }
 

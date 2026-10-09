@@ -3,6 +3,7 @@
   import FileText from '@lucide/svelte/icons/file-text';
   import LayoutDashboard from '@lucide/svelte/icons/layout-dashboard';
   import MessagesSquare from '@lucide/svelte/icons/messages-square';
+  import HardDrive from '@lucide/svelte/icons/hard-drive';
   import PanelLeftClose from '@lucide/svelte/icons/panel-left-close';
   import PanelLeftOpen from '@lucide/svelte/icons/panel-left-open';
   import Search from '@lucide/svelte/icons/search';
@@ -13,7 +14,7 @@
   import ModuleIcon from './ModuleIcon.svelte';
   import ProfileAvatar from './ProfileAvatar.svelte';
 
-  type View = 'dashboard' | 'records' | 'collaboration' | 'admin' | 'account';
+  type View = 'dashboard' | 'records' | 'collaboration' | 'drive' | 'admin' | 'account';
 
   let {
     deployment,
@@ -103,6 +104,7 @@
     <button class:active={view === 'collaboration'} title="Collaboration" onclick={() => onNavigate('collaboration')}>
       <span><MessagesSquare size={18} /></span><b>Collaboration</b>
     </button>
+    <button class:active={view === 'drive'} title="MX Drive" onclick={() => onNavigate('drive')}><span><HardDrive size={18} /></span><b>MX Drive</b></button>
     {#if session.access_level === 0}
       <button class:active={view === 'admin'} title={deployment.terminology.administration_label} onclick={() => onNavigate('admin')}>
         <span><ShieldCheck size={18} /></span><b>{deployment.terminology.administration_label}</b>

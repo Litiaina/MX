@@ -50,7 +50,7 @@
   async function restoreDefaults() {
     if (!config || !await requestConfirmation({ title: 'Restore MX identity defaults?', description: 'Only this form will be reset. Nothing changes for users until you save the deployment identity.', confirmLabel: 'Restore defaults', tone: 'primary' })) return;
     config = {
-      branding: { display_name: 'MX', subtitle: "Litiaina's General-Purpose System", organization_name: '', logo_url: 'images/system-icon.png' },
+      branding: { display_name: 'MX', subtitle: "Litiaina's Digital Workplace Platform", organization_name: '', logo_url: 'images/system-icon.png' },
       appearance: { preset: 'blue', primary_color: '#1d4ed8', sidebar_color: '#0f172a', radius: 'rounded', density: 'normal', default_theme: 'light', content_width: 'wide' },
       terminology: { record_singular: 'Record', record_plural: 'Records', dashboard_label: 'Dashboard', administration_label: 'Administration' },
       navigation: { show_dashboard: true, show_records: true, show_quick_actions: true, default_workspace: 'dashboard' },

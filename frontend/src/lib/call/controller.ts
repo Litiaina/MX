@@ -1,4 +1,5 @@
 import type { CallIceServer, CallMode, CallSignalKind } from '../api/domain';
+import { operationUid } from '../api/operation';
 
 export interface RemoteCallMedia {
   userUid: string;
@@ -30,6 +31,8 @@ type SendSignal = (recipientUid: string, recipientSessionUid: string, kind: Call
 
 interface PeerState {
   sessionUid: string;
+  transportRevision: number;
+  restartCount: number;
   connection: RTCPeerConnection;
   remoteStream: MediaStream;
   polite: boolean;
@@ -41,6 +44,14 @@ interface PeerState {
   pendingCandidates: RTCIceCandidateInit[];
   videoSender: RTCRtpSender | null;
   screenAudioSender: RTCRtpSender | null;
+  descriptionQueue: Promise<void>;
+  pendingOffer: { uid: string; sentAt: number; attempts: number; sending: boolean } | null;
+  answers: Map<string, Record<string, unknown>>;
+  unhealthySince: number;
+  lastRestartAt: number;
+  localCandidates: RTCIceCandidateInit[];
+  lastCandidateReplayAt: number;
+  replayingCandidates: boolean;
 }
 
 export function callMediaConstraints(mode: CallMode): MediaStreamConstraints {
@@ -102,6 +113,8 @@ export class CallController {
   #preferredCameraDeviceId = '';
   #peers = new Map<string, PeerState>();
   #closed = false;
+  #recoveryTimer: ReturnType<typeof setInterval> | null = null;
+  #retiredSessions = new Set<string>();
 
   constructor(
     private readonly selfUid: string,
@@ -121,12 +134,34 @@ export class CallController {
     this.#microphoneTrack = stream.getAudioTracks()[0] || null;
     this.#cameraTrack = stream.getVideoTracks()[0] || null;
     for (const track of stream.getTracks()) this.#localSource.addTrack(track);
+    // A group join event can create a peer while the permission/capture
+    // promise is pending. Those peers must acquire the newly granted media,
+    // not remain permanently connected with receive-only/empty senders.
+    for (const [userUid, peer] of this.#peers) {
+      if (this.#microphoneTrack && !peer.connection.getSenders().some((sender) => sender.track === this.#microphoneTrack)) {
+        peer.connection.addTrack(this.#microphoneTrack, this.#localSource);
+      }
+      if (this.#cameraTrack && !peer.videoSender) {
+        peer.videoSender = peer.connection.addTrack(this.#cameraTrack, new MediaStream([this.#cameraTrack]));
+      }
+      peer.negotiationPending = true;
+      void this.#negotiate(userUid, peer);
+    }
     this.#emitLocal();
   }
 
   connectToExisting(peers: CallPeerIdentity[]): void {
     for (const peer of peers) {
       if (peer.userUid === this.selfUid) continue;
+      const retiredKey = `${peer.userUid}:${peer.sessionUid}`;
+      if (this.#retiredSessions.has(retiredKey)) {
+        const current = this.#peers.get(peer.userUid);
+        if (current && current.sessionUid !== peer.sessionUid) continue;
+        // A server-confirmed heartbeat rejoin may legitimately reuse its
+        // session after lease expiry. Only authoritative discovery can revive
+        // it; arbitrary late signals cannot, nor can it displace a fresh peer.
+        this.#retiredSessions.delete(retiredKey);
+      }
       // Both browsers learn about the same participant pair. Only one side
       // should make the initial offer; otherwise rejoin reliably creates glare.
       const shouldInitiate = this.selfUid.localeCompare(peer.userUid) < 0;
@@ -136,18 +171,51 @@ export class CallController {
 
   async handleSignal(signal: IncomingCallSignal): Promise<void> {
     if (this.#closed || signal.senderUid === this.selfUid || signal.recipientSessionUid !== this.selfSessionUid) return;
-    const state = this.#ensurePeer(signal.senderUid, signal.senderSessionUid, false);
+    if (this.#retiredSessions.has(`${signal.senderUid}:${signal.senderSessionUid}`)) return;
+    let state = this.#ensurePeer(signal.senderUid, signal.senderSessionUid, false);
+    const revision = signal.data.transport_revision;
+    if (revision !== undefined && (!Number.isSafeInteger(revision) || Number(revision) < 1)) return;
+    const incomingRevision = Number(revision || 1);
+    // A restarted browser transport needs new ICE AND DTLS/SRTP state. Scope
+    // every message to that transport so delayed candidates/answers cannot
+    // contaminate its replacement inside the same logical call session.
+    if (incomingRevision < state.transportRevision) return;
+    if (incomingRevision > state.transportRevision) {
+      // Only a new offer may replace the transport. Early trickled candidates
+      // will be replayed after the offer, rather than resetting on arbitrary ICE.
+      if (signal.kind !== 'offer') return;
+      state = this.#rebuildPeer(signal.senderUid, state, incomingRevision, false);
+    }
+    if (signal.kind !== 'ice') {
+      // SDP operations must not race a duplicate delivery or another offer.
+      state.descriptionQueue = state.descriptionQueue.then(() => this.#handleDescription(signal, state));
+      await state.descriptionQueue;
+      return;
+    }
+    const candidate = signal.data as RTCIceCandidateInit;
+    if (!state.connection.remoteDescription) {
+      if (state.pendingCandidates.length < 256) state.pendingCandidates.push(candidate);
+    } else await this.#addRemoteCandidate(signal.senderUid, state, candidate);
+  }
+
+  async #handleDescription(signal: IncomingCallSignal, state: PeerState): Promise<void> {
+    if (this.#closed || this.#peers.get(signal.senderUid) !== state) return;
     const connection = state.connection;
     try {
-      if (signal.kind === 'ice') {
-        const candidate = signal.data as RTCIceCandidateInit;
-        if (!connection.remoteDescription) state.pendingCandidates.push(candidate);
-        else await this.#addRemoteCandidate(signal.senderUid, state, candidate);
-        return;
-      }
-
       const description = signal.data as unknown as RTCSessionDescriptionInit;
       if (!['offer', 'answer'].includes(String(description.type))) return;
+      const negotiationUid = typeof signal.data.negotiation_uid === 'string' ? signal.data.negotiation_uid : '';
+      const offerKey = negotiationUid || description.sdp || '';
+      const cachedAnswer = description.type === 'offer' ? state.answers.get(offerKey) : null;
+      if (cachedAnswer) {
+        // The offer/answer may have reached WebRTC even when its HTTP or live
+        // acknowledgement was lost. Re-send the answer, never apply it twice.
+        await this.sendSignal(signal.senderUid, state.sessionUid, 'answer', cachedAnswer);
+        await this.#replayCandidates(signal.senderUid, state);
+        return;
+      }
+      if (description.type === 'answer' && (connection.signalingState !== 'have-local-offer'
+        || (negotiationUid && negotiationUid !== state.pendingOffer?.uid))) return;
       const readyForOffer = !state.makingOffer && (connection.signalingState === 'stable' || state.settingRemoteAnswer);
       const offerCollision = description.type === 'offer' && !readyForOffer;
       state.ignoreOffer = !state.polite && offerCollision;
@@ -155,6 +223,7 @@ export class CallController {
 
       state.settingRemoteAnswer = description.type === 'answer';
       await connection.setRemoteDescription(description);
+      if (description.type === 'answer' || offerCollision) state.pendingOffer = null;
       state.settingRemoteAnswer = false;
       state.negotiationAllowed = true;
       for (const candidate of state.pendingCandidates.splice(0)) {
@@ -166,7 +235,12 @@ export class CallController {
         // The answer includes local tracks already queued before it is built.
         state.negotiationPending = false;
         await connection.setLocalDescription();
-        if (connection.localDescription) await this.#signalDescription(signal.senderUid, connection.localDescription);
+        if (connection.localDescription) {
+          const answer = { ...connection.localDescription.toJSON(), negotiation_uid: negotiationUid, transport_revision: state.transportRevision };
+          state.answers.set(offerKey, answer);
+          if (state.answers.size > 8) state.answers.delete(state.answers.keys().next().value!);
+          await this.sendSignal(signal.senderUid, state.sessionUid, 'answer', answer);
+        }
       }
       // Track additions requested during an outstanding offer must resume as
       // soon as its answer arrives, rather than waiting for participant refresh.
@@ -180,6 +254,12 @@ export class CallController {
   removePeer(userUid: string): void {
     const peer = this.#peers.get(userUid);
     if (!peer) return;
+    this.#retiredSessions.add(`${userUid}:${peer.sessionUid}`);
+    if (this.#retiredSessions.size > 100) this.#retiredSessions.delete(this.#retiredSessions.values().next().value!);
+    this.#disposePeer(userUid, peer);
+  }
+
+  #disposePeer(userUid: string, peer: PeerState): void {
     peer.connection.ontrack = null;
     peer.connection.onicecandidate = null;
     peer.connection.onnegotiationneeded = null;
@@ -187,7 +267,16 @@ export class CallController {
     peer.connection.close();
     peer.remoteStream.getTracks().forEach((track) => track.stop());
     this.#peers.delete(userUid);
+    if (!this.#peers.size && this.#recoveryTimer !== null) {
+      clearInterval(this.#recoveryTimer); this.#recoveryTimer = null;
+    }
     this.#emitRemote();
+  }
+
+  #rebuildPeer(userUid: string, peer: PeerState, revision: number, initiate: boolean): PeerState {
+    const sessionUid = peer.sessionUid;
+    this.#disposePeer(userUid, peer);
+    return this.#ensurePeer(userUid, sessionUid, initiate, revision);
   }
 
   setMicrophoneEnabled(enabled: boolean): void {
@@ -332,9 +421,11 @@ export class CallController {
     this.#emitLocal();
   }
 
-  #ensurePeer(userUid: string, sessionUid: string, initiate: boolean): PeerState {
+  #ensurePeer(userUid: string, sessionUid: string, initiate: boolean, transportRevision = 1): PeerState {
     const existing = this.#peers.get(userUid);
-    if (existing && existing.sessionUid !== sessionUid) this.removePeer(userUid);
+    if (existing && existing.sessionUid !== sessionUid) {
+      this.removePeer(userUid);
+    }
     const current = this.#peers.get(userUid);
     if (current) {
       if (initiate && !current.makingOffer && !current.connection.localDescription && !current.connection.remoteDescription) {
@@ -348,6 +439,8 @@ export class CallController {
     const remoteStream = new MediaStream();
     const state: PeerState = {
       sessionUid,
+      transportRevision,
+      restartCount: 0,
       connection,
       remoteStream,
       polite: this.selfUid.localeCompare(userUid) > 0,
@@ -358,15 +451,24 @@ export class CallController {
       negotiationPending: initiate,
       pendingCandidates: [],
       videoSender: null,
-      screenAudioSender: null
+      screenAudioSender: null,
+      descriptionQueue: Promise.resolve(), pendingOffer: null, answers: new Map(),
+      unhealthySince: Date.now(), lastRestartAt: 0, localCandidates: [], lastCandidateReplayAt: 0, replayingCandidates: false
     };
     this.#peers.set(userUid, state);
+    if (this.#recoveryTimer === null) this.#recoveryTimer = setInterval(() => this.#recover(), 1000);
     if (this.#microphoneTrack) connection.addTrack(this.#microphoneTrack, this.#localSource);
     if (this.#screenAudioTrack) state.screenAudioSender = connection.addTrack(this.#screenAudioTrack, new MediaStream([this.#screenAudioTrack]));
     const outgoingVideo = this.#screenTrack || this.#cameraTrack;
     if (outgoingVideo) state.videoSender = connection.addTrack(outgoingVideo, new MediaStream([outgoingVideo]));
     connection.onicecandidate = (event) => {
-      if (event.candidate) void this.sendSignal(userUid, state.sessionUid, 'ice', event.candidate.toJSON()).catch((reason) => this.onError(reason instanceof Error ? reason.message : 'Could not relay a network candidate.'));
+      if (!event.candidate || this.#closed || this.#peers.get(userUid) !== state) return;
+      const candidate = { ...event.candidate.toJSON(), transport_revision: state.transportRevision };
+      if (state.localCandidates.length >= 256) state.localCandidates.shift();
+      state.localCandidates.push(candidate);
+      void this.sendSignal(userUid, state.sessionUid, 'ice', candidate).catch(() => {
+        // Offer retries / ICE restart replay current candidates after recovery.
+      });
     };
     connection.ontrack = (event) => {
       if (this.#closed || this.#peers.get(userUid) !== state) return;
@@ -387,7 +489,12 @@ export class CallController {
       this.#emitRemote();
     };
     connection.onconnectionstatechange = () => {
+      if (this.#closed || this.#peers.get(userUid) !== state) return;
+      if (connection.connectionState === 'connected') state.unhealthySince = 0;
+      else if (!state.unhealthySince) state.unhealthySince = Date.now();
       if (connection.connectionState === 'failed') {
+        state.lastRestartAt = Date.now();
+        state.restartCount++;
         connection.restartIce();
         state.negotiationPending = true;
         void this.#negotiate(userUid, state);
@@ -414,7 +521,10 @@ export class CallController {
       // inside its signaling operation queue, avoiding a createOffer → remote
       // offer → setLocalDescription race.
       await state.connection.setLocalDescription();
-      if (state.connection.localDescription) await this.#signalDescription(userUid, state.connection.localDescription);
+      if (state.connection.localDescription?.type === 'offer') {
+        state.pendingOffer = { uid: operationUid(), sentAt: 0, attempts: 0, sending: false };
+        await this.#sendPendingOffer(userUid, state);
+      }
     } catch (reason) {
       failed = true;
       state.negotiationPending = true;
@@ -488,6 +598,7 @@ export class CallController {
       // call. A genuinely failed connection is recovered by the existing
       // connection-state handler and a fresh negotiation.
       if (state.connection.connectionState === 'failed') {
+        state.restartCount++;
         state.connection.restartIce();
         state.negotiationPending = true;
         void this.#negotiate(userUid, state);
@@ -495,10 +606,80 @@ export class CallController {
     }
   }
 
-  #signalDescription(userUid: string, description: RTCSessionDescription): Promise<unknown> {
-    const peer = this.#peers.get(userUid);
-    if (!peer) return Promise.resolve();
-    return this.sendSignal(userUid, peer.sessionUid, description.type as CallSignalKind, description.toJSON());
+  async #sendPendingOffer(userUid: string, peer: PeerState): Promise<void> {
+    const pending = peer.pendingOffer;
+    if (!pending || pending.sending || this.#closed || this.#peers.get(userUid) !== peer
+      || peer.connection.signalingState !== 'have-local-offer' || !peer.connection.localDescription) return;
+    pending.sending = true;
+    pending.sentAt = Date.now();
+    pending.attempts++;
+    try {
+      // Include gathered candidates on replay, so lost trickled ICE messages
+      // cannot leave an otherwise accepted offer permanently stranded.
+      await this.sendSignal(userUid, peer.sessionUid, 'offer', {
+        ...peer.connection.localDescription.toJSON(), negotiation_uid: pending.uid, transport_revision: peer.transportRevision
+      });
+      await this.#replayCandidates(userUid, peer);
+    } catch {
+      if (pending.attempts === 3 && !this.#closed && peer.pendingOffer === pending) {
+        this.onError('Call signaling is reconnecting. Keep this call open while MX retries.');
+      }
+    } finally { pending.sending = false; }
+  }
+
+  async #replayCandidates(userUid: string, peer: PeerState): Promise<void> {
+    if (this.#closed || this.#peers.get(userUid) !== peer || peer.replayingCandidates) return;
+    const candidates = peer.localCandidates.filter((candidate) => candidateMatchesRemoteDescription(candidate, peer.connection.localDescription));
+    peer.lastCandidateReplayAt = Date.now();
+    peer.replayingCandidates = true;
+    try { await Promise.allSettled(candidates.map((candidate) => this.sendSignal(userUid, peer.sessionUid, 'ice', candidate))); }
+    finally { peer.replayingCandidates = false; }
+  }
+
+  #recover(): void {
+    if (this.#closed) return;
+    const now = Date.now();
+    for (const [userUid, peer] of this.#peers) {
+      const pending = peer.pendingOffer;
+      if (pending && now - pending.sentAt >= Math.min(10_000, 2000 * 2 ** Math.min(3, pending.attempts - 1))) {
+        void this.#sendPendingOffer(userUid, peer);
+      }
+      const connection = peer.connection;
+      // A connected ICE/DTLS transport is not proof of flowing media. Some
+      // browsers remain connected after delayed ICE with every receiver still
+      // muted. Recover that stalled transport too, without reacting to normal
+      // microphone silence, disabled tracks (which still send silence), or
+      // retired screen-audio tracks.
+      const liveTracks = peer.remoteStream.getTracks().filter((track) => track.readyState !== 'ended');
+      const missingMedia = liveTracks.length > 0 && liveTracks.every((track) => track.muted);
+      if (connection.connectionState === 'connected' && !missingMedia) peer.unhealthySince = 0;
+      else if (!peer.unhealthySince) peer.unhealthySince = now;
+      if (connection.connectionState !== 'connected' && connection.connectionState !== 'closed'
+        && connection.localDescription && now - peer.lastCandidateReplayAt >= 3000) {
+        // Acknowledged SDP does not acknowledge trickled ICE. Try the same
+        // current candidates before disturbing transports with an ICE restart.
+        void this.#replayCandidates(userUid, peer);
+      }
+      // Stagger recovery by the same deterministic offerer rule as initial
+      // discovery. Restarting both ends at once can repeatedly create glare.
+      const recoveryDelay = peer.polite ? 30_000 : 15_000;
+      if (peer.unhealthySince && now - peer.unhealthySince >= recoveryDelay && now - peer.lastRestartAt >= recoveryDelay
+        && connection.signalingState === 'stable' && peer.negotiationAllowed) {
+        if (peer.restartCount > 0 && !peer.polite) {
+          // Some native engines keep connected ICE/DTLS but no usable SRTP
+          // after an outage. Do not loop ICE restart forever: the deterministic
+          // offerer replaces just this pair, retaining all local capture tracks
+          // and the room session. The other end follows its revisioned offer.
+          this.#rebuildPeer(userUid, peer, peer.transportRevision + 1, true);
+          continue;
+        }
+        peer.lastRestartAt = now;
+        peer.restartCount++;
+        connection.restartIce();
+        peer.negotiationPending = true;
+      }
+      if (peer.negotiationPending) void this.#negotiate(userUid, peer);
+    }
   }
 
   #emitRemote(): void {

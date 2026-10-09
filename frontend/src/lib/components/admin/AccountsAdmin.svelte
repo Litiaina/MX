@@ -17,6 +17,8 @@
   import { requestConfirmation } from '../../confirmation';
   import { createUser, loadAccountModuleAccess, loadUsers, removeUser, resetUserPassword, resetUserSecurity, saveAccountModuleAccess, updateUserAccess } from '../../api/workspace';
   import ProfileAvatar from '../ProfileAvatar.svelte';
+  import HardDrive from '@lucide/svelte/icons/hard-drive';
+  import DriveQuotaAdmin from './DriveQuotaAdmin.svelte';
 
   let { session }: { session: Session } = $props();
   let users = $state<UserSummary[]>([]); let loading = $state(true); let error = $state(''); let notice = $state('');
@@ -24,6 +26,7 @@
   let recovery = $state<{ mode: 'password' | 'security'; user: UserSummary } | null>(null);
   let createOpen = $state(false);
   let managedUser = $state<UserSummary | null>(null);
+  let storageUser = $state<UserSummary | null>(null);
   let newPassword = $state(''); let confirmPassword = $state(''); let adminPassword = $state(''); let factor = $state('');
   let userSearch = $state('');
   let moduleAccess = $state<AccountModuleAccessResponse | null>(null);
@@ -129,11 +132,17 @@
         <div class="account-identity"><div><strong>{user.name}</strong>{#if user.uid === session.uid}<span class="account-you">You</span>{/if}</div><small>{user.email}</small></div>
         <div class:enabled={user.totp_enabled} class="account-security"><span>{#if user.totp_enabled}<ShieldCheck size={15} />{:else}<ShieldOff size={15} />{/if}</span><div><small>Security</small><strong>{user.totp_enabled ? '2FA enabled' : '2FA disabled'}</strong></div></div>
         <div class="account-role"><small>Access</small><strong>{roleName(user.access_level)}</strong></div>
-        {#if user.uid === session.uid}<button class="button small" onclick={() => location.hash = '#account'}>My account</button>{:else}<button class="button small icon-labelled" onclick={() => void openManagement(user)}><UserCog size={15} /><span>Manage</span></button>{/if}
+        <div class="inline-actions"><button class="button small icon-labelled" aria-label={`Storage for ${user.name}`} onclick={() => storageUser = user}><HardDrive size={15} /><span>Storage</span></button>{#if user.uid === session.uid}<button class="button small" onclick={() => location.hash = '#account'}>My account</button>{:else}<button class="button small icon-labelled" onclick={() => void openManagement(user)}><UserCog size={15} /><span>Manage</span></button>{/if}</div>
       </article>
     {/each}
   </div>
 </section>
+
+{#if storageUser}{#key storageUser.uid}<DriveQuotaAdmin userUid={storageUser.uid} userName={storageUser.name} onClose={() => storageUser = null} />{/key}{/if}
+
+<style>
+  @media(max-width:900px) { .account-card > .inline-actions { grid-column: 3; grid-row: 1 / span 3; flex-direction: column; align-items: stretch; } }
+</style>
 
 {#if createOpen}<div class="overlay"><div class="dialog account-admin-dialog" role="dialog" aria-modal="true" aria-labelledby="create-account-title"><header class="dialog-head"><div class="admin-dialog-title"><span><UserPlus size={19} /></span><div><p class="eyebrow">Identity and access</p><h2 id="create-account-title">Create account</h2><p>Set the person’s initial access. They can personalize their account after signing in.</p></div></div><button class="icon-button" aria-label="Close account creation" onclick={() => createOpen = false}><X size={18} /></button></header><form class="form-stack account-create-form" onsubmit={add}><label>Name<input bind:value={name} autocomplete="off" required /></label><label>Email<input bind:value={email} type="email" autocomplete="off" required /></label><label class="full">Temporary password<input bind:value={password} type="password" minlength="12" autocomplete="new-password" required /><small>Use at least 12 characters.</small></label><label class="full">Access<select bind:value={access}><option value={0}>Administrator</option><option value={1}>Manager</option><option value={2}>Editor</option><option value={3}>Viewer</option></select></label><details class="role-guide full"><summary>What can each role do?</summary><p><strong>Administrator</strong> Accounts, configuration, and all record operations</p><p><strong>Manager</strong> All record operations, including deletion</p><p><strong>Editor</strong> Create, edit, upload, and download</p><p><strong>Viewer</strong> Search, read, and download only</p></details>{#if error}<div class="notice error full">{error}</div>{/if}<div class="dialog-actions"><button class="button" type="button" onclick={() => createOpen = false}>Cancel</button><button class="button primary icon-labelled" disabled={loading}><UserPlus size={16} /><span>Create account</span></button></div></form></div></div>{/if}
 

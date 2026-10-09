@@ -1,0 +1,26 @@
+<script lang="ts">
+  import { onMount } from 'svelte';
+  import HardDrive from '@lucide/svelte/icons/hard-drive';
+  import Download from '@lucide/svelte/icons/download';
+  import ChevronRight from '@lucide/svelte/icons/chevron-right';
+  import DriveFileIcon from './DriveFileIcon.svelte';
+  import DrivePreview from './DrivePreview.svelte';
+  import DrivePagination from './DrivePagination.svelte';
+  import { guestDrive, guestPreview, guestDownloadUrl, driveSize, type GuestDrivePage, type DriveItem } from '../api/drive';
+  let { token }: { token: string } = $props();
+  let page = $state<GuestDrivePage | null>(null); let current = $state<string | undefined>(undefined); let offset = $state(0); let error = $state(''); let loading = $state(false); let preview = $state<DriveItem | null>(null); let generation = 0;
+  onMount(() => { void load(); });
+  async function load() { const request = ++generation; loading = true; error = ''; try { const result = await guestDrive(token, current, offset); if (request === generation) {page = result;offset=result.offset;} } catch (reason) { if (request === generation) error = reason instanceof Error ? reason.message : 'This shared link is unavailable.'; } finally { if (request === generation) loading = false; } }
+  function open(item: DriveItem) { if (item.kind === 'folder') { current = item.uid; offset = 0; void load(); } else preview = item; }
+</script>
+<main class="guest-drive"><header><HardDrive size={28} /><div><strong>MX Drive</strong><small>Shared with you · read-only guest access</small></div><a href={location.pathname} rel="noreferrer">Open MX</a></header>
+  {#if error}<section class="unavailable" role="alert"><h1>This link is unavailable</h1><p>{error}</p><button onclick={() => void load()}>Try again</button><p>Ask the owner for a new link if it expired or was revoked.</p></section>
+  {:else if page}<section class="shared"><div class="breadcrumbs">{#each page.breadcrumbs as item, index}{#if index}<ChevronRight size={13} />{/if}<button onclick={() => open(item)}>{item.name}</button>{/each}</div><h1>{page.item.name}</h1><p>{page.item.kind === 'folder' ? `${page.total} items` : driveSize(page.item.size)} · Shared by an MX user</p>
+    <div class="guest-files" aria-busy={loading}>{#each page.item.kind === 'file' ? [page.item] : page.items as item (`${item.uid}:${item.revision}`)}<article><button class="name" onclick={() => open(item)}><DriveFileIcon {item} guestToken={token} /><span><strong>{item.name}</strong><small>{item.kind === 'folder' ? 'Folder' : driveSize(item.size)}</small></span>{#if item.kind === 'folder'}<ChevronRight size={16} />{/if}</button>{#if item.kind === 'file'}<a href={guestDownloadUrl(token, item)} download={item.name} rel="noreferrer" aria-label={`Download ${item.name}`} title="Download"><Download size={17} /></a>{/if}</article>{:else}<p>This folder is empty.</p>{/each}</div>
+    {#if page.item.kind==='folder'}<DrivePagination total={page.total} {offset} limit={page.limit} {loading} onPage={(next)=>{offset=next;void load();}}/>{/if}<footer><span>Guest links may be revoked by the owner at any time.</span></footer>
+  </section>{:else}<p role="status">Loading shared files…</p>{/if}
+</main>
+{#if preview}{#key preview.uid}<DrivePreview item={preview} guestToken={token} onNavigate={(item)=>preview=item} onClose={()=>preview=null}/>{/key}{/if}
+<style>
+  .guest-drive { width: min(70rem,100%); padding: clamp(1rem,3vw,2.5rem); margin: auto; color: var(--text); } header { display: flex; gap: .8rem; align-items: center; border-bottom: 1px solid var(--line); padding-bottom: 1.2rem; } header strong { font-size: 1.25rem; } header a { margin-left: auto; } small { display: block; color: var(--muted); font-size: .8rem; margin-top: .25rem; } h1 { font-size: 1.5rem; margin: .8rem 0 .3rem; overflow-wrap: anywhere; } p { color: var(--muted); font-size: .9rem; } button, a { color: var(--text); border: 1px solid var(--line); background: var(--surface); border-radius: .4rem; padding: .5rem .7rem; display: inline-flex; align-items: center; justify-content: center; gap: .5rem; cursor: pointer; text-decoration: none; font: inherit; font-size: .85rem; } button:hover, a:hover { background: var(--surface-2); } button:disabled { opacity: .45; } .breadcrumbs { display: flex; flex-wrap: wrap; gap: .2rem; align-items: center; margin-top: 1rem; } .breadcrumbs button { border: 0; background: transparent; padding: .3rem; overflow-wrap: anywhere; } .guest-files { border: 1px solid var(--line); border-radius: .6rem; overflow: hidden; margin-top: 1.2rem; background: var(--surface); } article { display: flex; align-items: center; gap: .6rem; padding: .8rem 1rem; } article + article { border-top: 1px solid var(--line); } .name { flex: 1; min-width: 0; border: 0; padding: 0; text-align: left; justify-content: flex-start; background: transparent; } .name span { flex: 1; min-width: 0; overflow-wrap: anywhere; } footer { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; margin-top: 1rem; } footer span { color: var(--muted); font-size: .8rem; margin-left: auto; } .unavailable { padding: 3rem 0; } @media(max-width:600px) { article { padding: .7rem; } header { align-items: flex-start; } footer span { width: 100%; margin-top: .5rem; } }
+</style>

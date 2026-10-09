@@ -3,7 +3,10 @@
 The MX frontend lives in this directory as part of the same repository and
 release artifact as the Rust backend.
 
-The frontend and Rust package share one product version. For MX 3.0.0, both
+MX is a self-hosted modular digital workplace platform for records, collaboration,
+calls, screen sharing, and personal/shared file storage.
+
+The frontend and Rust package share one product version. For MX 4.0.0, both
 package manifests and the committed production bundle must be released together.
 
 ## Layout
@@ -46,7 +49,7 @@ The Rust server serves `frontend/dist` in production. Rebuild and commit that
 bundle whenever frontend source changes. A Node.js process is not required at
 runtime, and an unchanged fresh checkout can start directly with `cargo run`.
 
-MX 3.0 media previews depend on the matching Rust routes for short-lived preview
+MX 4.0 media previews depend on the matching Rust routes for short-lived preview
 tickets and HTTP byte-range forwarding. Restart the Rust service after deploying
 a newly built frontend so the client and API cannot become version-skewed.
 
@@ -68,7 +71,7 @@ changes retain a still-frame overlay capped at 1280×720 until the replacement
 is decoded. No video opacity crossfade or second playing video is used.
 Unchanged participant heartbeat responses reuse existing objects, and the
 device-panel preview compares video tracks so microphone-only changes do not
-restart video playback. These are post-3.0.0 fixes recorded under **Unreleased**
+restart video playback. These post-3.0.0 fixes are included in **4.0.0**
 in the root changelog. Deployment verification should include camera-to-screen-
 to-camera switching, microphone toggles, and several heartbeat intervals.
 Remote media publishes a new stream wrapper when its track set changes so track
@@ -102,7 +105,7 @@ prints its temporary screenshot directory. `MX_TEST_CAPTURE_SOURCE=synthetic`
 runs the same UI checks with a generated screen source when native tab capture
 is unavailable; native capture is the default.
 
-Module navigation is server-derived in MX 3.0. The client renders only the
+Module navigation is server-derived in MX 4.0. The client renders only the
 effective modules and capabilities returned for the signed-in account; it does
 not treat a hidden control as authorization. Search, reporting, record routes,
 attachments, notifications, and preview tickets are independently enforced by

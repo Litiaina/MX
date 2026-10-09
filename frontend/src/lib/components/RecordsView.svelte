@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, tick } from 'svelte';
+  import { onMount, tick, untrack } from 'svelte';
   import ChevronDown from '@lucide/svelte/icons/chevron-down';
   import ChevronUp from '@lucide/svelte/icons/chevron-up';
   import Ellipsis from '@lucide/svelte/icons/ellipsis';
@@ -14,6 +14,7 @@
   import type { Session } from '../api/types';
   import { deleteRecord, getRecord, listRecords, loadModuleSchema, loadSchema, patchRecord } from '../api/workspace';
   import RecordEditor from './RecordEditor.svelte';
+  import { floatingMenu } from '../util/floating';
 
   let { session, accessLevel, moduleUid = '', modulePermission = null, openRecordUid = '', openRequestRevision = 0, focusLinkedAttachments = false, revision = 0, liveMessage = null, recordSingular = 'Record', recordPlural = 'Records' }: { session: Session; accessLevel: number; moduleUid?: string; modulePermission?: ModulePermission | null; openRecordUid?: string; openRequestRevision?: number; focusLinkedAttachments?: boolean; revision?: number; liveMessage?: LiveMessage | null; recordSingular?: string; recordPlural?: string } = $props();
   let schema = $state<SchemaResponse | null>(null);
@@ -27,9 +28,11 @@
   let loading = $state(true); let error = $state('');
   let deletingUid = $state('');
   let rowMenuUid = $state('');
+  let rowMenuAnchor = $state<HTMLButtonElement | null>(null);
+  const menuRow = $derived(rows.find((row) => row.uid === rowMenuUid));
   let editor = $state<MxRecord | null | undefined>(undefined);
   let editorWritable = $state(false);
-  let cellEdit = $state<{ rowUid: string; fieldKey: string; value: string } | null>(null);
+  let cellEdit = $state<{ rowUid: string; fieldKey: string; value: string; baseRevision: number } | null>(null);
   let cellSaving = $state(false);
   let cellConflict = $state<{ conflict: FieldConflict; recordRevision: number } | null>(null);
   let focusAttachments = $state(false);
@@ -38,6 +41,12 @@
   let legacyColumns: string[] | null = null;
   let searchTimer: number | undefined;
   let refreshSequence = 0;
+  // A response can have been read before a concurrent deletion committed.
+  // Keep deletion barriers until an explicit restore, not just another fetch.
+  const deletedRecordUids = new Set<string>();
+  const lifecycleSequences = new Map<string, number>();
+  const deletionGenerations = new Map<string, number>();
+  let deletionGeneration = 0;
   let openedDeepLink = '';
   let openedRequestRevision = -1;
   const canCreate = $derived(modulePermission ? modulePermission.can_create : accessLevel <= 2);
@@ -52,18 +61,51 @@
   onMount(() => {
     try { const saved = JSON.parse(localStorage.getItem(columnStorageKey) || localStorage.getItem('mx_record_columns_v3') || 'null'); if (saved && Array.isArray(saved.shown) && Array.isArray(saved.hidden)) columnOverrides = { shown: saved.shown.filter((key: unknown): key is string => typeof key === 'string'), hidden: saved.hidden.filter((key: unknown): key is string => typeof key === 'string') }; else { const old = JSON.parse(localStorage.getItem('mx_record_columns_v2') || 'null'); if (Array.isArray(old)) legacyColumns = old.filter((key): key is string => typeof key === 'string'); } } catch { /* Use schema defaults. */ }
     const closeRowMenu = (event: PointerEvent) => { const target = event.target instanceof Element ? event.target : null; if (!target?.closest('[data-record-actions]')) rowMenuUid = ''; };
-    const closeRowMenuWithKeyboard = (event: KeyboardEvent) => { if (event.key === 'Escape') rowMenuUid = ''; };
+    const closeRowMenuWithKeyboard = (event: KeyboardEvent) => { if (event.key === 'Escape' && rowMenuUid) { event.preventDefault(); closeRowMenuAndFocus(); } };
     document.addEventListener('pointerdown', closeRowMenu);
     document.addEventListener('keydown', closeRowMenuWithKeyboard);
     void refresh(true);
     return () => { window.clearTimeout(searchTimer); document.removeEventListener('pointerdown', closeRowMenu); document.removeEventListener('keydown', closeRowMenuWithKeyboard); };
   });
+  $effect(() => {
+    const message = liveMessage; const selected = moduleUid || 'mx-default-records';
+    untrack(() => {
+      if (message?.type === 'sync.required') {
+        // Live sequence numbers restart with the server process. A new
+        // connection must not reject its lifecycle events using the old epoch.
+        lifecycleSequences.clear();
+        void reconcileDeletedRecords(); return;
+      }
+      if (!message?.payload || typeof message.payload !== 'object') return;
+      if (!['record.deleted', 'record.restored'].includes(message.type)) return;
+      const payload = message.payload as Record<string, unknown>;
+      if (payload.module_uid && payload.module_uid !== selected) return;
+      const uid = String(payload.record_uid || ''); if (!uid) return;
+      const sequence = Number(message.sequence || 0);
+      if (sequence && sequence <= (lifecycleSequences.get(uid) || 0)) return;
+      if (sequence) lifecycleSequences.set(uid, sequence);
+      if (message.type === 'record.deleted') forgetDeletedRecord(uid);
+      else { deletedRecordUids.delete(uid); deletionGenerations.delete(uid); }
+    });
+  });
   $effect(() => { if (revision !== lastRevision && schema) { lastRevision = revision; void refresh(liveMessage?.type.startsWith('schema.') === true); } });
   $effect(() => { if (schema && openRecordUid && (openRecordUid !== openedDeepLink || openRequestRevision !== openedRequestRevision)) void openLinkedRecord(openRecordUid); });
 
+  function closeRowMenuAndFocus() { rowMenuUid = ''; rowMenuAnchor?.focus({ preventScroll: true }); }
+  function toggleRowMenu(event: MouseEvent, uid: string) {
+    event.stopPropagation();
+    rowMenuAnchor = event.currentTarget as HTMLButtonElement;
+    rowMenuUid = rowMenuUid === uid ? '' : uid;
+  }
+  function menuKeydown(event: KeyboardEvent) {
+    if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+      event.preventDefault(); (event.currentTarget as HTMLElement).querySelector<HTMLElement>('[role="menuitem"]')?.focus();
+    } else if (event.key === 'Tab') closeRowMenuAndFocus();
+  }
+
   async function openLinkedRecord(uid: string) {
-    openedDeepLink = uid; openedRequestRevision = openRequestRevision; error = '';
-    try { editor = await getRecord(uid, moduleUid || undefined); editorWritable = false; focusAttachments = focusLinkedAttachments; }
+    rowMenuUid = ''; openedDeepLink = uid; openedRequestRevision = openRequestRevision; error = '';
+    try { const record = await getRecord(uid, moduleUid || undefined); if (deletedRecordUids.has(uid) || openedDeepLink !== uid) return; editor = record; editorWritable = false; focusAttachments = focusLinkedAttachments; }
     catch (reason) { error = reason instanceof Error ? reason.message : `The linked ${recordSingular.toLowerCase()} could not be opened.`; }
   }
 
@@ -72,7 +114,9 @@
     loading = true; error = '';
     try {
       if (withSchema || !schema) {
-        schema = moduleUid ? await loadModuleSchema(moduleUid) : await loadSchema();
+        const nextSchema = moduleUid ? await loadModuleSchema(moduleUid) : await loadSchema();
+        if (request !== refreshSequence) return;
+        schema = nextSchema;
         const allowed = new Set(schema.fields.filter((field) => field.active).map((field) => field.key));
         const defaults = schema.fields.filter((field) => field.active && field.table_visible).sort((a, b) => a.position - b.position).map((field) => field.key);
         columnOverrides = { shown: columnOverrides.shown.filter((key) => allowed.has(key)), hidden: columnOverrides.hidden.filter((key) => allowed.has(key)) };
@@ -86,9 +130,35 @@
       const activeFilters = Object.fromEntries(Object.entries(filters).filter(([, value]) => value.trim()));
       const result = await listRecords({ page, limit: pageSize, q: search.trim(), match: matchMode, filters: activeFilters, attachments: attachmentMode, sort_by: sortBy || undefined, sort_dir: sortDir }, moduleUid || undefined);
       if (request !== refreshSequence) return;
-      rows = result.data; page = result.page; pageInput = result.page; pages = result.total_pages; total = result.total;
-    } catch (reason) { error = reason instanceof Error ? reason.message : 'Records could not be loaded.'; }
+      rows = result.data.filter((row) => !deletedRecordUids.has(row.uid)); page = result.page; pageInput = result.page; pages = result.total_pages; total = Math.max(0, result.total - (result.data.length - rows.length));
+    } catch (reason) { if (request === refreshSequence) error = reason instanceof Error ? reason.message : 'Records could not be loaded.'; }
     finally { if (request === refreshSequence) loading = false; }
+  }
+
+  function forgetDeletedRecord(uid: string) {
+    deletedRecordUids.add(uid);
+    deletionGenerations.set(uid, ++deletionGeneration);
+    if (rows.some((row) => row.uid === uid)) total = Math.max(0, total - 1);
+    rows = rows.filter((row) => row.uid !== uid);
+    if (cellEdit?.rowUid === uid) { cellEdit = null; cellConflict = null; }
+    if (rowMenuUid === uid) rowMenuUid = '';
+    if (editor?.uid === uid) closeEditor();
+  }
+
+  async function reconcileDeletedRecords() {
+    // A restore event may have been missed during an outage. Only an
+    // authoritative GET can lift a deletion barrier during resynchronization.
+    const pending = [...deletionGenerations]; let restored = false;
+    for (let offset = 0; offset < pending.length; offset += 8) {
+      await Promise.all(pending.slice(offset, offset + 8).map(async ([uid, generation]) => {
+        try {
+          await getRecord(uid, moduleUid || undefined);
+          if (deletionGenerations.get(uid) !== generation) return;
+          deletedRecordUids.delete(uid); deletionGenerations.delete(uid); restored = true;
+        } catch { /* Still deleted, forbidden, or offline: keep the barrier. */ }
+      }));
+    }
+    if (restored) await refresh();
   }
 
   function display(row: MxRecord, key: string) {
@@ -112,11 +182,12 @@
     return canUpdate && !['attachments', 'auto_number', 'formula'].includes(field.field_type);
   }
   function beginCellEdit(event: MouseEvent, row: MxRecord, field: SchemaResponse['fields'][number]) {
-    if (!canEditCell(field)) return;
+    if (!canEditCell(field) || cellSaving) return;
     event.preventDefault(); event.stopPropagation();
     error = '';
     const raw = row.values[field.key];
-    cellEdit = { rowUid: row.uid, fieldKey: field.key, value: field.field_type === 'boolean' ? String(raw === true) : raw == null ? '' : String(raw) };
+    cellConflict = null;
+    cellEdit = { rowUid: row.uid, fieldKey: field.key, value: field.field_type === 'boolean' ? String(raw === true) : raw == null ? '' : String(raw), baseRevision: row.revision };
     void tick().then(() => {
       const control = document.querySelector<HTMLInputElement | HTMLSelectElement>('[data-active-cell-editor]');
       control?.focus();
@@ -137,6 +208,7 @@
     const field = schema.fields.find((item) => item.key === cellEdit!.fieldKey);
     if (!row || !field) return;
     const latest = { ...row, revision: recordRevision };
+    cellEdit.baseRevision = recordRevision;
     rows = rows.map((item) => item.uid === latest.uid ? latest : item);
     cellConflict = null; error = '';
     await commitCellEdit(latest, field);
@@ -156,8 +228,8 @@
     if (JSON.stringify(nextValue) === JSON.stringify(row.values[field.key] ?? null)) { cellEdit = null; return; }
     cellSaving = true; error = '';
     try {
-      const saved = await patchRecord(row.uid, { [field.key]: nextValue }, row.revision, moduleUid || undefined);
-      rows = rows.map((item) => item.uid === saved.uid ? saved : item);
+      const saved = await patchRecord(row.uid, { [field.key]: nextValue }, edit.baseRevision, moduleUid || undefined);
+      if (!deletedRecordUids.has(saved.uid)) rows = rows.map((item) => item.uid === saved.uid ? saved : item);
       cellEdit = null;
     } catch (reason) {
       error = reason instanceof Error ? reason.message : `The ${field.label.toLowerCase()} cell could not be saved.`;
@@ -189,18 +261,18 @@
   function resetColumns() { columnOverrides = { shown: [], hidden: [] }; selectedKeys = eligibleFields.filter((field) => field.table_visible).map((field) => field.key); saveColumnOverrides(); }
   async function changePageSize() { page = 1; await refresh(); }
   async function clearFilters() { filters = {}; search = ''; attachmentMode = ''; sortBy = ''; sortDir = 'asc'; page = 1; await refresh(); }
-  function openRecord(row: MxRecord, attachments = false, edit = false) { if (cellEdit) cancelCellEdit(); focusAttachments = attachments; editorWritable = edit && canUpdate; editor = row; }
+  function openRecord(row: MxRecord, attachments = false, edit = false) { if (deletedRecordUids.has(row.uid)) return; rowMenuUid = ''; if (cellEdit) cancelCellEdit(); focusAttachments = attachments; editorWritable = edit && canUpdate; editor = row; }
   function closeEditor() { focusAttachments = false; editorWritable = false; editor = undefined; if (openRecordUid) location.hash = `module/${encodeURIComponent(moduleUid || 'mx-default-records')}`; }
   async function removeRecord(row: MxRecord, event: MouseEvent) {
     event.stopPropagation();
-    rowMenuUid = '';
+    closeRowMenuAndFocus();
     if (!await requestConfirmation({
       title: `Move this ${recordSingular.toLowerCase()} to trash?`,
       description: 'Its fields, attachments, and version history will be preserved so an administrator can inspect or restore it.',
       confirmLabel: 'Move to trash'
     })) return;
     deletingUid = row.uid; error = '';
-    try { await deleteRecord(row.uid, moduleUid || undefined); if (rows.length === 1 && page > 1) page -= 1; await refresh(); }
+    try { await deleteRecord(row.uid, moduleUid || undefined); if (rows.length === 1 && page > 1) page -= 1; forgetDeletedRecord(row.uid); await refresh(); }
     catch (reason) { error = reason instanceof Error ? reason.message : `The ${recordSingular.toLowerCase()} could not be deleted.`; }
     finally { deletingUid = ''; }
   }
@@ -226,7 +298,7 @@
         {:else if !rows.length}
           <tr class="records-state-row"><td class="table-message" colspan={visibleFields.length + 2}>No {recordPlural.toLowerCase()} match this view.</td></tr>
         {:else}
-          {#each rows as row, rowIndex}
+          {#each rows as row, rowIndex (row.uid)}
             <tr onclick={() => openRecord(row)} class="clickable-row">
               <td class="row-index-column" data-label="Row"><span title={`${recordSingular} ${row.uid}`}>{(page - 1) * pageSize + rowIndex + 1}</span></td>
               {#each visibleFields as field}
@@ -252,7 +324,12 @@
                   {/if}
                 </td>
               {/each}
-              <td class="record-actions-column"><div class="record-row-actions" data-record-actions={row.uid}><button class="button record-primary-action" type="button" title={canUpdate ? `Edit ${recordSingular.toLowerCase()}` : `View ${recordSingular.toLowerCase()}`} aria-label={`${canUpdate ? 'Edit' : 'View'} ${recordSingular} ${(page - 1) * pageSize + rowIndex + 1}`} onclick={(event) => { event.stopPropagation(); rowMenuUid = ''; openRecord(row, false, canUpdate); }}>{#if canUpdate}<Pencil size={14} /><span>Edit</span>{:else}<Eye size={14} /><span>View</span>{/if}</button>{#if canDelete}<button class="record-actions-trigger" type="button" aria-label={`More actions for ${recordSingular} ${(page - 1) * pageSize + rowIndex + 1}`} aria-expanded={rowMenuUid === row.uid} onclick={(event) => { event.stopPropagation(); rowMenuUid = rowMenuUid === row.uid ? '' : row.uid; }}><Ellipsis size={17} /></button>{#if rowMenuUid === row.uid}<div class="record-row-menu"><button class="danger-text" type="button" disabled={deletingUid === row.uid} onclick={(event) => removeRecord(row, event)}><Trash2 size={14} />{deletingUid === row.uid ? 'Moving…' : 'Move to trash'}</button></div>{/if}{/if}</div></td>
+              <td class="record-actions-column">
+                <div class="record-row-actions" data-record-actions={row.uid}>
+                  <button class="button record-primary-action" type="button" title={canUpdate ? `Edit ${recordSingular.toLowerCase()}` : `View ${recordSingular.toLowerCase()}`} aria-label={`${canUpdate ? 'Edit' : 'View'} ${recordSingular} ${(page - 1) * pageSize + rowIndex + 1}`} onclick={(event) => { event.stopPropagation(); rowMenuUid = ''; openRecord(row, false, canUpdate); }}>{#if canUpdate}<Pencil size={14} /><span>Edit</span>{:else}<Eye size={14} /><span>View</span>{/if}</button>
+                  {#if canDelete}<button class="record-actions-trigger" type="button" aria-label={`More actions for ${recordSingular} ${(page - 1) * pageSize + rowIndex + 1}`} aria-haspopup="menu" aria-expanded={rowMenuUid === row.uid} onclick={(event) => toggleRowMenu(event, row.uid)}><Ellipsis size={17} /></button>{/if}
+                </div>
+              </td>
             </tr>
           {/each}
         {/if}
@@ -261,5 +338,11 @@
   </div>
   <div class="pagination records-pagination"><span>{rows.length ? `${((page - 1) * pageSize + 1).toLocaleString()}–${Math.min(page * pageSize, total).toLocaleString()} of ${total.toLocaleString()}` : 'No records'}</span><label>Rows<select bind:value={pageSize} onchange={changePageSize}><option value={25}>25</option><option value={50}>50</option><option value={100}>100</option><option value={256}>256</option></select></label><button class="button" disabled={page <= 1 || loading} onclick={() => movePage(1)}>First</button><button class="button" disabled={page <= 1 || loading} onclick={() => movePage(page - 1)}>Previous</button><form onsubmit={goToPage}><label>Page<input type="number" min="1" max={Math.max(1, pages)} bind:value={pageInput} /></label><button class="button" aria-label="Go to page">Go</button></form><span>of {pages}</span><button class="button" disabled={page >= pages || loading} onclick={() => movePage(page + 1)}>Next</button><button class="button" disabled={page >= pages || loading} onclick={() => movePage(pages)}>Last</button></div>
 </section>
+
+{#if canDelete && menuRow && rowMenuAnchor}
+  <div class="record-row-menu" data-record-actions={menuRow.uid} role="menu" aria-label={`${recordSingular} actions`} tabindex="-1" onkeydown={menuKeydown} use:floatingMenu={{ anchor: rowMenuAnchor, close: () => rowMenuUid = '' }}>
+    <button class="danger-text" role="menuitem" type="button" disabled={deletingUid === menuRow.uid} onclick={(event) => removeRecord(menuRow, event)}><Trash2 size={14} />{deletingUid === menuRow.uid ? 'Moving…' : 'Move to trash'}</button>
+  </div>
+{/if}
 
 {#if editor !== undefined && schema}<RecordEditor {schema} {moduleUid} record={editor} canWrite={editor === null ? canCreate : editorWritable && canUpdate} canDelete={editorWritable && canDelete} {canAttachments} allowEdit={editor !== null && canUpdate} {liveMessage} {focusAttachments} recordLabel={recordSingular} onEdit={() => editorWritable = true} onClose={closeEditor} onSaved={() => refresh(true)} />{/if}

@@ -1,4 +1,4 @@
-import { apiFetch, apiJson, apiUpload, jsonRequest } from './client';
+import { apiFile, apiJson, apiUpload, jsonRequest } from './client';
 import type {
   OperationResponse,
   RecoveryCodesResponse,
@@ -18,9 +18,7 @@ export function deleteProfilePhoto(): Promise<OperationResponse> {
 }
 
 export async function loadProfilePhoto(userUid: string, version: number): Promise<Blob> {
-  const response = await apiFetch(`/mx/v1/account/profile-photo/${encodeURIComponent(userUid)}?v=${encodeURIComponent(String(version))}`);
-  if (!response.ok) throw new Error('Profile photo could not be loaded.');
-  return response.blob();
+  return (await apiFile(`/mx/v1/account/profile-photo/${encodeURIComponent(userUid)}?v=${encodeURIComponent(String(version))}`)).blob;
 }
 
 export function updateProfile(input: {

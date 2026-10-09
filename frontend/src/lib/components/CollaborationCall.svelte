@@ -68,6 +68,7 @@
   let heartbeatTimer: number | undefined;
   let clockTimer: number | undefined;
   let ended = false;
+  let heartbeatInFlight = false;
   const callSessionUid = createCallSessionUid();
   // The Workspace retains a rolling event history. A remounted call must not
   // replay the previous session's joined/left events or SDP/ICE messages.
@@ -119,7 +120,7 @@
     void begin();
     const leaveOnPageHide = () => { if (!ended) void leaveCall(channelUid, callSessionUid).catch(() => undefined); };
     window.addEventListener('pagehide', leaveOnPageHide);
-    return () => { window.removeEventListener('pagehide', leaveOnPageHide); window.clearInterval(heartbeatTimer); window.clearInterval(clockTimer); controller?.close(); if (!ended) void leaveCall(channelUid, callSessionUid).catch(() => undefined); };
+    return () => { window.removeEventListener('pagehide', leaveOnPageHide); window.clearInterval(heartbeatTimer); window.clearInterval(clockTimer); controller?.close(); if (!ended) void leaveCall(channelUid, callSessionUid).catch(() => undefined); ended = true; };
   });
 
   $effect(() => {
@@ -146,6 +147,7 @@
     try {
       if (!window.isSecureContext && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') throw new Error('Voice and video calls require MX to be opened through HTTPS.');
       const available = await getCallState(channelUid);
+      if (ended) return;
       controller = new CallController(
         session.uid,
         callSessionUid,
@@ -157,14 +159,18 @@
         () => void screenEnded()
       );
       await controller.start(initialMode);
+      if (ended) { controller?.close(); return; }
       await refreshMediaDevices();
+      if (ended) return;
       const state = await joinCall(channelUid, initialMode, callSessionUid);
+      if (ended) { void leaveCall(channelUid, callSessionUid).catch(() => undefined); return; }
       applyState(state);
       controller.connectToExisting(callPeerIdentities(state.participants, session.uid));
       stage = 'active';
       heartbeatTimer = window.setInterval(() => void heartbeat(), Math.max(8, state.heartbeat_seconds || 15) * 1000);
       clockTimer = window.setInterval(() => clockNow = Date.now(), 1000);
     } catch (reason) {
+      if (ended) return;
       controller?.close();
       controller = null;
       error = callPermissionMessage(reason);
@@ -173,6 +179,7 @@
   }
 
   function applyState(state: CallState) {
+    if (ended) return;
     participants = reconcileCallParticipants(participants, state.participants);
     maxParticipants = state.max_participants || maxParticipants;
     if (state.started_at) callStartedAt = state.started_at;
@@ -193,6 +200,7 @@
   }
 
   async function handleLiveEvent(event: LiveMessage) {
+    if (ended) return;
     if (!event.type.startsWith('call.') || !event.payload || typeof event.payload !== 'object') return;
     const payload = event.payload as Record<string, unknown>;
     if (payload.channel_uid !== channelUid) return;
@@ -246,7 +254,8 @@
   }
 
   async function heartbeat() {
-    if (stage !== 'active' || !localMedia) return;
+    if (ended || heartbeatInFlight || stage !== 'active' || !localMedia) return;
+    heartbeatInFlight = true;
     try {
       applyState(await updateCallParticipant(channelUid, callSessionUid, {
         audio_enabled: localMedia.microphoneEnabled,
@@ -254,10 +263,12 @@
         screen_sharing: localMedia.screenSharing
       }));
     } catch (reason) {
+      if (ended) return;
       // Browsers can throttle timers in long-hidden tabs. Rejoin if the server
       // expired this participant instead of leaving a dead call dock behind.
       try {
         const current = await getCallState(channelUid);
+        if (ended) return;
         if (callSessionWasReplaced(current.participants, session.uid, callSessionUid)) {
           await finish(false, 'replaced');
           return;
@@ -268,6 +279,7 @@
           return;
         }
         const rejoined = await joinCall(channelUid, localMedia.cameraEnabled || localMedia.screenSharing ? 'video' : 'voice', callSessionUid);
+        if (ended) { void leaveCall(channelUid, callSessionUid).catch(() => undefined); return; }
         controller?.setMicrophoneEnabled(localMedia.microphoneEnabled);
         const state = await updateCallParticipant(channelUid, callSessionUid, {
           audio_enabled: localMedia.microphoneEnabled,
@@ -279,7 +291,7 @@
       } catch {
         error = reason instanceof Error ? reason.message : 'The call connection could not be refreshed.';
       }
-    }
+    } finally { heartbeatInFlight = false; }
   }
 
   async function toggleMicrophone() {

@@ -20,9 +20,7 @@ use serde_json::json;
 use uuid::Uuid;
 
 use crate::{
-    api::mx::handler::{
-        n1_access_token, n1_download, n1_ensure_directory, n1_soft_delete, n1_upload,
-    },
+    api::mx::handler::{n1_access_token, n1_download, n1_soft_delete, n1_upload},
     db::connector::{SqliteDatabaseError, with_sql_connection},
     middleware::auth::Claims,
 };
@@ -313,28 +311,6 @@ async fn update_backup_verification(
     .map_err(|error| format!("failed to update MX backup verification metadata: {error}"))
 }
 
-async fn prepare_backup_namespace(
-    token: &str,
-    year: &str,
-    month: &str,
-    day: &str,
-) -> Result<(), String> {
-    for path in [
-        "__mx",
-        "__mx/backups",
-        "__mx/backups/database",
-        &format!("__mx/backups/database/{year}"),
-        &format!("__mx/backups/database/{year}/{month}"),
-        &format!("__mx/backups/database/{year}/{month}/{day}"),
-    ] {
-        n1_ensure_directory(path, token).await.map_err(|error| {
-            format!("N1 could not prepare backup directory '{path}': {error:?}")
-        })?;
-    }
-
-    Ok(())
-}
-
 pub async fn list_backups(claims: Claims) -> Response {
     if !claims.can_manage_accounts() {
         return backup_access_denied();
@@ -506,14 +482,6 @@ pub async fn create_backup(claims: Claims) -> Response {
             );
         }
     };
-
-    if let Err(error) = prepare_backup_namespace(&token, &year, &month, &day).await {
-        let _ = fs::remove_file(&temp_path);
-
-        crate::report_error!(error.clone(), "backup", "create_backup()");
-
-        return backup_error(StatusCode::BAD_GATEWAY, error);
-    }
 
     if let Err(error) = n1_upload(&object_key, "application/vnd.sqlite3", bytes, &token).await {
         let _ = fs::remove_file(&temp_path);

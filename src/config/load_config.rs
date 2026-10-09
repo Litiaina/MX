@@ -53,6 +53,12 @@ pub struct WebRtcConfig {
 }
 
 #[derive(Debug, Clone)]
+pub struct DriveConfig {
+    pub quota_mb: usize,
+    pub public_links: bool,
+}
+
+#[derive(Debug, Clone)]
 pub struct Config {
     pub server: ServerConfigValues,
     pub database: DatabaseConfigValues,
@@ -60,6 +66,7 @@ pub struct Config {
     pub static_hosting: StaticHosting,
     pub n1: N1Config,
     pub webrtc: WebRtcConfig,
+    pub drive: DriveConfig,
 }
 
 pub static CONFIG: LazyLock<Config> = LazyLock::new(|| {
@@ -142,6 +149,39 @@ pub static CONFIG: LazyLock<Config> = LazyLock::new(|| {
     // work on reachable local networks; STUN/TURN should be configured for
     // calls that must traverse NAT or restrictive firewalls.
     let webrtc_section = configuration.section(Some("webrtc"));
+    let drive_section = configuration.section(Some("drive"));
+    let drive_number = |key: &str, default: usize| -> usize {
+        drive_section
+            .and_then(|section| section.get(key))
+            .map(|value| {
+                value
+                    .parse::<usize>()
+                    .ok()
+                    .filter(|number| *number > 0 && *number <= 1_048_576)
+                    .unwrap_or_else(|| {
+                        crate::fatal_error!(
+                            format!("invalid positive MiB value for '[drive] {key}'"),
+                            "static",
+                            "CONFIG"
+                        )
+                    })
+            })
+            .unwrap_or(default)
+    };
+    let drive_public_links = match drive_section
+        .and_then(|section| section.get("public_links"))
+        .unwrap_or("true")
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "true" => true,
+        "false" => false,
+        _ => crate::fatal_error!(
+            "'[drive] public_links' must be true or false",
+            "static",
+            "CONFIG"
+        ),
+    };
 
     /*
      * Server values
@@ -565,6 +605,10 @@ pub static CONFIG: LazyLock<Config> = LazyLock::new(|| {
             turn_username,
             turn_credential,
             max_participants,
+        },
+        drive: DriveConfig {
+            quota_mb: drive_number("quota_mb", 10_240),
+            public_links: drive_public_links,
         },
     }
 });

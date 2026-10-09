@@ -159,20 +159,6 @@ struct N1AuthResponse {
     expires_in: u64,
 }
 
-#[derive(Debug, Clone, Serialize)]
-struct N1MultipartParameters {
-    content_type: String,
-    total_size_bytes: u64,
-    expected_parts: u64,
-    part_size_bytes: u64,
-}
-
-#[derive(Debug, Deserialize)]
-struct N1MultipartSession {
-    session_id: String,
-    version_id: String,
-}
-
 #[derive(Debug)]
 struct CachedN1Token {
     access_token: String,
@@ -421,6 +407,10 @@ fn n1_client() -> Result<&'static Client, MxOperationError> {
 
     let client = Client::builder()
         .danger_accept_invalid_certs(CONFIG.n1.insecure_tls)
+        .connect_timeout(Duration::from_secs(10))
+        // Per-read, not a total download deadline: long range/media streams
+        // may remain open as long as bytes keep arriving.
+        .read_timeout(Duration::from_secs(60))
         .build()
         .map_err(|error| {
             MxOperationError::N1(format!("failed to build N1 HTTP client: {error}"))
@@ -441,7 +431,9 @@ pub(crate) async fn n1_access_token() -> Result<String, MxOperationError> {
     let safety_window = Duration::from_secs(30);
 
     {
-        let guard = n1_token_cache().read().await;
+        let guard = tokio::time::timeout(Duration::from_secs(20), n1_token_cache().read())
+            .await
+            .map_err(|_| MxOperationError::N1("Timed out waiting for N1 authentication".into()))?;
 
         if let Some(cached) = guard.as_ref()
             && cached.expires_at > Instant::now() + safety_window
@@ -450,7 +442,9 @@ pub(crate) async fn n1_access_token() -> Result<String, MxOperationError> {
         }
     }
 
-    let mut guard = n1_token_cache().write().await;
+    let mut guard = tokio::time::timeout(Duration::from_secs(20), n1_token_cache().write())
+        .await
+        .map_err(|_| MxOperationError::N1("Timed out waiting for N1 authentication".into()))?;
 
     // Another request may have refreshed the token while this request waited.
     if let Some(cached) = guard.as_ref()
@@ -462,9 +456,16 @@ pub(crate) async fn n1_access_token() -> Result<String, MxOperationError> {
     let base_url = n1_base_url()?;
     let fragment = n1_fragment()?;
     let secret = n1_secret()?;
+    if fragment == secret {
+        tracing::warn!(
+            "N1 fragment contains the raw secret; using its SHA-256 identifier. Configure [n1].fragment with the identifier, not the secret."
+        );
+    }
+    let fragment = super::n1::fragment_identifier(&fragment, &secret);
 
     let response = n1_client()?
         .post(format!("{base_url}/noa/v1/auth/fragment"))
+        .timeout(Duration::from_secs(20))
         .json(&N1AuthRequest {
             fragment: &fragment,
             secret: &secret,
@@ -483,7 +484,7 @@ pub(crate) async fn n1_access_token() -> Result<String, MxOperationError> {
 
     if !status.is_success() {
         return Err(MxOperationError::N1(format!(
-            "N1 fragment authentication failed with HTTP {status}: {text}"
+            "N1 fragment authentication failed with HTTP {status}; check [n1].fragment (SHA-256 identifier) and N1_MX_SECRET"
         )));
     }
 
@@ -573,248 +574,13 @@ fn configured_attachment_object_key(
     format!("{}/{}", directory_path.trim_end_matches('/'), visible_name)
 }
 
-async fn n1_prepare_directory_path(
-    directory_path: &str,
-    token: &str,
-) -> Result<(), MxOperationError> {
-    let mut current = String::new();
-
-    for component in directory_path
-        .split('/')
-        .map(str::trim)
-        .filter(|component| !component.is_empty())
-    {
-        if !current.is_empty() {
-            current.push('/');
-        }
-        current.push_str(component);
-        n1_ensure_directory(&current, token).await?;
-    }
-
-    Ok(())
-}
-
-pub(crate) async fn n1_ensure_directory(path: &str, token: &str) -> Result<(), MxOperationError> {
-    let base_url = n1_base_url()?;
-
-    let response = n1_client()?
-        .get(format!("{base_url}/noa/v1/posix/stat"))
-        .bearer_auth(token)
-        .query(&[("path", path)])
-        .send()
-        .await
-        .map_err(|error| {
-            MxOperationError::N1(format!("failed to stat N1 directory '{path}': {error}"))
-        })?;
-
-    if response.status().is_success() {
-        return Ok(());
-    }
-
-    if response.status() != StatusCode::NOT_FOUND {
-        let status = response.status();
-        let text = response.text().await.unwrap_or_default();
-
-        return Err(MxOperationError::N1(format!(
-            "N1 stat failed for '{path}' with HTTP {status}: {text}"
-        )));
-    }
-
-    let response = n1_client()?
-        .post(format!("{base_url}/noa/v1/posix/mkdir"))
-        .bearer_auth(token)
-        .json(&json!({ "path": path }))
-        .send()
-        .await
-        .map_err(|error| {
-            MxOperationError::N1(format!("failed to create N1 directory '{path}': {error}"))
-        })?;
-
-    if response.status().is_success() || response.status() == StatusCode::CONFLICT {
-        // 409 is acceptable here because another concurrent request may have
-        // created the same office/date directory after our stat request.
-        return Ok(());
-    }
-
-    let status = response.status();
-    let text = response.text().await.unwrap_or_default();
-
-    Err(MxOperationError::N1(format!(
-        "N1 mkdir failed for '{path}' with HTTP {status}: {text}"
-    )))
-}
-
-#[allow(dead_code)]
-async fn n1_prepare_attachment_directory(
-    office: &str,
-    date: &str,
-    token: &str,
-) -> Result<(), MxOperationError> {
-    let office = office_folder(office);
-    let date_path = format!("{office}/{date}");
-
-    n1_ensure_directory(&office, token).await?;
-    n1_ensure_directory(&date_path, token).await?;
-
-    Ok(())
-}
-
-pub(crate) async fn n1_upload_one_shot(
-    object_key: &str,
-    mime_type: &str,
-    bytes: Vec<u8>,
-    token: &str,
-) -> Result<(), MxOperationError> {
-    let base_url = n1_base_url()?;
-
-    let response = n1_client()?
-        .post(format!("{base_url}/noa/v1/upload/one-shot/{object_key}"))
-        .bearer_auth(token)
-        .header(CONTENT_TYPE, mime_type)
-        .body(bytes)
-        .send()
-        .await
-        .map_err(|error| {
-            MxOperationError::N1(format!("failed to upload '{object_key}' to N1: {error}"))
-        })?;
-
-    let status = response.status();
-
-    if !status.is_success() {
-        let text = response.text().await.unwrap_or_default();
-
-        return Err(MxOperationError::N1(format!(
-            "N1 upload failed for '{object_key}' with HTTP {status}: {text}"
-        )));
-    }
-
-    Ok(())
-}
-
-fn multipart_plan(total_size: usize, configured_part_size_mb: usize) -> (usize, usize) {
-    let part_size = configured_part_size_mb
-        .clamp(5, 100)
-        .saturating_mul(1024 * 1024)
-        .max(1);
-    let expected_parts = total_size.div_ceil(part_size).max(1);
-    (part_size, expected_parts)
-}
-
-async fn n1_cancel_multipart(base_url: &str, object_key: &str, version_id: &str, token: &str) {
-    if let Ok(client) = n1_client() {
-        let _ = client
-            .delete(format!("{base_url}/noa/v1/upload/multipart/{version_id}"))
-            .bearer_auth(token)
-            .query(&[("object_key", object_key)])
-            .send()
-            .await;
-    }
-}
-
-pub(crate) async fn n1_upload_multipart(
-    object_key: &str,
-    mime_type: &str,
-    bytes: Vec<u8>,
-    token: &str,
-) -> Result<(), MxOperationError> {
-    let base_url = n1_base_url()?;
-    let (part_size, expected_parts) = multipart_plan(bytes.len(), CONFIG.n1.multipart_part_size_mb);
-    let parameters = N1MultipartParameters {
-        content_type: mime_type.to_string(),
-        total_size_bytes: bytes.len() as u64,
-        expected_parts: expected_parts as u64,
-        part_size_bytes: part_size as u64,
-    };
-
-    let response = n1_client()?
-        .post(format!(
-            "{base_url}/noa/v1/upload/multipart/init/{object_key}"
-        ))
-        .bearer_auth(token)
-        .json(&parameters)
-        .send()
-        .await
-        .map_err(|error| {
-            MxOperationError::N1(format!(
-                "failed to initialize multipart upload for '{object_key}': {error}"
-            ))
-        })?;
-
-    let status = response.status();
-    if !status.is_success() {
-        let text = response.text().await.unwrap_or_default();
-        return Err(MxOperationError::N1(format!(
-            "N1 multipart initialization failed for '{object_key}' with HTTP {status}: {text}"
-        )));
-    }
-
-    let session = response
-        .json::<N1MultipartSession>()
-        .await
-        .map_err(|error| {
-            MxOperationError::N1(format!(
-                "N1 returned an invalid multipart session for '{object_key}': {error}"
-            ))
-        })?;
-
-    for (part_index, part) in bytes.chunks(part_size).enumerate() {
-        let response = match n1_client()?
-            .put(format!(
-                "{base_url}/noa/v1/upload/multipart/{}/{part_index}",
-                session.version_id
-            ))
-            .bearer_auth(token)
-            .header(CONTENT_TYPE, "application/octet-stream")
-            .header(reqwest::header::CONTENT_LENGTH, part.len())
-            .body(part.to_vec())
-            .send()
-            .await
-        {
-            Ok(response) => response,
-            Err(error) => {
-                n1_cancel_multipart(&base_url, object_key, &session.version_id, token).await;
-                return Err(MxOperationError::N1(format!(
-                    "failed to upload multipart part {part_index} for '{object_key}': {error}"
-                )));
-            }
-        };
-
-        let status = response.status();
-        if !status.is_success() {
-            let text = response.text().await.unwrap_or_default();
-            n1_cancel_multipart(&base_url, object_key, &session.version_id, token).await;
-            return Err(MxOperationError::N1(format!(
-                "N1 multipart part {part_index} failed for '{object_key}' with HTTP {status}: {text}"
-            )));
-        }
-    }
-
-    let response = n1_client()?
-        .post(format!(
-            "{base_url}/noa/v1/upload/multipart/{}/{}/finalize",
-            session.version_id, session.session_id
-        ))
-        .bearer_auth(token)
-        .query(&[("object_key", object_key)])
-        .json(&parameters)
-        .send()
-        .await
-        .map_err(|error| {
-            MxOperationError::N1(format!(
-                "failed to finalize multipart upload for '{object_key}': {error}"
-            ))
-        })?;
-
-    let status = response.status();
-    if !status.is_success() {
-        let text = response.text().await.unwrap_or_default();
-        n1_cancel_multipart(&base_url, object_key, &session.version_id, token).await;
-        return Err(MxOperationError::N1(format!(
-            "N1 multipart finalization failed for '{object_key}' with HTTP {status}: {text}"
-        )));
-    }
-
-    Ok(())
+pub(crate) fn n1_storage(token: &str) -> Result<super::n1::N1Storage<'_>, MxOperationError> {
+    Ok(super::n1::N1Storage::new(
+        n1_client()?,
+        &n1_base_url()?,
+        token,
+        CONFIG.n1.multipart_part_size_mb,
+    ))
 }
 
 pub(crate) async fn n1_upload(
@@ -823,65 +589,19 @@ pub(crate) async fn n1_upload(
     bytes: Vec<u8>,
     token: &str,
 ) -> Result<(), MxOperationError> {
-    let (part_size, _) = multipart_plan(bytes.len(), CONFIG.n1.multipart_part_size_mb);
-    if bytes.len() > part_size {
-        n1_upload_multipart(object_key, mime_type, bytes, token).await
-    } else {
-        n1_upload_one_shot(object_key, mime_type, bytes, token).await
-    }
+    n1_storage(token)?
+        .upload(object_key, mime_type, bytes)
+        .await
 }
 
 pub(crate) async fn n1_soft_delete(object_key: &str) -> Result<(), MxOperationError> {
-    let base_url = n1_base_url()?;
     let token = n1_access_token().await?;
-
-    let response = n1_client()?
-        .delete(format!("{base_url}/noa/v1/objects/{object_key}"))
-        .bearer_auth(token)
-        .send()
-        .await
-        .map_err(|error| {
-            MxOperationError::N1(format!(
-                "failed to soft-delete '{object_key}' from N1: {error}"
-            ))
-        })?;
-
-    if response.status().is_success() || response.status() == StatusCode::NOT_FOUND {
-        return Ok(());
-    }
-
-    let status = response.status();
-    let text = response.text().await.unwrap_or_default();
-
-    Err(MxOperationError::N1(format!(
-        "N1 soft-delete failed for '{object_key}' with HTTP {status}: {text}"
-    )))
+    n1_storage(&token)?.soft_delete(object_key).await
 }
 
 pub(crate) async fn n1_recover(object_key: &str) -> Result<(), MxOperationError> {
-    let base_url = n1_base_url()?;
     let token = n1_access_token().await?;
-
-    let response = n1_client()?
-        .post(format!("{base_url}/noa/v1/objects/recover/{object_key}"))
-        .bearer_auth(token)
-        .send()
-        .await
-        .map_err(|error| {
-            MxOperationError::N1(format!("failed to recover '{object_key}' in N1: {error}"))
-        })?;
-
-    let status = response.status();
-
-    if !status.is_success() {
-        let text = response.text().await.unwrap_or_default();
-
-        return Err(MxOperationError::N1(format!(
-            "N1 recovery failed for '{object_key}' with HTTP {status}: {text}"
-        )));
-    }
-
-    Ok(())
+    n1_storage(&token)?.recover(object_key).await
 }
 
 #[allow(dead_code)]
@@ -890,108 +610,23 @@ async fn n1_rename(
     destination_key: &str,
     token: &str,
 ) -> Result<(), MxOperationError> {
-    if source_key == destination_key {
-        return Ok(());
-    }
-
-    let base_url = n1_base_url()?;
-    let fragment = n1_fragment()?;
-
-    let response = n1_client()?
-        .post(format!("{base_url}/noa/v1/objects/rename"))
-        .bearer_auth(token)
-        .json(&json!({
-            "source_fragment": fragment,
-            "source_key": source_key,
-            "destination_fragment": fragment,
-            "destination_key": destination_key,
-        }))
-        .send()
-        .await
-        .map_err(|error| {
-            MxOperationError::N1(format!(
-                "failed to move N1 object '{source_key}' to '{destination_key}': {error}"
-            ))
-        })?;
-
-    let status = response.status();
-
-    if !status.is_success() {
-        let text = response.text().await.unwrap_or_default();
-
-        return Err(MxOperationError::N1(format!(
-            "N1 move failed from '{source_key}' to '{destination_key}' with HTTP {status}: {text}"
-        )));
-    }
-
-    Ok(())
+    n1_storage(token)?.rename(source_key, destination_key).await
 }
 
 pub(crate) async fn n1_download(
     object_key: &str,
     file_name: &str,
 ) -> Result<Vec<u8>, MxOperationError> {
-    let base_url = n1_base_url()?;
     let token = n1_access_token().await?;
-
-    let response = n1_client()?
-        .get(format!("{base_url}/noa/v1/objects/download"))
-        .bearer_auth(token)
-        .query(&[("object_key", object_key), ("filename", file_name)])
-        .send()
-        .await
-        .map_err(|error| {
-            MxOperationError::N1(format!(
-                "failed to download '{object_key}' from N1: {error}"
-            ))
-        })?;
-
-    let status = response.status();
-
-    if !status.is_success() {
-        let text = response.text().await.unwrap_or_default();
-
-        return Err(MxOperationError::N1(format!(
-            "N1 download failed for '{object_key}' with HTTP {status}: {text}"
-        )));
-    }
-
-    let bytes = response.bytes().await.map_err(|error| {
-        MxOperationError::N1(format!(
-            "failed to read N1 download body for '{object_key}': {error}"
-        ))
-    })?;
-
-    Ok(bytes.to_vec())
+    n1_storage(&token)?.download(object_key, file_name).await
 }
 
 pub(crate) async fn n1_stream(
     object_key: &str,
     range: Option<&str>,
 ) -> Result<reqwest::Response, MxOperationError> {
-    let base_url = n1_base_url()?;
     let token = n1_access_token().await?;
-    let mut request = n1_client()?
-        .get(format!("{base_url}/noa/v1/objects/stream/{object_key}"))
-        .bearer_auth(token);
-
-    if let Some(range) = range.filter(|value| !value.trim().is_empty()) {
-        request = request.header(reqwest::header::RANGE, range);
-    }
-
-    let response = request.send().await.map_err(|error| {
-        MxOperationError::N1(format!("failed to stream '{object_key}' from N1: {error}"))
-    })?;
-    let status = response.status();
-
-    if status.is_success() || status == StatusCode::RANGE_NOT_SATISFIABLE {
-        return Ok(response);
-    }
-
-    let text = response.text().await.unwrap_or_default();
-    Err(MxOperationError::N1(format!(
-        "N1 stream failed for '{object_key}' with HTTP {status}: {text}"
-    )))
+    n1_storage(&token)?.stream(object_key, range).await
 }
 
 fn attachment_extension(file_name: &str) -> Option<String> {
@@ -2544,7 +2179,6 @@ pub async fn execute_upload_mx_attachment(
 
     let size = bytes.len() as u64;
     let token = n1_access_token().await?;
-    n1_prepare_directory_path(&directory_path, &token).await?;
     n1_upload(&object_key, &mime_type, bytes, &token).await?;
 
     let attachment = FileAttachment {
@@ -2631,8 +2265,6 @@ async fn execute_update_entry_with_n1_moves(
 
     if storage_changed && !existing.entry.attached_files.is_empty() {
         let token = n1_access_token().await?;
-
-        n1_prepare_attachment_directory(&request.office, &request.date, &token).await?;
 
         let new_identity = StorageIdentity {
             control_no: existing.entry.control_no,

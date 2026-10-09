@@ -7,13 +7,17 @@
   import Minus from '@lucide/svelte/icons/minus';
   import Plus from '@lucide/svelte/icons/plus';
   import X from '@lucide/svelte/icons/x';
+  import {focusDialog} from '../util/focusDialog';
 
-  let { fileName, load, navigationItems = [], activeIndex = 0, onNavigate = (_index: number) => undefined, onClose }: {
+  let { fileName, load, navigationItems = [], activeIndex = 0, onNavigate = (_index: number) => undefined, externalNavigation, navigationNoun = 'attachment', onStep = (_direction: -1|1) => undefined, onClose }: {
     fileName: string;
     load: () => Promise<{ blob?: Blob; url?: string; fileName: string; mimeType: string }>;
     navigationItems?: { key: string; name: string; detail?: string }[];
     activeIndex?: number;
     onNavigate?: (index: number) => void;
+    externalNavigation?: {previous: {name:string}|null;next:{name:string}|null;position:number;total:number;busy:boolean;error?:string};
+    navigationNoun?: string;
+    onStep?: (direction:-1|1)=>void;
     onClose: () => void;
   } = $props();
 
@@ -41,7 +45,10 @@
   const imageZoomLabel = $derived(`${Math.round(imageZoom * 100)}%`);
   const pdfZoomLabel = $derived(pdfZoom === 'page-width' ? 'Fit width' : `${pdfZoom}%`);
   const pdfSource = $derived(previewUrl ? `${previewUrl}#toolbar=1&navpanes=0&zoom=${pdfZoom}` : '');
-  const hasNavigation = $derived(navigationItems.length > 1);
+  const hasNavigation = $derived(!!externalNavigation || navigationItems.length > 1);
+  const showNavigator = $derived(!externalNavigation && navigationItems.length > 1);
+  let textTruncated=$state(false);
+  const previewController=new AbortController();let disposed=false;
 
   onMount(() => {
     previewName = fileName;
@@ -49,14 +56,15 @@
     void loadPreview();
     const keydown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') { event.preventDefault(); onClose(); return; }
+      if (event.target instanceof Element && event.target.closest('input,textarea,select,[contenteditable="true"],video,audio')) return;
       if (hasNavigation && event.key === 'ArrowLeft' && !event.ctrlKey && !event.metaKey && !event.altKey) {
         event.preventDefault();
-        navigate(activeIndex - 1);
+        step(-1);
         return;
       }
       if (hasNavigation && event.key === 'ArrowRight' && !event.ctrlKey && !event.metaKey && !event.altKey) {
         event.preventDefault();
-        navigate(activeIndex + 1);
+        step(1);
         return;
       }
       if (stage !== 'ready' || event.ctrlKey || event.metaKey || event.altKey) return;
@@ -89,7 +97,7 @@
     };
   });
   let ownsPreviewUrl = false;
-  onDestroy(() => { if (previewUrl && ownsPreviewUrl) URL.revokeObjectURL(previewUrl); });
+  onDestroy(() => { disposed=true;previewController.abort();if (previewUrl && ownsPreviewUrl) URL.revokeObjectURL(previewUrl); });
 
   function previewType(mimeType: string, name: string): typeof previewKind {
     const type = mimeType.toLowerCase(); const lowerName = name.toLowerCase();
@@ -103,6 +111,7 @@
   async function loadPreview() {
     try {
       const result = await load();
+      if(disposed)return;
       previewName = result.fileName || fileName;
       previewMime = result.mimeType || result.blob?.type || 'application/octet-stream';
       previewKind = previewType(previewMime, previewName);
@@ -116,12 +125,19 @@
         throw new Error('MX did not return a preview resource.');
       }
       if (previewKind === 'text') {
-        const blob: Blob = result.blob ?? await fetch(previewUrl).then((response) => {
-          if (!response.ok) throw new Error('The text preview could not be loaded.');
-          return response.blob();
-        });
-        previewText = await blob.text();
+        const maximum=256*1024;
+        if(result.blob){textTruncated=result.blob.size>maximum;previewText=await result.blob.slice(0,maximum).text();}
+        else {
+          const response=await fetch(previewUrl,{headers:{Range:`bytes=0-${maximum-1}`},signal:previewController.signal});
+          if(!response.ok)throw new Error('The text preview could not be loaded.');
+          const range=response.headers.get('content-range');const total=Number(range?.split('/')[1]||response.headers.get('content-length'));
+          textTruncated=total>maximum;
+          const reader=response.body?.getReader();const chunks:Uint8Array[]=[];let size=0;
+          if(reader)try{while(size<maximum){const next=await reader.read();if(next.done)break;const chunk=next.value.slice(0,maximum-size);chunks.push(chunk);size+=chunk.length;if(next.value.length>chunk.length)textTruncated=true;}if(size===maximum&&!total)textTruncated=true;}finally{await reader.cancel().catch(()=>undefined);}
+          const bytes=new Uint8Array(size);let cursor=0;for(const chunk of chunks){bytes.set(chunk,cursor);cursor+=chunk.length;}previewText=new TextDecoder().decode(bytes);
+        }
       }
+      if(disposed)return;
       stage = 'ready';
     } catch (reason) {
       error = reason instanceof Error ? reason.message : 'Preview failed.';
@@ -194,10 +210,11 @@
     if (index < 0 || index >= navigationItems.length || index === activeIndex) return;
     onNavigate(index);
   }
+  function step(direction:-1|1){if(externalNavigation){if(!externalNavigation.busy)onStep(direction);}else navigate(activeIndex+direction);}
 </script>
 
 <div class="overlay preview-overlay" role="presentation" onclick={(event) => event.target === event.currentTarget && onClose()}>
-  <div class="dialog preview-dialog" role="dialog" aria-modal="true" aria-labelledby="collaboration-preview-title">
+  <div class="dialog preview-dialog" use:focusDialog role="dialog" aria-modal="true" aria-labelledby="collaboration-preview-title" tabindex="-1">
     <header class:has-navigation={hasNavigation} class="dialog-head preview-head">
       <div class="preview-heading">
         <h2 id="collaboration-preview-title">{fileName}</h2>
@@ -205,9 +222,9 @@
       </div>
       {#if hasNavigation}
         <div class="preview-navigation" role="toolbar" aria-label="Attachment navigation">
-          <button type="button" onclick={() => navigate(activeIndex - 1)} disabled={activeIndex <= 0} aria-label="Previous attachment" title="Previous attachment (Left arrow)"><ChevronLeft size={16} /></button>
-          <output aria-live="polite">{activeIndex + 1} of {navigationItems.length}</output>
-          <button type="button" onclick={() => navigate(activeIndex + 1)} disabled={activeIndex >= navigationItems.length - 1} aria-label="Next attachment" title="Next attachment (Right arrow)"><ChevronRight size={16} /></button>
+          <button type="button" onclick={() => step(-1)} disabled={externalNavigation ? externalNavigation.busy||!externalNavigation.previous : activeIndex<=0} aria-label={`Previous ${navigationNoun}`} title={`Previous ${navigationNoun} (Left arrow)`}><ChevronLeft size={16} /></button>
+          <output aria-live="polite">{externalNavigation?.busy ? 'Loading…' : externalNavigation ? `${externalNavigation.position} of ${externalNavigation.total}` : `${activeIndex+1} of ${navigationItems.length}`}</output>
+          <button type="button" onclick={() => step(1)} disabled={externalNavigation ? externalNavigation.busy||!externalNavigation.next : activeIndex>=navigationItems.length-1} aria-label={`Next ${navigationNoun}`} title={`Next ${navigationNoun} (Right arrow)`}><ChevronRight size={16} /></button>
         </div>
       {/if}
       {#if stage === 'ready' && (previewKind === 'image' || previewKind === 'pdf' || previewKind === 'text')}
@@ -237,9 +254,11 @@
         </div>
       {/if}
       <button class="icon-button preview-close" type="button" aria-label="Close preview" onclick={onClose}><X size={18} /></button>
+      {#if externalNavigation?.error}<p role="alert" class="preview-navigation-error" style="grid-column:1/-1">{externalNavigation.error}</p>{/if}
+      {#if textTruncated}<p role="status" class="preview-navigation-error" style="grid-column:1/-1">Showing the first 256 KiB. Download or open the file separately to read the rest.</p>{/if}
     </header>
-    <div class:with-navigator={hasNavigation} class="preview-workspace">
-      {#if hasNavigation}
+    <div class:with-navigator={showNavigator} class="preview-workspace">
+      {#if showNavigator}
         <aside class="preview-navigator" aria-label="Record attachments">
           <header><strong>Attachments</strong><span>{navigationItems.length}</span></header>
           <div>{#each navigationItems as item, index (item.key)}<button class:active={index === activeIndex} type="button" aria-current={index === activeIndex ? 'true' : undefined} onclick={() => navigate(index)}><span><FileText size={15} /></span><span><strong>{item.name}</strong>{#if item.detail}<small>{item.detail}</small>{/if}</span><i>{index + 1}</i></button>{/each}</div>

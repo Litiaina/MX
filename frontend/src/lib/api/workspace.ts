@@ -1,4 +1,5 @@
-import { apiFetch, apiJson, apiUpload, jsonRequest } from './client';
+import { apiFile, apiJson, apiUpload, jsonRequest } from './client';
+import { operationUid } from './operation';
 import type {
   ActionRateRow, AuditPage, BackupEntry, DashboardConfigResponse, DashboardWidget,
   DeploymentConfig, DeploymentResponse, FieldDefinition, JsonValue, MxRecord, PresenceResponse,
@@ -39,13 +40,12 @@ export function listRecords(query: { page?: number; limit?: number; q?: string; 
   return apiJson<RecordPage>(`${base}?${params}`);
 }
 export const getRecord = (uid: string, moduleUid?: string) => apiJson<MxRecord>(moduleUid ? `/mx/v1/modules/${encodeURIComponent(moduleUid)}/records/${encodeURIComponent(uid)}` : `/mx/v1/records/${encodeURIComponent(uid)}`);
-export const createRecord = (values: Record<string, JsonValue>, moduleUid?: string) => apiJson<MxRecord>(moduleUid ? `/mx/v1/modules/${encodeURIComponent(moduleUid)}/records` : '/mx/v1/records', jsonRequest('POST', { values }));
+export const createRecord = (values: Record<string, JsonValue>, moduleUid?: string, operation_uid = operationUid()) => apiJson<MxRecord>(moduleUid ? `/mx/v1/modules/${encodeURIComponent(moduleUid)}/records` : '/mx/v1/records', { ...jsonRequest('POST', { values, operation_uid }), retrySafe: true, maxAttempts: 2, timeoutMs: 30_000 });
 export const patchRecord = (uid: string, changes: Record<string, JsonValue>, base_revision: number, moduleUid?: string) =>
   apiJson<MxRecord>(moduleUid ? `/mx/v1/modules/${encodeURIComponent(moduleUid)}/records/${encodeURIComponent(uid)}` : `/mx/v1/records/${encodeURIComponent(uid)}`, jsonRequest('PATCH', { changes, base_revision }));
 export const deleteRecord = async (uid: string, moduleUid?: string) => {
   const path = moduleUid ? `/mx/v1/modules/${encodeURIComponent(moduleUid)}/records/${encodeURIComponent(uid)}` : `/mx/v1/records/${encodeURIComponent(uid)}`;
-  const response = await apiFetch(path, { method: 'DELETE' });
-  if (!response.ok) throw new Error((await response.json().catch(() => null))?.response || 'Could not delete record.');
+  await apiJson<void>(path, { method: 'DELETE' });
 };
 function recordPath(uid: string, moduleUid?: string) { return moduleUid ? `/mx/v1/modules/${encodeURIComponent(moduleUid)}/records/${encodeURIComponent(uid)}` : `/mx/v1/records/${encodeURIComponent(uid)}`; }
 export const listRecordVersions = (uid: string, moduleUid?: string) => apiJson<{ versions: RecordVersionSummary[] }>(`${recordPath(uid,moduleUid)}/versions`);
@@ -62,17 +62,14 @@ export async function uploadAttachments(recordUid: string, fieldUid: string, fil
   return apiUpload<{ attachments: unknown[]; record_revision: number }>(`/mx/v1/records/${encodeURIComponent(recordUid)}/attachments/fields/${encodeURIComponent(fieldUid)}`, body, onProgress);
 }
 export const deleteAttachment = async (recordUid: string, attachmentUid: string, baseRevision: number) => {
-  const response = await apiFetch(`/mx/v1/records/${encodeURIComponent(recordUid)}/attachments/${encodeURIComponent(attachmentUid)}?base_revision=${encodeURIComponent(baseRevision)}`, { method: 'DELETE' });
-  if (!response.ok) throw new Error((await response.json().catch(() => null))?.response || 'Could not delete attachment.');
-  return response.json() as Promise<{ response: string; record_revision: number }>;
+  return apiJson<{ response: string; record_revision: number }>(`/mx/v1/records/${encodeURIComponent(recordUid)}/attachments/${encodeURIComponent(attachmentUid)}?base_revision=${encodeURIComponent(baseRevision)}`, { method: 'DELETE' });
 };
 
 export async function download(path: string, fallbackName: string) {
-  const response = await apiFetch(path);
-  if (!response.ok) throw new Error((await response.json().catch(() => null))?.response || 'Download failed.');
-  const disposition = response.headers.get('content-disposition') || '';
+  const { blob, headers } = await apiFile(path);
+  const disposition = headers.get('content-disposition') || '';
   const fileName = /filename="?([^";]+)"?/i.exec(disposition)?.[1] || fallbackName;
-  const url = URL.createObjectURL(await response.blob());
+  const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url; link.download = fileName; link.click();
   URL.revokeObjectURL(url);
@@ -84,15 +81,13 @@ export async function previewAttachment(recordUid: string, attachmentUid: string
     const ticket = await issueRecordAttachmentPreviewTicket(recordUid, attachmentUid);
     return { url: ticket.url, fileName: ticket.file_name || fileName, mimeType: ticket.mime_type || mimeType || 'application/octet-stream' };
   }
-  const response = await apiFetch(path);
-  if (!response.ok) throw new Error((await response.json().catch(() => null))?.response || 'Preview failed.');
-  const disposition = response.headers.get('content-disposition') || '';
-  const blob = await response.blob();
+  const { blob, headers } = await apiFile(path);
+  const disposition = headers.get('content-disposition') || '';
   return {
     blob,
     url: undefined,
     fileName: /filename="?([^";]+)"?/i.exec(disposition)?.[1] || '',
-    mimeType: response.headers.get('content-type') || blob.type || 'application/octet-stream'
+    mimeType: headers.get('content-type') || blob.type || 'application/octet-stream'
   };
 }
 
@@ -138,9 +133,7 @@ export const uploadNotificationSound = (file: File, onProgress?: (loaded: number
 export const deleteNotificationSound = () => apiJson<{ response: string }>('/mx/v1/account/notification-sound', { method: 'DELETE' });
 export async function loadNotificationSound(version?: number) {
   const suffix = version ? `?v=${encodeURIComponent(String(version))}` : '';
-  const response = await apiFetch(`/mx/v1/account/notification-sound${suffix}`);
-  if (!response.ok) throw new Error((await response.json().catch(() => null))?.response || 'Could not load the notification sound.');
-  return response.blob();
+  return (await apiFile(`/mx/v1/account/notification-sound${suffix}`)).blob;
 }
 export const loadNotifications = (unreadOnly = false) =>
   apiJson<{ notifications: MxNotification[]; unread: number }>(`/mx/v1/notifications?unread_only=${unreadOnly}`);
@@ -163,8 +156,7 @@ export const listChannelMembers = (channelUid: string) =>
 export const saveChannelMember = (channelUid: string, user_uid: string, role: 'owner' | 'admin' | 'member' = 'member') =>
   apiJson<{ response: string; member: ChannelMember }>(`/mx/v1/collaboration/channels/${encodeURIComponent(channelUid)}/members`, jsonRequest('POST', { user_uid, role }));
 export const removeChannelMember = async (channelUid: string, userUid: string) => {
-  const response = await apiFetch(`/mx/v1/collaboration/channels/${encodeURIComponent(channelUid)}/members/${encodeURIComponent(userUid)}`, { method: 'DELETE' });
-  if (!response.ok) throw new Error((await response.json().catch(() => null))?.response || 'Could not remove the space member.');
+  await apiJson<void>(`/mx/v1/collaboration/channels/${encodeURIComponent(channelUid)}/members/${encodeURIComponent(userUid)}`, { method: 'DELETE' });
 };
 export const searchChannel = (channelUid: string, q: string, limit = 50) =>
   apiJson<{ messages: ChatMessage[] }>(`/mx/v1/collaboration/channels/${encodeURIComponent(channelUid)}/search?q=${encodeURIComponent(q)}&limit=${limit}`);
@@ -175,13 +167,12 @@ export const listMessages = (channelUid: string, before?: number) => {
   const query = params.size ? `?${params}` : '';
   return apiJson<{ messages: ChatMessage[]; pinned_messages: ChatMessage[]; read_states: ChannelReadState[]; has_more: boolean; page_size: number }>(`/mx/v1/collaboration/channels/${encodeURIComponent(channelUid)}/messages${query}`);
 };
-export const sendMessage = (channelUid: string, body: string, mention_uids: string[] = [], record_uids: string[] = [], reply_to_uid: string | null = null) =>
-  apiJson<{ message: ChatMessage }>(`/mx/v1/collaboration/channels/${encodeURIComponent(channelUid)}/messages`, jsonRequest('POST', { body, mention_uids, record_uids, reply_to_uid }));
+export const sendMessage = (channelUid: string, body: string, mention_uids: string[] = [], record_uids: string[] = [], reply_to_uid: string | null = null, operation_uid = operationUid()) =>
+  apiJson<{ message: ChatMessage }>(`/mx/v1/collaboration/channels/${encodeURIComponent(channelUid)}/messages`, { ...jsonRequest('POST', { body, mention_uids, record_uids, reply_to_uid, operation_uid }), retrySafe: true, maxAttempts: 2, timeoutMs: 30_000 });
 export const editMessage = (messageUid: string, body: string) =>
   apiJson<{ message: ChatMessage }>(`/mx/v1/collaboration/messages/${encodeURIComponent(messageUid)}`, jsonRequest('PUT', { body }));
 export const deleteMessage = async (messageUid: string) => {
-  const response = await apiFetch(`/mx/v1/collaboration/messages/${encodeURIComponent(messageUid)}`, { method: 'DELETE' });
-  if (!response.ok) throw new Error((await response.json().catch(() => null))?.response || 'Could not delete the message.');
+  await apiJson<void>(`/mx/v1/collaboration/messages/${encodeURIComponent(messageUid)}`, { method: 'DELETE' });
 };
 export const toggleMessageReaction = (messageUid: string, emoji: string) =>
   apiJson<{ message: ChatMessage }>(`/mx/v1/collaboration/messages/${encodeURIComponent(messageUid)}/reactions`, jsonRequest('POST', { emoji }));
@@ -199,20 +190,18 @@ export const updateCallParticipant = (channelUid: string, session_uid: string, u
 export const leaveCall = (channelUid: string, sessionUid: string) =>
   apiJson<void>(`/mx/v1/collaboration/channels/${encodeURIComponent(channelUid)}/call?session_uid=${encodeURIComponent(sessionUid)}`, { method: 'DELETE', keepalive: true });
 export const sendCallSignal = (channelUid: string, recipient_uid: string, sender_session_uid: string, recipient_session_uid: string, kind: CallSignalKind, data: object) =>
-  apiJson<void>(`/mx/v1/collaboration/channels/${encodeURIComponent(channelUid)}/call/signal`, jsonRequest('POST', { recipient_uid, sender_session_uid, recipient_session_uid, kind, data }));
+  apiJson<void>(`/mx/v1/collaboration/channels/${encodeURIComponent(channelUid)}/call/signal`, { ...jsonRequest('POST', { recipient_uid, sender_session_uid, recipient_session_uid, kind, data }), timeoutMs: 8000 });
 export const uploadMessageFile = (messageUid: string, file: File, onProgress?: (loaded: number, total: number) => void) => {
   const body = new FormData(); body.append('file', file);
   return apiUpload<{ file: unknown }>(`/mx/v1/collaboration/messages/${encodeURIComponent(messageUid)}/files`, body, onProgress);
 };
 export async function previewMessageFile(fileUid: string) {
-  const response = await apiFetch(`/mx/v1/collaboration/files/${encodeURIComponent(fileUid)}/preview`);
-  if (!response.ok) throw new Error((await response.json().catch(() => null))?.response || 'Preview failed.');
-  const disposition = response.headers.get('content-disposition') || '';
-  const blob = await response.blob();
+  const { blob, headers } = await apiFile(`/mx/v1/collaboration/files/${encodeURIComponent(fileUid)}/preview`);
+  const disposition = headers.get('content-disposition') || '';
   return {
     blob,
     fileName: /filename="?([^";]+)"?/i.exec(disposition)?.[1] || '',
-    mimeType: response.headers.get('content-type') || blob.type || 'application/octet-stream'
+    mimeType: headers.get('content-type') || blob.type || 'application/octet-stream'
   };
 }
 export const issueMessageFilePreviewTicket = (fileUid: string) =>

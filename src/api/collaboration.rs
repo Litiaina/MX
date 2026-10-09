@@ -32,10 +32,11 @@ use crate::{
         modules::module_can_for_user,
         mx::handler::{
             generate_office_pdf_preview, inline_attachment_response, n1_access_token, n1_download,
-            n1_ensure_directory, n1_soft_delete, n1_stream, n1_upload, office_preview_supported,
+            n1_soft_delete, n1_stream, n1_upload, office_preview_supported,
         },
         mx::model::FileAttachment,
         notifications::{NewNotification, ensure_notification_schema, notify_user},
+        operations::{self, ClientOperation},
     },
     config::load_config::CONFIG,
     db::connector::{SqliteDatabaseError, with_sql_connection},
@@ -43,7 +44,7 @@ use crate::{
 };
 
 type MessageInsertResult =
-    Result<(ChatMessage, Vec<(String, String)>, Vec<String>), SqliteDatabaseError>;
+    Result<(ChatMessage, Vec<(String, String)>, Vec<String>, bool), SqliteDatabaseError>;
 type ChannelReadAdvance = (ChannelReadState, Vec<(String, String)>, bool, usize);
 type MessagePage = (
     Vec<ChatMessage>,
@@ -227,6 +228,7 @@ pub struct SendMessageRequest {
     pub mention_uids: Vec<String>,
     #[serde(default)]
     pub record_uids: Vec<String>,
+    pub operation_uid: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -284,34 +286,9 @@ pub(crate) fn ensure_collaboration_schema(
 ) -> rusqlite::Result<()> {
     ensure_record_lifecycle_schema(connection)?;
     ensure_profile_photo_schema(connection)?;
+    ensure_space_directory_schema(connection)?;
     connection.execute_batch(
         r#"
-        CREATE TABLE IF NOT EXISTS mx_channels (
-            uid          TEXT PRIMARY KEY NOT NULL,
-            kind         TEXT NOT NULL CHECK(kind IN ('channel','group','direct')),
-            name         TEXT NOT NULL,
-            description  TEXT NOT NULL DEFAULT '',
-            direct_key   TEXT UNIQUE,
-            created_by   TEXT NOT NULL,
-            created_at   INTEGER NOT NULL,
-            archived_at  INTEGER,
-            invite_policy TEXT NOT NULL DEFAULT 'admins' CHECK(invite_policy IN ('owner','admins','members')),
-            FOREIGN KEY(created_by) REFERENCES users(uid) ON DELETE RESTRICT
-        );
-
-        CREATE TABLE IF NOT EXISTS mx_channel_members (
-            channel_uid        TEXT NOT NULL,
-            user_uid           TEXT NOT NULL,
-            role               TEXT NOT NULL DEFAULT 'member' CHECK(role IN ('owner','admin','member')),
-            notification_level TEXT NOT NULL DEFAULT 'all' CHECK(notification_level IN ('all','mentions','muted')),
-            joined_at          INTEGER NOT NULL,
-            last_read_at       INTEGER NOT NULL DEFAULT 0,
-            last_read_message_id INTEGER NOT NULL DEFAULT 0,
-            PRIMARY KEY(channel_uid, user_uid),
-            FOREIGN KEY(channel_uid) REFERENCES mx_channels(uid) ON DELETE CASCADE,
-            FOREIGN KEY(user_uid) REFERENCES users(uid) ON DELETE CASCADE
-        );
-
         CREATE TABLE IF NOT EXISTS mx_messages (
             uid           TEXT PRIMARY KEY NOT NULL,
             channel_uid   TEXT NOT NULL,
@@ -432,6 +409,25 @@ pub(crate) fn ensure_collaboration_schema(
         [],
     )?;
     Ok(())
+}
+
+/// Drive's space grants depend only on this directory, not message/record tables.
+pub(crate) fn ensure_space_directory_schema(connection: &rusqlite::Connection) -> rusqlite::Result<()> {
+    connection.execute_batch(r#"
+      CREATE TABLE IF NOT EXISTS mx_channels (
+        uid TEXT PRIMARY KEY NOT NULL,kind TEXT NOT NULL CHECK(kind IN ('channel','group','direct')),
+        name TEXT NOT NULL,description TEXT NOT NULL DEFAULT '',direct_key TEXT UNIQUE,
+        created_by TEXT NOT NULL REFERENCES users(uid) ON DELETE RESTRICT,created_at INTEGER NOT NULL,
+        archived_at INTEGER,invite_policy TEXT NOT NULL DEFAULT 'admins' CHECK(invite_policy IN ('owner','admins','members')));
+      CREATE TABLE IF NOT EXISTS mx_channel_members (
+        channel_uid TEXT NOT NULL REFERENCES mx_channels(uid) ON DELETE CASCADE,
+        user_uid TEXT NOT NULL REFERENCES users(uid) ON DELETE CASCADE,
+        role TEXT NOT NULL DEFAULT 'member' CHECK(role IN ('owner','admin','member')),
+        notification_level TEXT NOT NULL DEFAULT 'all' CHECK(notification_level IN ('all','mentions','muted')),
+        joined_at INTEGER NOT NULL,last_read_at INTEGER NOT NULL DEFAULT 0,last_read_message_id INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY(channel_uid,user_uid));
+      CREATE INDEX IF NOT EXISTS idx_mx_channel_members_user ON mx_channel_members(user_uid,channel_uid);
+    "#)
 }
 
 pub async fn list_collaboration_people(claims: Claims) -> Response {
@@ -1662,6 +1658,13 @@ pub async fn send_message(
     Path(channel_uid): Path<String>,
     Json(request): Json<SendMessageRequest>,
 ) -> Response {
+    let operation = match ClientOperation::parse(
+        request.operation_uid.clone(),
+        &json!({"body":request.body,"reply":request.reply_to_uid,"mentions":request.mention_uids,"records":request.record_uids}),
+    ) {
+        Ok(operation) => operation,
+        Err(message) => return api_json(StatusCode::BAD_REQUEST, json!({"response":message})),
+    };
     let body = clean_message_text(&request.body, 20_000);
     if body.is_empty() {
         return api_json(
@@ -1680,12 +1683,17 @@ pub async fn send_message(
     let result = tokio::task::spawn_blocking(move || -> MessageInsertResult {
         with_sql_connection(|connection| {
             ensure_collaboration_schema(connection)?;
+            operations::ensure_schema(connection)?;
             if member_role(connection, &channel_uid, &sender_uid)?.is_none() { return Err(rusqlite::Error::QueryReturnedNoRows); }
+            let transaction = rusqlite::Transaction::new_unchecked(connection, rusqlite::TransactionBehavior::Immediate)?;
+            let scope = format!("message:create:{channel_uid}");
+            if let Some(existing_uid) = operations::existing(&transaction, &sender_uid, &scope, operation.as_ref())? {
+                return Ok((load_message(&transaction, &existing_uid, &sender_uid, access_level)?, vec![], vec![], false));
+            }
             if let Some(reply_uid) = reply_to.as_deref() {
                 let valid: bool = connection.query_row("SELECT EXISTS(SELECT 1 FROM mx_messages WHERE uid = ?1 AND channel_uid = ?2 AND deleted_at IS NULL)", params![reply_uid, channel_uid], |row| row.get(0))?;
                 if !valid { return Err(rusqlite::Error::InvalidParameterName("the message being replied to is unavailable".to_string())); }
             }
-            let transaction = connection.unchecked_transaction()?;
             let now = chrono::Utc::now().timestamp_millis();
             transaction.execute(
                 "INSERT INTO mx_messages(uid, channel_uid, sender_uid, body, reply_to_uid, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -1712,13 +1720,17 @@ pub async fn send_message(
                 }
                 transaction.execute("INSERT OR IGNORE INTO mx_message_record_links(message_uid, record_uid) VALUES (?1, ?2)", params![message_uid, record_uid])?;
             }
+            operations::complete(&transaction, &sender_uid, &scope, operation.as_ref(), &message_uid)?;
             transaction.commit()?;
             let message = load_message(connection, &message_uid, &sender_uid, access_level)?;
-            Ok((message, members, mentions))
+            Ok((message, members, mentions, true))
         })
     }).await;
     match result {
-        Ok(Ok((message, members, mentions))) => {
+        Ok(Ok((message, members, mentions, created))) => {
+            if !created {
+                return api_json(StatusCode::OK, json!({"uid":message.uid,"message":message}));
+            }
             let message_json = live_message_payload(&message);
             for (member_uid, _) in &members {
                 publish_user_event(
@@ -1770,7 +1782,15 @@ pub async fn send_message(
             json!({"response":"you are not a member of this channel"}),
         ),
         Ok(Err(SqliteDatabaseError::Sqlite(rusqlite::Error::InvalidParameterName(message)))) => {
-            api_json(StatusCode::BAD_REQUEST, json!({"response":message}))
+            let status = if message.starts_with("MX_OPERATION:") {
+                StatusCode::CONFLICT
+            } else {
+                StatusCode::BAD_REQUEST
+            };
+            api_json(
+                status,
+                json!({"response":message.strip_prefix("MX_OPERATION:").unwrap_or(&message)}),
+            )
         }
         _ => api_json(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -2288,26 +2308,6 @@ pub async fn upload_message_file(
             );
         }
     };
-    for directory in [
-        "__mx".to_string(),
-        "__mx/collaboration".to_string(),
-        format!(
-            "__mx/collaboration/{}",
-            safe_component(&channel_uid, "channel")
-        ),
-        format!(
-            "__mx/collaboration/{}/{}",
-            safe_component(&channel_uid, "channel"),
-            safe_component(&message_uid, "message")
-        ),
-    ] {
-        if n1_ensure_directory(&directory, &token).await.is_err() {
-            return api_json(
-                StatusCode::BAD_GATEWAY,
-                json!({"response":"N1 could not prepare collaboration storage"}),
-            );
-        }
-    }
     if n1_upload(&object_key, &mime_type, bytes.clone().to_vec(), &token)
         .await
         .is_err()

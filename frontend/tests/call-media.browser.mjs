@@ -5,15 +5,17 @@ import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isolatedBrowserAudio } from './silent-audio.mjs';
 
 const projectRoot = fileURLToPath(new URL('../', import.meta.url));
+const browserAudio = isolatedBrowserAudio();
 const artifacts = await mkdtemp(join(tmpdir(), 'mx-call-media-'));
 const server = await createServer({ root: projectRoot, logLevel: 'error', server: { host: '127.0.0.1', port: 5187, strictPort: true, hmr: false } });
 let browser;
 try {
   await server.listen();
-  browser = await chromium.launch({ executablePath: process.env.MX_BROWSER_EXECUTABLE || undefined, headless: true,
-    args: ['--no-sandbox', '--autoplay-policy=no-user-gesture-required', '--disable-background-timer-throttling', '--disable-renderer-backgrounding',
+  browser = await chromium.launch({ executablePath: process.env.MX_BROWSER_EXECUTABLE || undefined, headless: true, env: browserAudio,
+    args: ['--no-sandbox', '--mute-audio', '--autoplay-policy=no-user-gesture-required', '--disable-background-timer-throttling', '--disable-renderer-backgrounding',
       '--auto-select-tab-capture-source-by-title=MX Self Share Test', '--auto-accept-this-tab-capture', '--allow-http-screen-capture'] });
   const pages = new Map();
   const errors = [];
@@ -97,4 +99,3 @@ try {
   assert.deepEqual(await source.evaluate(() => window.testCall.state().errors), []);
   console.log(JSON.stringify({ passed: true, actualTabCapture: realCapture, errors, artifacts }));
 } finally { await browser?.close(); await server.close(); }
-

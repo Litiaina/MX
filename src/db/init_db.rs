@@ -231,6 +231,7 @@ pub async fn initialize_sql_db() {
             // remain default-denied until an administrator explicitly grants
             // modules.
             ensure_module_schema(connection)?;
+            crate::api::drive::ensure_drive_schema(connection)?;
             ensure_record_collaboration_schema(connection)?;
 
             let journal_mode: String =

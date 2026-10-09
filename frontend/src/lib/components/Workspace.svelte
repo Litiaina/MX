@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy, untrack } from 'svelte';
   import Phone from '@lucide/svelte/icons/phone';
   import PhoneIncoming from '@lucide/svelte/icons/phone-incoming';
   import PhoneOff from '@lucide/svelte/icons/phone-off';
@@ -20,6 +20,9 @@
   import AccountSecurity from './AccountSecurity.svelte';
   import AdminView from './AdminView.svelte';
   import CollaborationView from './CollaborationView.svelte';
+  import DriveView from './DriveView.svelte';
+  import DriveUploadPanel from './DriveUploadPanel.svelte';
+  import { createDriveUploads } from '../drive/uploads.svelte';
   import CollaborationCall from './CollaborationCall.svelte';
   import DashboardView from './DashboardView.svelte';
   import DisplaySettingsDialog from './DisplaySettingsDialog.svelte';
@@ -30,7 +33,14 @@
 
   let { session, deployment, onSessionChanged, onSessionEnded, onDeploymentChanged }:
     { session: Session; deployment: DeploymentConfig; onSessionChanged: () => Promise<unknown>; onSessionEnded: (message: string) => void; onDeploymentChanged: () => Promise<void> } = $props();
-  type View = 'dashboard' | 'records' | 'collaboration' | 'admin' | 'account';
+  type View = 'dashboard' | 'records' | 'collaboration' | 'drive' | 'admin' | 'account';
+  const driveUploads = untrack(() => createDriveUploads(session.uid));
+  onDestroy(() => driveUploads.dispose());
+  onMount(() => {
+    const warnUploads = (event: BeforeUnloadEvent) => { if (driveUploads.active()) { event.preventDefault(); event.returnValue = ''; } };
+    window.addEventListener('beforeunload', warnUploads);
+    return () => window.removeEventListener('beforeunload', warnUploads);
+  });
   let view = $state<View>('dashboard');
   let recordRevision = $state(0); let dashboardRevision = $state(0); let adminRevision = $state(0);
   let live = $state(false); let mobileOpen = $state(false); let settingsOpen = $state(false);
@@ -66,7 +76,7 @@
   const accentPresets = ['#1d4ed8', '#047857', '#6d28d9', '#b45309', '#be123c', '#0e7490'];
   const selectedModule = $derived(modules.find((module) => module.uid === selectedModuleUid) || null);
   const selectedModulePermission = $derived(selectedModule?.effective_permission || selectedModule?.permissions.find((permission) => permission.access_level === session.access_level) || null);
-  const viewTitle = $derived(view === 'dashboard' ? deployment.terminology.dashboard_label : view === 'records' ? (selectedModule?.name || deployment.terminology.record_plural) : view === 'collaboration' ? 'Collaboration' : view === 'admin' ? deployment.terminology.administration_label : 'My account');
+  const viewTitle = $derived(view === 'dashboard' ? deployment.terminology.dashboard_label : view === 'records' ? (selectedModule?.name || deployment.terminology.record_plural) : view === 'collaboration' ? 'Collaboration' : view === 'drive' ? 'MX Drive' : view === 'admin' ? deployment.terminology.administration_label : 'My account');
   const incomingCall = $derived(ongoingCalls
     .filter((call) => call.channel_uid !== activeCall?.channelUid && !call.participants.some((participant) => participant.user_uid === session.uid) && !dismissedCallUids.includes(call.channel_uid))
     .sort((left, right) => right.started_at - left.started_at)[0] || null);
@@ -81,7 +91,7 @@
     if (!fromHash) history.replaceState(null, '', `#${view}`);
     const client = new MxLiveClient(handleLive, (connected) => {
       live = connected;
-      if (connected) { dashboardRevision += 1; void refreshOngoingCalls(); }
+      if (connected) resynchronize();
     });
     client.start();
     const handleHash = () => { const next = hashView(); if (next) { view = next; selectModuleFromHash(); mobileOpen = false; } };
@@ -103,7 +113,8 @@
       selectModuleFromHash();
       if (!modules.some((module) => module.uid === selectedModuleUid)) selectedModuleUid = modules[0]?.uid || 'mx-default-records';
     } catch {
-      modules = [];
+      // Keep the last acknowledged navigation through a transient outage.
+      // Every module/data request still enforces current server permissions.
     }
   }
 
@@ -143,7 +154,7 @@
     if (next === 'admin') return session.access_level === 0;
     return true;
   }
-  function hashView(): View | null { if (/^#\/?module\//.test(location.hash)) return allowed('records') ? 'records' : null; const candidate = location.hash.replace(/^#\/?/, '').split('?')[0] as View; return ['dashboard', 'records', 'collaboration', 'admin', 'account'].includes(candidate) && allowed(candidate) ? candidate : null; }
+  function hashView(): View | null { if (/^#\/?module\//.test(location.hash)) return allowed('records') ? 'records' : null; const candidate = location.hash.replace(/^#\/?/, '').split('?')[0] as View; return ['dashboard', 'records', 'collaboration', 'drive', 'admin', 'account'].includes(candidate) && allowed(candidate) ? candidate : null; }
   function handleLive(message: LiveMessage) {
     if (message.type === 'notification.created' || message.type.startsWith('notification.')) {
       notificationRevision += 1;
@@ -164,14 +175,20 @@
     if (message.type.startsWith('module.')) { void loadWorkspaceModules(); recordRevision += 1; dashboardRevision += 1; return; }
     if (message.type === 'presence.changed') { dashboardRevision += 1; collaborationRevision += 1; return; }
     if (message.type === 'sync.required') {
-      recordRevision += 1;
-      dashboardRevision += 1;
-      lastRecordEvent = message;
+      resynchronize();
       return;
     }
     if (message.type.startsWith('record.') || message.type.startsWith('attachment.') || message.type.startsWith('schema.')) { recordRevision += 1; lastRecordEvent = message; }
     if (message.type.startsWith('record.') || message.type.startsWith('attachment.') || message.type === 'dashboard.updated') dashboardRevision += 1;
     if (message.type === 'deployment.updated') void onDeploymentChanged();
+  }
+  function resynchronize() {
+    recordRevision += 1; dashboardRevision += 1; adminRevision += 1;
+    notificationRevision += 1; collaborationRevision += 1;
+    lastRecordEvent = { type: 'sync.required' };
+    lastCollaborationEvent = { type: 'sync.required' };
+    void loadWorkspaceModules(); void refreshUnreadCount(); void refreshOngoingCalls();
+    void loadAccountPreferences(); void onDeploymentChanged();
   }
   async function startCollaborationCall(channel: CollaborationChannel, mode: CallMode) {
     if (activeCall?.channelUid === channel.uid) return;
@@ -433,6 +450,7 @@
   function refreshCurrent() {
     if (view === 'records') recordRevision += 1;
     else if (view === 'dashboard') dashboardRevision += 1;
+    else if (view === 'drive') dashboardRevision += 1;
     else if (view === 'admin') adminRevision += 1;
   }
   function setTheme(value: string) { theme = value; document.documentElement.dataset.theme = value || deployment.appearance.default_theme; }
@@ -545,11 +563,14 @@
     {:else if view === 'records' && selectedModule}{#key selectedModuleUid}<RecordsView {session} accessLevel={session.access_level} moduleUid={selectedModule.uid} modulePermission={selectedModulePermission} openRecordUid={linkedRecordUid} openRequestRevision={linkedRecordRequestRevision} focusLinkedAttachments={linkedRecordFocusAttachments} revision={recordRevision} liveMessage={lastRecordEvent} recordSingular={selectedModule.singular_name} recordPlural={selectedModule.name} />{/key}
     {:else if view === 'records'}<section class="panel module-access-empty"><h2>No module access</h2><p>Your account has not been granted access to any active record module. Ask an MX administrator to assign the modules needed for your work.</p><button class="button" type="button" onclick={() => go('collaboration')}>Open collaboration</button></section>
     {:else if view === 'collaboration'}<CollaborationView {session} openChannelUid={linkedChannelUid} revision={collaborationRevision} connected={live} liveEvent={lastCollaborationEvent} {callEvents} activeCalls={ongoingCalls} activeCallChannelUid={activeCall?.channelUid || ''} onStartCall={startCollaborationCall} onChannelChanged={setActiveCollaborationChannel} />
+    {:else if view === 'drive'}<DriveView accountUid={session.uid} revision={dashboardRevision} uploads={driveUploads} />
     {:else if view === 'admin' && session.access_level === 0}{#key adminRevision}<AdminView {session} administrationLabel={deployment.terminology.administration_label} dashboardLabel={deployment.terminology.dashboard_label} />{/key}
     {:else}<AccountSecurity {session} {onSessionChanged} {onSessionEnded} />{/if}
   </main>
   {#if mobileOpen}<button class="sidebar-scrim" aria-label="Close menu" onclick={() => mobileOpen = false}></button>{/if}
 </div>
+
+<DriveUploadPanel uploads={driveUploads} avoidComposer={view === 'collaboration'} />
 
 {#if incomingCall}
   {@const caller = incomingCall.participants[0]}

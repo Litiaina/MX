@@ -8,7 +8,8 @@
   import AudioLines from '@lucide/svelte/icons/audio-lines';
   import type { CallParticipant } from '../api/domain';
   import { monitorAudioLevel, speakingFromLevel } from '../call/audioLevel';
-  import { CallVideoPresentation, sameMediaTracks, type CallVideoMode } from '../call/videoPresentation';
+  import { CallVideoPresentation, type CallVideoMode } from '../call/videoPresentation';
+  import CallAudioTrack from './CallAudioTrack.svelte';
   import ProfileAvatar from './ProfileAvatar.svelte';
 
   let { participant, stream = null, local = false, deafened = false, focused = false, outputDeviceId = '', connectionState = 'new', onToggleFocus = () => undefined }: {
@@ -24,7 +25,6 @@
   let video = $state<HTMLVideoElement>();
   let snapshot = $state<HTMLCanvasElement>();
   let presentation = $state<CallVideoPresentation | null>(null);
-  let audio = $state<HTMLAudioElement>();
   let tile = $state<HTMLElement>();
   let fullscreen = $state(false);
   let fullscreenPending = $state(false);
@@ -36,6 +36,7 @@
   const hasVideo = $derived(participant.video_enabled && !!stream?.getVideoTracks().length);
   const selfScreenShare = $derived(local && participant.screen_sharing);
   const previewHidden = $derived(selfScreenShare && (!selfPreviewEnabled || fullscreen));
+  const audioTracks = $derived(local ? [] : (stream?.getAudioTracks() || []));
 
   $effect(() => {
     if (!selfScreenShare) selfPreviewEnabled = false;
@@ -74,7 +75,6 @@
     document.addEventListener('fullscreenerror', syncFullscreenState);
     syncFullscreenState();
     return () => {
-      if (audio) { audio.pause(); audio.srcObject = null; }
       document.removeEventListener('fullscreenchange', syncFullscreenState);
       document.removeEventListener('fullscreenerror', syncFullscreenState);
     };
@@ -85,37 +85,6 @@
     const mediaMode: CallVideoMode = participant.screen_sharing ? 'screen' : participant.video_enabled ? 'camera' : 'off';
     const videoTrack = stream?.getVideoTracks()[0] || null;
     presentation.setSource(previewHidden ? null : videoTrack, mediaMode);
-  });
-
-  $effect(() => {
-    if (!audio) return;
-    const audioElement = audio;
-    if (local) {
-      if (audioElement.srcObject) { audioElement.pause(); audioElement.srcObject = null; }
-      return;
-    }
-    const currentStream = stream;
-    const audioTracks = currentStream?.getAudioTracks() || [];
-    const boundAudioTracks = (audioElement.srcObject as MediaStream | null)?.getAudioTracks() || [];
-    if (!sameMediaTracks(boundAudioTracks, audioTracks)) audioElement.srcObject = audioTracks.length ? new MediaStream(audioTracks) : null;
-    // Microphone mute is represented by the remote track itself. Do not mute
-    // this element from participant.audio_enabled: it may also carry the
-    // independently shared tab/system audio track.
-    audioElement.muted = local || deafened;
-    const output = audioElement as HTMLAudioElement & { setSinkId?: (deviceId: string) => Promise<void> };
-    if (!local && outputDeviceId && output.setSinkId) void output.setSinkId(outputDeviceId).catch(() => undefined);
-    const resumeAudio = () => {
-      if (!local && !deafened && currentStream?.getAudioTracks().length) void audioElement.play().catch(() => undefined);
-    };
-    for (const track of audioTracks) track.addEventListener('unmute', resumeAudio);
-    currentStream?.addEventListener('addtrack', resumeAudio);
-    audioElement.addEventListener('canplay', resumeAudio);
-    resumeAudio();
-    return () => {
-      for (const track of audioTracks) track.removeEventListener('unmute', resumeAudio);
-      currentStream?.removeEventListener('addtrack', resumeAudio);
-      audioElement.removeEventListener('canplay', resumeAudio);
-    };
   });
 
   async function toggleFullscreen() {
@@ -141,7 +110,9 @@
 <article bind:this={tile} class:has-video={hasVideo && !previewHidden && (videoReady || snapshotVisible)} class:screen-share={participant.screen_sharing} class:focused class:speaking class:media-interrupted={fullscreen && !hasVideo} class="call-media-tile" data-speaking={speaking} ondblclick={() => (hasVideo || fullscreen) && void toggleFullscreen()}>
   <video bind:this={video} class="call-video-layer" class:active={videoReady} autoplay playsinline muted aria-label={`${participant.user_name} call video`}></video>
   <canvas bind:this={snapshot} class="call-video-snapshot" class:active={snapshotVisible} aria-hidden="true"></canvas>
-  <audio bind:this={audio} autoplay aria-label={`${participant.user_name} call audio`}></audio>
+  {#each audioTracks as track, index (track.id)}
+    <CallAudioTrack {track} {deafened} {outputDeviceId} label={`${participant.user_name} call audio${index ? ` ${index + 1}` : ''}`} />
+  {/each}
   {#if previewHidden}
     <div class="call-self-share-status"><MonitorUp size={28} /><strong>You’re sharing your screen</strong><small>{fullscreen ? 'Your preview is hidden in fullscreen to prevent screen feedback.' : 'Your preview is hidden. Others still receive your screen.'}</small>{#if !fullscreen}<button type="button" onclick={() => selfPreviewEnabled = true}>Show my preview</button>{/if}</div>
   {:else if !hasVideo || (!videoReady && !snapshotVisible)}

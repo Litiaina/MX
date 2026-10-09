@@ -49,5 +49,9 @@ pub fn init_default_config<P: AsRef<Path>>(path: P) -> io::Result<()> {
         .set("turn_credential", "")
         .set("max_participants", "12");
 
+    conf.with_section(Some("drive"))
+        .set("quota_mb", "10240")
+        .set("public_links", "true");
+
     conf.write_to_file(path).map_err(io::Error::other)
 }

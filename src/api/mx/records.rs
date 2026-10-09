@@ -26,6 +26,7 @@ use crate::{
             },
         },
         notifications::notify_module_readers,
+        operations::{self, ClientOperation},
     },
     db::connector::{SqliteDatabaseError, with_sql_connection},
     middleware::auth::Claims,
@@ -55,6 +56,8 @@ pub struct DynamicListQuery {
 pub struct DynamicRecordRequest {
     #[serde(default)]
     pub values: BTreeMap<String, Value>,
+    pub operation_uid: Option<String>,
+    pub base_revision: Option<i64>,
 }
 
 #[derive(Debug, Deserialize, Clone, Default)]
@@ -1251,17 +1254,32 @@ fn next_hidden_legacy_number(transaction: &rusqlite::Transaction<'_>) -> rusqlit
 
 fn create_record_db(
     module_uid: String,
-    request_values: BTreeMap<String, NormalizedValue>,
+    request_values: BTreeMap<String, Value>,
     actor_uid: String,
-) -> Result<String, SqliteDatabaseError> {
+    operation: Option<ClientOperation>,
+) -> Result<(String, bool), SqliteDatabaseError> {
     with_sql_connection(|connection| {
         ensure_dynamic_schema(connection)?;
         ensure_record_collaboration_schema(connection)?;
         ensure_record_lifecycle_schema(connection)?;
-        let fields = load_module_fields_db(connection, &module_uid, false)?;
-        let transaction = connection.unchecked_transaction()?;
+        operations::ensure_schema(connection)?;
+        let transaction = rusqlite::Transaction::new_unchecked(
+            connection,
+            rusqlite::TransactionBehavior::Immediate,
+        )?;
+        let scope = format!("record:create:{module_uid}");
+        if let Some(uid) =
+            operations::existing(&transaction, &actor_uid, &scope, operation.as_ref())?
+        {
+            return Ok((uid, false));
+        }
+        // A committed operation must remain reconcilable even if required
+        // fields changed while its acknowledgement was lost. New creates are
+        // validated against the actual schema inside the write transaction.
+        let fields = load_module_fields_db(&transaction, &module_uid, false)?;
+        let mut values = validate_payload(&fields, &request_values)
+            .map_err(rusqlite::Error::InvalidParameterName)?;
         let uid = Uuid::new_v4().to_string();
-        let mut values = request_values;
 
         fill_auto_numbers(&transaction, &fields, &mut values)?;
         apply_formula_values(&fields, &mut values).map_err(|error| {
@@ -1321,9 +1339,10 @@ fn create_record_db(
         write_dynamic_values(&transaction, &uid, &fields, &values)?;
         initialize_field_revisions(&transaction, &uid, &fields, &values, &actor_uid)?;
         capture_record_version(&transaction, &uid, &module_uid, "created", &actor_uid)?;
+        operations::complete(&transaction, &actor_uid, &scope, operation.as_ref(), &uid)?;
         transaction.commit()?;
 
-        Ok(uid)
+        Ok((uid, true))
     })
 }
 
@@ -1332,13 +1351,17 @@ fn update_record_db(
     uid: String,
     request_values: BTreeMap<String, NormalizedValue>,
     actor_uid: String,
+    base_revision: Option<i64>,
 ) -> Result<(), SqliteDatabaseError> {
     with_sql_connection(|connection| {
         ensure_dynamic_schema(connection)?;
         ensure_record_collaboration_schema(connection)?;
         ensure_record_lifecycle_schema(connection)?;
         let fields = load_module_fields_db(connection, &module_uid, false)?;
-        let transaction = connection.unchecked_transaction()?;
+        let transaction = rusqlite::Transaction::new_unchecked(
+            connection,
+            rusqlite::TransactionBehavior::Immediate,
+        )?;
 
         let existing = transaction.query_row(
             r#"
@@ -1365,6 +1388,12 @@ fn update_record_db(
             },
         )?;
 
+        let current_revision: i64 = transaction.query_row(
+            "SELECT revision FROM mx_records WHERE uid=?1 AND module_uid=?2 AND deleted_at IS NULL",
+            params![&uid, &module_uid],
+            |row| row.get(0),
+        )?;
+        validate_replacement_revision(base_revision, current_revision)?;
         let mut values = request_values;
         let existing_auto = load_existing_auto_numbers(&transaction, &uid, &fields)?;
 
@@ -1417,11 +1446,6 @@ fn update_record_db(
             existing.5
         };
 
-        let current_revision: i64 = transaction.query_row(
-            "SELECT revision FROM mx_records WHERE uid=?1 AND module_uid=?2 AND deleted_at IS NULL",
-            params![&uid, &module_uid],
-            |row| row.get(0),
-        )?;
         let next_revision = current_revision.saturating_add(1);
 
         let affected = transaction.execute(
@@ -1435,7 +1459,7 @@ fn update_record_db(
                 routed_to_div = ?6,
                 remarks = ?7,
                 revision = ?9
-            WHERE uid = ?1 AND module_uid = ?8 AND deleted_at IS NULL
+            WHERE uid = ?1 AND module_uid = ?8 AND deleted_at IS NULL AND revision = ?10
             "#,
             params![
                 &uid,
@@ -1447,6 +1471,7 @@ fn update_record_db(
                 remarks,
                 module_uid,
                 next_revision,
+                current_revision,
             ],
         )?;
 
@@ -1461,6 +1486,23 @@ fn update_record_db(
 
         Ok(())
     })
+}
+
+fn validate_replacement_revision(
+    base_revision: Option<i64>,
+    current_revision: i64,
+) -> rusqlite::Result<()> {
+    let Some(base_revision) = base_revision else {
+        return Err(rusqlite::Error::InvalidParameterName(
+            "MX_BASE_REVISION:Full-record replacement requires base_revision. Reload the record or use PATCH with only changed fields.".to_string(),
+        ));
+    };
+    if base_revision < 1 || base_revision != current_revision {
+        return Err(rusqlite::Error::InvalidParameterName(format!(
+            "MX_REVISION:The record changed since this replacement was loaded (current revision {current_revision}). Reload it or use PATCH with only changed fields."
+        )));
+    }
+    Ok(())
 }
 
 fn value_from_row(
@@ -1966,7 +2008,11 @@ fn database_error_response(error: SqliteDatabaseError) -> Response {
         ),
 
         SqliteDatabaseError::Sqlite(rusqlite::Error::InvalidParameterName(message)) => {
-            let (status, prefix) = if message.starts_with("MX_REVISION:") {
+            let (status, prefix) = if message.starts_with("MX_BASE_REVISION:") {
+                (StatusCode::PRECONDITION_REQUIRED, "MX_BASE_REVISION:")
+            } else if message.starts_with("MX_OPERATION:") {
+                (StatusCode::CONFLICT, "MX_OPERATION:")
+            } else if message.starts_with("MX_REVISION:") {
                 (StatusCode::CONFLICT, "MX_REVISION:")
             } else {
                 (StatusCode::BAD_REQUEST, "MX_FORMULA:")
@@ -2034,6 +2080,11 @@ async fn create_record_for_module(
     module_uid: String,
     request: DynamicRecordRequest,
 ) -> Response {
+    let operation =
+        match ClientOperation::parse(request.operation_uid.clone(), &json!(request.values)) {
+            Ok(operation) => operation,
+            Err(message) => return api_json(StatusCode::BAD_REQUEST, json!({"response":message})),
+        };
     if !claims.can_write_records()
         || !module_permission(&module_uid, &claims.uid, claims.access_level, "create").await
     {
@@ -2041,24 +2092,10 @@ async fn create_record_for_module(
     }
     let include_attachments =
         module_permission(&module_uid, &claims.uid, claims.access_level, "attachments").await;
-    let schema = match load_active_module_schema(module_uid.clone()).await {
-        Ok(schema) => schema,
-        Err(error) => {
-            crate::report_error!(error, "function", "create_record_for_module()");
-            return api_json(
-                StatusCode::NOT_FOUND,
-                json!({"response":"module structure was not found"}),
-            );
-        }
-    };
-    let normalized = match validate_payload(&schema.fields, &request.values) {
-        Ok(values) => values,
-        Err(error) => return api_json(StatusCode::BAD_REQUEST, json!({"response":error})),
-    };
     let actor_uid = claims.uid.clone();
     let db_module_uid = module_uid.clone();
-    let uid = match tokio::task::spawn_blocking(move || {
-        create_record_db(db_module_uid, normalized, actor_uid)
+    let (uid, created) = match tokio::task::spawn_blocking(move || {
+        create_record_db(db_module_uid, request.values, actor_uid, operation)
     })
     .await
     {
@@ -2079,6 +2116,9 @@ async fn create_record_for_module(
     .await
     {
         Ok(Ok(record)) => {
+            if !created {
+                return api_json(StatusCode::OK, json!(record));
+            }
             publish_live_event(
                 "record.created",
                 Some(&claims.uid),
@@ -2132,8 +2172,9 @@ async fn update_record_for_module(
     let db_uid = uid.clone();
     let db_module_uid = module_uid.clone();
     let actor_uid = claims.uid.clone();
+    let base_revision = request.base_revision;
     match tokio::task::spawn_blocking(move || {
-        update_record_db(db_module_uid, db_uid, normalized, actor_uid)
+        update_record_db(db_module_uid, db_uid, normalized, actor_uid, base_revision)
     })
     .await
     {
@@ -2382,8 +2423,16 @@ pub async fn list_module_records(
 
 #[cfg(test)]
 mod concurrency_tests {
-    use super::field_changed_after_base;
+    use super::{field_changed_after_base, validate_replacement_revision};
     use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
+
+    #[test]
+    fn full_replacement_requires_the_exact_loaded_revision() {
+        assert!(validate_replacement_revision(Some(7), 7).is_ok());
+        for base in [None, Some(0), Some(6), Some(8)] {
+            assert!(validate_replacement_revision(base, 7).is_err());
+        }
+    }
 
     fn save_field(
         connection: &Connection,

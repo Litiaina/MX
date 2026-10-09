@@ -571,6 +571,40 @@ pub(crate) fn ensure_audit_schema(
 fn classify_action(method: &Method, path: &str) -> Option<AuditClassification> {
     let segments = path.trim_matches('/').split('/').collect::<Vec<_>>();
 
+    if segments.get(0..3) == Some(&["mx", "v1", "drive"][..])
+        && ![Method::GET, Method::HEAD].contains(method)
+        && !matches!(segments.get(3), Some(&"guest") | Some(&"media"))
+    {
+        // Do not log public bearer URLs, preview tickets, filenames, or file bytes.
+        let quota = segments.get(3..5) == Some(&["admin", "quotas"][..]);
+        let action = if quota {
+            "drive.quota.update"
+        } else if segments.get(5) == Some(&"sharing") {
+            "drive.access.update"
+        } else if segments.get(5) == Some(&"links") {
+            if method == Method::DELETE {
+                "drive.link.revoke"
+            } else {
+                "drive.link.create"
+            }
+        } else if method == Method::DELETE {
+            "drive.remove"
+        } else {
+            "drive.update"
+        };
+        return Some(AuditClassification {
+            action,
+            target_type: Some(if quota { "account" } else { "drive-item" }),
+            target_uid: if quota {
+                segments.get(5).map(|uid| uid.to_string())
+            } else if segments.get(3) == Some(&"items") {
+                segments.get(4).map(|uid| uid.to_string())
+            } else {
+                None
+            },
+        });
+    }
+
     if path == "/mx/v1/admin/audit" && method == Method::GET {
         return Some(AuditClassification {
             action: "audit.view",

@@ -40,8 +40,13 @@
   import type { LiveMessage } from '../live/client';
   import { createChannel, createDirectChannel, deleteMessage, download, editMessage, getCallState, listChannelFiles, listChannelMembers, listChannels, listCollaborationPeople, listMessages, loadPresence, markChannelRead, prepareMessageFilePreview, removeChannelMember, saveChannelMember, searchChannel, sendMessage, setMessagePinned, toggleMessageReaction, updateChannel, uploadMessageFile } from '../api/workspace';
   import { requestConfirmation } from '../confirmation';
+  import { ApiError } from '../api/client';
+  import { operationUid } from '../api/operation';
   import { shouldSendChatMessage } from '../util/interactions';
   import FilePreview from './FilePreview.svelte';
+  import DrivePicker from './DrivePicker.svelte';
+  import HardDrive from '@lucide/svelte/icons/hard-drive';
+  import { driveFile, type DriveItem } from '../api/drive';
   import ProfileAvatar from './ProfileAvatar.svelte';
   import SharedImageThumbnail from './SharedImageThumbnail.svelte';
 
@@ -54,6 +59,10 @@
   let channels = $state<CollaborationChannel[]>([]); let selected = $state<CollaborationChannel | null>(null);
   let messages = $state<ChatMessage[]>([]); let pinnedMessages = $state<ChatMessage[]>([]); let pinsOpen = $state(false); let readStates = $state<ChannelReadState[]>([]); let users = $state<CollaborationPerson[]>([]); let onlineUserUids = $state<string[]>([]); let peopleLoading = $state(false); let peopleError = $state(''); let body = $state('');
   let pendingFiles = $state<File[]>([]); let loading = $state(true); let conversationLoading = $state(false); let sending = $state(false); let error = $state('');
+  let drivePickerOpen = $state(false); let driveCopying = $state(false);
+  type PendingSend = { channelUid: string; uid: string; body: string; mentions: string[]; records: string[]; reply: string | null };
+  let pendingSend = $state<PendingSend | null>(null);
+  const composerDrafts = new Map<string, { body: string; files: File[]; records: string[]; mentions: string[]; reply: ChatMessage | null; submission: PendingSend | null }>();
   let hasMoreMessages = $state(false); let reachedBeginning = $state(false); let loadingOlder = $state(false);
   let section = $state<ConversationFilter>('all'); let conversationSearch = $state(''); let detailsOpen = $state(false); let toolsOpen = $state(false);
   let recordLinkInput = $state(''); let pendingRecordUids = $state<string[]>([]); let mentionUser = $state(''); let pendingMentionUids = $state<string[]>([]);
@@ -277,11 +286,26 @@
     }
   }
   async function openConversation(channel: CollaborationChannel, revealThread = true) {
+    const changingConversation = selected?.uid !== channel.uid;
+    if (changingConversation && sending) {
+      error = 'Wait for this send to finish before switching conversations.';
+      return;
+    }
+    if (changingConversation && selected) {
+      composerDrafts.set(selected.uid, { body, files: [...pendingFiles], records: [...pendingRecordUids], mentions: [...pendingMentionUids], reply: replyingTo, submission: pendingSend });
+    }
+    const draft = composerDrafts.get(channel.uid);
+    if (changingConversation) {
+      body = draft?.body || ''; pendingFiles = draft?.files || [];
+      pendingRecordUids = draft?.records || []; pendingMentionUids = draft?.mentions || [];
+      pendingSend = draft?.submission || null;
+    }
     const requestSequence = ++conversationRequestSequence;
     const channelUid = channel.uid;
     if (selected && selected.uid !== channel.uid) detailsOpen = false;
     if (revealThread) mobileThreadOpen = true;
     selected = channel; messages = []; pinnedMessages = []; pinsOpen = false; readStates = []; hasMoreMessages = false; conversationLoading = true; error = ''; toolsOpen = false; mentionOpen = false; messageMenuUid = ''; reactionMenuUid = ''; editingMessageUid = ''; deleteCandidate = null; replyingTo = null; reachedBeginning = false; selectedCallState = null;
+    if (changingConversation) replyingTo = draft?.reply || null;
     onChannelChanged(channel.uid, false);
     closeConversationSearch(); channelFiles = []; channelFileTotal = 0; fileSearch = ''; filesLoaded = false; manageOpen = false; channelMembers = []; membersLoaded = false;
     if (channel.kind !== 'direct') void loadConversationMembers();
@@ -359,10 +383,19 @@
   function pendingImageUrl(file: File) { let url = pendingPreviewUrls.get(file); if (!url) { url = URL.createObjectURL(file); pendingPreviewUrls.set(file, url); } return url; }
   function releasePendingPreview(file: File) { const url = pendingPreviewUrls.get(file); if (url) URL.revokeObjectURL(url); pendingPreviewUrls.delete(file); }
   function releasePendingPreviews() { for (const url of pendingPreviewUrls.values()) URL.revokeObjectURL(url); pendingPreviewUrls.clear(); }
-  function removePendingFile(index: number) { const file = pendingFiles[index]; if (file) releasePendingPreview(file); pendingFiles = pendingFiles.filter((_, item) => item !== index); }
+  function removePendingFile(index: number) { if (sending) return; const file = pendingFiles[index]; if (file) releasePendingPreview(file); pendingFiles = pendingFiles.filter((_, item) => item !== index); }
   function clearPendingFiles() { releasePendingPreviews(); pendingFiles = []; }
   function sharedFileLimitLabel() { const mib = sharedFileMaxBytes / 1024 ** 2; return `${Number.isInteger(mib) ? mib : mib.toFixed(1)} MiB`; }
+  async function attachDriveFile(item: DriveItem | null) {
+    if (!item || !selected || sending || pendingSend) return;
+    if (item.size > sharedFileMaxBytes) { error = `This Drive file exceeds the ${sharedFileLimitLabel()} chat attachment limit.`; drivePickerOpen = false; return; }
+    const channelUid = selected.uid; drivePickerOpen = false; driveCopying = true;
+    try { const file = await driveFile(item); if (selected?.uid === channelUid && !sending && !pendingSend) queueSharedFiles([file]); else error = 'The conversation changed while copying. Choose the Drive file again in the intended conversation.'; }
+    catch (reason) { error = reason instanceof Error ? reason.message : 'Could not copy this Drive file.'; }
+    finally { driveCopying = false; }
+  }
   function queueSharedFiles(files: FileList | File[]) {
+    if (sending || pendingSend) return;
     const incoming = Array.from(files);
     const oversized = incoming.filter((file) => file.size > sharedFileMaxBytes);
     const accepted = incoming.filter((file) => file.size <= sharedFileMaxBytes && !pendingFiles.some((pending) => pending.name === file.name && pending.size === file.size && pending.lastModified === file.lastModified));
@@ -417,6 +450,7 @@
   }
   function toggleMember(uid: string) { selectedMembers = selectedMembers.includes(uid) ? selectedMembers.filter((item) => item !== uid) : [...selectedMembers, uid]; }
   function addRecordLink() {
+    if (sending || pendingSend) return;
     const raw = recordLinkInput.trim(); if (!raw) return; let uid = raw;
     try { const decoded = decodeURIComponent(raw); uid = /[?&]record=([^&#]+)/.exec(decoded)?.[1] || decoded; } catch { /* Keep the supplied UID. */ }
     uid = uid.trim(); if (!/^[a-zA-Z0-9-]{8,128}$/.test(uid)) { error = 'Paste a record UID or an MX record link.'; return; }
@@ -457,6 +491,7 @@
     updateMentionPicker(textarea);
   }
   async function insertMention(user: CollaborationPerson, replaceTypedMention = false) {
+    if (sending || pendingSend) return;
     const textarea = composerTextarea;
     const caret = textarea?.selectionStart ?? body.length;
     const start = replaceTypedMention && mentionStart >= 0 ? mentionStart : caret;
@@ -487,7 +522,7 @@
   }
   function replySnippet(message: Pick<ChatMessage, 'body' | 'deleted_at'>) { return message.deleted_at ? 'Original message was deleted' : message.body.trim() || 'Shared content'; }
   function beginReply(message: ChatMessage) {
-    if (message.deleted_at) return;
+    if (message.deleted_at || sending || pendingSend) return;
     messageMenuUid = ''; cancelMessageEdit(); replyingTo = message; error = '';
     void tick().then(() => document.querySelector<HTMLTextAreaElement>('.message-composer textarea[aria-label="Message"]')?.focus());
   }
@@ -588,19 +623,34 @@
     finally { directBusyUid = ''; }
   }
   async function submit(event: SubmitEvent) {
-    event.preventDefault(); if (!selected || (!body.trim() && !pendingFiles.length && !pendingRecordUids.length)) return;
+    event.preventDefault(); if (driveCopying) { error = 'Wait for the Drive file to finish copying before sending.'; return; } if (sending || !selected || (!pendingSend && !body.trim() && !pendingFiles.length && !pendingRecordUids.length)) return;
     const oversized = pendingFiles.find((file) => file.size > sharedFileMaxBytes);
     if (oversized) { error = `${oversized.name} is larger than the ${sharedFileLimitLabel()} chat file limit.`; return; }
     sending = true; error = '';
+    let acknowledged = false;
     try {
       const channelUid = selected.uid;
       const messageText = body.trim() || (pendingFiles.length ? `Shared ${pendingFiles.length} file${pendingFiles.length === 1 ? '' : 's'}` : `Shared ${pendingRecordUids.length} record${pendingRecordUids.length === 1 ? '' : 's'}`);
-      const result = await sendMessage(channelUid, messageText, pendingMentionUids, pendingRecordUids, replyingTo?.uid || null); for (const file of pendingFiles) await uploadMessageFile(result.message.uid, file);
+      if (!pendingSend) pendingSend = { channelUid, uid: operationUid(), body: messageText, mentions: [...pendingMentionUids], records: [...pendingRecordUids], reply: replyingTo?.uid || null };
+      const submission = pendingSend;
+      const result = await sendMessage(channelUid, submission.body, submission.mentions, submission.records, submission.reply, submission.uid);
+      acknowledged = true;
+      messages = mergeMessages(messages, [result.message]);
+      for (const file of [...pendingFiles]) {
+        await uploadMessageFile(result.message.uid, file);
+        releasePendingPreview(file);
+        pendingFiles = pendingFiles.filter((pending) => pending !== file);
+      }
+      pendingSend = null;
+      composerDrafts.delete(channelUid);
       body = ''; clearPendingFiles(); pendingRecordUids = []; pendingMentionUids = []; replyingTo = null; toolsOpen = false;
       const data = await listMessages(channelUid); messages = mergeMessages(messages, data.messages); readStates = data.read_states || [];
       channels = (await listChannels()).channels; selected = channels.find((item) => item.uid === channelUid) || selected;
       await markVisibleConversationRead(channelUid); await scrollEnd();
-    } catch (reason) { fail(reason); } finally { sending = false; }
+    } catch (reason) {
+      if (!acknowledged && reason instanceof ApiError && [400, 403, 404, 413, 422].includes(reason.status)) pendingSend = null;
+      fail(reason);
+    } finally { sending = false; }
   }
   function composerKeydown(event: KeyboardEvent) {
     if (event.isComposing) return;
@@ -873,13 +923,15 @@
             {/each}{/if}
           </div>
           <form class="message-composer" bind:this={composerForm} onsubmit={submit}>
-            {#if replyingTo}<div class="composer-reply-context"><Reply size={15} /><span><strong>Replying to {replyingTo.sender_name}</strong><small>{replySnippet(replyingTo)}</small></span><button type="button" onclick={() => replyingTo = null} aria-label="Cancel reply"><X size={14} /></button></div>{/if}
+            {#if replyingTo}<div class="composer-reply-context"><Reply size={15} /><span><strong>Replying to {replyingTo.sender_name}</strong><small>{replySnippet(replyingTo)}</small></span><button type="button" disabled={sending || !!pendingSend} onclick={() => replyingTo = null} aria-label="Cancel reply"><X size={14} /></button></div>{/if}
             {#if pendingFiles.length || pendingRecordUids.length || pendingMentionUids.length}<div class="pending-shares">{#each pendingFiles as file, index}{#if isPendingImage(file)}<div class="pending-image-share"><img src={pendingImageUrl(file)} alt="" /><span><strong>{file.name}</strong><small>{fileSize(file.size)} · Image ready to send</small></span><button type="button" aria-label={`Remove ${file.name}`} onclick={() => removePendingFile(index)}><X size={13} /></button></div>{:else}<span><i><Paperclip size={12} /></i>{file.name} · {fileSize(file.size)}<button type="button" aria-label={`Remove ${file.name}`} onclick={() => removePendingFile(index)}><X size={12} /></button></span>{/if}{/each}{#each pendingRecordUids as uid}<span><i><FileText size={12} /></i>Record · {uid.slice(0, 12)}<button type="button" aria-label={`Remove record ${uid}`} onclick={() => pendingRecordUids = pendingRecordUids.filter((item) => item !== uid)}><X size={12} /></button></span>{/each}{#each pendingMentionUids as uid}<span><i><AtSign size={12} /></i>{personName(uid)}<button type="button" aria-label={`Remove mention ${personName(uid)}`} onclick={() => pendingMentionUids = pendingMentionUids.filter((item) => item !== uid)}><X size={12} /></button></span>{/each}</div>{/if}
             {#if toolsOpen}<div class="composer-context-tools"><label><span>Link an MX record</span><div><input bind:value={recordLinkInput} placeholder="Record UID or copied MX link" aria-label="Record to link" /><button class="button small" type="button" onclick={addRecordLink} disabled={!recordLinkInput.trim()}>Add</button></div></label><label><span>Mention someone</span><div><select bind:value={mentionUser} aria-label="Person to mention"><option value="">Choose a person…</option>{#each mentionablePeople.filter((user) => !pendingMentionUids.includes(user.uid)) as user}<option value={user.uid}>{user.name}</option>{/each}</select><button class="button small" type="button" onclick={addMention} disabled={!mentionUser}>Add</button></div></label></div>{/if}
             <div class="composer-entry" data-mention-composer>
+              <button class="composer-action" type="button" disabled={sending || !!pendingSend || driveCopying} onclick={() => drivePickerOpen = true} title="Attach a copy from MX Drive"><HardDrive size={14} /><span>{driveCopying ? 'Copying Drive file…' : 'MX Drive'}</span></button>
               {#if mentionOpen}<div id="composer-mention-options" class="composer-mention-menu" role="listbox" aria-label="People in this conversation"><header><AtSign size={14} /><span><strong>Mention someone</strong><small>{mentionQuery ? `Results for “${mentionQuery}”` : 'People in this conversation'}</small></span></header>{#if mentionSuggestions.length}<div>{#each mentionSuggestions as user, index}<button class:active={mentionActiveIndex === index} type="button" role="option" aria-selected={mentionActiveIndex === index} onmouseenter={() => mentionActiveIndex = index} onmousedown={(event) => event.preventDefault()} onclick={() => chooseMention(user)}><span class="message-avatar"><ProfileAvatar userUid={user.uid} name={user.name} updatedAt={user.profile_photo_updated_at} online={isUserOnline(user.uid)} /></span><span><strong>{user.name}</strong><small class:online={isUserOnline(user.uid)}>{isUserOnline(user.uid) ? 'Online' : 'Offline'}</small></span><span class="mention-enter">↵</span></button>{/each}</div>{:else}<p>{membersLoaded || selected.kind === 'direct' ? 'No matching people in this conversation.' : 'Loading people…'}</p>{/if}</div>{/if}
-              <textarea bind:this={composerTextarea} bind:value={body} oninput={composerInput} onkeydown={composerKeydown} onpaste={composerPaste} rows="2" placeholder={`Message ${selected.name}`} aria-label="Message" aria-autocomplete="list" aria-controls="composer-mention-options"></textarea>
-              <div class="composer-commandbar"><div><label class="composer-action" title={`Attach files up to ${sharedFileLimitLabel()}`} aria-label={`Attach files up to ${sharedFileLimitLabel()}`}><span><Paperclip size={13} /></span><span class="composer-action-label">Attach</span><input type="file" multiple onchange={(event) => { if (event.currentTarget.files) queueSharedFiles(event.currentTarget.files); event.currentTarget.value = ''; }} /></label><button class:active={toolsOpen} class="composer-action" type="button" onclick={() => toolsOpen = !toolsOpen} title="Add context" aria-label="Add context"><span><Link2 size={13} /></span><span class="composer-action-label">Add context</span></button></div><span class="composer-hint">Type @ to mention · Enter to send · Shift + Enter for a new line</span><button class="button primary send-message icon-label" disabled={sending || (!body.trim() && !pendingFiles.length && !pendingRecordUids.length)}>{#if !sending}<Send size={13} />{/if}<span class="send-message-label">{sending ? 'Sending…' : 'Send'}</span></button></div>
+              {#if pendingSend}<p class="muted small" role="status">A send is pending. Retry sends the same message, not a duplicate. Check shared files before retrying an interrupted upload.</p>{/if}
+              <textarea bind:this={composerTextarea} bind:value={body} readonly={sending || !!pendingSend} oninput={composerInput} onkeydown={composerKeydown} onpaste={composerPaste} rows="2" placeholder={`Message ${selected.name}`} aria-label="Message" aria-autocomplete="list" aria-controls="composer-mention-options"></textarea>
+              <div class="composer-commandbar"><div><label class="composer-action" title={`Attach files up to ${sharedFileLimitLabel()}`} aria-label={`Attach files up to ${sharedFileLimitLabel()}`}><span><Paperclip size={13} /></span><span class="composer-action-label">Attach</span><input type="file" multiple disabled={sending || !!pendingSend} onchange={(event) => { if (event.currentTarget.files) queueSharedFiles(event.currentTarget.files); event.currentTarget.value = ''; }} /></label><button class:active={toolsOpen} class="composer-action" type="button" disabled={sending || !!pendingSend} onclick={() => toolsOpen = !toolsOpen} title="Add context" aria-label="Add context"><span><Link2 size={13} /></span><span class="composer-action-label">Add context</span></button></div><span class="composer-hint">Type @ to mention · Enter to send · Shift + Enter for a new line</span><button class="button primary send-message icon-label" disabled={sending || driveCopying || (!pendingSend && !body.trim() && !pendingFiles.length && !pendingRecordUids.length)}>{#if !sending}<Send size={13} />{/if}<span class="send-message-label">{sending ? 'Sending…' : pendingSend ? 'Retry send' : 'Send'}</span></button></div>
             </div>
           </form>
         {:else}<div class="collaboration-empty"><div class="collaboration-empty-mark">MX</div><h2>Choose a conversation</h2><p>Keep work, documents, and record context together without leaving MX.</p><button class="button primary" onclick={() => createOpen = true}>Create a space</button></div>{/if}
@@ -914,6 +966,7 @@
   </div>
 {/if}
 
+{#if drivePickerOpen}<DrivePicker onChoose={(item) => void attachDriveFile(item)} onClose={() => drivePickerOpen = false} />{/if}
 {#if previewFile}
   <FilePreview fileName={previewFile.file_name} load={() => prepareMessageFilePreview(previewFile!.uid, previewFile!.file_name)} onClose={() => previewFile = null} />
 {/if}

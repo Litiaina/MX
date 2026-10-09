@@ -74,7 +74,7 @@ The upstream MX repository is not obligated to merge changes from forks.
 
 ## Why MX Uses This Model
 
-MX is developed as a cohesive information-system platform with tightly connected behavior across:
+MX is developed as a cohesive modular digital workplace platform with tightly connected behavior across:
 
 - the Rust backend;
 - the dynamic Record Structure;
@@ -84,6 +84,8 @@ MX is developed as a cohesive information-system platform with tightly connected
 - real-time WebSocket synchronization;
 - field-level concurrency handling;
 - reporting and dashboards;
+- personal/shared file storage and background transfers;
+- collaboration spaces, messaging, calls, and screen sharing;
 - the unified web interface.
 
 The project therefore keeps upstream implementation decisions under a single maintainer-controlled development process.
