@@ -6,7 +6,7 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
-use rusqlite::params;
+use rusqlite::{OptionalExtension, params};
 use serde::Serialize;
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -328,6 +328,12 @@ async fn delete_for_module(claims: Claims, module_uid: String, uid: String) -> R
             StatusCode::NOT_FOUND,
             json!({"response":"record was not found"}),
         ),
+        Ok(Err(SqliteDatabaseError::Sqlite(rusqlite::Error::SqliteFailure(
+            error,
+            Some(message),
+        )))) if error.code == rusqlite::ErrorCode::ConstraintViolation => {
+            api_json(StatusCode::CONFLICT, json!({"response":message}))
+        }
         _ => api_json(
             StatusCode::INTERNAL_SERVER_ERROR,
             json!({"response":"record could not be moved to trash"}),
@@ -404,6 +410,7 @@ async fn version_detail_for_module(
                     "integer" | "auto_number" => row.get::<_,Option<i64>>(3)?.map_or(Value::Null, |value| json!(value)),
                     "decimal" | "formula" => row.get::<_,Option<f64>>(4)?.map_or(Value::Null, |value| json!(value)),
                     "boolean" => row.get::<_,Option<i64>>(5)?.map_or(Value::Null, |value| json!(value != 0)),
+                    "relationship" => row.get::<_,Option<String>>(2)?.map_or(Value::Null, |value| if value.starts_with('[') {serde_json::from_str(&value).unwrap_or(Value::Null)} else {json!(value)}),
                     _ => row.get::<_,Option<String>>(2)?.map_or(Value::Null, |value| json!(value)),
                 };
                 values.insert(key, value);
@@ -414,6 +421,10 @@ async fn version_detail_for_module(
                 "mime_type":row.get::<_,String>(2)?, "size":row.get::<_,i64>(3)?,
                 "attachment_field_uid":row.get::<_,Option<String>>(4)?
             })))?.collect::<Result<Vec<_>,_>>()?;
+            let fields=crate::api::mx::schema::load_module_fields_db(connection,&module_uid,true)?;
+            for field in fields.iter().filter(|f|f.field_type=="relationship") {
+                if !module_can_for_user(connection,field.config["target_module_uid"].as_str().unwrap_or(""),&permission_claims.uid,permission_claims.access_level,"read")? {values.insert(field.key.clone(),Value::Null);}
+            }
             Ok(RecordVersionDetail { uid, record_uid, module_uid, version, event, actor_uid, actor_name, created_at, values, attachments })
         })
     }).await;
@@ -449,17 +460,27 @@ async fn restore_version_for_module(
         if !can(connection, &module_uid, &permission_claims, "update") {
             return Err(rusqlite::Error::InvalidParameterName("forbidden".into()));
         }
-        let transaction = connection.unchecked_transaction()?;
+        let transaction = rusqlite::Transaction::new_unchecked(connection, rusqlite::TransactionBehavior::Immediate)?;
         let exists = transaction.query_row(
             "SELECT EXISTS(SELECT 1 FROM mx_record_versions WHERE uid=?1 AND record_uid=?2 AND module_uid=?3)",
             params![version_uid, record_uid, module_uid], |row| row.get::<_,i64>(0),
         )? != 0;
         if !exists { return Err(rusqlite::Error::QueryReturnedNoRows); }
+        let fields=crate::api::mx::schema::load_module_fields_initialized_db(&transaction,&module_uid,false)?;
+        let mut relationship_values=BTreeMap::new();
+        for field in fields.iter().filter(|f|f.field_type=="relationship") {
+            let raw:Option<String>=transaction.query_row("SELECT value_text FROM mx_record_version_values WHERE version_uid=?1 AND field_uid=?2",params![version_uid,field.uid],|r|r.get(0)).optional()?.flatten();
+            let value=raw.map_or(Value::Null,|text|if text.starts_with('['){serde_json::from_str(&text).unwrap_or(Value::Null)}else{json!(text)});
+            relationship_values.insert(field.key.clone(),value);
+        }
+        crate::api::mx::relationships::validate_selection(&transaction,&fields,&relationship_values,&actor_uid)?;
         transaction.execute("DELETE FROM mx_unique_values WHERE record_uid=?1", params![record_uid])?;
         transaction.execute("DELETE FROM mx_record_values WHERE record_uid=?1", params![record_uid])?;
         transaction.execute(
             r#"INSERT INTO mx_record_values(record_uid,field_uid,value_text,value_integer,value_real,value_boolean)
-               SELECT ?1,field_uid,value_text,value_integer,value_real,value_boolean FROM mx_record_version_values WHERE version_uid=?2"#,
+               SELECT ?1,v.field_uid,v.value_text,v.value_integer,v.value_real,v.value_boolean
+               FROM mx_record_version_values v JOIN mx_fields f ON f.uid=v.field_uid
+               WHERE v.version_uid=?2 AND (f.field_type!='relationship' OR f.active=1)"#,
             params![record_uid, version_uid],
         )?;
         transaction.execute(
@@ -505,12 +526,12 @@ async fn restore_version_for_module(
             StatusCode::NOT_FOUND,
             json!({"response":"record version was not found"}),
         ),
-        Ok(Err(SqliteDatabaseError::Sqlite(rusqlite::Error::SqliteFailure(error, _))))
+        Ok(Err(SqliteDatabaseError::Sqlite(rusqlite::Error::SqliteFailure(error, message))))
             if error.code == rusqlite::ErrorCode::ConstraintViolation =>
         {
             api_json(
                 StatusCode::CONFLICT,
-                json!({"response":"this version conflicts with a unique value now used by another record"}),
+                json!({"response":message.unwrap_or_else(|| "This version conflicts with a unique value or record relationship.".into())}),
             )
         }
         _ => api_json(
@@ -937,6 +958,14 @@ pub async fn restore_trashed_record(claims: Claims, Path(uid): Path<String>) -> 
             StatusCode::NOT_FOUND,
             json!({"response":"trashed record was not found"}),
         ),
+        Ok(Err(SqliteDatabaseError::Sqlite(rusqlite::Error::SqliteFailure(code, message))))
+            if code.code == rusqlite::ErrorCode::ConstraintViolation =>
+        {
+            api_json(
+                StatusCode::CONFLICT,
+                json!({"response":message.unwrap_or_else(|| "Restore the linked records first.".into())}),
+            )
+        }
         _ => api_json(
             StatusCode::INTERNAL_SERVER_ERROR,
             json!({"response":"record could not be restored"}),

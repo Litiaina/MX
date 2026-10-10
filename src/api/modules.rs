@@ -464,6 +464,15 @@ pub(crate) fn effective_module_permission(
     access_level: i64,
 ) -> rusqlite::Result<Option<ModulePermission>> {
     ensure_module_schema(connection)?;
+    effective_module_permission_initialized(connection, module_uid, user_uid, access_level)
+}
+
+fn effective_module_permission_initialized(
+    connection: &rusqlite::Connection,
+    module_uid: &str,
+    user_uid: &str,
+    access_level: i64,
+) -> rusqlite::Result<Option<ModulePermission>> {
     if access_level == 0 {
         let active = connection
             .query_row(
@@ -527,8 +536,20 @@ pub(crate) fn module_can_for_user(
     access_level: i64,
     capability: &str,
 ) -> rusqlite::Result<bool> {
+    ensure_module_schema(connection)?;
+    module_can_for_user_initialized(connection, module_uid, user_uid, access_level, capability)
+}
+
+/// Permission read for already-initialized schemas and transaction snapshots.
+pub(crate) fn module_can_for_user_initialized(
+    connection: &rusqlite::Connection,
+    module_uid: &str,
+    user_uid: &str,
+    access_level: i64,
+    capability: &str,
+) -> rusqlite::Result<bool> {
     let Some(permission) =
-        effective_module_permission(connection, module_uid, user_uid, access_level)?
+        effective_module_permission_initialized(connection, module_uid, user_uid, access_level)?
     else {
         return Ok(false);
     };
@@ -1014,6 +1035,10 @@ pub async fn delete_module(
         with_sql_connection(|connection| {
             ensure_module_schema(connection)?;
             let transaction = connection.unchecked_transaction()?;
+            if table_exists(&transaction, "mx_fields")? {
+                let linked:bool=transaction.query_row("SELECT EXISTS(SELECT 1 FROM mx_fields WHERE module_uid!=?1 AND active=1 AND field_type='relationship' AND json_extract(config_json,'$.target_module_uid')=?1)",[&preflight_uid],|r|r.get(0))?;
+                if linked {return Err(rusqlite::Error::InvalidParameterName("Remove relationships to this module before deleting it.".into()));}
+            }
             let module_name = transaction
                 .query_row(
                     "SELECT name FROM mx_modules WHERE uid = ?1",
@@ -1100,6 +1125,11 @@ pub async fn delete_module(
                 json!({"response":"administrator re-authentication failed"}),
             );
         }
+        Ok(Err(SqliteDatabaseError::Sqlite(rusqlite::Error::InvalidParameterName(message))))
+            if message.starts_with("Remove relationships") =>
+        {
+            return api_json(StatusCode::CONFLICT, json!({"response":message}));
+        }
         Ok(Err(error)) => {
             crate::report_error!(format!("{error}"), "modules", "delete_module_preflight()");
             return api_json(
@@ -1144,6 +1174,9 @@ pub async fn delete_module(
             }
             if table_exists(&transaction, "mx_record_field_revisions")? {
                 transaction.execute("DELETE FROM mx_record_field_revisions WHERE record_uid IN (SELECT uid FROM mx_records WHERE module_uid = ?1)", params![&delete_uid])?;
+            }
+            if table_exists(&transaction, "mx_record_links")? {
+                transaction.execute("DELETE FROM mx_record_links WHERE record_uid IN (SELECT uid FROM mx_records WHERE module_uid=?1)",[&delete_uid])?;
             }
             transaction.execute("DELETE FROM mx_records WHERE module_uid = ?1", params![&delete_uid])?;
 

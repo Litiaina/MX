@@ -199,7 +199,14 @@ fn lookup_field(
 ) -> rusqlite::Result<Option<FieldDefinition>> {
     Ok(load_module_fields_db(connection, module_uid, false)?
         .into_iter()
-        .find(|field| field.uid == uid && field.active))
+        .find(|field| {
+            field.uid == uid
+                && field.active
+                && !matches!(
+                    field.field_type.as_str(),
+                    "relationship" | "lookup" | "rollup"
+                )
+        }))
 }
 
 fn optional_group_field(
@@ -1094,7 +1101,13 @@ fn detailed_records_csv(connection: &Connection, module_uid: &str) -> rusqlite::
 
     let fields = load_module_fields_db(connection, module_uid, false)?
         .into_iter()
-        .filter(|field| field.active)
+        .filter(|field| {
+            field.active
+                && !matches!(
+                    field.field_type.as_str(),
+                    "relationship" | "lookup" | "rollup"
+                )
+        })
         .collect::<Vec<_>>();
     let scalar_fields = fields
         .iter()

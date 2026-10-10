@@ -181,7 +181,10 @@ async fn server() {
 
     let application = Router::new()
         .merge(api_route())
-        .fallback_service(serve_static_files().not_found_service(handler_404.into_service()));
+        .fallback_service(serve_static_files().not_found_service(handler_404.into_service()))
+        .layer(axum::middleware::from_fn(
+            crate::api::hosting::handler::office_isolation,
+        ));
 
     let api_task = tokio::spawn(serve(
         ip,

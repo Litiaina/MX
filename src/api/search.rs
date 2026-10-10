@@ -77,7 +77,7 @@ fn search_records(
                 JOIN mx_fields field ON field.uid = value.field_uid
                 WHERE value.record_uid = record.uid
                   AND field.active = 1
-                  AND field.field_type <> 'attachments'
+                  AND field.field_type NOT IN ('attachments','relationship','lookup','rollup')
                 ORDER BY field.position, field.rowid
                 LIMIT 1
             ), record.uid),

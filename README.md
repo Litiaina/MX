@@ -18,7 +18,7 @@
 </div>
 
 <p align="center">
-  <strong>Current release: MX 4.0.0</strong>
+  <strong>Current version: MX 4.1.0</strong>
 </p>
 
 ---
@@ -146,6 +146,8 @@ assets in `frontend/dist` and served by the Rust process. It provides:
 - personal/shared Drive, paginated folders, file versions, and upload queues
 - collaboration spaces, messaging, and file sharing
 - voice/video calls, screen sharing, and device controls
+- linked-record selectors, lookups and rollups between modules
+- bundled client-side Office editing with opt-in offline document copies
 
 ### MX Server
 
@@ -586,11 +588,14 @@ recheck it atomically. Backup both MX SQLite metadata and N1 storage.
 Drive lists refresh quietly every 15 seconds while visible and no preview/dialog
 is open, and when coming
 online; this is not instant Drive-specific live synchronization. Native
-video/audio previews use range-capable streaming. Office previews reuse MX's
-server-side conversion setup. This implementation does not include Google
-Docs/Sheets editing, desktop sync, OCR/full-text indexing, or Google Drive parity.
+video/audio previews use range-capable streaming. The existing Office PDF preview
+uses optional server-side conversion. **Edit in MX Office** is a separate bundled
+browser editor: see [Standalone Office editing](#standalone-office-editing).
+This is not Google Docs-style real-time co-editing, desktop sync, OCR/full-text
+indexing, or Google Drive feature parity.
 
 ---
+
 
 ## Modules and Dynamic Record Structure
 
@@ -635,12 +640,61 @@ Long Text
 Integer
 Decimal
 Formula / Calculated
+Relationship / Linked record
+Lookup from linked records
+Rollup / Aggregate linked records
 Date
 Boolean
 Select
 Auto Number
 File Attachment
 ```
+
+### Relationships, lookups and rollups
+
+In **Administration → Modules & fields**, select the source module and add a
+**Relationship / linked record** field. Choose the target module, its display
+field, and whether multiple records may be selected. For example, a Billing
+record can link to a Patient without copying the patient's name into every bill.
+Stored values are stable record IDs; display labels follow subsequent renames.
+Forms and table-cell editing provide searchable, paginated selectors.
+
+Add a **Lookup** to display another field from those selected records, or a
+**Rollup** to count them or calculate sum, average, minimum or maximum of a
+numeric linked field. These values are read-only and calculated when records are
+loaded. Empty links produce count/sum zero; average/min/max are empty. Lookups
+return a list of values, even for a single link. A record's **Related records**
+section lists accessible records referencing it, with paged navigation.
+
+Example API field configurations:
+
+```json
+{"field_type":"relationship","config":{"target_module_uid":"<module UUID>","label_field":"name","multiple":false}}
+{"field_type":"lookup","config":{"relationship_field":"patient","target_field":"department"}}
+{"field_type":"rollup","config":{"relationship_field":"selected_bills","target_field":"amount","function":"sum"}}
+```
+
+Send a record UUID for a single relationship, an array of UUIDs for a multiple
+relationship (up to 100), or null/an empty array to clear an optional link.
+Changes participate in the normal record `base_revision`/PATCH merge and version
+history. Two edits to the same relationship field conflict; unrelated fields
+still merge. Lookup/rollup fields cannot be submitted as editable values.
+
+Both modules must be accessible. MX validates target membership and active state
+inside the write transaction. Hidden target IDs, labels, lookups and rollups are
+redacted, not merely hidden by the UI. Linked records cannot be trashed while
+active records reference them. Clear links or trash their sources first; restore
+targets before restoring sources. Reconfigure/archive dependent calculated
+fields and clear stored links before archiving a relationship. Active relationship
+definitions prevent deleting their target module.
+
+Current scope: rollups aggregate **explicitly selected outgoing links**, not all
+inverse child records automatically. Derived values are current-data views, not
+historical computed snapshots. Relationships/lookups/rollups cannot be sorted,
+raw-searched, used as N1 path components or referenced by formulas. Existing
+dashboard/report SQL measures do not aggregate these on-demand computed fields;
+CSV exports omit all three new field types rather than exposing raw linked IDs.
+This does not turn MX into a SQL administration tool.
 
 ### Common field behavior
 
@@ -818,6 +872,12 @@ MX supports server-side:
 - pagination.
 
 The browser does not need to download the complete database just to find or display records.
+
+Wide record tables have a slim, synchronized horizontal scrollbar at the bottom
+of the visible table area when their normal bottom scrollbar is off-screen.
+Drag it or focus it and use Left/Right, Home/End or Page Up/Down. It disappears
+when the normal scrollbar is reachable, columns fit, mobile cards are shown or
+a record editor is open. Table styling and server-side pagination are unchanged.
 
 ---
 
@@ -1352,6 +1412,8 @@ GET /mx/v1/admin/accounts/{account_uid}/modules
 PUT /mx/v1/admin/accounts/{account_uid}/modules
 
 GET  /mx/v1/modules/{module_uid}/schema
+GET  /mx/v1/relationships/{field_uid}/options?q={query}&page=1
+GET  /mx/v1/relationships/{module_uid}/{record_uid}/related?page=1
 POST /mx/v1/admin/modules/{module_uid}/fields
 PUT  /mx/v1/admin/modules/{module_uid}/schema/order
 
@@ -1604,6 +1666,7 @@ the same raw fragment into both, MX derives its identifier in memory and logs a
 credential-free configuration warning. Already-hashed identifiers are not
 hashed again, and other credential failures do not trigger fallback attempts.
 
+
 Example WebRTC configuration:
 
 ```ini
@@ -1663,6 +1726,156 @@ libreoffice --headless --version
 ```
 
 LibreOffice is used as a headless conversion worker. The original N1 object is not replaced by the generated preview.
+
+### Standalone Office editing
+
+MX deployment must remain MX + SQLite + N1. No Collabora/ONLYOFFICE server,
+Docker stack, database service, public Office API or runtime CDN is required by
+the bundled editor. In Drive, use the Office action / **Edit in MX Office** on a
+supported file. Viewers open a read-only editor. This opens a separate browser tab
+running a locally bundled LibreOffice/ZetaOffice WebAssembly engine; MX owns
+authorization, metadata and versions, while N1 stores the bytes.
+
+The editor fills the window beneath a single 38-pixel MX bar: filename, compact
+save status, Save and **⋯ Document options**. There are no additional status,
+offline or information rows and no MX footer. Open from Drive, Download copy,
+Save as a copy, offline settings and detailed save/certificate information are
+in Document options. The menu and actionable error/recovery messages overlay
+the editor rather than resizing it while you type. LibreOffice's own editing
+menus, formatting controls and formula bar are retained.
+
+Editing is offered for DOC/DOCX/ODT/RTF and XLS/XLSX/ODS, using explicit matching
+export filters. PPT/PPTX/ODP open **read-only**: native presentation editing
+failed acceptance tests and is not enabled in this build. Macro execution and automatic linked-data
+updates are disabled; macro-enabled DOCM/XLSM/PPTM files are not offered for
+editing. Format availability is not a guarantee of perfect fidelity for every
+document. See `TESTING.md` for the formats and browser engines actually tested.
+Current acceptance testing still catches intermittent missing leading input in
+freshly opened spreadsheets and a Firefox native-canvas rendering failure.
+Office editing is not release-qualified yet; keep separate copies of important
+documents and do not confuse confirmed MX snapshot storage with validation of
+every native editing interaction.
+
+#### Offline operation
+
+There are two independent cases:
+
+- **No public internet, MX/N1 reachable on the LAN:** open, edit and save normally.
+  Every engine/SDK/font asset is served from MX. Deployment needs only the Rust
+  binary, the complete `frontend/dist` package, SQLite and N1; Node.js and a host
+  LibreOffice installation are not needed for this editor.
+- **MX/LAN itself unreachable:** previously prepared documents can reopen and
+  remain editable. Visit Office once while connected, open **Document options**
+  and wait for **Editor
+  available offline**. Enable **Keep offline copy on this device** for each
+  document, then bookmark `/office/index.html` for the offline document list.
+  Unsaved snapshots are retained in IndexedDB after a short typing pause and
+  periodically while editing. Reconnect, sign in if necessary, and explicitly
+  choose **Save to MX**. Reconnection never silently uploads or overwrites files.
+
+The editor-only service worker caches public application/engine assets, **not**
+API responses, credentials or documents. Document retention is a separate,
+explicit opt-in. Local copies are readable by anyone using the same browser
+profile; do not enable this on shared/untrusted workstations. Offline copies
+are not backups or cloud saves. Browser storage limits, eviction/private mode,
+device failure or clearing site data can remove them. Download a separate copy
+when needed. Changes not yet checkpointed can be lost in a process/power crash.
+Removing a local copy does not delete MX versions, and revoking server access
+cannot retract a copy already downloaded to a user's machine.
+
+Office requires a secure context, WebAssembly threads/SharedArrayBuffer, worker
+WebGL and
+browser-trusted HTTPS. LAN deployments can use an internally trusted CA; a public
+internet connection is not necessary. Merely accepting a self-signed certificate
+warning may prevent service-worker installation. Preserve MX's isolation headers
+through any reverse proxy. They apply only to `/office/`, not the workspace/calls.
+Offline caching failures have a concise, expandable explanation in **Document
+options**, technical
+details and a retry action. They are separate from MX save errors: an expired or
+untrusted certificate can prevent offline preparation even when the browser
+lets you open MX after bypassing its certificate warning. Renew the certificate
+and establish browser trust; bypassing the warning is not an offline-mode fix.
+If the engine cannot
+start, an already loaded document/local copy remains downloadable. A disposable
+worker checks actual graphics support before the large runtime starts: merely
+having `OffscreenCanvas` or main-page WebGL is not enough. The tested WebKit/WPE
+runtime lacks worker WebGL; its download fallback is tested, not Office editing.
+Chromium/Firefox editing results are listed separately in `TESTING.md`.
+
+Each frontend build changes the offline worker's generation as well as its asset
+manifest, so already-cached browsers can receive editor updates. Before closing
+an old editor tab, save successfully to MX or download a copy of unsaved edits;
+then reopen the document to use the updated interface.
+
+#### Saving and concurrency
+
+Use **Save to MX**, Ctrl/Cmd+S, or the native File → Save/Save toolbar action.
+The compact bar shows **Unsaved → Saving… → Saved**, with success only after MX
+acknowledges the commit. Hover its status or open **Document options** for
+**Saved to MX · revision … · time** and detailed progress; the full status is
+also announced to assistive technology. Unsaved/newer edits and failures stay marked
+unsaved; a local draft or native temporary file is not proof of an MX save.
+Saving an unchanged document explains that there are no unsaved changes rather
+than creating another version. **Sign in to save** is a recovery action shown
+only when authentication is missing/expired, not an extra Office account.
+Recovery keeps the open edits and requires the original MX account.
+Save also accepts the spreadsheet cell currently being typed, without requiring
+Enter first. The native spreadsheet address box identifies the active cell; its
+local-only accessible selection is also retained. It does not create server edit
+sessions or presence tracking.
+
+Native File → Open, the folder toolbar action and Ctrl/Cmd+O guide you to
+**Open from Drive** in **Document options**. Each editor tab remains bound to its original MX file.
+Opening a different local file through the engine's unsupported native picker
+is not enabled; upload/open it through Drive in a separate editor tab. This also
+prevents accidentally saving a different displayed document over the original.
+
+`GET /mx/v1/drive/items/{uid}/office` returns an ACL-checked snapshot with the
+current MX revision, exact version UID and `editing_supported` flag; the editor downloads that pinned
+version. Editing stays entirely local, with no edit locks, edit-presence heartbeat
+or server Office sessions. A read-only connection check shows an offline icon
+without tracking edits. MX's existing resumable multipart upload publishes saves:
+
+1. Export the document in its original format in the browser.
+2. Upload it as a **new uniquely keyed N1 object**, preserving the original
+   extension. Never replace an earlier Office version's content.
+3. Atomically recheck access, owner quota and the original MX revision, insert a
+   normal MX file version and switch the current-version pointer.
+
+An uncertain save or separate-file save retains its exact upload operation/payload
+for idempotent retry. With local retention enabled, this intent also survives
+closing/reopening the tab. Save and Download queue behind an in-flight local
+checkpoint; the user does not need to click a second time.
+Concurrent whole-document edits do **not** automatically merge paragraphs/cells:
+a stale save asks the user to save a separate file, deliberately add a version
+after the latest version, or discard/load the latest. Each explicit replacement
+is checked again; previous versions remain in history. Native Office Save and
+Ctrl/Cmd+S route through MX, not just the engine's temporary filesystem.
+
+#### Packaging and current limits
+
+`frontend/public/office/vendor/manifest.json` pins executable/data checksums;
+`npm run build` verifies them without downloading assets. Brotli engine assets
+include approximately 51 MiB of Brotli binaries plus approximately 80 MiB of
+generated gzip alternatives for browsers/connections that do not advertise
+Brotli. The engine expands to approximately 250 MiB before additional runtime/
+document memory. Large documents require the
+client to load/export the full file: Drive's unlimited-per-file multipart policy
+does not imply unlimited browser editing memory. Editor tabs consume client RAM;
+small server hardware still needs to serve assets and handle storage transfers.
+
+The pinned upstream engine assets are dated 2025-05-13. This integration is **not
+a completed current-engine security/support or third-party distribution-license
+audit**; those are release gates. Provenance, source links and license notices are
+in `frontend/public/office/vendor/THIRD-PARTY.md`. Physical low-memory devices,
+mobile ergonomics and complex/legacy-format fidelity need target-device testing.
+Direct Office editing currently starts from Drive, not record/message attachment
+modals. The older optional headless LibreOffice PDF preview remains separate,
+read-only and dependent on a host installation; it is not needed by this editor.
+The native engine toolbar is desktop-oriented. Narrow windows scroll an
+initialized-width canvas instead of distorting its text and hit targets. The MX
+bar stays one row, with keyboard-operable scroll buttons available in Document
+options. This is not a mobile-native Office interface.
 
 ---
 
@@ -1811,6 +2024,49 @@ Run from `frontend` after `cargo build --locked` and `npm run build`.
 Without the live-N1 variables the runner uses an explicit HTTP contract fixture,
 not live storage. `MX_TEST_API_ONLY=1` skips browser checks; no UI validation is
 claimed for that mode. See [TESTING.md](TESTING.md) for retained results and gaps.
+
+The native relationship runner tests eight-account merges/conflicts, referential
+integrity, paged selectors and three-engine form/inline/admin UI:
+`npm run test:relationships:browser` (with the same isolated audio sink).
+
+`npm run test:office:browser` runs the **real bundled engine**, keyboard edits,
+exported-document inspection, new-object version saves, offline tab closure and
+reopening, lost-response reconciliation and simultaneous-save conflicts. Public
+internet requests are blocked throughout the browser phase. This suite needs no
+audio devices/sink and never changes system certificate trust. It uses a test-only
+localhost proxy for the isolated self-signed MX server. The default N1 backend is
+the explicit contract fixture; opt-in live N1 variables retain the same meaning.
+`MX_TEST_BROWSERS` selects the browser engines. Focused diagnostic runs using
+`MX_TEST_OFFICE_FORMATS_ONLY=1` are not the complete offline/concurrency UI suite.
+`MX_TEST_OFFICE_SHELL_ONLY=1` checks the compact layout, keyboard/menu actions,
+real DOCX save/download, opt-in offline retention and fixed canvas geometry;
+it does not clear the existing spreadsheet input/rendering release gates.
+Use `MX_TEST_BROWSERS=chromium,firefox` for the currently validated editing engines.
+The separate `MX_TEST_BROWSERS=webkit MX_TEST_OFFICE_GRAPHICS_FALLBACK=1` run
+verifies the unsupported-runtime message and unchanged download, **not** WebKit
+editing. Presentation checks assert the read-only gate, not a successful edit.
+The suite's result file explicitly records these limits and does not claim
+production qualification.
+
+`npm run test:records:scroll` exercises wide/tall real record tables in Chromium,
+Firefox and WebKit: pointer/keyboard scrolling, both-way synchronization,
+resizing/themes, normal-scrollbar handoff, column visibility, dialogs, mobile
+cards, pagination and cleanup when navigating away. It uses disposable MX data
+and the explicit N1 contract fixture by default, without audio devices.
+
+`npm run test:drive:dropdowns` checks dropdown arrows on dashboard, module settings,
+report builder, account creation and Drive. It covers explicit light/dark and
+system-light/system-dark themes at desktop/mobile widths; Reporting period
+keyboard input and persisted Navigation icon changes are checked alongside
+user/group access roles, every guest-link expiry, committed ACLs/timestamps,
+all sort choices and 25/50/100-item pages. Computed-style checks verify one
+non-repeating chevron inset 12px with reserved text space, plus the native-arrow
+fallback in high-contrast mode. Shared-style unit checks reject legacy theme
+overlays and guard the shared decoration against component background overrides.
+It also checks that dismissing a dropdown with Escape keeps Share open, while
+Escape from another dialog control still closes Share. The three-engine runner
+uses real isolated MX/SQLite, light/dark desktop/mobile layouts and process-local
+null audio backends; it does not require or change a desktop audio sink.
 
 For focused pagination/share/preview and file-manager regressions, use
 `npm run test:drive:polish` and `npm run test:drive:file-manager` with the same
@@ -2003,7 +2259,44 @@ MX follows these principles:
 ---
 
 
-## MX 4.0.0
+## MX 4.1.0
+
+MX 4.1 adds native module relationships, lookups and rollups, plus locally
+bundled, client-side Office editing in Drive. MX owns access and versioning;
+each saved file version is a new immutable N1 object. Prepared, opted-in local
+copies can reopen without MX connectivity; normal LAN use needs no Internet
+or separately installed Office server. The Office shell is one compact bar,
+and wide record tables keep horizontal scrolling within reach.
+
+Dropdown arrows remain visible throughout MX, including Drive access
+roles, guest-link expiry, sorting and page size. A single chevron sits 12px
+inside the border with space reserved beside the selected text; high-contrast
+mode uses the browser's native arrow. These remain real HTML dropdowns:
+click/tap to open, or focus and use the browser's arrow-key selection controls.
+Fixed labels such as the file's Owner role are not editable dropdowns.
+
+The 4.1.0 version is not production certification. Office spreadsheet input and
+Firefox rendering have unresolved acceptance failures; presentation files are
+read-only and the tested WebKit/WPE editor uses a download fallback. Full call,
+live-storage, security, complex-document and real-device qualification gates
+remain documented in [TESTING.md](TESTING.md). Do not infer clearance from a
+successful build or a version bump.
+
+### Upgrade and validation
+
+Rust and frontend package versions are both **4.1.0**. Deploy the matching binary
+and rebuilt `frontend/dist` together, then restart MX so the new routes and
+automatic SQLite schema migrations are active. Back up SQLite first; do not
+replace the existing database, environment, or deployment configuration.
+Compatibility remains **N1 v4.0.0 / storage format 4**; do not change N1's version
+to match MX. Office offline reopening requires browser-trusted HTTPS and
+sufficient client storage; a certificate-warning bypass does not qualify it.
+
+API clients must send `base_revision` for full-record PUT, use durable multipart
+instead of the retired Drive one-request upload endpoint, and honor returned
+page limits/offsets rather than hard-coding 100-item pages.
+
+### MX 4.0.0 baseline
 
 MX 4.0 expands the product into a **self-hosted modular digital workplace
 platform**. MX Drive joins the existing configurable records, dashboards,
@@ -2031,23 +2324,11 @@ merges, module isolation, reporting, attachment previews and team calls remain
 part of the platform. See [CHANGELOG.md](CHANGELOG.md) for the 4.0 changes and
 the historical 3.0 release notes.
 
-### Upgrade and validation
-
-Rust and frontend package versions are both **4.0.0**. Deploy the matching binary
-and rebuilt `frontend/dist` together, then restart MX so the new routes and
-automatic SQLite schema migrations are active. Back up SQLite first; do not
-replace the existing database, environment, or deployment configuration. This
-release targets **N1 v4.0.0 / storage format 4**.
-
 Existing saved deployment branding is preserved. New defaults use “Litiaina's
 Digital Workplace Platform”; **Restore MX defaults** in Deployment identity
 changes the editor only until the administrator saves it.
 
-API clients must send `base_revision` for full-record PUT, use durable multipart
-instead of the retired Drive one-request upload endpoint, and honor returned
-page limits/offsets rather than hard-coding 100-item pages.
-
-Version 4.0.0 is not a blanket reliability certification. The known Linux WebKit
+Version 4.1.0 is not a blanket reliability certification. The known Linux WebKit
 large-upload crash, incomplete eight-person call validation, and current live-N1
 test-fragment blocker remain documented in [TESTING.md](TESTING.md).
 

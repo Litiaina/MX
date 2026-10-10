@@ -20,6 +20,8 @@
   import HardDrive from '@lucide/svelte/icons/hard-drive';
   import { driveFile, type DriveItem } from '../api/drive';
   import RecordAttachmentThumbnail from './RecordAttachmentThumbnail.svelte';
+  import RelationshipInput from './RelationshipInput.svelte';
+  import RelatedRecords from './RelatedRecords.svelte';
 
   let { schema, moduleUid = '', record, canWrite, canDelete, canAttachments = true, allowEdit = false, liveMessage = null, focusAttachments = false, recordLabel = 'Record', onEdit = () => undefined, onClose, onSaved }:
     { schema: SchemaResponse; moduleUid?: string; record: MxRecord | null; canWrite: boolean; canDelete: boolean; canAttachments?: boolean; allowEdit?: boolean; liveMessage?: LiveMessage | null; focusAttachments?: boolean; recordLabel?: string; onEdit?: () => void; onClose: () => void; onSaved: () => Promise<void> } = $props();
@@ -82,7 +84,7 @@
       const saved = canWrite ? JSON.parse(sessionStorage.getItem(draftStorageKey()) || 'null') as { values?: Record<string, JsonValue>; original?: Record<string, JsonValue>; base_revision?: number; create_submission?: {uid:string;values:Record<string,JsonValue>} } | null : null;
       if (!record && saved?.create_submission?.uid) restoredSubmission = saved.create_submission;
       if (saved?.values && typeof saved.values === 'object') {
-        const editable = new Set(schema.fields.filter((field) => field.active && !['attachments', 'auto_number', 'formula'].includes(field.field_type)).map((field) => field.key));
+        const editable = new Set(schema.fields.filter((field) => field.active && !['attachments', 'auto_number', 'formula', 'lookup', 'rollup'].includes(field.field_type)).map((field) => field.key));
         for (const [key, value] of Object.entries(saved.values)) {
           if (!editable.has(key)) continue;
           const savedOriginal = saved.original?.[key] ?? null;
@@ -164,7 +166,7 @@
 
   function persistDraft() {
     if (!canWrite) return;
-    const changed = schema.fields.some((field) => !['attachments', 'auto_number', 'formula'].includes(field.field_type) && JSON.stringify(values[field.key] ?? null) !== JSON.stringify(original[field.key] ?? null));
+    const changed = schema.fields.some((field) => !['attachments', 'auto_number', 'formula', 'lookup', 'rollup'].includes(field.field_type) && JSON.stringify(values[field.key] ?? null) !== JSON.stringify(original[field.key] ?? null));
     try {
       if (changed || createSubmission) sessionStorage.setItem(draftStorageKey(), JSON.stringify({ values: cloneJson(values), original: cloneJson(original), base_revision: workingRevision, create_submission: createSubmission, saved_at: Date.now() }));
       else sessionStorage.removeItem(draftStorageKey());
@@ -301,7 +303,7 @@
       if (current) {
         const changes: Record<string, JsonValue> = {};
         for (const field of fields) {
-          if (['attachments', 'auto_number', 'formula'].includes(field.field_type)) continue;
+          if (['attachments', 'auto_number', 'formula', 'lookup', 'rollup'].includes(field.field_type)) continue;
           if (JSON.stringify(values[field.key] ?? null) !== JSON.stringify(original[field.key] ?? null)) {
             changes[field.key] = values[field.key] ?? null;
           }
@@ -311,7 +313,7 @@
         saved = Object.keys(changes).length ? await patchRecord(current.uid, changes, workingRevision, moduleUid || undefined) : cloneJson(current);
       } else {
         const payload: Record<string, JsonValue> = {};
-        for (const field of fields) if (!['attachments', 'auto_number', 'formula'].includes(field.field_type)) payload[field.key] = values[field.key] ?? null;
+        for (const field of fields) if (!['attachments', 'auto_number', 'formula', 'lookup', 'rollup'].includes(field.field_type)) payload[field.key] = values[field.key] ?? null;
         if (!createSubmission) createSubmission = { uid: operationUid(), values: cloneJson(payload) };
         persistDraft();
         saved = await createRecord(createSubmission.values, moduleUid || undefined, createSubmission.uid);
@@ -513,6 +515,10 @@
           <label>{field.label}<input value={autoNumberValue(field)} disabled placeholder="Assigned automatically when saved" /></label>
         {:else if field.field_type === 'formula'}
           <label><span>{field.label}<small class="field-kind-hint">Calculated</small></span><input value={String(fieldValue(field))} disabled placeholder="Calculated when saved" /></label>
+        {:else if field.field_type === 'relationship'}
+          <RelationshipInput {field} value={values[field.key] ?? null} labels={current?.relationships?.[field.key]} disabled={!canWrite} onChange={value=>values[field.key]=value} />
+        {:else if field.field_type === 'lookup' || field.field_type === 'rollup'}
+          <label><span>{field.label}</span><input disabled value={Array.isArray(values[field.key]) ? (values[field.key] as JsonValue[]).join(', ') : String(values[field.key] ?? '—')} /><small class="muted">Calculated from linked records when loaded</small></label>
         {:else if field.field_type === 'long_text'}
           <label class="full"><span>{field.label}{#if field.required}<b class="required-mark"> *</b>{/if}</span><textarea rows="4" required={field.required} disabled={!canWrite} value={String(fieldValue(field))} oninput={(event) => setValue(field, event.currentTarget)}></textarea></label>
         {:else if field.field_type === 'select'}
@@ -523,6 +529,7 @@
           <label><span>{field.label}{#if field.required}<b class="required-mark"> *</b>{/if}</span><input type={field.field_type === 'date' ? 'date' : field.field_type === 'integer' || field.field_type === 'decimal' ? 'number' : 'text'} step={field.field_type === 'decimal' ? 'any' : field.field_type === 'integer' ? 1 : undefined} required={field.required} disabled={!canWrite} value={String(fieldValue(field))} oninput={(event) => setValue(field, event.currentTarget)} /></label>
         {/if}
       {/each}
+      {#if current}<RelatedRecords module={moduleUid || 'mx-default-records'} record={current.uid} />{/if}
       {#if unassignedFiles.length}<fieldset class="field-block full attachment-section"><legend>Unassigned legacy attachments</legend><p class="muted small">These files predate File Attachment fields. They remain available for preview and download.</p>{#each unassignedFiles as file}<div class="file-row record-file-row"><RecordAttachmentThumbnail recordUid={current!.uid} {file} onOpen={() => showPreview(file.uid)} /><span class="record-file-copy"><strong>{file.file_name}</strong><small>{file.mime_type || 'application/octet-stream'} · {bytes(file.size)}</small></span><div class="inline-actions"><button class="file-action-icon" type="button" onclick={() => showPreview(file.uid)} aria-label={`Preview ${file.file_name}`} title="Preview"><Eye size={15} /></button><button class="file-action-icon" type="button" onclick={() => download(`/mx/v1/records/${current?.uid}/attachments/${file.uid}/download`, file.file_name)} aria-label={`Download ${file.file_name}`} title="Download"><DownloadIcon size={15} /></button>{#if canDelete}<button class="file-action-icon danger-text" type="button" onclick={() => removeFile(file.uid)} aria-label={`Delete ${file.file_name}`} title="Delete"><Trash2 size={15} /></button>{/if}</div></div>{/each}</fieldset>{/if}
       {#if uploadLabel}<section class="upload-progress-panel full" aria-live="polite"><div><strong>{uploadLabel}</strong><span>{uploadProgress}%</span></div><div class="upload-progress-track"><i style={`width:${uploadProgress}%`}></i></div><small>Keep this window open until every queued file finishes.</small></section>{/if}
       <footer class="dialog-actions">

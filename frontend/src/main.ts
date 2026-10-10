@@ -5,6 +5,7 @@ import './styles/app.css';
 import './styles/foundation.css';
 import './styles/shell.css';
 import './styles/workspaces.css';
+import './styles/dropdowns.css';
 
 const target = document.getElementById('app');
 

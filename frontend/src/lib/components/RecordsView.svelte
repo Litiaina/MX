@@ -14,6 +14,8 @@
   import type { Session } from '../api/types';
   import { deleteRecord, getRecord, listRecords, loadModuleSchema, loadSchema, patchRecord } from '../api/workspace';
   import RecordEditor from './RecordEditor.svelte';
+  import RelationshipInput from './RelationshipInput.svelte';
+  import TableScrollbar from './TableScrollbar.svelte';
   import { floatingMenu } from '../util/floating';
 
   let { session, accessLevel, moduleUid = '', modulePermission = null, openRecordUid = '', openRequestRevision = 0, focusLinkedAttachments = false, revision = 0, liveMessage = null, recordSingular = 'Record', recordPlural = 'Records' }: { session: Session; accessLevel: number; moduleUid?: string; modulePermission?: ModulePermission | null; openRecordUid?: string; openRequestRevision?: number; focusLinkedAttachments?: boolean; revision?: number; liveMessage?: LiveMessage | null; recordSingular?: string; recordPlural?: string } = $props();
@@ -29,6 +31,7 @@
   let deletingUid = $state('');
   let rowMenuUid = $state('');
   let rowMenuAnchor = $state<HTMLButtonElement | null>(null);
+  let tableViewport = $state<HTMLDivElement>();
   const menuRow = $derived(rows.find((row) => row.uid === rowMenuUid));
   let editor = $state<MxRecord | null | undefined>(undefined);
   let editorWritable = $state(false);
@@ -169,8 +172,11 @@
       return files.length === 1 ? files[0].file_name : `${files.length} files`;
     }
     const value = row.values[key];
+    if (field?.field_type === 'relationship' && row.relationships?.[key]?.restricted) return 'Access restricted';
     if (value == null || value === '') return '—';
     if (typeof value === 'boolean') return value ? 'Yes' : 'No';
+    if (field?.field_type === 'relationship') return row.relationships?.[key]?.restricted ? 'Access restricted' : row.relationships?.[key]?.items.map(item=>item.label).join(', ') || '—';
+    if (Array.isArray(value)) return value.map(item=>String(item ?? '—')).join(', ');
     if (field?.field_type === 'auto_number') {
       const prefix = String(field.config.prefix || ''); const padding = Number(field.config.padding || 0);
       return `${prefix}${String(value).padStart(padding, '0')}`;
@@ -179,7 +185,7 @@
   }
 
   function canEditCell(field: SchemaResponse['fields'][number]) {
-    return canUpdate && !['attachments', 'auto_number', 'formula'].includes(field.field_type);
+    return canUpdate && !['attachments', 'auto_number', 'formula', 'lookup', 'rollup'].includes(field.field_type);
   }
   function beginCellEdit(event: MouseEvent, row: MxRecord, field: SchemaResponse['fields'][number]) {
     if (!canEditCell(field) || cellSaving) return;
@@ -187,7 +193,7 @@
     error = '';
     const raw = row.values[field.key];
     cellConflict = null;
-    cellEdit = { rowUid: row.uid, fieldKey: field.key, value: field.field_type === 'boolean' ? String(raw === true) : raw == null ? '' : String(raw), baseRevision: row.revision };
+    cellEdit = { rowUid: row.uid, fieldKey: field.key, value: field.field_type === 'boolean' ? String(raw === true) : Array.isArray(raw) ? JSON.stringify(raw) : raw == null ? '' : String(raw), baseRevision: row.revision };
     void tick().then(() => {
       const control = document.querySelector<HTMLInputElement | HTMLSelectElement>('[data-active-cell-editor]');
       control?.focus();
@@ -215,6 +221,7 @@
   }
   function cellEditValue(field: SchemaResponse['fields'][number], value: string) {
     if (value === '') return null;
+    if (field.field_type === 'relationship' && field.config.multiple === true) { try { return JSON.parse(value); } catch { return []; } }
     if (field.field_type === 'boolean') return value === 'true';
     if (field.field_type === 'integer') return Number.parseInt(value, 10);
     if (field.field_type === 'decimal') return Number(value);
@@ -289,7 +296,7 @@
   {#if error}<div class="notice error">{error}</div>{/if}
   {#if cellConflict}<div class="notice record-cell-conflict"><div><strong>{cellConflict.conflict.label} changed elsewhere</strong><small>Stored: {String(cellConflict.conflict.current_value ?? 'Empty')} · Yours: {String(cellConflict.conflict.your_value ?? 'Empty')}</small></div><div class="inline-actions"><button class="button small" type="button" onclick={useStoredCellValue}>Use stored</button><button class="button primary small" type="button" onclick={() => void keepProposedCellValue()}>Keep mine</button></div></div>{/if}
   <div class="records-result-summary" aria-live="polite" aria-label={`${total.toLocaleString()} ${total === 1 ? recordSingular.toLowerCase() : recordPlural.toLowerCase()}`}><span><strong>{total.toLocaleString()}</strong> {total === 1 ? 'result' : 'results'}</span><small>{rows.length ? `Showing ${((page - 1) * pageSize + 1).toLocaleString()}–${Math.min(page * pageSize, total).toLocaleString()}` : 'No rows in this view'}</small></div>
-  <div class="table-wrap records-table">
+  <div class="table-wrap records-table" id={`records-table-${moduleUid || 'default'}`} bind:this={tableViewport}>
     <table>
       <thead><tr><th class="row-index-column">#</th>{#each visibleFields as field}<th><button class="table-sort" class:sortable={field.sortable} onclick={() => field.sortable && sort(field.key)}>{field.label}{#if sortBy === field.key}{#if sortDir === 'asc'}<ChevronUp size={14} />{:else}<ChevronDown size={14} />{/if}{/if}</button></th>{/each}<th class="record-actions-column">Actions</th></tr></thead>
       <tbody>
@@ -299,7 +306,7 @@
           <tr class="records-state-row"><td class="table-message" colspan={visibleFields.length + 2}>No {recordPlural.toLowerCase()} match this view.</td></tr>
         {:else}
           {#each rows as row, rowIndex (row.uid)}
-            <tr onclick={() => openRecord(row)} class="clickable-row">
+            <tr onclick={(event) => { if (event.target instanceof Element && event.target.closest('.relationship-input')) return; openRecord(row); }} class="clickable-row">
               <td class="row-index-column" data-label="Row"><span title={`${recordSingular} ${row.uid}`}>{(page - 1) * pageSize + rowIndex + 1}</span></td>
               {#each visibleFields as field}
                 {@const editingCell = cellEdit?.rowUid === row.uid && cellEdit.fieldKey === field.key}
@@ -308,7 +315,10 @@
                     {@const fieldFiles = row.attached_files.filter((file) => file.attachment_field_uid === field.uid)}
                     <button class="attachment-cell-button" class:empty={!fieldFiles.length} onclick={(event) => { event.stopPropagation(); openRecord(row, true); }}>{fieldFiles.length ? `${fieldFiles.length} file${fieldFiles.length === 1 ? '' : 's'}` : 'No files'}</button>
                   {:else if editingCell && cellEdit}
-                    {#if field.field_type === 'long_text'}
+                    {#if field.field_type === 'relationship'}
+                      <RelationshipInput {field} value={field.config.multiple === true ? JSON.parse(cellEdit.value || '[]') : cellEdit.value || null} labels={row.relationships?.[field.key]} disabled={cellSaving} onChange={value=>{if(cellEdit)cellEdit.value=Array.isArray(value)?JSON.stringify(value):String(value ?? '');}} />
+                      <div class="inline-actions"><button type="button" class="button small primary" disabled={cellSaving} onclick={event=>{event.stopPropagation();void commitCellEdit(row,field);}}>Save link</button><button type="button" class="button small" onclick={event=>{event.stopPropagation();cancelCellEdit();}}>Cancel</button></div>
+                    {:else if field.field_type === 'long_text'}
                       <textarea class="cell-editor long-text-cell-editor" data-active-cell-editor bind:value={cellEdit.value} disabled={cellSaving} rows="4" onclick={(event) => event.stopPropagation()} onkeydown={(event) => cellEditorKeydown(event, row, field)} onblur={() => void commitCellEdit(row, field)} aria-label={`Edit ${field.label}`} placeholder="Enter text · Shift + Enter for a new line"></textarea>
                     {:else if field.field_type === 'select'}
                       <select class="cell-editor" data-active-cell-editor bind:value={cellEdit.value} disabled={cellSaving} onclick={(event) => event.stopPropagation()} onkeydown={(event) => cellEditorKeydown(event, row, field)} onblur={() => void commitCellEdit(row, field)}><option value="">Select…</option>{#each (field.config.options as (string | number | boolean)[] || []) as option}<option value={String(option)}>{String(option)}</option>{/each}</select>
@@ -338,6 +348,8 @@
   </div>
   <div class="pagination records-pagination"><span>{rows.length ? `${((page - 1) * pageSize + 1).toLocaleString()}–${Math.min(page * pageSize, total).toLocaleString()} of ${total.toLocaleString()}` : 'No records'}</span><label>Rows<select bind:value={pageSize} onchange={changePageSize}><option value={25}>25</option><option value={50}>50</option><option value={100}>100</option><option value={256}>256</option></select></label><button class="button" disabled={page <= 1 || loading} onclick={() => movePage(1)}>First</button><button class="button" disabled={page <= 1 || loading} onclick={() => movePage(page - 1)}>Previous</button><form onsubmit={goToPage}><label>Page<input type="number" min="1" max={Math.max(1, pages)} bind:value={pageInput} /></label><button class="button" aria-label="Go to page">Go</button></form><span>of {pages}</span><button class="button" disabled={page >= pages || loading} onclick={() => movePage(page + 1)}>Next</button><button class="button" disabled={page >= pages || loading} onclick={() => movePage(pages)}>Last</button></div>
 </section>
+
+<TableScrollbar target={tableViewport} enabled={editor === undefined} />
 
 {#if canDelete && menuRow && rowMenuAnchor}
   <div class="record-row-menu" data-record-actions={menuRow.uid} role="menu" aria-label={`${recordSingular} actions`} tabindex="-1" onkeydown={menuKeydown} use:floatingMenu={{ anchor: rowMenuAnchor, close: () => rowMenuUid = '' }}>

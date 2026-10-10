@@ -162,12 +162,11 @@ input[type="checkbox"], input[type="radio"] {
 }
 textarea { resize: vertical; }
 select {
-  appearance: none;
-  padding-right: 2.15rem;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none'%3E%3Cpath d='m4 6 4 4 4-4' stroke='%2352657d' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: right .72rem center;
-  background-size: .78rem;
+  /* Native baseline, including listboxes. dropdowns.css adds exactly one
+     inset chevron to single-choice controls and keeps high-contrast native. */
+  appearance: auto;
+  padding-right: .65rem;
+  background-image: none;
   line-height: 1.2;
 }
 
@@ -395,7 +394,6 @@ legend { padding: 0 .35rem; color: var(--text-2); font-size: calc(.83rem * var(-
 [data-theme="dark"] .main-stage, [data-theme="dark"] .loading-page { background: #101828; }
 [data-theme="dark"] .panel, [data-theme="dark"] .dialog, [data-theme="dark"] .table-wrap, [data-theme="dark"] .subnav, [data-theme="dark"] .advanced-search, [data-theme="dark"] .toolbar-popover, [data-theme="dark"] .mobile-header, [data-theme="dark"] .auth-card, [data-theme="dark"] .empty-state { border-color: #344054; background: #1d2939; color: #f2f4f7; }
 [data-theme="dark"] input, [data-theme="dark"] select, [data-theme="dark"] textarea, [data-theme="dark"] .button { border-color: #475467; background-color: #101828; color: #f2f4f7; }
-[data-theme="dark"] select { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none'%3E%3Cpath d='m4 6 4 4 4-4' stroke='%2398a2b3' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"); }
 [data-theme="dark"] .button.primary { border-color: var(--primary); background: var(--primary); color: var(--on-primary); }
 [data-theme="dark"] th { background: #344054; color: #d0d5dd; }
 [data-theme="dark"] th, [data-theme="dark"] td, [data-theme="dark"] .dialog-actions, [data-theme="dark"] .definition { border-color: #344054; }
@@ -409,7 +407,6 @@ legend { padding: 0 .35rem; color: var(--text-2); font-size: calc(.83rem * var(-
   [data-theme="system"] .main-stage, [data-theme="system"] .loading-page { background: #101828; }
   [data-theme="system"] .panel, [data-theme="system"] .dialog, [data-theme="system"] .table-wrap, [data-theme="system"] .subnav, [data-theme="system"] .advanced-search, [data-theme="system"] .toolbar-popover, [data-theme="system"] .mobile-header, [data-theme="system"] .auth-card, [data-theme="system"] .empty-state { border-color: #344054; background: #1d2939; color: #f2f4f7; }
   [data-theme="system"] input, [data-theme="system"] select, [data-theme="system"] textarea, [data-theme="system"] .button { border-color: #475467; background-color: #101828; color: #f2f4f7; }
-  [data-theme="system"] select { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none'%3E%3Cpath d='m4 6 4 4 4-4' stroke='%2398a2b3' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"); }
   [data-theme="system"] .button.primary { border-color: var(--primary); background: var(--primary); color: var(--on-primary); }
   [data-theme="system"] th { background: #344054; color: #d0d5dd; }
   [data-theme="system"] th, [data-theme="system"] td, [data-theme="system"] .dialog-actions, [data-theme="system"] .definition { border-color: #344054; }
@@ -1308,9 +1305,9 @@ button.message-reply-quote:hover { background: color-mix(in srgb, var(--primary)
 .module-editor { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); align-items: end; gap: .6rem; }
 .module-editor > label:nth-child(1) { grid-column: span 2; }
 .module-editor > label:nth-child(2) { grid-column: span 2; }
-.module-editor > label:nth-child(3) { grid-column: span 1; }
+.module-editor > label:nth-child(3) { grid-column: span 2; }
 .module-editor > label:nth-child(4) { grid-column: span 1; }
-.module-editor > label:nth-child(5) { grid-column: span 4; }
+.module-editor > label:nth-child(5) { grid-column: span 3; }
 .module-editor > label:nth-child(6) { grid-column: span 2; }
 .module-editor .module-description { min-width: 0; grid-column: span 6; }
 .module-editor > .checkbox { grid-column: span 3; min-height: 2.35rem; align-self: end; padding: .48rem .62rem; border: 1px solid var(--line); border-radius: .55rem; background: var(--surface-2); }

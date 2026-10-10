@@ -4,7 +4,7 @@ export interface FieldDefinition {
   uid: string;
   key: string;
   label: string;
-  field_type: 'text' | 'long_text' | 'integer' | 'decimal' | 'date' | 'boolean' | 'select' | 'auto_number' | 'attachments' | 'formula';
+  field_type: 'text' | 'long_text' | 'integer' | 'decimal' | 'date' | 'boolean' | 'select' | 'auto_number' | 'attachments' | 'formula' | 'relationship' | 'lookup' | 'rollup';
   required: boolean;
   unique_value: boolean;
   searchable: boolean;
@@ -99,7 +99,10 @@ export interface FileAttachment {
   attachment_field_storage_name: string | null;
 }
 
+export interface RelationshipState { restricted: boolean; items: {uid:string;label:string}[] }
+
 export interface MxRecord {
+  relationships?: Record<string, RelationshipState>;
   uid: string;
   revision: number;
   values: Record<string, JsonValue>;

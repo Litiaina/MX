@@ -1,0 +1,13 @@
+{
+  "engine": "ZetaOffice / LibreOffice WebAssembly",
+  "engine_source": "https://git.libreoffice.org/core/+/refs/heads/distro/allotropia/zeta-24-2",
+  "engine_asset_date": "2025-05-13",
+  "sdk_version": "1.2.0",
+  "assets": {
+    "soffice.js": "5143e5354f470b87f86ba272bcfef857bd13e6f07b59666e48a7ccb89643cd77",
+    "soffice.data.js.metadata": "5d9d909d0b9b38443c0f19704032d0fc12d654f6c9c24c2c3b237739c4848ae3",
+    "soffice.wasm.br": "a11808aaba3c9a4412a865bde645247fd9d0b262b5baa0680a9fced29a8656e4",
+    "soffice.data.br": "9d3c1cf3c904ce570905052ba6844f3383fde93ad1267b65a3ae4b236db2fd05",
+    "zeta.js": "b70ee7022908822c512535bbf43c4e44c297acc364e7542abba0d3071f5f9bfd"
+  }
+}

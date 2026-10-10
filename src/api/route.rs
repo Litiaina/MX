@@ -89,6 +89,7 @@ pub fn api_route() -> Router {
         .merge(admin_routes())
         .merge(user_routes())
         .merge(mx_routes())
+        .merge(crate::api::mx::relationships::routes())
         .merge(crate::api::drive::routes())
         .merge(crate::api::drive::public_routes())
         .layer(axum::middleware::from_fn(audit_request))

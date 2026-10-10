@@ -506,7 +506,10 @@ async fn update_storage_layout_for_module(
                             "MX_STORAGE_FIELD_NOT_FOUND".to_string(),
                         )
                     })?;
-                    if field.field_type == "attachments" {
+                    if matches!(
+                        field.field_type.as_str(),
+                        "attachments" | "relationship" | "lookup" | "rollup"
+                    ) {
                         return Err(rusqlite::Error::InvalidParameterName(
                             "MX_STORAGE_ATTACHMENT_FIELD".to_string(),
                         ));
@@ -519,7 +522,10 @@ async fn update_storage_layout_for_module(
                             "MX_STORAGE_FIELD_NOT_FOUND".to_string(),
                         )
                     })?;
-                    if field.field_type == "attachments" {
+                    if matches!(
+                        field.field_type.as_str(),
+                        "attachments" | "relationship" | "lookup" | "rollup"
+                    ) {
                         return Err(rusqlite::Error::InvalidParameterName(
                             "MX_STORAGE_ATTACHMENT_FIELD".to_string(),
                         ));
@@ -598,7 +604,7 @@ async fn update_storage_layout_for_module(
             api_json(
                 StatusCode::BAD_REQUEST,
                 json!({
-                    "response": "File Attachment fields cannot be used as N1 base folders or filename prefixes. Their folder is appended automatically when files are uploaded."
+                    "response": "Attachment, relationship, lookup and rollup fields cannot be used as N1 base folders or filename prefixes. Choose a regular record field."
                 }),
             )
         }

@@ -4,6 +4,7 @@ pub mod handler;
 pub mod model;
 pub(crate) mod n1;
 pub mod records;
+pub mod relationships;
 pub mod schema;
 pub mod storage;
 

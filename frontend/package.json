@@ -1,7 +1,7 @@
 {
   "name": "litiaina-mx-frontend",
   "private": true,
-  "version": "4.0.0",
+  "version": "4.1.0",
   "type": "module",
   "engines": {
     "node": ">=24.0.0"
@@ -9,7 +9,7 @@
   "packageManager": "npm@11.19.0",
   "scripts": {
     "dev": "vite",
-    "build": "svelte-check --tsconfig ./tsconfig.app.json && vite build",
+    "build": "node scripts/verify-office.mjs && svelte-check --tsconfig ./tsconfig.app.json && vite build",
     "check": "svelte-check --tsconfig ./tsconfig.app.json",
     "test": "vitest run",
     "test:calls:browser": "node tests/call-media.browser.mjs",
@@ -18,10 +18,15 @@
     "test:drive:browser": "node tests/drive.browser.mjs",
     "test:drive:file-manager": "node tests/drive-file-manager.browser.mjs",
     "test:drive:polish": "node tests/drive-polish.browser.mjs",
+    "test:drive:dropdowns": "node tests/drive-dropdowns.browser.mjs",
+    "test:relationships:browser": "node tests/relationships.browser.mjs",
+    "test:records:scroll": "node tests/record-scroll.browser.mjs",
+    "test:office:browser": "node tests/office.browser.mjs",
     "preview": "vite preview"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^7.3.0",
+    "@types/node": "^24.19.1",
     "playwright": "1.63.0",
     "svelte": "^5.57.1",
     "svelte-check": "^4.7.6",

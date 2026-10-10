@@ -195,7 +195,9 @@ fn normalize_type(value: &str) -> Result<String, String> {
 
     match field_type.as_str() {
         "text" | "long_text" | "integer" | "decimal" | "date" | "boolean" | "select"
-        | "auto_number" | "attachments" | "formula" => Ok(field_type),
+        | "auto_number" | "attachments" | "formula" | "relationship" | "lookup" | "rollup" => {
+            Ok(field_type)
+        }
 
         _ => Err(format!("Unsupported MX field type '{field_type}'.")),
     }
@@ -236,6 +238,7 @@ fn normalize_attachment_storage_name(value: &str) -> String {
 
 fn validate_config(field_type: &str, config: &Value) -> Result<Value, String> {
     match field_type {
+        "relationship" | "lookup" | "rollup" => super::relationships::config(field_type, config),
         "select" => {
             let options = config
                 .get("options")
@@ -376,7 +379,7 @@ fn validate_formula_references(
         ));
     }
     let available = connection
-        .prepare("SELECT LOWER(COALESCE(module_key,field_key)) FROM mx_fields WHERE module_uid=?1 AND active=1")?
+        .prepare("SELECT LOWER(COALESCE(module_key,field_key)) FROM mx_fields WHERE module_uid=?1 AND active=1 AND field_type NOT IN ('lookup','rollup','relationship','attachments')")?
         .query_map(params![module_uid], |row| row.get::<_, String>(0))?
         .collect::<Result<HashSet<_>, _>>()?;
     let unknown = references
@@ -1141,6 +1144,7 @@ pub(crate) fn ensure_dynamic_schema(connection: &rusqlite::Connection) -> rusqli
         )?;
     }
 
+    super::relationships::ensure(connection)?;
     Ok(())
 }
 
@@ -1175,7 +1179,16 @@ pub(crate) fn load_module_fields_db(
     include_archived: bool,
 ) -> rusqlite::Result<Vec<FieldDefinition>> {
     ensure_dynamic_schema(connection)?;
+    load_module_fields_initialized_db(connection, module_uid, include_archived)
+}
 
+/// Read-only variant for snapshots after schema initialization. Never run
+/// migration writes while upgrading a deferred read transaction under WAL.
+pub(crate) fn load_module_fields_initialized_db(
+    connection: &rusqlite::Connection,
+    module_uid: &str,
+    include_archived: bool,
+) -> rusqlite::Result<Vec<FieldDefinition>> {
     let sql = if include_archived {
         r#"
         SELECT
@@ -1485,13 +1498,21 @@ pub async fn create_schema_field(
         )
     };
     let requested_position = request.position;
-    let required = field_type != "formula" && (request.required || field_type == "auto_number");
-    let unique_value = if matches!(field_type.as_str(), "attachments" | "formula") {
+    let required = !matches!(field_type.as_str(), "formula" | "lookup" | "rollup")
+        && (request.required || field_type == "auto_number");
+    let unique_value = if matches!(
+        field_type.as_str(),
+        "attachments" | "formula" | "relationship" | "lookup" | "rollup"
+    ) {
         false
     } else {
         request.unique_value || field_type == "auto_number"
     };
-    let sortable = request.sortable && field_type != "long_text" && field_type != "attachments";
+    let sortable = request.sortable
+        && !matches!(
+            field_type.as_str(),
+            "long_text" | "attachments" | "relationship" | "lookup" | "rollup"
+        );
     let key_for_db = internal_key;
     let module_key_for_db = key.clone();
     let module_uid_for_db = module_uid.clone();
@@ -1508,6 +1529,12 @@ pub async fn create_schema_field(
                 if load_module_db(connection, &module_uid_for_db)?.is_none() {
                     return Err(rusqlite::Error::QueryReturnedNoRows);
                 }
+                super::relationships::validate_config(
+                    connection,
+                    &module_uid_for_db,
+                    &field_type_for_db,
+                    &config,
+                )?;
                 if field_type_for_db == "formula" {
                     validate_formula_references(
                         connection,
@@ -1568,7 +1595,16 @@ pub async fn create_schema_field(
                         field_type_for_db,
                         if required { 1_i64 } else { 0_i64 },
                         if unique_value { 1_i64 } else { 0_i64 },
-                        if request.searchable { 1_i64 } else { 0_i64 },
+                        if request.searchable
+                            && !matches!(
+                                field_type_for_db.as_str(),
+                                "relationship" | "lookup" | "rollup"
+                            )
+                        {
+                            1_i64
+                        } else {
+                            0_i64
+                        },
                         if sortable { 1_i64 } else { 0_i64 },
                         if request.table_visible { 1_i64 } else { 0_i64 },
                         request.table_priority,
@@ -2175,6 +2211,32 @@ pub async fn update_schema_field(
                 if request.active == Some(false) {
                     ensure_storage_layout_schema(connection)?;
 
+                    let dependency: bool = connection.query_row(
+                        "SELECT EXISTS(SELECT 1 FROM mx_fields d WHERE d.active=1 AND d.uid!=?1 AND (
+                          (d.field_type='relationship' AND json_extract(d.config_json,'$.target_module_uid')=?2 AND json_extract(d.config_json,'$.label_field')=?3)
+                          OR (d.field_type IN ('lookup','rollup') AND d.module_uid=?2 AND json_extract(d.config_json,'$.relationship_field')=?3)
+                          OR (d.field_type IN ('lookup','rollup') AND json_extract(d.config_json,'$.target_field')=?3 AND EXISTS(
+                            SELECT 1 FROM mx_fields l WHERE l.module_uid=d.module_uid AND l.field_type='relationship'
+                              AND COALESCE(l.module_key,l.field_key)=json_extract(d.config_json,'$.relationship_field')
+                              AND json_extract(l.config_json,'$.target_module_uid')=?2))))",
+                        params![&uid_for_db, &module_uid, &existing.key],
+                        |row| row.get(0),
+                    )?;
+                    if dependency {
+                        return Err(rusqlite::Error::InvalidParameterName(
+                            "MX_CONFIG:Reconfigure or archive the relationship, lookup and rollup fields that use this field first.".into(),
+                        ));
+                    }
+                    if existing.field_type == "relationship" {
+                        let linked: bool = connection.query_row(
+                            "SELECT EXISTS(SELECT 1 FROM mx_record_links WHERE field_uid=?1)",
+                            [&uid_for_db], |row| row.get(0),
+                        )?;
+                        if linked { return Err(rusqlite::Error::InvalidParameterName(
+                            "MX_CONFIG:Clear this relationship's stored links before archiving the field.".into(),
+                        )); }
+                    }
+
                     if field_used_by_storage_layout_db(connection, &uid_for_db)? {
                         return Err(rusqlite::Error::InvalidParameterName(
                             "MX_STORAGE_LAYOUT_FIELD".to_string(),
@@ -2197,7 +2259,7 @@ pub async fn update_schema_field(
                 }
 
                 let next_unique =
-                    if matches!(existing.field_type.as_str(), "attachments" | "formula") {
+                    if matches!(existing.field_type.as_str(), "attachments" | "formula" | "relationship" | "lookup" | "rollup") {
                         false
                     } else {
                         request.unique_value.unwrap_or(existing.unique_value)
@@ -2258,6 +2320,18 @@ pub async fn update_schema_field(
                     )?;
                 }
 
+                super::relationships::validate_config(connection, &module_uid, &existing.field_type, &next_config)?;
+                if existing.field_type == "relationship" && next_config != existing.config {
+                    if next_config["target_module_uid"] != existing.config["target_module_uid"] {
+                        let dependent:bool = connection.query_row("SELECT EXISTS(SELECT 1 FROM mx_fields WHERE module_uid=?1 AND active=1 AND field_type IN ('lookup','rollup') AND json_extract(config_json,'$.relationship_field')=?2)",params![&module_uid,&existing.key],|r|r.get(0))?;
+                        if dependent {return Err(rusqlite::Error::InvalidParameterName("MX_CONFIG:Archive or reconfigure dependent lookup and rollup fields before changing this relationship's module.".into()));}
+                    }
+                    let count: i64 = connection.query_row("SELECT COUNT(*) FROM mx_record_values WHERE field_uid=?1", [&uid_for_db], |r| r.get(0))?;
+                    if count > 0 && (next_config["target_module_uid"] != existing.config["target_module_uid"] || next_config["multiple"] != existing.config["multiple"]) {
+                        return Err(rusqlite::Error::InvalidParameterName("MX_CONFIG:Clear existing links before changing the target module or selection cardinality.".into()));
+                    }
+                }
+
                 if existing.field_type == "attachments"
                     && next_config
                         .get("storage_name")
@@ -2285,8 +2359,7 @@ pub async fn update_schema_field(
                 }
 
                 let next_sortable = request.sortable.unwrap_or(existing.sortable)
-                    && existing.field_type != "long_text"
-                    && existing.field_type != "attachments";
+                    && !matches!(existing.field_type.as_str(), "long_text" | "attachments" | "relationship" | "lookup" | "rollup");
 
                 connection.execute(
                     r#"
@@ -2307,7 +2380,7 @@ pub async fn update_schema_field(
                     params![
                         &uid_for_db,
                         next_label,
-                        if existing.field_type != "formula"
+                        if !matches!(existing.field_type.as_str(), "formula" | "lookup" | "rollup")
                             && (request.required.unwrap_or(existing.required)
                                 || existing.field_type == "auto_number")
                         {
@@ -2316,7 +2389,7 @@ pub async fn update_schema_field(
                             0_i64
                         },
                         if next_unique { 1_i64 } else { 0_i64 },
-                        if request.searchable.unwrap_or(existing.searchable) {
+                        if request.searchable.unwrap_or(existing.searchable) && !matches!(existing.field_type.as_str(), "relationship" | "lookup" | "rollup") {
                             1_i64
                         } else {
                             0_i64

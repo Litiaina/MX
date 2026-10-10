@@ -2,6 +2,7 @@
 mod batch;
 mod gc;
 mod listing;
+mod office;
 mod quotas;
 mod resumable;
 mod sharing;
@@ -108,6 +109,7 @@ pub fn routes() -> Router {
         .route("/mx/v1/drive/items/{uid}/links", post(create_link))
         .route("/mx/v1/drive/items/{uid}/links/{link}", delete(revoke_link))
         .route("/mx/v1/drive/items/{uid}/history", get(history))
+        .route("/mx/v1/drive/items/{uid}/office", get(office::open))
         .route("/mx/v1/drive/items/{uid}/restore-version", post(transfers::restore))
         .route("/mx/v1/drive/items/{uid}/ticket", post(ticket))
         .route("/mx/v1/drive/items/{uid}/download", get(download))

@@ -229,6 +229,9 @@ fn normalize_field_value(
     }
 
     match field.field_type.as_str() {
+        "relationship" => {
+            super::relationships::normalize(field, value).map(|v| v.map(NormalizedValue::Text))
+        }
         "text" | "long_text" => {
             let value = value
                 .as_str()
@@ -339,7 +342,7 @@ fn normalize_field_value(
             Ok(Some(NormalizedValue::Boolean(boolean)))
         }
 
-        "auto_number" | "attachments" | "formula" => Ok(None),
+        "auto_number" | "attachments" | "formula" | "lookup" | "rollup" => Ok(None),
 
         _ => Err(format!(
             "{} has unsupported type '{}'.",
@@ -367,7 +370,7 @@ fn validate_payload(
     for field in fields {
         if matches!(
             field.field_type.as_str(),
-            "auto_number" | "attachments" | "formula"
+            "auto_number" | "attachments" | "formula" | "lookup" | "rollup"
         ) {
             continue;
         }
@@ -407,7 +410,7 @@ fn validate_patch_payload(
 
         if matches!(
             field.field_type.as_str(),
-            "auto_number" | "attachments" | "formula"
+            "auto_number" | "attachments" | "formula" | "lookup" | "rollup"
         ) {
             return Err(format!(
                 "{} cannot be modified through the record field PATCH API.",
@@ -1104,6 +1107,12 @@ fn patch_record_db(
             let Some(current_record_revision) = current_record_revision else {
                 return Ok(PatchDbResult::NotFound);
             };
+            super::relationships::validate_selection(
+                &transaction,
+                &fields,
+                &raw_changes,
+                &actor_uid,
+            )?;
             if base_revision < 1 || base_revision > current_record_revision {
                 return Err(rusqlite::Error::InvalidParameterName(
                     "MX_REVISION:The loaded record revision is invalid. Reload the record and try again.".to_string(),
@@ -1118,13 +1127,30 @@ fn patch_record_db(
                 let field_revision = current_field_revision(&transaction, &uid, &field.uid)?;
                 if field_changed_after_base(current_record_revision, base_revision, field_revision)
                 {
+                    let mut current_value = current_field_value(&transaction, &uid, field)?;
+                    if field.field_type == "relationship" {
+                        let level: i64 = transaction.query_row(
+                            "SELECT access_level FROM users WHERE uid=?1",
+                            [&actor_uid],
+                            |r| r.get(0),
+                        )?;
+                        if !module_can_for_user(
+                            &transaction,
+                            field.config["target_module_uid"].as_str().unwrap_or(""),
+                            &actor_uid,
+                            level,
+                            "read",
+                        )? {
+                            current_value = Value::Null;
+                        }
+                    }
                     conflicts.push(FieldConflict {
                         field_uid: field.uid.clone(),
                         field_key: field.key.clone(),
                         label: field.label.clone(),
                         base_revision,
                         current_revision: field_revision,
-                        current_value: current_field_value(&transaction, &uid, field)?,
+                        current_value,
                         your_value: raw_changes.get(key).cloned().unwrap_or(Value::Null),
                     });
                 }
@@ -1277,6 +1303,12 @@ fn create_record_db(
         // fields changed while its acknowledgement was lost. New creates are
         // validated against the actual schema inside the write transaction.
         let fields = load_module_fields_db(&transaction, &module_uid, false)?;
+        super::relationships::validate_selection(
+            &transaction,
+            &fields,
+            &request_values,
+            &actor_uid,
+        )?;
         let mut values = validate_payload(&fields, &request_values)
             .map_err(rusqlite::Error::InvalidParameterName)?;
         let uid = Uuid::new_v4().to_string();
@@ -1394,6 +1426,24 @@ fn update_record_db(
             |row| row.get(0),
         )?;
         validate_replacement_revision(base_revision, current_revision)?;
+        let relationship_values = request_values
+            .iter()
+            .map(|(key, v)| {
+                let value = match v {
+                    NormalizedValue::Text(text) if text.starts_with('[') => {
+                        serde_json::from_str(text).unwrap_or_else(|_| json!(text))
+                    }
+                    _ => normalized_to_json(v),
+                };
+                (key.clone(), value)
+            })
+            .collect();
+        super::relationships::validate_selection(
+            &transaction,
+            &fields,
+            &relationship_values,
+            &actor_uid,
+        )?;
         let mut values = request_values;
         let existing_auto = load_existing_auto_numbers(&transaction, &uid, &fields)?;
 
@@ -1513,6 +1563,13 @@ fn value_from_row(
     boolean: Option<i64>,
 ) -> Value {
     match field_type {
+        "relationship" => text.map_or(Value::Null, |value| {
+            if value.starts_with('[') {
+                serde_json::from_str(&value).unwrap_or(Value::Null)
+            } else {
+                json!(value)
+            }
+        }),
         "integer" | "auto_number" => integer.map_or(Value::Null, |value| json!(value)),
         "decimal" | "formula" => real.map_or(Value::Null, |value| json!(value)),
         "boolean" => boolean.map_or(Value::Null, |value| json!(value != 0)),
@@ -2029,7 +2086,7 @@ fn database_error_response(error: SqliteDatabaseError) -> Response {
             api_json(
                 StatusCode::CONFLICT,
                 json!({
-                    "response": "A configured unique MX field conflicts with an existing record."
+                    "response": "A unique field or record relationship conflicts with the current stored data."
                 }),
             )
         }
@@ -2075,6 +2132,31 @@ async fn module_permission(
     .unwrap_or(false)
 }
 
+async fn present_response(status: StatusCode, claims: &Claims, mut value: Value) -> Response {
+    let claims = claims.clone();
+    match tokio::task::spawn_blocking(move || {
+        with_sql_connection(|c| {
+            let tx = c.unchecked_transaction()?;
+            if let Some(rows) = value.get_mut("data").and_then(Value::as_array_mut) {
+                super::relationships::present_many(&tx, &claims, rows)?;
+            } else {
+                super::relationships::present(&tx, &claims, &mut value)?;
+            }
+            tx.commit()?;
+            Ok(value)
+        })
+    })
+    .await
+    {
+        Ok(Ok(value)) => api_json(status, value),
+        Ok(Err(error)) => database_error_response(error),
+        Err(_) => api_json(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            json!({"response":"Linked record lookup failed."}),
+        ),
+    }
+}
+
 async fn create_record_for_module(
     claims: Claims,
     module_uid: String,
@@ -2117,7 +2199,7 @@ async fn create_record_for_module(
     {
         Ok(Ok(record)) => {
             if !created {
-                return api_json(StatusCode::OK, json!(record));
+                return present_response(StatusCode::OK, &claims, json!(record)).await;
             }
             publish_live_event(
                 "record.created",
@@ -2133,7 +2215,7 @@ async fn create_record_for_module(
                 record.uid.clone(),
                 json!({"record_uid":record.uid,"module_uid":module_uid}),
             ));
-            api_json(StatusCode::CREATED, json!(record))
+            present_response(StatusCode::CREATED, &claims, json!(record)).await
         }
         Ok(Err(error)) => database_error_response(error),
         Err(_) => api_json(
@@ -2208,7 +2290,7 @@ async fn update_record_for_module(
                 record.uid.clone(),
                 json!({"record_uid":record.uid,"module_uid":module_uid}),
             ));
-            api_json(StatusCode::OK, json!(record))
+            present_response(StatusCode::OK, &claims, json!(record)).await
         }
         Ok(Err(error)) => database_error_response(error),
         Err(_) => api_json(
@@ -2229,7 +2311,7 @@ async fn get_record_for_module(claims: Claims, module_uid: String, uid: String) 
     match tokio::task::spawn_blocking(move || get_record_db(module_uid, uid, include_attachments))
         .await
     {
-        Ok(Ok(record)) => api_json(StatusCode::OK, json!(record)),
+        Ok(Ok(record)) => present_response(StatusCode::OK, &claims, json!(record)).await,
         Ok(Err(error)) => database_error_response(error),
         Err(_) => api_json(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -2311,7 +2393,7 @@ async fn patch_record_for_module(
     publish_live_event(
         "record.fields.updated",
         Some(&claims.uid),
-        json!({"record_uid":uid,"module_uid":module_uid,"changes":outcome.changed_values,"record_revision":outcome.revision}),
+        json!({"record_uid":uid,"module_uid":module_uid,"changes":outcome.changed_values.iter().filter(|(key,_)|!schema.fields.iter().any(|f|f.key==**key && f.field_type=="relationship")).collect::<BTreeMap<_,_>>(),"record_revision":outcome.revision}),
     );
     tokio::spawn(notify_module_readers(
         module_uid.clone(),
@@ -2325,7 +2407,7 @@ async fn patch_record_for_module(
     match tokio::task::spawn_blocking(move || get_record_db(module_uid, uid, include_attachments))
         .await
     {
-        Ok(Ok(record)) => api_json(StatusCode::OK, json!(record)),
+        Ok(Ok(record)) => present_response(StatusCode::OK, &claims, json!(record)).await,
         Ok(Err(error)) => database_error_response(error),
         Err(_) => api_json(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -2351,7 +2433,7 @@ async fn list_records_for_module(
     })
     .await
     {
-        Ok(Ok(page)) => api_json(StatusCode::OK, json!(page)),
+        Ok(Ok(page)) => present_response(StatusCode::OK, &claims, json!(page)).await,
         Ok(Err(error)) => database_error_response(error),
         Err(_) => api_json(
             StatusCode::INTERNAL_SERVER_ERROR,

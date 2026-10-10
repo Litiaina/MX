@@ -7,6 +7,7 @@ export interface DriveItem {
   uid: string; owner_uid: string; parent_uid: string | null; name: string; kind: 'file' | 'folder'; revision: number;
   mime_type: string; size: number; created_at: number; updated_at: number; trashed_at: number | null;
   permission: 'owner' | 'editor' | 'viewer' | 'guest'; starred: boolean;
+  original_file_name?: string;
 }
 export type DriveSort = 'modified_desc' | 'modified_asc' | 'name_asc' | 'name_desc';
 export interface DriveListOptions { limit?: number; sort?: DriveSort; kind?: '' | 'file' | 'folder' }
@@ -52,7 +53,7 @@ export async function driveDownload(item: DriveItem, version_uid?: string) {
 
 interface UploadState { operation_uid?: string; completed: boolean; item?: DriveItem; part_size?: number; workers?: number; uploaded_parts?: number[]; ready_to_finalize?: boolean }
 export interface UploadProgress { loaded: number; total: number; phase: 'initializing' | 'uploading' | 'finalizing'; resumedParts: number; bytesPerSecond: number; etaSeconds: number | null }
-export interface DriveUploadOptions { accountUid: string; parentUid: string | null; versionOf?: DriveItem; signal?: AbortSignal; onProgress?: (progress: UploadProgress) => void }
+export interface DriveUploadOptions { accountUid: string; parentUid: string | null; versionOf?: DriveItem; operationUid?: string; signal?: AbortSignal; onProgress?: (progress: UploadProgress) => void }
 const pageOperations = new Map<string, { uid: string; time: number }>();
 function pageOperation(key: string): string {
   const cached = pageOperations.get(key);
@@ -67,7 +68,7 @@ function uploadIdentity(file: File, options: DriveUploadOptions) {
   signal?.throwIfAborted();
   // Metadata only, as in console. N1 and MX own durable session recovery.
   const identity = JSON.stringify([options.accountUid, options.parentUid, options.versionOf?.uid, options.versionOf?.revision, file.name, file.size, file.type, file.lastModified]);
-  return { key: identity, operation_uid: pageOperation(identity), last_modified: file.lastModified };
+  return { key: identity, operation_uid: options.operationUid || pageOperation(identity), last_modified: file.lastModified };
 }
 export async function uploadDriveFile(file: File, options: DriveUploadOptions): Promise<DriveItem> {
   const { signal, onProgress } = options;

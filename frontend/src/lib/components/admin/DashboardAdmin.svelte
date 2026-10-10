@@ -49,7 +49,7 @@
   let filterOperator = $state<DashboardFilter['operator']>('equals');
   let filterValue = $state('');
 
-  const normalFields = $derived(fields.filter((field) => field.active && field.field_type !== 'attachments'));
+  const normalFields = $derived(fields.filter((field) => field.active && !['attachments', 'relationship', 'lookup', 'rollup'].includes(field.field_type)));
   const attachmentFields = $derived(fields.filter((field) => field.active && field.field_type === 'attachments'));
 
   onMount(() => void refresh());
@@ -387,7 +387,7 @@
         <summary><span><Filter size={17} /><strong>Narrow the records</strong><small>Optional filters applied before MX counts the answer.</small></span><b>{filters.length || 'Optional'}</b></summary>
         <div class="builder-disclosure-body">
           <div class="builder-filter-grid">
-            <label>Field<select bind:value={filterField} onchange={syncFilterField}><option value="">Choose a field…</option>{#each fields.filter((field) => field.active) as field}<option value={field.uid}>{field.label}{field.field_type === 'attachments' ? ' (files)' : ''}</option>{/each}</select></label>
+            <label>Field<select bind:value={filterField} onchange={syncFilterField}><option value="">Choose a field…</option>{#each fields.filter((field) => field.active && !['relationship', 'lookup', 'rollup'].includes(field.field_type)) as field}<option value={field.uid}>{field.label}{field.field_type === 'attachments' ? ' (files)' : ''}</option>{/each}</select></label>
             <label>Condition<select bind:value={filterOperator}>{#if fields.find((field) => field.uid === filterField)?.field_type === 'attachments'}<option value="has">Has a file</option><option value="missing">Has no file</option>{:else}<option value="equals">Equals</option><option value="not_equals">Does not equal</option><option value="contains">Contains</option><option value="nonempty">Is filled in</option><option value="empty">Is empty</option>{/if}</select></label>
             {#if !['empty', 'nonempty', 'has', 'missing'].includes(filterOperator)}<label>Value<input bind:value={filterValue} placeholder="Required value" /></label>{/if}
             <button class="button" type="button" onclick={addContextFilter} disabled={!filterField}>Add filter</button>

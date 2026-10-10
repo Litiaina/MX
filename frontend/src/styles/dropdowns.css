@@ -1,0 +1,35 @@
+/* The HTML select/popup remains native. Only its closed-control arrow is
+   painted here so its inset does not depend on the browser/desktop theme.
+   These narrowly scoped important longhands survive component background and
+   padding shorthands without creating additional arrows or changing surfaces. */
+:root {
+  --mx-select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none'%3E%3Cpath d='m4 6 4 4 4-4' stroke='%2352657d' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  --mx-select-inset: .75rem;
+  --mx-select-icon-size: .75rem;
+}
+[data-theme='dark'] {
+  --mx-select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none'%3E%3Cpath d='m4 6 4 4 4-4' stroke='%2398a2b3' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+@media (prefers-color-scheme: dark) {
+  [data-theme='system'] {
+    --mx-select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none'%3E%3Cpath d='m4 6 4 4 4-4' stroke='%2398a2b3' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  }
+}
+select:not([multiple]):not([size]), select:not([multiple])[size='1'] {
+  appearance: none !important;
+  background-image: var(--mx-select-chevron) !important;
+  background-repeat: no-repeat !important;
+  background-position: right var(--mx-select-inset) center !important;
+  background-size: var(--mx-select-icon-size) var(--mx-select-icon-size) !important;
+  padding-inline-end: calc(var(--mx-select-inset) + var(--mx-select-icon-size) + .5rem) !important;
+}
+select:not([multiple]):not([size]):dir(rtl), select:not([multiple])[size='1']:dir(rtl) {
+  background-position: left var(--mx-select-inset) center !important;
+}
+@media (forced-colors: active) {
+  select:not([multiple]):not([size]), select:not([multiple])[size='1'] {
+    appearance: auto !important;
+    background-image: none !important;
+    padding-inline-end: .65rem !important;
+  }
+}

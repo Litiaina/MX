@@ -5,7 +5,126 @@ deployment maintainer's local date.
 
 ## [Unreleased]
 
-No additional changes recorded yet.
+## [4.1.0] - 2026-10-10
+
+### Release and UI notes
+
+- Align Rust/frontend manifests and lockfiles on 4.1.0 for the standalone
+  Office and module-relationship additions. N1 compatibility remains v4.0.0;
+  no external Office server or deployment dependency is introduced.
+- Restore visible dropdown arrows across MX. Component background overrides
+  previously erased the custom arrow while native select styling was disabled,
+  making Drive permissions, guest-link expiry, sorting and page-size controls
+  look like plain text boxes. Preserve native HTML select popups and keyboard/touch
+  controls. Use one non-repeating chevron inset 12px in light/dark themes, with
+  reserved text space and native arrows restored in high-contrast mode.
+- Keep Share open when Escape dismisses a native dropdown (including Firefox);
+  Escape from other Share controls and the Close button still dismiss the dialog.
+- Remove the remaining dark/system-theme SVG arrow overrides and obsolete
+  custom-arrow spacing. Those overrides tiled behind native arrows outside
+  Drive, including Reporting period and Navigation icon. Expand regression
+  coverage to dashboard, module settings, report builder and account controls
+  in explicit light/dark and system-light/system-dark themes, plus shared-style
+  tests to prevent duplicated or tiled arrow overlays from returning.
+- Give the module editor's Navigation icon control more desktop grid space so
+  its selected text and inset arrow fit comfortably; preserve the mobile layout.
+- This version designation does not clear the Office native-input/rendering,
+  browser/device, live-storage or call qualification gates below. Consult
+  `TESTING.md` before deciding whether to deploy.
+
+### Added
+
+- Keep horizontal scrolling within reach for wide/tall record tables with a
+  slim synchronized scrollbar at the visible bottom edge. Show it only while
+  the native bottom scrollbar is off-screen; hide it for fitting columns, mobile
+  cards and open editors. Support thumb dragging and keyboard navigation without
+  changing the table's styling, records or pagination.
+- Relationship fields between modules, with single/multiple stable record-ID
+  links, searchable 50-item selectors, inline/form editing and paged inbound
+  related-record navigation. Lookup and count/sum/average/min/max rollup fields
+  calculate from the selected linked records on read.
+- Persistent indexed relationships and referential-integrity checks: reject
+  cross-module/missing/trashed targets, prevent deletion of actively referenced
+  records and modules, and guard dependent field archival. Relationship values
+  use normal record revisions/history and optimistic conflicts, not edit locks.
+- Check both source and target module access and redact inaccessible linked IDs,
+  labels and calculated values, including history/conflict responses. These
+  fields cannot be raw search/sort/storage-path inputs or formula dependencies.
+- Bundled client-side Office editing from Drive, without an external Office
+  server or runtime CDN. An ACL-checked snapshot pins the current MX version;
+  Word/spreadsheet exports save through existing multipart uploads
+  as new immutable N1 objects and normal, revision-checked MX versions.
+- Editor-only public-asset offline caching and explicit per-document local
+  retention. Prepared documents can reopen/edit with MX unreachable; reconnect
+  and explicitly save after access/quota/revision checks. Local drafts survive
+  tab closure, and uncertain saves retain their exact retry operation/payload.
+- Route native Save/Ctrl+S through MX. Whole-document conflicts offer deliberate
+  next-version/separate-file/latest-version choices; there is no automatic Office
+  co-editing merge. Disable macros and automatic linked-data updates, and keep
+  the editor's isolation/security headers separate from calls and the workspace.
+- Queue Save/Download behind local checkpoints rather than losing a click;
+  retain separate-file save operations across uncertain responses and offline
+  reopening. Ctrl/Cmd+Shift+S opens the MX separate-file save flow.
+- Check real worker WebGL support before engine startup and retain the original
+  document download on unsupported graphics runtimes. Generate gzip alternatives
+  for browsers/connections that do not advertise Brotli.
+- Keep narrow-screen Office controls at their initialized width, with scroll
+  buttons instead of distorting the native canvas; show a real failure status
+  when startup fails, retain the loaded download, and observe later runtime errors.
+- Show explicit acknowledged MX save feedback with revision/time, separate from
+  offline drafts and preparation errors. Accept current Calc cell input before
+  exporting; preserve native shortcut key state and resize native pointer targets
+  when the viewport changes. Establish native focus after layout and retain the
+  actual local spreadsheet selection for accessibility.
+- Replace the stacked Office headers/status/offline rows and MX footer with one
+  fixed 38-pixel bar. Keep filename, compact save feedback, Save and Document
+  options; move Drive/download/copy/offline/details/scroll controls into that
+  menu. Errors, recovery prompts and the options panel overlay the native editor
+  without changing its canvas dimensions. Preserve the native editing controls.
+- Show Office sign-in only for missing/expired MX authentication; preserve edits
+  during recovery and reject switching the document to a different account.
+  Guard the module-specific native File/Open commands and route users to Drive
+  instead of the unsupported native file picker. Keep each tab bound to its file.
+- Replace the raw offline-preparation SSL error banner with compact expandable
+  guidance, technical details and retry. This does not bypass certificate checks
+  or change deployment certificates/system trust.
+- Change the served offline worker script for each bundled asset generation,
+  allowing browsers with an existing offline cache to install editor updates
+  instead of retaining the old shell indefinitely.
+
+### Validation and deployment notes
+
+- Dropdown regression passes in Chromium, Firefox and WebKit with real
+  isolated MX/SQLite: keyboard role/expiry selection, persisted ACLs and expiry,
+  all sorting choices, bounded pages, Escape behaviour and light/dark/mobile
+  screenshots, shared 12px arrow insets and forced-colors fallback. Packaging/build
+  and unit tests were rerun on 4.1.0; storage is
+  the explicit contract fixture, not live N1. See `TESTING.md` for evidence/limits.
+- Added an isolated eight-account relationship/API and three-engine UI runner.
+  Relationship reads use already-initialized schema/permission readers within
+  a database snapshot, avoiding migration writes and WAL read-to-write lock
+  failures during concurrent record creation. See `TESTING.md` for exact results.
+- Rollups operate
+  on explicitly selected outgoing links, not automatic inverse SQL aggregates.
+- Preserve standalone MX + SQLite + N1 deployment. The external Collabora/WOPI
+  direction was replaced with checksum-pinned local WebAssembly assets. Office
+  offline caching requires browser-trusted HTTPS and sufficient client storage;
+  retained documents are private browser-profile copies, not server backups.
+  The older pinned engine still needs a current security/support and complete
+  distribution-notice audit before production qualification. Real device,
+  low-memory and complex-document fidelity remain separate release gates.
+- PPT/PPTX/ODP are explicitly read-only: presentation rendering succeeds, but
+  native edit-input tests failed. Do not treat format/filter availability as a
+  passing editing test. The tested WebKit/WPE build lacks worker WebGL; graceful
+  fallback is separate from Chromium/Firefox Office editing qualification.
+- Expanded real-browser save-UX checks validate delayed acknowledgement,
+  current-cell saves and newer input during an upload. Repeated full runs still
+  catch intermittent leading-character loss in fresh spreadsheets and a Firefox
+  native-canvas rendering failure. These are explicit Office release blockers,
+  not hidden behind green frontend unit tests or successful server commits.
+- Patch the build-only `source-map-js` lockfile entry to 1.2.2 for
+  [GHSA-68fv-2mgg-jv7q](https://github.com/advisories/GHSA-68fv-2mgg-jv7q).
+  Full npm audit reports zero advisories; the Office binary audit remains separate.
 
 ## [4.0.0] - 2026-10-09
 
