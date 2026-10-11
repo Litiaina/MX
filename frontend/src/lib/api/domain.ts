@@ -350,6 +350,7 @@ export interface ChatMessage {
   sender_profile_photo_updated_at?: number | null;
   reply_to_uid: string | null; reply_preview?: MessageReplyPreview | null; created_at: number; edited_at: number | null;
   deleted_at: number | null; sequence: number; files: MessageFile[]; record_links: MessageRecordLink[]; reactions?: MessageReaction[]; mentions?: MessageMention[];
+  drive_links?: import('./drive').MessageDriveLink[];
   pinned_at?: number | null; pinned_by_uid?: string | null; pinned_by_name?: string | null;
 }
 

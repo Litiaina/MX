@@ -36,10 +36,12 @@
   import { driveTransfer, driveRestoreVersion } from '../api/drive';
   import {driveSpaces,driveSpaceGrant,type DriveSpace,type DriveSort} from '../api/drive';
   import {ApiError} from '../api/client';
+  import {driveItem, type DriveShareDelivery} from '../api/drive';
   import { droppedFiles, selection, intersects, isEditing, activityLabel, type UploadEntry } from '../drive/fileManager';
   import { driveMenu } from '../drive/contextMenu';
   import { canOpenOffice, canEditOffice, openOffice } from '../office/launch';
-  let { accountUid, revision = 0, uploads }: { accountUid: string; revision?: number; uploads: DriveUploads } = $props();
+  let { accountUid, revision = 0, uploads, itemUid = '', onDismissLinkedItem = () => {} }: { accountUid: string; revision?: number; uploads: DriveUploads; itemUid?: string; onDismissLinkedItem?: () => void } = $props();
+  let sharingNotice = $state(''); let sharingChannel = $state(''); let linkedGeneration = 0; let linkedController: AbortController | undefined;
   const tabs: { id: DriveTab; label: string }[] = [{ id: 'mine', label: 'My Drive' }, { id: 'shared', label: 'Shared with me' }, { id: 'recent', label: 'Recent' }, { id: 'starred', label: 'Starred' }, { id: 'trash', label: 'Trash' }];
   let tab = $state<DriveTab>('mine'); let parent = $state<string | null>(null); let query = $state(''); let offset = $state(0); let grid = $state(false); let page = $state<DrivePage | null>(null); let busy = $state(false); let error = $state(''); let notice = $state(''); let loading = $state(false); let mounted = false; let generation = 0;
   let pageSize=$state(50);let sort=$state<DriveSort>('modified_desc');
@@ -57,26 +59,53 @@
   const canUpload = $derived(tab === 'mine');
   const storagePercent = $derived(page ? Math.min(100, page.quota_bytes ? page.used_bytes / page.quota_bytes * 100 : page.used_bytes ? 100 : 0) : 0);
   onMount(() => { mounted = true; void load(); const timer = setInterval(() => { if (document.visibilityState === 'visible' && !loading && !busy && !marquee && !menu && !preview && !dialog) void load(true); }, 15_000); const online = () => void load(true); window.addEventListener('online', online); document.addEventListener('keydown', keyboard); document.addEventListener('copy',copyEvent); document.addEventListener('cut',copyEvent); document.addEventListener('paste',pasteEvent); return () => { clearInterval(timer); window.removeEventListener('online', online); document.removeEventListener('keydown',keyboard); document.removeEventListener('copy',copyEvent); document.removeEventListener('cut',copyEvent); document.removeEventListener('paste',pasteEvent); }; });
-  onDestroy(() => { mounted = false; ++generation; endMarquee?.(); });
+  onDestroy(() => { mounted = false; ++generation; ++linkedGeneration; linkedController?.abort(); endMarquee?.(); });
   $effect(() => { void revision; void uploads.revision; if (mounted) untrack(() => { void load(true); if (dialog === 'history' && selected) void uploaded(selected); }); });
+  $effect(() => {
+    const uid = itemUid, request = ++linkedGeneration, controller = new AbortController();
+    linkedController = controller;
+    untrack(() => { if (uid) void openLinkedItem(uid, request, controller.signal); });
+    return () => { controller.abort(); if (linkedController === controller) linkedController = undefined; };
+  });
+  async function openLinkedItem(uid:string, request:number, signal:AbortSignal) {
+    try { const item=await driveItem(uid,signal); if(!mounted || signal.aborted || request!==linkedGeneration || itemUid!==uid) return;
+      preview=null; previewVersion=undefined;
+      if(item.kind==='folder') navigate(item.uid,item.permission==='owner'?'mine':'shared',true);
+      else { navigate(item.permission==='owner'?item.parent_uid:null,item.permission==='owner'?'mine':'shared',true); preview=item; }
+    } catch(reason) { if(mounted && !signal.aborted && request===linkedGeneration && itemUid===uid) error=reason instanceof Error?reason.message:'This shared item is no longer available.'; }
+  }
+  function dismissLinkedItem() {
+    ++linkedGeneration; linkedController?.abort();
+    if (itemUid) onDismissLinkedItem();
+  }
+  function closePreview() {
+    dismissLinkedItem(); preview=null; previewVersion=undefined;
+  }
+  function stepPreview(item:DriveItem) {
+    dismissLinkedItem(); previewVersion=undefined; preview=item;
+  }
+  function sharedNotice(result:DriveShareDelivery,role:string|null) {
+    sharingChannel=role ? result.channel_uid || '' : '';
+    sharingNotice=!role?'Access removed.':result.changed?'Shared in the conversation. Recipient notifications follow their settings.':'This access is already shared.';
+  }
   async function load(quiet = false) {
     const token = ++generation; if (!quiet) loading = true;
     try { const result = await driveList(tab, parent, query, offset,{limit:pageSize,sort}); if (token === generation) { page = result;offset=result.offset; chosen = new Set([...chosen].filter(uid => result.items.some(item => item.uid === uid))); if (selected) selected = result.items.find((item) => item.uid === selected?.uid) || selected; if (!quiet) error = ''; } }
     catch (reason) { if(token===generation){if(parent&&reason instanceof ApiError&&[403,404].includes(reason.status)){parent=null;offset=0;query='';page=null;chosen=new Set();anchor=null;menu=null;notice='This folder is no longer available. Returned to '+(tab==='shared'?'Shared with me.':'My Drive.');void load();}else if(!quiet)error=reason instanceof Error?reason.message:'Could not load Drive.';} }
     finally { if (token === generation) loading = false; }
   }
-  function navigate(uid: string | null, next = tab) { parent = uid; tab = next; query = ''; offset = 0; error = ''; chosen = new Set(); anchor = null; menu = null; void load(); }
-  function pageTo(next:number){offset=next;chosen=new Set();anchor=null;menu=null;void load();fileArea?.scrollTo({top:0});}
-  function open(item: DriveItem) { if (tab === 'trash') return; if (item.kind === 'folder') navigate(item.uid, item.permission === 'owner' ? 'mine' : 'shared'); else { previewVersion = undefined; preview = item; } }
+  function navigate(uid: string | null, next = tab, fromLink = false) { if (!fromLink) closePreview(); parent = uid; tab = next; query = ''; offset = 0; error = ''; chosen = new Set(); anchor = null; menu = null; void load(); }
+  function pageTo(next:number){closePreview();offset=next;chosen=new Set();anchor=null;menu=null;void load();fileArea?.scrollTo({top:0});}
+  function open(item: DriveItem) { if (tab === 'trash') return; if (item.kind === 'folder') navigate(item.uid, item.permission === 'owner' ? 'mine' : 'shared'); else { closePreview(); preview = item; } }
   function launchOffice(item: DriveItem) { sessionStorage.setItem('mx_office_theme',document.documentElement.dataset.theme || 'light'); if(!openOffice(item)) error='The browser blocked the editor tab. Allow popups for MX and try again.'; }
   async function action(operation: () => Promise<unknown>, message = '') { busy = true; error = ''; try { await operation(); if (message) notice = message; await load(true); } catch (reason) { error = reason instanceof Error ? reason.message : 'This operation failed.'; } finally { busy = false; } }
   function edit(item: DriveItem) { selected = item; label = item.name; dialogError = ''; dialog = 'rename'; }
   async function saveName() { busy = true; dialogError = ''; try { if (dialog === 'folder') await driveFolder(label, parent); else if (selected) await driveChange(selected, 'rename', label); dialog = null; await load(true); } catch (reason) { dialogError = reason instanceof Error ? reason.message : 'Could not save.'; } finally { busy = false; } }
-  async function share(item: DriveItem) { selected = item; sharing = null; people = [];spaces=[];shareTarget='people';found=false;peopleQuery = ''; newLink = ''; dialogError = ''; dialog = 'share'; try { const result=await driveSharing(item.uid);if(selected?.uid===item.uid&&dialog==='share')sharing=result; } catch (reason) { dialogError = String(reason); } }
-  async function updateGrant(user: string, role: 'viewer' | 'editor' | null) { if (!selected) return; busy = true; dialogError = ''; try { await driveGrant(selected.uid, user, role); sharing = await driveSharing(selected.uid); people=people.filter(p=>p.uid!==user); } catch (reason) { dialogError = reason instanceof Error ? reason.message : 'Could not update sharing.'; } finally { busy = false; } }
+  async function share(item: DriveItem) { selected = item; sharing = null; sharingNotice='';sharingChannel='';people = [];spaces=[];shareTarget='people';found=false;peopleQuery = ''; newLink = ''; dialogError = ''; dialog = 'share'; try { const result=await driveSharing(item.uid);if(selected?.uid===item.uid&&dialog==='share')sharing=result; } catch (reason) { dialogError = String(reason); } }
+  async function updateGrant(user: string, role: 'viewer' | 'editor' | null) { if (!selected) return; busy = true; dialogError = '';sharingNotice=''; try { sharedNotice(await driveGrant(selected.uid, user, role),role); sharing = await driveSharing(selected.uid); people=people.filter(p=>p.uid!==user); } catch (reason) { dialogError = reason instanceof Error ? reason.message : 'Could not update sharing.'; } finally { busy = false; } }
   async function findPeople() { const request=++searchGeneration;const target=shareTarget;finding=true;found=false;dialogError='';try {if(target==='people'){const result=await drivePeople(peopleQuery);if(request===searchGeneration)people=result.people.filter(item=>item.uid!==accountUid&&!sharing?.users.some(u=>u.user_uid===item.uid));}else{const result=await driveSpaces(peopleQuery);if(request===searchGeneration)spaces=result.spaces.filter(item=>!sharing?.spaces.some(s=>s.space_uid===item.uid));}if(request===searchGeneration)found=true;}catch(reason){if(request===searchGeneration)dialogError=reason instanceof Error?reason.message:'Search unavailable.';}finally{if(request===searchGeneration)finding=false;} }
   function switchShareTarget(target:'people'|'spaces'){shareTarget=target;people=[];spaces=[];peopleQuery='';found=false;finding=false;++searchGeneration;}
-  async function updateSpace(space:string,role:'viewer'|'editor'|null){if(!selected)return;busy=true;dialogError='';try{await driveSpaceGrant(selected.uid,space,role);sharing=await driveSharing(selected.uid);spaces=spaces.filter(s=>s.uid!==space);}catch(reason){dialogError=reason instanceof Error?reason.message:'Could not update space access.';}finally{busy=false;}}
+  async function updateSpace(space:string,role:'viewer'|'editor'|null){if(!selected)return;busy=true;dialogError='';sharingNotice='';try{sharedNotice(await driveSpaceGrant(selected.uid,space,role),role);sharing=await driveSharing(selected.uid);spaces=spaces.filter(s=>s.uid!==space);}catch(reason){dialogError=reason instanceof Error?reason.message:'Could not update space access.';}finally{busy=false;}}
   async function createLink() { if (!selected) return; busy = true; dialogError = ''; try { const result = await driveLink(selected.uid, linkDays === '0' ? null : Date.now() + Number(linkDays) * 86400_000); newLink = `${location.origin}${location.pathname}#drive-share/${result.token}`; sharing = await driveSharing(selected.uid); } catch (reason) { dialogError = reason instanceof Error ? reason.message : 'Could not create link.'; } finally { busy = false; } }
   async function revoke(link: string) { if (!selected) return; busy = true; try { await driveRevokeLink(selected.uid, link); sharing = await driveSharing(selected.uid); newLink = ''; } catch (reason) { dialogError = String(reason); } finally { busy = false; } }
   async function showHistory(item: DriveItem) { selected = item; history = null; historyTab = item.kind === 'folder' ? 'activity' : 'versions'; dialogError = ''; dialog = 'history'; try { const result = await driveHistory(item.uid); if(dialog === 'history' && selected?.uid === item.uid) history = result; } catch (reason) { dialogError = String(reason); } }
@@ -139,7 +168,7 @@
     if (!shortcutsAllowed(event.target) || menu) return;
     const modifier = event.ctrlKey || event.metaKey;
     if (modifier && event.key.toLowerCase()==='a') { event.preventDefault(); chosen=new Set((page?.items||[]).map(i=>i.uid)); }
-    else if(event.key==='Escape') { chosen=new Set(); uploads.clearClipboard(); }
+    else if(event.key==='Escape') { closePreview(); chosen=new Set(); uploads.clearClipboard(); }
     else if(event.key==='F2' && chosenItems.length===1 && chosenItems[0].permission!=='viewer' && tab!=='trash') { event.preventDefault(); edit(chosenItems[0]); }
     else if(event.key==='Delete' && chosenItems.length && tab!=='trash') { event.preventDefault(); void trashSelection(chosenItems); }
     else if(event.target instanceof Element) {
@@ -185,7 +214,7 @@
   <input class="hidden" type="file" bind:this={versionInput} onclick={(event) => { event.currentTarget.value = ''; }} onchange={(event) => { const file = event.currentTarget.files?.[0]; if (file && versionTarget) void queueFiles([file], versionTarget); }} />
   <div class="drive-shell"><aside class="drive-sidebar"><nav aria-label="Drive views">{#each tabs as entry}<button class:active={tab === entry.id} aria-current={tab === entry.id ? 'page' : undefined} onclick={() => navigate(null, entry.id)}>{#if entry.id === 'mine'}<HardDrive size={18} />{:else if entry.id === 'shared'}<Share2 size={18} />{:else if entry.id === 'recent'}<History size={18} />{:else if entry.id === 'starred'}<Star size={18} />{:else}<Trash2 size={18} />{/if}{entry.label}</button>{/each}</nav>
     <section class="storage-summary" aria-label="Drive storage"><div><HardDrive size={17} /><strong>Storage</strong></div>{#if page}<progress aria-label="Storage used" value={storagePercent} max="100"></progress><p><strong>{driveSize(page.used_bytes)}</strong> of {driveSize(page.quota_bytes)} used</p><small>{page.quota_assigned ? 'Assigned by your administrator' : 'Default account allowance'}{page.reserved_bytes ? ` · ${driveSize(page.reserved_bytes)} uploading` : ''}</small>{#if page.used_bytes >= page.quota_bytes}<p class="storage-warning">Storage is full. Empty trash or ask your administrator for more space.</p>{/if}<small>Includes versions and trash</small>{:else}<small>Loading storage…</small>{/if}</section>
-  </aside><div class="drive-content"><div class="drive-toolbar"><form onsubmit={(event) => { event.preventDefault(); offset = 0; void load(); }}><Search size={18} /><input aria-label="Search MX Drive" placeholder="Search files and folders…" bind:value={query} /><button type="submit" title="Search Drive" aria-label="Search Drive"><Search size={16} /></button></form></div>
+  </aside><div class="drive-content"><div class="drive-toolbar"><form onsubmit={(event) => { event.preventDefault(); closePreview(); offset = 0; void load(); }}><Search size={18} /><input aria-label="Search MX Drive" placeholder="Search files and folders…" bind:value={query} /><button type="submit" title="Search Drive" aria-label="Search Drive"><Search size={16} /></button></form></div>
   <div class="drive-location"><div class="breadcrumbs"><button onclick={() => navigate(null)}>{tabs.find((entry) => entry.id === tab)?.label}</button>{#each page?.breadcrumbs || [] as crumb}<ChevronRight size={13} /><button onclick={() => navigate(crumb.uid)}>{crumb.name}</button>{/each}</div><div class="view-actions"><button title="Refresh Drive" aria-label="Refresh Drive" disabled={loading} onclick={() => void load()}><RefreshCw size={16} /></button><button title={grid ? 'Switch to list' : 'Switch to grid'} aria-label={grid ? 'Switch to list' : 'Switch to grid'} onclick={() => grid = !grid}>{#if grid}<List size={16} />{:else}<LayoutGrid size={16} />{/if}</button>{#if tab === 'trash'}<button class="danger" disabled={busy || !page?.items.length} onclick={() => void purge()}>Empty trash</button>{/if}</div></div>
   {#if notice}<div class="message" role="status">{notice}<button aria-label="Dismiss notice" onclick={() => notice = ''}><X size={15} /></button></div>{/if}
   {#if error}<div class="message error" role="alert">{error}<button onclick={() => void load()}>Retry</button></div>{/if}
@@ -245,6 +274,7 @@
   <div class="drive-modal-backdrop" inert={!!preview} aria-hidden={preview ? 'true' : undefined}><div class="drive-modal" use:focusDialog role="dialog" aria-modal="true" aria-label={dialog === 'share' ? 'Share file or folder' : dialog === 'history' ? 'Versions and activity' : dialog === 'folder' ? 'New folder' : 'Rename item'} tabindex="-1" onkeydown={(event) => { if (event.key === 'Escape' && !busy && !(event.target instanceof HTMLSelectElement)) dialog = null; }}>
     <header><div><h2>{dialog === 'share' ? 'Share' : dialog === 'history' ? 'Versions and activity' : dialog === 'folder' ? 'New folder' : 'Rename'}</h2>{#if selected && dialog !== 'folder'}<p>{selected.name}</p>{/if}</div><button aria-label="Close dialog" disabled={busy} onclick={() => dialog = null}><X size={19} /></button></header>
     {#if dialogError}<p class="dialog-error" role="alert">{dialogError}</p>{/if}
+    {#if dialog==='share' && sharingNotice}<p class="hint" role="status">{sharingNotice} {#if sharingChannel}<a href={`#collaboration?channel=${encodeURIComponent(sharingChannel)}`}>View conversation</a>{/if}</p>{/if}
     {#if dialog === 'folder' || dialog === 'rename'}<form class="name-form" onsubmit={(event) => { event.preventDefault(); void saveName(); }}><label>Name<input required maxlength="240" bind:value={label} /></label><p class="hint">{dialog === 'rename' ? 'Only the MX display name changes. The N1 object key keeps its original extension.' : 'Folder structure is managed by MX; N1 stores file objects by unique key.'}</p><footer><button type="button" disabled={busy} onclick={() => dialog = null}>Cancel</button><button class="emphasis" disabled={busy || !label.trim()}>{busy ? 'Saving…' : 'Save'}</button></footer></form>
     {:else if dialog === 'share'}
       <div class="dialog-body sharing-body"><h3>Who has access</h3><p class="hint">Viewer: preview and download. Editor: rename and add file versions. Only you can move, delete or manage sharing.</p>
@@ -278,7 +308,7 @@
   </div></div>
 {/if}
 {#if moving}<DrivePicker foldersOnly excludeUids={moving.map(i=>i.uid)} onChooseFolder={(uid) => { const items = moving!; moving = null; void action(() => driveTransfer(items, 'move', uid),`${items.length} items moved.`); }} onClose={() => moving = null} />{/if}
-{#if preview}{#key `${preview.uid}:${previewVersion || ''}`}{#if previewVersion}<FilePreview fileName={preview.name} load={()=>drivePreview(preview!,previewVersion)} onClose={()=>{preview=null;previewVersion=undefined;}}/>{:else}<DrivePreview item={preview} view={tab} {parent} {query} {sort} onNavigate={(item)=>preview=item} onClose={()=>preview=null}/>{/if}{/key}{/if}
+{#if preview}{#key `${preview.uid}:${previewVersion || ''}`}{#if previewVersion}<FilePreview fileName={preview.name} load={()=>drivePreview(preview!,previewVersion)} onClose={closePreview}/>{:else}<DrivePreview item={preview} view={tab} {parent} {query} {sort} onNavigate={stepPreview} onClose={closePreview}/>{/if}{/key}{/if}
 
 <style>
   .drive { padding: 1.2rem var(--shell-gutter, 1rem); position:relative; }

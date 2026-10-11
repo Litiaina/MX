@@ -303,7 +303,7 @@ mod tests {
     use super::*;
     fn db() -> Connection {
         let c = Connection::open_in_memory().unwrap();
-        c.execute_batch("PRAGMA foreign_keys=ON;CREATE TABLE users(uid TEXT PRIMARY KEY);INSERT INTO users VALUES('a'),('b');").unwrap();
+        c.execute_batch("PRAGMA foreign_keys=ON;CREATE TABLE users(uid TEXT PRIMARY KEY,name TEXT NOT NULL);INSERT INTO users VALUES('a','Alice'),('b','Bob');").unwrap();
         store::ensure(&c).unwrap();
         c
     }

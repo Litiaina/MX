@@ -6,6 +6,8 @@ mod office;
 mod quotas;
 mod resumable;
 mod sharing;
+#[cfg(test)]
+mod sharing_tests;
 mod store;
 mod transfers;
 mod uploads;
@@ -33,6 +35,7 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 pub(crate) use gc::run as run_cleanup;
+pub(crate) use sharing::message_links;
 pub(crate) use store::ensure as ensure_drive_schema;
 
 #[derive(Debug)]
@@ -74,6 +77,7 @@ pub fn routes() -> Router {
         .route("/mx/v1/drive", get(list))
         .route("/mx/v1/drive/people", get(people))
         .route("/mx/v1/drive/spaces", get(sharing::spaces))
+        .route("/mx/v1/drive/conversations/{uid}/items", get(sharing::conversation_items))
         .route("/mx/v1/drive/folders", post(create_folder))
         .route("/mx/v1/drive/transfers", post(transfers::transfer))
         .route("/mx/v1/drive/admin/quotas/{uid}", get(quotas::get).put(quotas::set))
@@ -247,20 +251,26 @@ async fn grant(
     Path(uid): Path<String>,
     Json(value): Json<Grant>,
 ) -> Result<Json<Value>, Error> {
-    database(
-        move |c| match (value.user_uid.as_deref(), value.space_uid.as_deref()) {
-            (Some(user), None) => store::grant(c, &claims.uid, &uid, user, value.role.as_deref()),
-            (None, Some(space)) => {
-                sharing::grant(c, &claims.uid, &uid, space, value.role.as_deref())
-            }
-            _ => Err(store::problem(
-                400,
-                "Choose exactly one MX account or collaboration space.",
-            )),
-        },
-    )
-    .await?;
-    Ok(Json(json!({"ok":true})))
+    let delivery =
+        database(
+            move |c| match (value.user_uid.as_deref(), value.space_uid.as_deref()) {
+                (Some(user), None) => {
+                    store::grant(c, &claims.uid, &uid, user, value.role.as_deref())
+                }
+                (None, Some(space)) => {
+                    sharing::grant(c, &claims.uid, &uid, space, value.role.as_deref())
+                }
+                _ => Err(store::problem(
+                    400,
+                    "Choose exactly one MX account or collaboration space.",
+                )),
+            },
+        )
+        .await?;
+    delivery.publish();
+    Ok(Json(
+        json!({"ok":true,"changed":delivery.changed,"channel_uid":delivery.channel_uid,"message_uid":delivery.message_uid}),
+    ))
 }
 #[derive(Deserialize)]
 struct Link {

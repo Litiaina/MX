@@ -18,7 +18,7 @@
 </div>
 
 <p align="center">
-  <strong>Current version: MX 4.1.0</strong>
+  <strong>Current version: MX 4.1.1</strong>
 </p>
 
 ---
@@ -568,6 +568,26 @@ remain owner actions. Record-module grants do not grant access to private Drive
 files. Sharing changes are persisted in Drive activity and authenticated API audit.
 The Share dialog separates people, spaces, inherited folder access and public links
 and keeps identity/role/removal controls readable on desktop and mobile.
+Sharing with a person also posts a clickable Drive card in your private conversation;
+sharing with a space/group posts it in that conversation. Access, the message,
+activity and durable recipient notifications commit together. Retrying unchanged
+access does not send duplicate messages or notifications. Role changes post an
+access update; removing access makes the card unavailable unless another grant
+still applies. Cards resolve current names and permissions rather than copying
+file bytes into chat.
+The Share dialog confirms the send and offers **View conversation**. In
+**Conversation details → MX Drive**, a searchable, 50-item paginated list shows
+current file/folder grants, including shares created before conversation delivery
+was added. Clicking a card opens the file preview or shared folder in Drive.
+Closing a preview clears its shared-file URL target. Switching modules and
+returning to Drive does not reopen it; delayed metadata responses are cancelled
+when you navigate away, choose another Drive view or open a newer file link.
+An explicit click on the shared card can still open the same file again.
+Personal notifications respect file-notification preferences and muted conversations;
+group shares additionally respect mentions-only settings. Toasts, configured sounds
+and browser alerts use MX's existing notification preferences. Public guest-link
+creation does not send private/group notifications. Old grants remain visible in
+the list; historical messages/notifications are not backfilled.
 If an open folder is deleted or its access is revoked, the next refresh clears
 the stale folder listing and returns to the current view's root with an explanation.
 
@@ -2296,7 +2316,16 @@ MX follows these principles:
 ---
 
 
-## MX 4.1.0
+## MX 4.1.1
+
+MX 4.1.1 is a Drive reliability patch: personal/group sharing now delivers
+conversation cards and recipient notifications, with a searchable, paginated
+shared-item view. Uploads recover from transient interruptions, retain resumable
+metadata across reloads and use bounded adaptive scheduling for large files.
+Dismissed shared-file previews stay closed across module switches and reloads;
+obsolete loading requests cannot reopen them.
+See [CHANGELOG.md](CHANGELOG.md) for the fixes and [TESTING.md](TESTING.md) for
+validation results and remaining limits.
 
 MX 4.1 adds native module relationships, lookups and rollups, plus locally
 bundled, client-side Office editing in Drive. MX owns access and versioning;
@@ -2312,7 +2341,7 @@ mode uses the browser's native arrow. These remain real HTML dropdowns:
 click/tap to open, or focus and use the browser's arrow-key selection controls.
 Fixed labels such as the file's Owner role are not editable dropdowns.
 
-The 4.1.0 version is not production certification. Office spreadsheet input and
+The 4.1.1 version is not production certification. Office spreadsheet input and
 Firefox rendering have unresolved acceptance failures; presentation files are
 read-only and the tested WebKit/WPE editor uses a download fallback. Full call,
 live-storage, security, complex-document and real-device qualification gates
@@ -2321,7 +2350,7 @@ successful build or a version bump.
 
 ### Upgrade and validation
 
-Rust and frontend package versions are both **4.1.0**. Deploy the matching binary
+Rust and frontend package versions are both **4.1.1**. Deploy the matching binary
 and rebuilt `frontend/dist` together, then restart MX so the new routes and
 automatic SQLite schema migrations are active. Back up SQLite first; do not
 replace the existing database, environment, or deployment configuration.
@@ -2365,7 +2394,7 @@ Existing saved deployment branding is preserved. New defaults use “Litiaina's
 Digital Workplace Platform”; **Restore MX defaults** in Deployment identity
 changes the editor only until the administrator saves it.
 
-Version 4.1.0 is not a blanket reliability certification. The known Linux WebKit
+Version 4.1.1 is not a blanket reliability certification. The known Linux WebKit
 large-upload crash, incomplete eight-person call validation, and current live-N1
 test-fragment blocker remain documented in [TESTING.md](TESTING.md).
 

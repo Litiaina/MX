@@ -184,6 +184,7 @@ struct ChatMessage {
     sequence: i64,
     files: Vec<MessageFile>,
     record_links: Vec<MessageRecordLink>,
+    drive_links: Vec<Value>,
     reactions: Vec<MessageReaction>,
     mentions: Vec<MessageMention>,
     pinned_at: Option<i64>,
@@ -197,6 +198,7 @@ fn live_message_payload(message: &ChatMessage) -> Value {
     // A shared WebSocket payload must never carry a link authorized only for
     // the sender or moderator who performed the action.
     safe.record_links.clear();
+    safe.drive_links.clear();
     serde_json::to_value(safe).unwrap_or_default()
 }
 
@@ -351,6 +353,12 @@ pub(crate) fn ensure_collaboration_schema(
             PRIMARY KEY(message_uid, user_uid, emoji),
             FOREIGN KEY(message_uid) REFERENCES mx_messages(uid) ON DELETE CASCADE,
             FOREIGN KEY(user_uid) REFERENCES users(uid) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS mx_message_drive_links (
+            message_uid TEXT NOT NULL REFERENCES mx_messages(uid) ON DELETE CASCADE,
+            item_uid TEXT NOT NULL,
+            PRIMARY KEY(message_uid, item_uid)
         );
 
         CREATE INDEX IF NOT EXISTS idx_mx_channel_members_user ON mx_channel_members(user_uid, channel_uid);
@@ -845,6 +853,7 @@ fn load_message(
                 sequence: row.get(10)?,
                 files: Vec::new(),
                 record_links: Vec::new(),
+                drive_links: Vec::new(),
                 reactions: Vec::new(),
                 mentions: Vec::new(),
                 pinned_at: row.get(11)?,
@@ -885,6 +894,7 @@ fn load_message(
         }
         message.files = load_files(connection, uid)?;
         message.record_links = load_record_links(connection, uid, user_uid, access_level)?;
+        message.drive_links = crate::api::drive::message_links(connection, uid, user_uid)?;
         message.reactions = load_reactions(connection, uid)?;
         message.mentions = load_mentions(connection, uid)?;
     }

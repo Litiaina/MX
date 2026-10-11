@@ -46,7 +46,8 @@
   import FilePreview from './FilePreview.svelte';
   import DrivePicker from './DrivePicker.svelte';
   import HardDrive from '@lucide/svelte/icons/hard-drive';
-  import { driveFile, type DriveItem } from '../api/drive';
+  import { driveFile, driveConversationItems, type DriveItem } from '../api/drive';
+  import DriveShareCard from './DriveShareCard.svelte';
   import ProfileAvatar from './ProfileAvatar.svelte';
   import SharedImageThumbnail from './SharedImageThumbnail.svelte';
 
@@ -76,6 +77,7 @@
   let messageMenuUid = $state(''); let reactionMenuUid = $state(''); let editingMessageUid = $state(''); let editingBody = $state(''); let messageActionBusy = $state(''); let deleteCandidate = $state<ChatMessage | null>(null);
   let conversationSearchOpen = $state(false); let messageSearch = $state(''); let messageSearchResults = $state<ChatMessage[]>([]); let messageSearching = $state(false); let focusedMessageUid = $state('');
   let channelFiles = $state<ChannelFile[]>([]); let channelFileTotal = $state(0); let fileSearch = $state(''); let filesLoading = $state(false); let filesLoaded = $state(false);
+  let channelDriveItems = $state<DriveItem[]>([]); let channelDriveTotal = $state(0); let driveFilesLoading = $state(false); let driveFilesError = $state(''); let driveFilesGeneration = 0;
   let manageOpen = $state(false); let manageLoading = $state(false); let manageBusy = $state(''); let manageError = $state(''); let manageNotice = $state(''); let channelMembers = $state<ChannelMember[]>([]); let membersLoaded = $state(false); let manageName = $state(''); let manageDescription = $state(''); let manageInvitePolicy = $state<CollaborationChannel['invite_policy']>('admins'); let addMemberUid = $state(''); let addMemberRole = $state<'member' | 'admin'>('member'); let manageMemberSearch = $state(''); let addMemberPickerOpen = $state(false);
   let manageMemberSearchInput = $state<HTMLInputElement>();
   let mentionOpen = $state(false); let mentionQuery = $state(''); let mentionStart = $state(-1); let mentionActiveIndex = $state(0);
@@ -224,6 +226,7 @@
         hasMoreMessages = !reachedBeginning && (hasMoreMessages || data.has_more);
         await markVisibleConversationRead(channelUid, stayAtEnd);
         if (selected?.uid !== channelUid || requestSequence !== conversationRequestSequence) return;
+        if(detailsOpen) void loadDriveFiles(true);
         if (stayAtEnd) await scrollEnd();
       }
     }
@@ -244,7 +247,7 @@
     const payload = event.payload as Partial<ChatMessage> & { channel_uid?: string; uid?: string };
     if (payload.channel_uid !== selected.uid || !payload.uid) return;
     if (event.type === 'message.deleted') {
-      messages = messages.map((message) => message.uid === payload.uid ? { ...message, body: '', files: [], record_links: [], mentions: [], deleted_at: event.at || Date.now() } : message);
+      messages = messages.map((message) => message.uid === payload.uid ? { ...message, body: '', files: [], record_links: [], drive_links: [], mentions: [], deleted_at: event.at || Date.now() } : message);
       pinnedMessages = pinnedMessages.filter((message) => message.uid !== payload.uid);
       if (replyingTo?.uid === payload.uid) replyingTo = null;
     } else if ((event.type === 'message.updated' || event.type === 'message.created') && typeof payload.sender_uid === 'string' && typeof payload.sequence === 'number') {
@@ -308,6 +311,7 @@
     if (changingConversation) replyingTo = draft?.reply || null;
     onChannelChanged(channel.uid, false);
     closeConversationSearch(); channelFiles = []; channelFileTotal = 0; fileSearch = ''; filesLoaded = false; manageOpen = false; channelMembers = []; membersLoaded = false;
+    ++driveFilesGeneration; channelDriveItems=[];channelDriveTotal=0;driveFilesLoading=false;driveFilesError='';
     if (channel.kind !== 'direct') void loadConversationMembers();
     void loadSelectedCall(channelUid);
     try {
@@ -690,6 +694,7 @@
     detailsOpen = !detailsOpen;
     if (detailsOpen && selected) {
       if (!filesLoaded) void loadSharedFiles(true);
+      void loadDriveFiles(true);
       if (selected.kind !== 'direct' && !membersLoaded) void loadConversationMembers();
     }
   }
@@ -715,7 +720,17 @@
     } catch (reason) { fail(reason); }
     finally { filesLoading = false; }
   }
-  function searchSharedFiles(event: SubmitEvent) { event.preventDefault(); void loadSharedFiles(true); }
+  async function loadDriveFiles(reset=false) {
+    if(!selected) return;
+    const uid=selected.uid, request=++driveFilesGeneration;
+    driveFilesLoading=true;driveFilesError='';
+    try { const result=await driveConversationItems(uid,fileSearch.trim(),reset?0:channelDriveItems.length);
+      if(request!==driveFilesGeneration || selected?.uid!==uid) return;
+      channelDriveItems=reset?result.items:[...channelDriveItems.slice(0,result.offset),...result.items];channelDriveTotal=result.total;
+    } catch(reason) { if(request===driveFilesGeneration) driveFilesError=reason instanceof Error?reason.message:'Could not load shared Drive files.'; }
+    finally { if(request===driveFilesGeneration) driveFilesLoading=false; }
+  }
+  function searchSharedFiles(event: SubmitEvent) { event.preventDefault(); void loadSharedFiles(true); void loadDriveFiles(true); }
   async function openManageSpace(focusAddPerson = false) {
     if (!selected || (!canManageSpace && !(focusAddPerson && canAddPeople))) return;
     manageOpen = true; manageLoading = true; manageError = ''; manageNotice = ''; manageName = selected.name; manageDescription = selected.description || ''; manageInvitePolicy = selected.invite_policy || 'admins'; manageMemberSearch = ''; addMemberUid = ''; addMemberRole = 'member';
@@ -913,6 +928,7 @@
                   {:else}
                     <p class="message-text">{#each messageTextSegments(message) as segment}{#if segment.mention}<button class:mine={segment.mention.uid === session.uid} class="message-mention" type="button" onclick={() => { const person = personByUid(segment.mention?.uid); if (person) openPersonCard(person); }} title={`View ${segment.mention.name}`}>{segment.text}</button>{:else}{segment.text}{/if}{/each}</p>
                     {#if message.record_links.length}<div class="shared-records">{#each message.record_links as record}<a href={recordHref(record)}><span><FileText size={15} /></span><div><strong>{record.label}</strong><small>{record.module_name} · Open {record.singular_name.toLowerCase()}</small></div><i><ChevronRight size={15} /></i></a>{/each}</div>{/if}
+                    {#if message.drive_links?.length}<div class="shared-drive-files">{#each message.drive_links as link}<DriveShareCard {link}/>{/each}</div>{/if}
                     {#if message.files.length}<div class="shared-files">{#each message.files as file}{#if isImageFile(file)}<SharedImageThumbnail {file} onOpen={() => showSharedFile(file)} />{:else}<div class="shared-file-item"><button class="shared-file-preview" type="button" onclick={() => showSharedFile(file)} title={`Preview ${file.file_name}`}><span><FileText size={15} /></span><div><strong>{file.file_name}</strong><small>{file.mime_type} · {fileSize(file.size)} · Preview</small></div></button><button class="shared-file-download" type="button" onclick={() => downloadSharedFile(file)} aria-label={`Download ${file.file_name}`} title={`Download ${file.file_name}`}><DownloadIcon size={15} /></button></div>{/if}{/each}</div>{/if}
                     {#if (message.reactions || []).length}<div class="message-reactions">{#each message.reactions || [] as reaction}<button class:mine={reaction.users.some((user) => user.uid === session.uid)} type="button" title={reactionLabel(message, reaction.emoji)} aria-label={reactionLabel(message, reaction.emoji)} onclick={() => reactToMessage(message, reaction.emoji)}><span>{reaction.emoji}</span><b>{reaction.users.length}</b></button>{/each}</div>{/if}
                   {/if}
@@ -942,12 +958,13 @@
         <button class="conversation-details-scrim" type="button" onclick={() => detailsOpen = false} aria-label="Close conversation details"></button>
         <aside class="conversation-details">
           <header><strong>Conversation details</strong><button onclick={() => detailsOpen = false} aria-label="Close details"><X size={15} /></button></header>
+          <section class="details-shared" aria-label="Shared from MX Drive"><header><strong>MX Drive</strong><span>{channelDriveTotal}</span></header><p>Files and folders shared with this conversation.</p><form class="details-file-search" onsubmit={searchSharedFiles}><label><Search size={13} /><input bind:value={fileSearch} type="search" placeholder="Search shared files and folders…" aria-label="Search shared files" /></label><button class="button small" disabled={filesLoading}>{filesLoading ? '…' : 'Search'}</button></form>{#if driveFilesError}<p role="alert">{driveFilesError}</p><button class="button small" onclick={()=>loadDriveFiles(true)}>Retry</button>{:else if driveFilesLoading && !channelDriveItems.length}<p role="status">Loading Drive shares…</p>{:else}<div class="shared-drive-files">{#each channelDriveItems as item}<DriveShareCard link={{uid:item.uid,unavailable:false,item}}/>{:else}<p>No Drive shares{fileSearch.trim()?' match your search':' yet'}.</p>{/each}</div>{#if channelDriveItems.length<channelDriveTotal}<button class="button small details-load-more" onclick={()=>loadDriveFiles(false)} disabled={driveFilesLoading}>{driveFilesLoading?'Loading…':'Load more Drive shares'}</button>{/if}{/if}</section>
           <section class="details-identity">{#if detailsPerson}<button class="channel-glyph large direct person-trigger" type="button" onclick={() => openPersonCard(detailsPerson)} aria-label={`View ${detailsPerson.name}`}><ProfileAvatar userUid={detailsPerson.uid} name={detailsPerson.name} updatedAt={detailsPerson.profile_photo_updated_at} online={isDirectOnline(selected)} /></button><h3><button class="conversation-person-name" type="button" onclick={() => openPersonCard(detailsPerson)}>{selected.name}</button></h3>{:else}<span class:direct={selected.kind === 'direct'} class="channel-glyph large">{#if selected.kind === 'direct'}{initials(selected.name)}{:else if selected.kind === 'channel'}<Hash size={20} />{:else}<UsersRound size={20} />{/if}</span><h3>{selected.name}</h3>{/if}<p>{selected.kind === 'direct' ? `Private to you and ${selected.name}. Messages, files, and shared records are not visible to other MX accounts.` : selected.description || 'A shared MX workspace.'}</p>{#if canManageSpace}<button class="button small manage-space-button" onclick={() => openManageSpace(false)}><Pencil size={13} /> Manage space</button>{/if}</section>
           <dl>{#if selected.kind === 'direct'}<div><dt>Status</dt><dd class:online={isDirectOnline(selected)}>{isDirectOnline(selected) ? 'Online' : 'Offline'}</dd></div>{/if}<div><dt>Type</dt><dd>{selected.kind === 'direct' ? 'Direct message' : selected.kind === 'channel' ? 'Channel' : 'Group space'}</dd></div><div><dt>Members</dt><dd>{selected.member_count}</dd></div><div><dt>Your access</dt><dd>{selected.role}</dd></div>{#if selected.kind !== 'direct'}<div><dt>Privacy</dt><dd><LockKeyhole size={11} /> Private</dd></div><div><dt>Who can add</dt><dd>{selected.invite_policy === 'owner' ? 'Owner only' : selected.invite_policy === 'members' ? 'All members' : 'Owner and admins'}</dd></div>{/if}</dl>
           {#if selected.kind !== 'direct'}<section class="details-members"><header><strong>People</strong><div class="details-members-actions"><span>{selected.member_count}</span>{#if canAddPeople}<button type="button" onclick={() => openManageSpace(true)}><UserPlus size={13} /> Add person</button>{/if}</div></header>{#if !membersLoaded}<p>Loading space members…</p>{:else}<div>{#each channelMembers as member}{#if member.user_uid === session.uid}<div class="details-member"><span class="message-avatar"><ProfileAvatar userUid={member.user_uid} name={member.user_name} updatedAt={member.profile_photo_updated_at} online={connected} /></span><span><strong>{member.user_name} (you)</strong><small>{member.role}</small></span></div>{:else}{@const memberPerson = personByUid(member.user_uid)}<button class="details-member" type="button" onclick={() => memberPerson && openPersonCard(memberPerson)} disabled={!memberPerson}><span class="message-avatar"><ProfileAvatar userUid={member.user_uid} name={member.user_name} updatedAt={member.profile_photo_updated_at} online={isUserOnline(member.user_uid)} /></span><span><strong>{member.user_name}</strong><small class:online={isUserOnline(member.user_uid)}>{isUserOnline(member.user_uid) ? 'Online' : 'Offline'} · {member.role}</small></span><MessageCircle size={14} /></button>{/if}{/each}</div>{/if}</section>{/if}
           {#if selected.kind !== 'direct'}<section class="details-membership-action">{#if selected.role === 'owner'}<p><Shield size={13} /><span>Owners must transfer ownership before leaving a space.</span></p>{:else}<button class="button danger small" type="button" onclick={leaveCurrentSpace} disabled={manageBusy === 'leave'}><LogOut size={13} />{manageBusy === 'leave' ? 'Leaving…' : 'Leave space'}</button>{/if}</section>{/if}
           <section class="details-shared"><header><strong>Shared records</strong><span>{sharedRecords.length}</span></header>{#if sharedRecords.length}<div>{#each sharedRecords.slice(-6).reverse() as record}<a href={recordHref(record)}><i><FileText size={14} /></i><span><strong>{record.label}</strong><small>{record.module_name}</small></span></a>{/each}</div>{:else}<p>No records shared in the loaded messages.</p>{/if}</section>
-          <section class="details-shared details-files"><header><strong>Shared files</strong><span>{channelFileTotal}</span></header><form class="details-file-search" onsubmit={searchSharedFiles}><label><Search size={13} /><input bind:value={fileSearch} type="search" placeholder="Search all files…" aria-label="Search shared files" /></label><button class="button small" disabled={filesLoading}>{filesLoading ? '…' : 'Search'}</button></form>{#if filesLoading && !channelFiles.length}<p>Searching the complete file history…</p>{:else if channelFiles.length}<div>{#each channelFiles as file}<div class="details-file-row"><button type="button" onclick={() => showSharedFile(file)} title={`Preview ${file.file_name}`}><i><FileText size={14} /></i><span><strong>{file.file_name}</strong><small>{fileSize(file.size)} · {file.sender_name} · Preview</small></span></button><button class="details-file-download" type="button" onclick={() => downloadSharedFile(file)} aria-label={`Download ${file.file_name}`} title={`Download ${file.file_name}`}><DownloadIcon size={14} /></button></div>{/each}</div>{#if channelFiles.length < channelFileTotal}<button class="button small details-load-more" onclick={() => loadSharedFiles(false)} disabled={filesLoading}>{filesLoading ? 'Loading…' : `Load more (${channelFileTotal - channelFiles.length})`}</button>{/if}{:else}<p>{fileSearch.trim() ? `No files match “${fileSearch.trim()}”.` : 'No files shared yet.'}</p>{/if}</section>
+          <section class="details-shared details-files"><header><strong>Chat attachments</strong><span>{channelFileTotal}</span></header>{#if filesLoading && !channelFiles.length}<p>Searching the complete file history…</p>{:else if channelFiles.length}<div>{#each channelFiles as file}<div class="details-file-row"><button type="button" onclick={() => showSharedFile(file)} title={`Preview ${file.file_name}`}><i><FileText size={14} /></i><span><strong>{file.file_name}</strong><small>{fileSize(file.size)} · {file.sender_name} · Preview</small></span></button><button class="details-file-download" type="button" onclick={() => downloadSharedFile(file)} aria-label={`Download ${file.file_name}`} title={`Download ${file.file_name}`}><DownloadIcon size={14} /></button></div>{/each}</div>{#if channelFiles.length < channelFileTotal}<button class="button small details-load-more" onclick={() => loadSharedFiles(false)} disabled={filesLoading}>{filesLoading ? 'Loading…' : `Load more (${channelFileTotal - channelFiles.length})`}</button>{/if}{:else}<p>{fileSearch.trim() ? `No files match “${fileSearch.trim()}”.` : 'No chat attachments yet.'}</p>{/if}</section>
         </aside>
       {/if}
     </div>

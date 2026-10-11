@@ -526,7 +526,8 @@ pub(super) fn grant(
     uid: &str,
     target: &str,
     role: Option<&str>,
-) -> rusqlite::Result<()> {
+) -> rusqlite::Result<super::sharing::ShareDelivery> {
+    crate::api::collaboration::ensure_collaboration_schema(connection)?;
     let tx = rusqlite::Transaction::new_unchecked(connection, TransactionBehavior::Immediate)?;
     owner(&tx, uid, actor, false)?;
     if target == actor {
@@ -551,8 +552,14 @@ pub(super) fn grant(
         if !exists {
             return Err(problem(404, "MX account not found."));
         }
+        if previous.as_deref() == Some(role) {
+            return Ok(super::sharing::ShareDelivery::default());
+        }
         tx.execute("INSERT INTO mx_drive_grants(item_uid,user_uid,role) VALUES(?1,?2,?3) ON CONFLICT(item_uid,user_uid) DO UPDATE SET role=excluded.role",params![uid,target,role])?;
     } else {
+        if previous.is_none() {
+            return Ok(super::sharing::ShareDelivery::default());
+        }
         tx.execute(
             "DELETE FROM mx_drive_grants WHERE item_uid=?1 AND user_uid=?2",
             params![uid, target],
@@ -565,7 +572,17 @@ pub(super) fn grant(
         "sharing.changed",
         &json!({"user_uid":target,"previous_role":previous,"new_role":role}),
     )?;
-    tx.commit()
+    let delivery = super::sharing::deliver(
+        &tx,
+        actor,
+        uid,
+        Some(target),
+        None,
+        role,
+        previous.is_none(),
+    )?;
+    tx.commit()?;
+    Ok(delivery)
 }
 
 pub(super) fn link(

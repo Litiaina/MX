@@ -5,6 +5,33 @@ deployment maintainer's local date.
 
 ## [Unreleased]
 
+## [4.1.1] - 2026-10-11
+
+### Patch release
+
+- Align Rust/frontend manifests and lockfiles on 4.1.1 for the Drive sharing
+  delivery and upload recovery fixes below. N1 compatibility remains v4.0.0.
+- This release does not clear the remaining Office, native WebKit upload,
+  live-storage or call-media qualification gates. See `TESTING.md` for measured
+  results and limits; a version bump is not production certification.
+
+### Drive sharing delivery — 2026-10-11
+
+- Post permission-aware Drive cards to private chats and spaces/groups when
+  owners share files or folders. Commit grants, messages, activity and recipient
+  notifications atomically; avoid duplicate delivery on unchanged-access retries.
+- Confirm sharing in the dialog with a conversation shortcut. Reuse the existing
+  notification center, toasts and configured alerts; respect file preferences,
+  muted conversations and group mentions-only settings.
+- Add a searchable, 50-item paginated conversation Drive list, including older
+  grants. Open cards directly in Drive; resolve current permissions/names and
+  show unavailable cards after access is removed or an item is trashed.
+- Prevent shared videos/files from reopening when switching modules and
+  returning to Drive. Synchronize route targets before mounting a destination,
+  clear dismissed preview URL intents and cancel superseded metadata requests.
+  Keep explicit shared-file clicks and intentional browser history navigation working.
+- Keep sharing metadata-only: no duplicate N1 object or file-byte transfer.
+
 ### Drive upload recovery and throughput — 2026-10-11
 
 - Automatically reconnect/reconcile transient Drive upload failures with bounded

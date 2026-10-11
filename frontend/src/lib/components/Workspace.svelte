@@ -56,6 +56,7 @@
   let linkedRecordFocusAttachments = $state(false);
   let linkedRecordRequestRevision = $state(0);
   let linkedChannelUid = $state('');
+  let linkedDriveItemUid = $state('');
   let lastRecordEvent = $state<LiveMessage | null>(null);
   let lastCollaborationEvent = $state<LiveMessage | null>(null);
   let callEvents = $state<LiveMessage[]>([]);
@@ -89,12 +90,13 @@
     const fromHash = hashView();
     view = fromHash || defaultView();
     if (!fromHash) history.replaceState(null, '', `#${view}`);
+    selectModuleFromHash();
     const client = new MxLiveClient(handleLive, (connected) => {
       live = connected;
       if (connected) resynchronize();
     });
     client.start();
-    const handleHash = () => { const next = hashView(); if (next) { view = next; selectModuleFromHash(); mobileOpen = false; } };
+    const handleHash = () => { const next = hashView(); if (next) { selectModuleFromHash(); view = next; mobileOpen = false; } };
     const handleResize = () => { if (autoScale) applyScale(); };
     const unlockAudio = () => void unlockNotificationAudio().catch(() => undefined);
     window.addEventListener('hashchange', handleHash);
@@ -125,9 +127,11 @@
       linkedRecordFocusAttachments = false;
       const raw = location.hash.replace(/^#\/?/, '');
       linkedChannelUid = raw.split('?')[0] === 'collaboration' ? new URLSearchParams(raw.split('?')[1] || '').get('channel') || '' : '';
+      linkedDriveItemUid = raw.split('?')[0] === 'drive' ? new URLSearchParams(raw.split('?')[1] || '').get('item') || '' : '';
       return;
     }
     linkedChannelUid = '';
+    linkedDriveItemUid = '';
     const uid = decodeURIComponent(match[1]);
     if (!modules.length || modules.some((module) => module.uid === uid)) selectedModuleUid = uid;
     const query = location.hash.split('?')[1] || '';
@@ -171,7 +175,7 @@
       collaborationRevision += 1;
       return;
     }
-    if (message.type.startsWith('message.') || message.type.startsWith('channel.') || message.type.startsWith('file.')) { lastCollaborationEvent = message; collaborationRevision += 1; notificationRevision += 1; return; }
+    if (message.type.startsWith('message.') || message.type.startsWith('channel.') || message.type.startsWith('file.')) { lastCollaborationEvent = message; collaborationRevision += 1; notificationRevision += 1; if(message.type.startsWith('file.')) dashboardRevision += 1; return; }
     if (message.type.startsWith('module.')) { void loadWorkspaceModules(); recordRevision += 1; dashboardRevision += 1; return; }
     if (message.type === 'presence.changed') { dashboardRevision += 1; collaborationRevision += 1; return; }
     if (message.type === 'sync.required') {
@@ -436,16 +440,32 @@
   }
   function go(next: View, replace = false) {
     if (!allowed(next)) return;
-    view = next; mobileOpen = false; linkedChannelUid = '';
     const url = `#${next}`;
     if (location.hash !== url) history[replace ? 'replaceState' : 'pushState'](null, '', url);
+    // pushState does not emit hashchange. Clear old route targets before the
+    // destination mounts, rather than waiting for a later live resync.
+    selectModuleFromHash();
+    view = next; mobileOpen = false;
   }
   function goModule(uid: string, replace = false) {
     const module = modules.find((item) => item.uid === uid);
     if (!module) return;
-    selectedModuleUid = uid; linkedRecordUid = ''; view = 'records'; mobileOpen = false;
     const url = `#module/${encodeURIComponent(uid)}`;
     if (location.hash !== url) history[replace ? 'replaceState' : 'pushState'](null, '', url);
+    selectModuleFromHash();
+    view = 'records'; mobileOpen = false;
+  }
+  function dismissLinkedDriveItem() {
+    linkedDriveItemUid = '';
+    const [route, query = ''] = location.hash.split('?');
+    if (route.replace(/^#\/?/, '') !== 'drive') return;
+    const parameters = new URLSearchParams(query);
+    if (!parameters.has('item')) return;
+    parameters.delete('item');
+    const remaining = parameters.toString();
+    // Dismissing a preview must also dismiss its URL intent, so refresh/live
+    // reconnect/back-forward cannot resurrect an explicitly closed video.
+    history.replaceState(null, '', `${route}${remaining ? `?${remaining}` : ''}`);
   }
   function refreshCurrent() {
     if (view === 'records') recordRevision += 1;
@@ -563,7 +583,7 @@
     {:else if view === 'records' && selectedModule}{#key selectedModuleUid}<RecordsView {session} accessLevel={session.access_level} moduleUid={selectedModule.uid} modulePermission={selectedModulePermission} openRecordUid={linkedRecordUid} openRequestRevision={linkedRecordRequestRevision} focusLinkedAttachments={linkedRecordFocusAttachments} revision={recordRevision} liveMessage={lastRecordEvent} recordSingular={selectedModule.singular_name} recordPlural={selectedModule.name} />{/key}
     {:else if view === 'records'}<section class="panel module-access-empty"><h2>No module access</h2><p>Your account has not been granted access to any active record module. Ask an MX administrator to assign the modules needed for your work.</p><button class="button" type="button" onclick={() => go('collaboration')}>Open collaboration</button></section>
     {:else if view === 'collaboration'}<CollaborationView {session} openChannelUid={linkedChannelUid} revision={collaborationRevision} connected={live} liveEvent={lastCollaborationEvent} {callEvents} activeCalls={ongoingCalls} activeCallChannelUid={activeCall?.channelUid || ''} onStartCall={startCollaborationCall} onChannelChanged={setActiveCollaborationChannel} />
-    {:else if view === 'drive'}<DriveView accountUid={session.uid} revision={dashboardRevision} uploads={driveUploads} />
+    {:else if view === 'drive'}<DriveView accountUid={session.uid} revision={dashboardRevision} uploads={driveUploads} itemUid={linkedDriveItemUid} onDismissLinkedItem={dismissLinkedDriveItem} />
     {:else if view === 'admin' && session.access_level === 0}{#key adminRevision}<AdminView {session} administrationLabel={deployment.terminology.administration_label} dashboardLabel={deployment.terminology.dashboard_label} />{/key}
     {:else}<AccountSecurity {session} {onSessionChanged} {onSessionEnded} />{/if}
   </main>

@@ -166,7 +166,7 @@ fn select_columns() -> &'static str {
     "#
 }
 
-fn insert_notification(
+pub(crate) fn insert_notification(
     connection: &rusqlite::Connection,
     request: &NewNotification,
 ) -> rusqlite::Result<Option<Notification>> {
@@ -228,14 +228,19 @@ pub async fn notify_user(request: NewNotification) -> Result<Option<Notification
     .map_err(|error| format!("notification database operation failed: {error}"))?;
 
     if let Some(notification) = result.as_ref() {
-        publish_user_event(
-            &request.recipient_uid,
-            "notification.created",
-            request.actor_uid.as_deref(),
-            serde_json::to_value(notification).unwrap_or_else(|_| json!({"uid":notification.uid})),
-        );
+        deliver_notification(&request.recipient_uid, notification);
     }
     Ok(result)
+}
+
+/// Call only after the transaction containing this notification has committed.
+pub(crate) fn deliver_notification(recipient: &str, notification: &Notification) {
+    publish_user_event(
+        recipient,
+        "notification.created",
+        notification.actor_uid.as_deref(),
+        serde_json::to_value(notification).unwrap_or_else(|_| json!({"uid":notification.uid})),
+    );
 }
 
 /// Notify every account that can read a module, excluding the actor. Each

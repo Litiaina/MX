@@ -1,5 +1,70 @@
 # MX validation
 
+## MX 4.1.1 release packaging — 2026-10-11
+
+Rust/frontend manifests and both lockfiles are aligned on **4.1.1**. This patch
+packages the sharing, preview-navigation and upload-recovery fixes below. The
+4.1.1 binary/frontend were rebuilt and the Rust, frontend and sharing/navigation
+suites rerun after the preview fix. N1 compatibility stays at v4.0.0. Historical
+validation entries retain their tested version, and remaining release gates are
+not cleared by this packaging change.
+
+## Shared-video preview navigation regression — 2026-10-11
+
+- Reproduced the bug in the actual production UI before the fix: open a shared
+  video, close it, switch to a record module and return to Drive. The old target
+  was fetched again, failing the no-reopening assertion. `history.pushState`
+  did not emit `hashchange`, leaving the previous shared-file target in memory.
+- Synchronize route targets before destination mounting, clear the `item` URL
+  parameter when dismissing a preview and abort/invalidate obsolete metadata
+  requests when a link changes, the user navigates or the Drive view unmounts.
+- `npm run test:drive:sharing` passes on rebuilt **MX 4.1.1** in Chromium,
+  Firefox and WebKit. Use a generated one-second silent VP8 video, real MX HTTP/
+  SQLite and the isolated N1 contract fixture. Verify decoded video and muted
+  playback, Records/Dashboard/Collaboration round trips, reload, back/forward,
+  Close/Escape/backdrop dismissal and repeated explicit opening of the same card.
+- Hold real metadata responses to simulate latency, then leave the module,
+  select another Drive view or open a different link. Late responses do not
+  reopen the old video or issue its preview ticket; a newer preview stays selected.
+- `npm test`: **223 passed across 35 files**. Rust tests: **116 passed, one
+  opt-in live-N1 test ignored**. Rust build and frontend build/check pass; zero
+  Svelte errors/warnings, with the existing Vite large-chunk advisory unchanged.
+
+Before-fix evidence: `/tmp/mx-eight-user-D60nUG/sharing-results.json`.
+After-fix evidence: `/tmp/mx-eight-user-zBsfBS/sharing-results.json` and screenshots.
+The browsers remain audio-isolated. This does not qualify audible call media,
+live N1 bandwidth or the separate native WebKit upload limitation below.
+
+## Drive share delivery — 2026-10-11
+
+- `cargo test --locked --bin litiaina-mx -- --test-threads=2`: **116 passed,
+  one opt-in live-N1 test ignored**. New tests cover transactional rollback
+  when notification insertion fails, direct-chat reuse, unchanged-grant replay,
+  role updates, current ACL resolution and group muted/mentions-only settings.
+- `npm test`: **223 passed across 35 files**. `npm run build` passed with zero
+  Svelte errors/warnings; Vite retains its existing large-chunk advisory.
+- `npm run test:drive:sharing`: real isolated MX/SQLite and the N1 contract
+  fixture, eight accounts, simultaneous personal shares and eight identical
+  group requests. Exactly one message per changed grant, no duplicate retry
+  delivery, no N1 byte-transfer requests during sharing, notifications/messages
+  preserved after an MX restart, and unauthorized nonmember/nonowner denial.
+- Verified 56 conversation shares on two server pages (50 + 6), metadata search,
+  and discovery of older personal/group grants without backfilling messages.
+- Actual production UI in **Chromium, Firefox and WebKit**: share confirmation,
+  recipient toast → conversation → Drive preview, group file cards and current
+  Drive list, light/dark rendering and narrow-screen layout. Revoking all grants
+  updates the card to unavailable, removes the list entry and denies preview
+  ticket issuance. A second valid grant correctly keeps access until revoked.
+- Test browsers use disconnected per-process PulseAudio/PipeWire endpoints and
+  an ALSA null configuration. No physical audio output or workstation audio
+  settings are used. Existing global alert preferences are reused; audible
+  speaker playback/OS notification permissions were not manually qualified.
+
+Latest artifacts: `/tmp/mx-eight-user-zBsfBS/sharing-results.json` and screenshots.
+This suite validates sharing against the N1 fixture, not a live N1 service.
+The existing WebKit native-file upload limitation below is not resolved by
+these sharing tests; browser uploads and call-media release gates are separate.
+
 ## Drive upload recovery and scheduling — 2026-10-11
 
 Implemented automatic transient recovery, explicit waiting/pause/reselection/
@@ -29,7 +94,7 @@ pre-scan/read-back or new per-file size ceiling.
   `cargo build --locked` passed.
 - Production frontend check/build passed: **zero Svelte errors/warnings**.
   Vite retains its existing >500-KB main-chunk notice. Rebuilt `frontend/dist`
-  is included; Rust/frontend versions remain 4.1.0.
+  is included; functional tests ran on 4.1.0 before the 4.1.1 packaging bump.
 - Chromium and Firefox pass real production UI against disposable MX/SQLite and
   the **N1 HTTP contract fixture**: 18-MiB native disk-backed files, module switches,
   offline waiting with acknowledged progress/no stale ETA, manual pause that
