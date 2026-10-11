@@ -463,7 +463,12 @@ or collaboration views does not abort its queue. It shows in-flight transferred
 bytes, smoothed **MB/s**, estimated time remaining, pause/resume, and per-file
 errors. Speed measures browser-to-MX transfer (decimal MB/s); N1 processing is
 shown separately as finalization, not falsely counted as a finished upload.
-Two files run at once, with up to eight part workers overall. Transient part
+Two files run at once, sharing an eight-part budget per browser document. Files
+above 1 GiB start with four workers and can grow to eight after acknowledged
+parts; chunk sizes still follow console. MX keeps its server-wide eight-transfer
+cap and briefly queues contention before reading bodies, avoiding unnecessary
+whole-part retransmissions during short bursts. This improves latency-limited
+transfers, not the physical capacity of a link or N1's disks. Transient part
 failures retry the identical slot/body with bounded backoff.
 Each file's progress is a circular ring around its icon, not a linear bar.
 
@@ -508,15 +513,28 @@ activity timeline. Versions have explicit Preview and Restore actions. Restoring
 creates a new normal version, keeps all previous history, checks quota and the
 loaded revision, and does not download the file through the browser.
 
-Pause/resume works while the file remains selected. Closing/reloading the page
-warns while transfers are active; signing out aborts and clears that account's
-in-memory queue. After reload, reselect the **original file** in the same
-destination to resume. MX recovers pending sessions by account, destination,
-name, size, type, and modification time, with N1 as the stored-part authority;
-this metadata identity is not a full-content checksum. No browser storage of
-durable session state or whole-file scan is needed. Inactive pending server
-reservations expire after one hour and queue cleanup; resuming after expiration
-may need a new upload. This is not an offline outbox or background browser service.
+Temporary upload interruptions show retry/reconnection state and automatically
+resume with bounded backoff. Browser "online" is only a wake-up hint: real
+MX/N1 reconciliation determines which parts to send. Waiting/paused states
+retain acknowledged bytes and hide stale speed/ETA. Manual pauses, authentication,
+permission, quota and revision failures do not trigger automatic resumption.
+An interrupted request body is retryable; a genuinely oversized part is not.
+
+Closing/reloading warns while transfers are active; sign-out stops that account's
+jobs and releases its in-memory files. The account-scoped browser queue retains
+only small metadata entries (no file bytes, credentials or N1 secrets). On
+reopening MX, unfinished files show **Select original file to resume**. Reselecting
+matches name, size, type and modification time, preserving manual pause and the
+exact operation ID; N1 remains the stored-part authority. Separate entries avoid
+one tab overwriting another file's recovery metadata. This metadata identity is
+not a full-content checksum. No whole-file scan is performed.
+If browser storage is blocked, uploads still work; reselect originals in their
+Drive destination for server-owned session recovery. Inactive reservations and
+their quota expire after **72 hours** by default, configurable with
+`[drive] upload_retention_hours` from 1 to 168 hours. Expired/cleaned sessions may
+require a fresh upload. Cancelling an unfinished upload releases its reservation
+and queues N1 cleanup without deleting a completed file. This is not an offline
+file-byte outbox or a service that keeps uploading after the browser closes.
 Active-document credentials are retained in memory if browser storage is lost;
 explicit signout and rejected authentication clear them. A browser process crash
 can also invalidate selected file handles: reselect the original file to resume
@@ -1652,6 +1670,7 @@ not need this section to start):
 [drive]
 quota_mb=10240
 public_links=true
+upload_retention_hours=72
 ```
 
 `quota_mb` is the default per-account allowance in MiB; administrator assignments
@@ -1659,6 +1678,9 @@ override it per user. Obsolete `max_file_size_mb` values are ignored: Drive has
 no per-file limit. Record/chat attachment limits remain separate and their Drive
 attachment copies are still buffered within those limits. Setting
 `public_links=false` immediately disables all guest listing/media routes.
+`upload_retention_hours` controls inactive pending-session cleanup and quota
+reservation together; default 72 hours, supported range 1–168 hours. Active part
+requests refresh the session; this is not a total upload-duration limit.
 
 N1 authentication requires `[n1].fragment` to contain the SHA-256 identifier and
 `N1_MX_SECRET` to contain the raw secret. For older configurations that copied
@@ -2024,6 +2046,21 @@ Run from `frontend` after `cargo build --locked` and `npm run build`.
 Without the live-N1 variables the runner uses an explicit HTTP contract fixture,
 not live storage. `MX_TEST_API_ONLY=1` skips browser checks; no UI validation is
 claimed for that mode. See [TESTING.md](TESTING.md) for retained results and gaps.
+
+`npm run test:drive:recovery` uses real production UI/MX/SQLite and an isolated,
+fault-injected N1 HTTP contract fixture. It checks native disk-file uploads,
+module navigation, disconnect/reconnect, manual pause, reload/original-file
+reselection, recovery of a two-hour-old reservation, real MX restart, lost
+finish acknowledgements, exact stored bytes and eight concurrent HTTP users.
+It needs no desktop audio sink and rejects live-N1 mode because its storage
+fault gates are fixture-specific. Use `MX_TEST_BROWSERS=chromium,firefox` for
+the currently passing full recovery scope. The default three-engine run also
+includes WebKit, whose tested WPE runtime currently loses native source-file
+access; that is an unresolved qualification gate, not a successful upload.
+`MX_TEST_BROWSERS=webkit MX_TEST_RECOVERY_SOURCE_FALLBACK=1` checks only the
+safe source-loss message/no-empty-file-publication guard, not full recovery.
+The controlled scheduling benchmark in `npm test` uses a virtual 2-GiB file;
+it does not measure actual N1/LAN MB/s. See [TESTING.md](TESTING.md) for evidence.
 
 The native relationship runner tests eight-account merges/conflicts, referential
 integrity, paged selectors and three-engine form/inline/admin UI:

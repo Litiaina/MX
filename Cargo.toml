@@ -14,6 +14,7 @@ strip = true
 [dependencies]
 tokio = { version = "1.44.2", features = ["full"] }
 axum = { version = "0.8.4", features = ["multipart", "ws"] }
+http-body-util = "0.1"
 tower-http = { version = "0.7", features = ["cors", "fs", "trace"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

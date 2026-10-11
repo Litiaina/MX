@@ -163,12 +163,12 @@ pub(super) async fn upload(claims: Claims, mut multipart: Multipart) -> Result<J
                 }
                 Err(failure) => {
                     results.push(json!({"operation_uid":r.operation,"status":failure.0.as_u16(),"error":failure.1}));
-                    release(r, failure.0.is_client_error()).await;
+                    let _ = release(r, failure.0.is_client_error()).await;
                 }
             }
         } else {
             results.push(json!({"operation_uid":r.operation,"status":502,"error":"N1 has not acknowledged this file. Retry the same file; other successful files were saved."}));
-            release(r, false).await;
+            let _ = release(r, false).await;
         }
     }
     Ok(Json(json!({"results":results})))

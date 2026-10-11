@@ -42,6 +42,7 @@ export async function startN1Fixture() {
       if (part && request.method === 'PUT') {
         const session = sessions.get(part[1]); assert.ok(session);
         assert.ok(bytes.length <= session.parameters.part_size_bytes);
+        await control.beforePart?.(session, Number(part[2]));
         if (!session.failedOnce) { session.failedOnce = true; return json({ response: 'Injected transient storage failure' }, 503); }
         const index = Number(part[2]);
         if (session.parts.has(index)) assert.deepEqual(session.parts.get(index), bytes);

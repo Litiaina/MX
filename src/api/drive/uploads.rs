@@ -4,6 +4,10 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 pub(super) const LEASE_MS: i64 = 60 * 60 * 1000;
+// Separate crash-processing lease from resumable retention/quota reservation.
+pub(super) fn retention_ms() -> i64 {
+    crate::config::load_config::CONFIG.drive.upload_retention_hours as i64 * 60 * 60 * 1000
+}
 #[derive(Clone, Deserialize)]
 pub(super) struct Upload {
     pub operation_uid: String,
@@ -104,7 +108,7 @@ pub(super) fn reserve_inner(
     )?;
     if !supplied && resumable && checksum.is_empty() && upload.last_modified.is_some() {
         // Server-owned recovery also works after a page reload with a new operation UUID.
-        if let Some(existing) = tx.query_row("SELECT operation_uid FROM mx_drive_uploads WHERE actor_uid=?1 AND fingerprint=?2 AND completed=0 AND attempted_at>?3 ORDER BY attempted_at DESC LIMIT 1",params![actor,fingerprint,store::now()-LEASE_MS],|r|r.get::<_,String>(0)).optional()? { operation=existing; }
+        if let Some(existing) = tx.query_row("SELECT operation_uid FROM mx_drive_uploads WHERE actor_uid=?1 AND fingerprint=?2 AND completed=0 AND ABS(attempted_at)>?3 ORDER BY ABS(attempted_at) DESC LIMIT 1",params![actor,fingerprint,store::now()-retention_ms()],|r|r.get::<_,String>(0)).optional()? { operation=existing; }
     }
     let prior:Option<(String,String,String,String,i64,bool)>=tx.query_row("SELECT fingerprint,item_uid,version_uid,attempt_uid,attempted_at,completed FROM mx_drive_uploads WHERE actor_uid=?1 AND operation_uid=?2",params![actor,operation],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?))).optional()?;
     let retry = prior.is_some();
@@ -183,7 +187,7 @@ pub(super) fn reserve_inner(
         actor.into()
     };
     let used:i64=tx.query_row("SELECT COALESCE(SUM(v.size),0) FROM mx_drive_versions v JOIN mx_drive_items i ON i.uid=v.item_uid WHERE i.owner_uid=?1",[&owner],|r|r.get(0))?;
-    let reserved:i64=tx.query_row("SELECT COALESCE(SUM(u.size),0) FROM mx_drive_uploads u WHERE u.completed=0 AND ABS(u.attempted_at)>?1 AND u.owner_uid=?2 AND NOT(u.actor_uid=?3 AND u.operation_uid=?4)",params![store::now()-LEASE_MS,owner,actor,operation],|r|r.get(0))?;
+    let reserved:i64=tx.query_row("SELECT COALESCE(SUM(u.size),0) FROM mx_drive_uploads u WHERE u.completed=0 AND ABS(u.attempted_at)>?1 AND u.owner_uid=?2 AND NOT(u.actor_uid=?3 AND u.operation_uid=?4)",params![store::now()-retention_ms(),owner,actor,operation],|r|r.get(0))?;
     if used.saturating_add(reserved).saturating_add(size) > store::quota(&tx, &owner, quota)? {
         return Err(store::problem(
             413,
@@ -277,8 +281,7 @@ pub(super) fn commit(c: &Connection, r: &Reservation) -> rusqlite::Result<store:
     Ok(item)
 }
 
-pub(super) async fn release(r: Reservation, discard: bool) {
-    let _=database(move|c|{
+fn release_inner(c: &Connection, r: &Reservation, discard: bool) -> rusqlite::Result<()> {
         let tx=rusqlite::Transaction::new_unchecked(c,TransactionBehavior::Immediate)?;
         if discard {
             // Superseded/denied destination: queue bytes only if THIS attempt still owns the reservation.
@@ -286,10 +289,13 @@ pub(super) async fn release(r: Reservation, discard: bool) {
             if changed>0 {tx.execute("INSERT OR IGNORE INTO mx_drive_gc(object_key,next_attempt_at,created_at) VALUES(?1,?2,?2)",params![r.key(),store::now()])?;}
         }else {tx.execute("UPDATE mx_drive_uploads SET attempted_at=?4 WHERE actor_uid=?1 AND operation_uid=?2 AND attempt_uid=?3 AND completed=0",params![r.actor,r.operation,r.attempt,-store::now()])?;}
         tx.commit()
-    }).await;
+}
+pub(super) async fn release(r: Reservation, discard: bool) -> Result<(), super::Error> {
+    database(move |c| release_inner(c, &r, discard)).await?;
     if discard {
         super::gc::wake();
     }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -310,6 +316,33 @@ mod tests {
             last_modified: None,
         }
     }
+    #[test]
+    fn cancellation_failure_preserves_the_reservation_and_returns_an_error() {
+        let c = db();
+        let r = reserve_inner(&c, "a", &upload(), "pending.mp4", "video/mp4", 60, "", 100, true).unwrap();
+        c.execute_batch("CREATE TRIGGER deny_cancel BEFORE DELETE ON mx_drive_uploads BEGIN SELECT RAISE(FAIL,'injected cancellation failure'); END;").unwrap();
+        assert!(release_inner(&c, &r, true).is_err());
+        assert_eq!(c.query_row("SELECT COUNT(*) FROM mx_drive_uploads", [], |row| row.get::<_, i64>(0)).unwrap(), 1);
+        assert_eq!(c.query_row("SELECT COUNT(*) FROM mx_drive_gc", [], |row| row.get::<_, i64>(0)).unwrap(), 0);
+        c.execute_batch("DROP TRIGGER deny_cancel;").unwrap();
+        release_inner(&c, &r, true).unwrap();
+        assert_eq!(c.query_row("SELECT COUNT(*) FROM mx_drive_uploads", [], |row| row.get::<_, i64>(0)).unwrap(), 0);
+        assert_eq!(c.query_row("SELECT COUNT(*) FROM mx_drive_gc", [], |row| row.get::<_, i64>(0)).unwrap(), 1);
+    }
+    #[test]
+    fn failed_uploads_recover_within_retention_and_still_reserve_quota() {
+        let c = db();
+        let mut first = upload(); first.last_modified = Some(123);
+        let original = reserve_inner(&c,"a",&first,"pending.mp4","video/mp4",60,"",100,true).unwrap();
+        let yesterday = store::now() - retention_ms() / 2;
+        c.execute("UPDATE mx_drive_uploads SET attempted_at=?1",[-yesterday]).unwrap();
+        first.operation_uid = Uuid::new_v4().to_string();
+        let recovered = reserve_inner(&c,"a",&first,"pending.mp4","video/mp4",60,"",100,true).unwrap();
+        assert_eq!(recovered.operation,original.operation);
+        let another = reserve_inner(&c,"a",&upload(),"other.mp4","video/mp4",60,"",100,true);
+        assert!(another.is_err(), "retained reservations still count against quota");
+    }
+
     #[test]
     fn metadata_reselection_recovers_only_same_actor_file_and_destination() {
         let c = db();

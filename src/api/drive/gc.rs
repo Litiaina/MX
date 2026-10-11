@@ -45,9 +45,10 @@ async fn batch() -> Result<(), super::Error> {
     let jobs=database(|c|{
         let tx=rusqlite::Transaction::new_unchecked(c,rusqlite::TransactionBehavior::Immediate)?;
         // Abandoned reservations are not permanent storage leaks after process crashes.
-        // A negative attempted_at marks a retryable failure, retaining its quota/identity for one hour.
+        // A negative attempted_at marks a retryable failure. Quota and cleanup
+        // use the same configured retention window as resumable reselection.
         let mut s=tx.prepare("SELECT actor_uid,operation_uid,owner_uid,version_uid,name FROM mx_drive_uploads WHERE completed=0 AND ABS(attempted_at)<?1 LIMIT 8")?;
-        let abandoned=s.query_map([store::now()-super::uploads::LEASE_MS],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?,r.get::<_,String>(3)?,r.get::<_,String>(4)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;drop(s);
+        let abandoned=s.query_map([store::now()-super::uploads::retention_ms()],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?,r.get::<_,String>(3)?,r.get::<_,String>(4)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;drop(s);
         for (actor,operation,owner,version,name) in abandoned {
             tx.execute("INSERT OR IGNORE INTO mx_drive_gc(object_key,next_attempt_at,created_at) VALUES(?1,?2,?2)",params![store::object_key(&owner,&version,&name),store::now()])?;
             tx.execute("DELETE FROM mx_drive_uploads WHERE actor_uid=?1 AND operation_uid=?2",params![actor,operation])?;

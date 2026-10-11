@@ -24,7 +24,7 @@ pub(super) fn snapshot(c: &Connection, uid: &str) -> rusqlite::Result<Value> {
         .optional()?;
     let default = CONFIG.drive.quota_mb as i64 * 1024 * 1024;
     let used: i64 = c.query_row("SELECT COALESCE(SUM(v.size),0) FROM mx_drive_versions v JOIN mx_drive_items i ON i.uid=v.item_uid WHERE i.owner_uid=?1", [uid], |row| row.get(0))?;
-    let reserved: i64 = c.query_row("SELECT COALESCE(SUM(size),0) FROM mx_drive_uploads WHERE owner_uid=?1 AND completed=0 AND ABS(attempted_at)>?2", params![uid,store::now()-super::uploads::LEASE_MS], |row| row.get(0))?;
+    let reserved: i64 = c.query_row("SELECT COALESCE(SUM(size),0) FROM mx_drive_uploads WHERE owner_uid=?1 AND completed=0 AND ABS(attempted_at)>?2", params![uid,store::now()-super::uploads::retention_ms()], |row| row.get(0))?;
     let assigned = row.and_then(|r| r.0);
     Ok(
         json!({"user_uid":uid,"quota_bytes":assigned.unwrap_or(default),"default_quota_bytes":default,"assigned":assigned.is_some(),"revision":row.map(|r|r.1).unwrap_or(0),"used_bytes":used,"reserved_bytes":reserved}),

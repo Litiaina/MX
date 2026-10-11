@@ -5,6 +5,36 @@ deployment maintainer's local date.
 
 ## [Unreleased]
 
+### Drive upload recovery and throughput — 2026-10-11
+
+- Automatically reconnect/reconcile transient Drive upload failures with bounded
+  backoff, immediate offline/online handling and explicit retry/waiting states.
+  Respect manual pauses and terminal authentication/permission/quota/conflict errors.
+- Persist account-scoped, per-transfer metadata without storing file bytes or
+  credentials. Restore unfinished uploads after reload with an original-file
+  picker, preserve stable operation IDs and manual pause, and keep other tabs'
+  unrelated recovery entries. Offer explicit cancellation of unfinished uploads,
+  acknowledging cancellation only after its metadata transaction commits.
+- Keep acknowledged progress separate from in-flight bytes. Hide stale speed/ETA
+  during retries and show Confirming until the MX commit is acknowledged.
+- Raise default inactive upload retention from one hour to 72 hours; configure
+  `[drive] upload_retention_hours` between 1 and 168. Quota reservation, session
+  matching and cleanup use the same window, including retryable failures. Valid
+  part activity renews the window so slow active uploads are not expired mid-transfer.
+- Grow files above 1 GiB from console's four workers toward eight after successful
+  parts, sharing an eight-part browser budget. Preserve console chunk sizes and
+  the existing eight-transfer server cap; apply bounded admission backpressure
+  before body buffering instead of immediately rejecting brief contention.
+- Distinguish interrupted request bodies (retryable) from oversized parts and
+  unreadable source-file handles. Preserve stored parts and request the original
+  file when browser-held source bytes are no longer readable; never accept empty
+  or truncated chunks as successful.
+- Validate recovery in Chromium/Firefox and eight concurrent HTTP clients against
+  real isolated MX/SQLite and the N1 contract fixture. WebKit/WPE native source-file
+  loss remains unresolved; only its safe-failure guard passes. Scheduling gains
+  are measured with virtual-file latency tests, not live-network MB/s. See
+  `TESTING.md`; this is not full production/browser qualification.
+
 ## [4.1.0] - 2026-10-10
 
 ### Release and UI notes

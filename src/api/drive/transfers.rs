@@ -86,7 +86,7 @@ fn restore_version(
         .optional()?
         .ok_or_else(|| store::problem(404, "File version not found."))?;
     let used:i64=tx.query_row("SELECT COALESCE(SUM(v.size),0) FROM mx_drive_versions v JOIN mx_drive_items i ON i.uid=v.item_uid WHERE i.owner_uid=?1",[&item.owner_uid],|r|r.get(0))?;
-    let reserved:i64=tx.query_row("SELECT COALESCE(SUM(size),0) FROM mx_drive_uploads WHERE owner_uid=?1 AND completed=0 AND ABS(attempted_at)>?2",params![item.owner_uid,store::now()-super::uploads::LEASE_MS],|r|r.get(0))?;
+    let reserved:i64=tx.query_row("SELECT COALESCE(SUM(size),0) FROM mx_drive_uploads WHERE owner_uid=?1 AND completed=0 AND ABS(attempted_at)>?2",params![item.owner_uid,store::now()-super::uploads::retention_ms()],|r|r.get(0))?;
     if used.saturating_add(reserved).saturating_add(size)
         > store::quota(&tx, &item.owner_uid, default)?
     {
@@ -251,7 +251,7 @@ fn apply(
                 .ok_or_else(|| store::problem(413, "Storage size is too large."))
         })?;
         let used: i64 = tx.query_row("SELECT COALESCE(SUM(v.size),0) FROM mx_drive_versions v JOIN mx_drive_items i ON i.uid=v.item_uid WHERE i.owner_uid=?1",[actor],|r|r.get(0))?;
-        let reserved: i64 = tx.query_row("SELECT COALESCE(SUM(size),0) FROM mx_drive_uploads WHERE owner_uid=?1 AND completed=0 AND ABS(attempted_at)>?2",params![actor,store::now()-super::uploads::LEASE_MS],|r|r.get(0))?;
+        let reserved: i64 = tx.query_row("SELECT COALESCE(SUM(size),0) FROM mx_drive_uploads WHERE owner_uid=?1 AND completed=0 AND ABS(attempted_at)>?2",params![actor,store::now()-super::uploads::retention_ms()],|r|r.get(0))?;
         if used.saturating_add(reserved).saturating_add(bytes)
             > store::quota(&tx, actor, default_quota)?
         {

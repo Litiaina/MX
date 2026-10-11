@@ -16,7 +16,25 @@ use serde_json::{Value, json};
 use std::sync::LazyLock;
 use tokio::sync::Semaphore;
 static TRANSFERS: LazyLock<Semaphore> = LazyLock::new(|| Semaphore::new(8));
+async fn transfer_permit() -> Result<tokio::sync::SemaphorePermit<'static>, Error> {
+    // Backpressure before body allocation. Brief contention should not make
+    // browsers resend an entire 50-MiB part; keep the existing eight-part cap.
+    tokio::time::timeout(std::time::Duration::from_secs(10), TRANSFERS.acquire())
+        .await
+        .map_err(|_| error(429, "Other transfers are busy. Retry shortly."))?
+        .map_err(|_| error(503, "Transfers are temporarily unavailable."))
+}
 pub(super) const MAX_PART_BYTES: usize = 50 * 1024 * 1024;
+async fn read_part(body: axum::body::Body, limit: usize) -> Result<axum::body::Bytes, Error> {
+    axum::body::to_bytes(body, limit).await.map_err(|failure| {
+        if std::error::Error::source(&failure).is_some_and(|source| source.is::<http_body_util::LengthLimitError>()) {
+            error(413, "Upload part exceeds the negotiated limit.")
+        } else {
+            // A broken stream is retryable, not a quota/oversize denial.
+            error(408, "The upload part connection was interrupted. Retry the identical part.")
+        }
+    })
+}
 // Match console's default policy, including the strict >1 GiB boundary.
 fn multipart_policy(size: u64) -> (u64, usize) {
     const MIB: u64 = 1024 * 1024;
@@ -29,6 +47,9 @@ fn multipart_policy(size: u64) -> (u64, usize) {
     } else {
         (8 * MIB, 3)
     }
+}
+fn maximum_workers(size: u64) -> usize {
+    if size > 1024 * 1024 * 1024 { 8 } else { multipart_policy(size).1 }
 }
 #[derive(Deserialize)]
 pub(super) struct Init {
@@ -66,9 +87,7 @@ fn load(c: &Connection, actor: &str, operation: &str) -> rusqlite::Result<Sessio
     Ok(session)
 }
 pub(super) async fn init(claims: Claims, Json(value): Json<Init>) -> Result<Json<Value>, Error> {
-    let _permit = TRANSFERS
-        .try_acquire()
-        .map_err(|_| error(429, "Other transfers are busy. Retry shortly."))?;
+    let _permit = transfer_permit().await?;
     if value.size < 0
         || (!value.sha256.is_empty()
             && (value.sha256.len() != 64 || !value.sha256.bytes().all(|b| b.is_ascii_hexdigit())))
@@ -168,7 +187,7 @@ pub(super) async fn status(
     let storage = n1_storage(&token).map_err(|_| error(502, "N1 is unavailable."))?;
     if storage.is_finalized(&r.key(), &session.version).await {
         return Ok(Json(
-            json!({"operation_uid":r.operation,"completed":false,"ready_to_finalize":true,"part_size":session.part_size,"workers":multipart_policy(r.size as u64).1,"uploaded_parts":[]}),
+            json!({"operation_uid":r.operation,"completed":false,"ready_to_finalize":true,"part_size":session.part_size,"workers":multipart_policy(r.size as u64).1,"max_workers":maximum_workers(r.size as u64),"uploaded_parts":[]}),
         ));
     }
     let result = storage
@@ -193,7 +212,7 @@ pub(super) async fn status(
         .map(|parts| parts.iter().filter_map(|v| v.as_u64()).collect())
         .unwrap_or_default();
     Ok(Json(
-        json!({"operation_uid":r.operation,"completed":false,"part_size":session.part_size,"workers":multipart_policy(r.size as u64).1,"uploaded_parts":indices}),
+        json!({"operation_uid":r.operation,"completed":false,"part_size":session.part_size,"workers":multipart_policy(r.size as u64).1,"max_workers":maximum_workers(r.size as u64),"uploaded_parts":indices}),
     ))
 }
 pub(super) async fn part(
@@ -201,13 +220,9 @@ pub(super) async fn part(
     Path((operation, index)): Path<(String, u64)>,
     request: axum::extract::Request,
 ) -> Result<Json<Value>, Error> {
-    let _permit = TRANSFERS
-        .try_acquire()
-        .map_err(|_| error(429, "Other parts are busy. Retry this part shortly."))?;
+    let _permit = transfer_permit().await?;
     // Admit before reading the body, not after Bytes has allocated it.
-    let bytes = axum::body::to_bytes(request.into_body(), MAX_PART_BYTES)
-        .await
-        .map_err(|_| error(413, "Upload part exceeds 50 MiB or was interrupted. Resume the file using the negotiated part size."))?;
+    let bytes = read_part(request.into_body(), MAX_PART_BYTES).await?;
     let actor = claims.uid.clone();
     let op = operation.clone();
     let hashing = bytes.clone();
@@ -219,10 +234,16 @@ pub(super) async fn part(
       let tx=rusqlite::Transaction::new_unchecked(c,rusqlite::TransactionBehavior::Immediate)?;let s=load(&tx,&actor,&op)?;let r=&s.reservation;
       if r.completed {return Err(store::problem(409,"This file is already uploaded."));}
       let parts=(r.size as u64).div_ceil(s.part_size as u64).max(1);
-      if index>=parts || size!=(r.size-index as i64*s.part_size).min(s.part_size) {return Err(store::problem(400,"Incorrect part index or length."));}
+      if index>=parts {return Err(store::problem(400,"Incorrect part index."));}
+      let expected = (r.size-index as i64*s.part_size).min(s.part_size);
+      if size!=expected {return Err(store::problem(422,&format!("Upload part {index} received {size} bytes; expected {expected}. Reselect the original file if its browser handle was lost.")));}
       let prior:Option<String>=tx.query_row("SELECT sha256 FROM mx_drive_parts WHERE actor_uid=?1 AND operation_uid=?2 AND part_index=?3",params![actor,op,index as i64],|row|row.get(0)).optional()?;
       if prior.is_some_and(|value|value!=checksum) {return Err(store::problem(409,"A different file was supplied for this upload part. Choose the original file."));}
-      tx.execute("INSERT OR IGNORE INTO mx_drive_parts(actor_uid,operation_uid,part_index,sha256) VALUES(?1,?2,?3,?4)",params![actor,op,index as i64,checksum])?;tx.commit()?;Ok(s)
+      tx.execute("INSERT OR IGNORE INTO mx_drive_parts(actor_uid,operation_uid,part_index,sha256) VALUES(?1,?2,?3,?4)",params![actor,op,index as i64,checksum])?;
+      // Retention measures inactivity, not time since init: slow but active
+      // multi-gigabyte uploads must not be collected mid-transfer.
+      tx.execute("UPDATE mx_drive_uploads SET attempted_at=?1 WHERE actor_uid=?2 AND operation_uid=?3 AND completed=0",params![store::now(),actor,op])?;
+      tx.commit()?;Ok(s)
     }).await?;
     let token = n1_access_token()
         .await
@@ -251,9 +272,7 @@ pub(super) async fn finish(
     claims: Claims,
     Path(operation): Path<String>,
 ) -> Result<Json<store::Item>, Error> {
-    let _permit = TRANSFERS
-        .try_acquire()
-        .map_err(|_| error(429, "Other transfers are busy. Retry shortly."))?;
+    let _permit = transfer_permit().await?;
     let s = database(move |c| load(c, &claims.uid, &operation)).await?;
     let r = s.reservation;
     if r.completed {
@@ -292,7 +311,7 @@ pub(super) async fn finish(
     match database(move |c| commit(c, &copy)).await {
         Ok(item) => Ok(Json(item)),
         Err(failure) => {
-            super::uploads::release(r, failure.0.is_client_error()).await;
+            let _ = super::uploads::release(r, failure.0.is_client_error()).await;
             Err(failure)
         }
     }
@@ -301,6 +320,27 @@ pub(super) async fn finish(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn interrupted_bodies_retry_but_oversized_parts_do_not() {
+        let broken = axum::body::Body::from_stream(futures::stream::once(async {
+            Err::<axum::body::Bytes, _>(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "interrupted"))
+        }));
+        assert_eq!(read_part(broken, 4).await.unwrap_err().0.as_u16(), 408);
+        assert_eq!(read_part(axum::body::Body::from("oversized"), 4).await.unwrap_err().0.as_u16(), 413);
+        assert_eq!(read_part(axum::body::Body::from("ok"), 4).await.unwrap(), "ok");
+    }
+    #[tokio::test]
+    async fn contention_waits_without_raising_the_eight_transfer_limit() {
+        let mut held = Vec::new();
+        for _ in 0..8 { held.push(TRANSFERS.acquire().await.unwrap()); }
+        let waiting = tokio::spawn(transfer_permit());
+        tokio::task::yield_now().await;
+        assert!(!waiting.is_finished()); assert_eq!(TRANSFERS.available_permits(), 0);
+        held.pop();
+        let admitted = tokio::time::timeout(std::time::Duration::from_secs(1), waiting).await.unwrap().unwrap().unwrap();
+        assert_eq!(TRANSFERS.available_permits(), 0);
+        drop(admitted); drop(held); assert_eq!(TRANSFERS.available_permits(), 8);
+    }
     #[test]
     fn console_part_sizes_and_workers_at_every_boundary() {
         const MIB: u64 = 1024 * 1024;
@@ -319,6 +359,7 @@ mod tests {
         ] {
             assert_eq!(multipart_policy(size), (part, workers));
             assert!(part <= MAX_PART_BYTES as u64);
+            assert_eq!(maximum_workers(size), if size > 1024 * MIB { 8 } else { workers });
         }
     }
 }
@@ -332,7 +373,7 @@ pub(super) async fn cancel(
     }).await?;
     if let Some(r) = r {
         if !r.completed {
-            super::uploads::release(r, true).await;
+            super::uploads::release(r, true).await?;
         }
     }
     Ok(Json(json!({"ok":true,"storage_cleanup":"queued"})))

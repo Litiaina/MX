@@ -56,6 +56,26 @@ pub struct WebRtcConfig {
 pub struct DriveConfig {
     pub quota_mb: usize,
     pub public_links: bool,
+    pub upload_retention_hours: usize,
+}
+
+fn upload_retention_hours(value: Option<&str>) -> Option<usize> {
+    match value {
+        None => Some(72),
+        Some(value) => value.parse::<usize>().ok().filter(|hours| (1..=168).contains(hours)),
+    }
+}
+
+#[cfg(test)]
+mod drive_retention_tests {
+    #[test]
+    fn recovery_retention_is_bounded_and_defaults_to_three_days() {
+        assert_eq!(super::upload_retention_hours(None), Some(72));
+        assert_eq!(super::upload_retention_hours(Some("168")), Some(168));
+        for value in ["0", "169", "-1", "invalid"] {
+            assert_eq!(super::upload_retention_hours(Some(value)), None);
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -609,6 +629,8 @@ pub static CONFIG: LazyLock<Config> = LazyLock::new(|| {
         drive: DriveConfig {
             quota_mb: drive_number("quota_mb", 10_240),
             public_links: drive_public_links,
+            upload_retention_hours: upload_retention_hours(drive_section.and_then(|section| section.get("upload_retention_hours")))
+                .unwrap_or_else(|| crate::fatal_error!("'[drive] upload_retention_hours' must be between 1 and 168", "static", "CONFIG")),
         },
     }
 });

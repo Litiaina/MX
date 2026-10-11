@@ -1,5 +1,6 @@
 import { apiJson, apiFile, apiUpload, apiUploadPart } from './client';
 import { UploadMeter } from '../util/uploadProgress';
+import { driveUploadSlots } from '../drive/uploadSlots';
 
 const root = '/mx/v1/drive';
 export type DriveTab = 'mine' | 'shared' | 'recent' | 'starred' | 'trash';
@@ -51,9 +52,10 @@ export async function driveDownload(item: DriveItem, version_uid?: string) {
   const link = document.createElement('a'); link.href = `${ticket.url}?download=true`; link.download = item.name; link.rel = 'noreferrer'; link.click();
 }
 
-interface UploadState { operation_uid?: string; completed: boolean; item?: DriveItem; part_size?: number; workers?: number; uploaded_parts?: number[]; ready_to_finalize?: boolean }
-export interface UploadProgress { loaded: number; total: number; phase: 'initializing' | 'uploading' | 'finalizing'; resumedParts: number; bytesPerSecond: number; etaSeconds: number | null }
-export interface DriveUploadOptions { accountUid: string; parentUid: string | null; versionOf?: DriveItem; operationUid?: string; signal?: AbortSignal; onProgress?: (progress: UploadProgress) => void }
+interface UploadState { operation_uid?: string; completed: boolean; item?: DriveItem; part_size?: number; workers?: number; max_workers?: number; uploaded_parts?: number[]; ready_to_finalize?: boolean }
+export interface UploadProgress { loaded: number; storedBytes?: number; total: number; phase: 'initializing' | 'uploading' | 'retrying' | 'finalizing'; resumedParts: number; bytesPerSecond: number; etaSeconds: number | null }
+export interface DriveUploadOptions { accountUid: string; parentUid: string | null; versionOf?: Pick<DriveItem, 'uid' | 'revision'>; operationUid?: string; previousStoredBytes?: number; signal?: AbortSignal; onOperation?: (uid: string) => void; onProgress?: (progress: UploadProgress) => void }
+export const driveCancelUpload = (operation: string) => apiJson(`${root}/uploads/${encodeURIComponent(operation)}`, { method: 'DELETE', retrySafe: true });
 const pageOperations = new Map<string, { uid: string; time: number }>();
 function pageOperation(key: string): string {
   const cached = pageOperations.get(key);
@@ -72,11 +74,12 @@ function uploadIdentity(file: File, options: DriveUploadOptions) {
 }
 export async function uploadDriveFile(file: File, options: DriveUploadOptions): Promise<DriveItem> {
   const { signal, onProgress } = options;
-  const progress = (phase: UploadProgress['phase'], loaded: number, resumedParts = 0) => onProgress?.({ phase, loaded, total: file.size, resumedParts, bytesPerSecond: 0, etaSeconds: null });
-  progress('initializing', 0);
+  const progress = (phase: UploadProgress['phase'], loaded: number, resumedParts = 0) => onProgress?.({ phase, loaded, storedBytes: loaded, total: file.size, resumedParts, bytesPerSecond: 0, etaSeconds: null });
+  progress('initializing', options.previousStoredBytes || 0);
   const identity = uploadIdentity(file, options);
   const state = await apiJson<UploadState>(`${root}/uploads`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ operation_uid: identity.operation_uid, last_modified: identity.last_modified, parent_uid: options.parentUid, item_uid: options.versionOf?.uid, base_revision: options.versionOf?.revision, file_name: file.name, mime_type: file.type || 'application/octet-stream', size: file.size }), retrySafe: true, timeoutMs: 60_000, signal });
   const operation_uid = state.operation_uid || identity.operation_uid;
+  options.onOperation?.(operation_uid);
   if (state.completed && state.item) { pageOperations.delete(identity.key); progress('finalizing', file.size); return state.item; }
   const partSize = state.part_size;
   if (!Number.isSafeInteger(partSize) || !partSize || partSize <= 0 || partSize > 50 * 1024 * 1024) throw new Error('MX returned an invalid multipart size.');
@@ -87,23 +90,46 @@ export async function uploadDriveFile(file: File, options: DriveUploadOptions): 
   if (state.ready_to_finalize) loaded = file.size;
   progress('uploading', loaded, present.size);
   const meter = new UploadMeter(file.size, loaded);
+  const retrying = new Set<number>();
   let lastEmission = 0;
-  const emit = (force = false) => { if (force || performance.now() - lastEmission >= 200) { lastEmission = performance.now(); onProgress?.({ phase: 'uploading', total: file.size, resumedParts: present.size, ...meter.snapshot() }); } };
+  const emit = (force = false) => { if (force || performance.now() - lastEmission >= 200) { lastEmission = performance.now(); onProgress?.({ phase: retrying.size ? 'retrying' : 'uploading', total: file.size, storedBytes: loaded, resumedParts: present.size, ...meter.snapshot(), ...(retrying.size ? { loaded, bytesPerSecond: 0, etaSeconds: null } : {}) }); } };
   const timer = setInterval(() => emit(), 1000);
-  // Console's default 1/2/3/4 workers; two queued files never exceed eight parts.
+  // Start at console's 1/2/3/4 workers, then grow after successful acknowledgements
+  // if MX allows it. All concurrent Drive uploads share an eight-part budget.
   let stopped = false;
+  const workers = Math.max(1, Math.min(4, state.workers || 2));
+  const maximum = Math.max(workers, Math.min(8, state.max_workers || workers));
+  const jobs: Promise<void>[] = [];
+  const startWorker = () => { const job = worker(); jobs.push(job); void job.catch(() => {}); };
+  let acknowledged = 0;
   const worker = async () => {
     while (!stopped && nextIndex < parts) {
       signal?.throwIfAborted(); const index = nextIndex++; if (present.has(index)) continue;
-      const chunk = file.slice(index * partSize, Math.min(file.size, (index + 1) * partSize));
-      try { await apiUploadPart(`${root}/uploads/${operation_uid}/parts/${index}`, chunk, (bytes) => { meter.part(index, bytes, chunk.size); emit(); }, signal); }
+      let release: (() => void) | undefined;
+      try {
+        release = await driveUploadSlots.acquire(signal);
+        signal?.throwIfAborted();
+        if (stopped) return;
+        const chunk = file.slice(index * partSize, Math.min(file.size, (index + 1) * partSize));
+        await apiUploadPart(`${root}/uploads/${operation_uid}/parts/${index}`, chunk, (bytes) => { meter.part(index, bytes, chunk.size); emit(); }, signal, () => { retrying.add(index); emit(true); });
+        retrying.delete(index);
+        loaded += chunk.size; meter.stored(index, chunk.size); emit(true);
+        acknowledged++;
+        if (acknowledged % workers === 0 && jobs.length < maximum && nextIndex < parts) startWorker();
+      }
       catch (reason) { stopped = true; throw reason; }
-      loaded += chunk.size; meter.stored(index, chunk.size); emit(true);
+      finally { release?.(); }
     }
   };
-  const workers = Math.max(1, Math.min(4, state.workers || 2));
-  let results: PromiseSettledResult<void>[];
-  try { results = await Promise.allSettled(Array.from({ length: workers }, () => worker())); }
+  const results: PromiseSettledResult<void>[] = [];
+  for (let index = 0; index < workers; index++) startWorker();
+  try {
+    // Include workers added while the initial wave is running, even on failure.
+    for (let cursor = 0; cursor < jobs.length;) {
+      const end = jobs.length;
+      results.push(...await Promise.allSettled(jobs.slice(cursor, end))); cursor = end;
+    }
+  }
   finally { clearInterval(timer); }
   const failed = results.find((result) => result.status === 'rejected');
   if (failed?.status === 'rejected') throw failed.reason;
@@ -112,8 +138,8 @@ export async function uploadDriveFile(file: File, options: DriveUploadOptions): 
   pageOperations.delete(identity.key); return item;
 }
 
-export async function uploadDriveBatch(entries: { file: File; parentUid: string | null; versionOf?: DriveItem }[], accountUid: string, signal: AbortSignal, onProgress?: (loaded: number, total: number) => void) {
-  const identities = await Promise.all(entries.map((entry) => uploadIdentity(entry.file, { accountUid, parentUid: entry.parentUid, versionOf: entry.versionOf, signal })));
+export async function uploadDriveBatch(entries: { file: File; parentUid: string | null; versionOf?: Pick<DriveItem, 'uid' | 'revision'>; operationUid?: string }[], accountUid: string, signal: AbortSignal, onProgress?: (loaded: number, total: number) => void) {
+  const identities = await Promise.all(entries.map((entry) => uploadIdentity(entry.file, { accountUid, parentUid: entry.parentUid, versionOf: entry.versionOf, operationUid: entry.operationUid, signal })));
   const metadata = entries.map((entry, index) => ({ operation_uid: identities[index].operation_uid, parent_uid: entry.parentUid, item_uid: entry.versionOf?.uid, base_revision: entry.versionOf?.revision }));
   const body = new FormData(); body.append('metadata', JSON.stringify(metadata));
   for (const entry of entries) body.append('file', entry.file, entry.file.name);

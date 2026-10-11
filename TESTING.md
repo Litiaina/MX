@@ -1,5 +1,94 @@
 # MX validation
 
+## Drive upload recovery and scheduling — 2026-10-11
+
+Implemented automatic transient recovery, explicit waiting/pause/reselection/
+confirmation states, account-scoped persistent metadata and stable operation
+IDs. File bytes are not persisted: reopening requires the original file.
+Inactive pending reservations default to 72 hours, configurable from 1 to
+168 hours; matching, reserved quota and garbage collection share that window.
+Files above 1 GiB ramp from console's four workers toward eight after successful
+acknowledgements, with eight shared part slots per browser document. Server
+admission waits briefly before body buffering without raising its existing
+eight-transfer limit. Console part sizes are unchanged; there is no full-file
+pre-scan/read-back or new per-file size ceiling.
+
+### Results and limits
+
+- `npm test`: **223 passed across 35 files**. Covers bounded/adaptive scheduling,
+  immutable retries, late-worker failure, FIFO slot cancellation, terminal errors,
+  offline/manual-pause behavior, per-account/per-transfer recovery, multiple tabs,
+  more than one thousand saved entries, partial small-file batches, source loss,
+  blocked storage and cancellation. Native synchronous send failures release
+  timers/listeners; no endless retry of unreadable files.
+- `cargo test --locked`: **113 passed, one opt-in live-N1 test ignored**
+  (114 total). Added interrupted-body 408 versus oversize 413 checks, the unchanged
+  eight-transfer bound, multipart-policy boundaries, configured retention and
+  failed-reservation recovery/quota checks, and cancellation rollback/error
+  propagation. Cancel is acknowledged only after its SQLite transaction commits.
+  `cargo build --locked` passed.
+- Production frontend check/build passed: **zero Svelte errors/warnings**.
+  Vite retains its existing >500-KB main-chunk notice. Rebuilt `frontend/dist`
+  is included; Rust/frontend versions remain 4.1.0.
+- Chromium and Firefox pass real production UI against disposable MX/SQLite and
+  the **N1 HTTP contract fixture**: 18-MiB native disk-backed files, module switches,
+  offline waiting with acknowledged progress/no stale ETA, manual pause that
+  survives reconnect/reload, wrong-original rejection, original-file reselection,
+  two-hour-old retryable reservation recovery and automatic reconnect after an
+  actual MX restart. A committed but held/lost finish response stays Confirming,
+  then reconciles to exactly one file version. Completed queue metadata is removed;
+  no upload reappears after reload. Final stored bytes match SHA-256 in the test.
+- Eight simultaneous authenticated HTTP clients pass real multipart initialization,
+  retry, part-driven retention renewal, finish and finish replay. Each has exactly
+  one normal MX version and byte-for-byte stored content. Repeated cancellation
+  releases the exact pending reservation without deleting completed files.
+  This is **not eight simultaneous browser tabs**
+  or a real multi-gigabyte/live-N1 bandwidth benchmark.
+- **WebKit/WPE full native-file recovery is not qualified.** Selected source files
+  become unreadable (`NotFoundError`), and native PUTs can send zero bytes. A
+  minimal control outside the MX queue reproduces source loss after metadata
+  initialization, using either fetch or XHR; retaining a Blob slice, delaying
+  input cleanup or retaining the picker did not establish a full pass. Root cause
+  remains unresolved. The separate source-loss guard test passes: show Select
+  original file, stop automatic replay and publish no empty/truncated file.
+  This limited guard is not a Safari/macOS/iOS or full WebKit upload pass.
+- Controlled virtual 2-GiB scheduling with 100-ms part acknowledgements improves
+  from 1,100 ms/four workers to 700 ms/eight workers (41 parts), while two jobs
+  still peak at eight shared slots. These are **simulated scheduler timings**, not
+  measured MB/s, CPU/memory qualification or a speed guarantee on an actual network.
+
+Evidence (private test directories may contain test credentials/database data;
+do not publish them wholesale):
+
+- `/tmp/mx-eight-user-iq5ypw`: final Chromium/Firefox recovery UI and eight-client
+  run; `recovery-results.json` records scope, fixture storage and
+  `productionQualified:false`. Includes part-driven retention renewal, repeated
+  pending cancellation and completed-file protection, actual desktop dark-palette
+  assertions and inspected desktop dark/mobile light screenshots.
+- `/tmp/mx-eight-user-XlbeJk`: final WebKit source-loss guard only plus eight HTTP clients;
+  `fullRecoveryQualified:false`. This is not a successful WebKit file upload.
+- `/tmp/mx-eight-user-pGXjIk`, `/tmp/mx-eight-user-wSrBio`: failed full WebKit runs,
+  including zero-byte part rejections and unreadable native source evidence.
+- `/tmp/mx-eight-user-5Pj5rX`: Chromium/Firefox UI passed, but the later direct
+  test-only timestamp write hit SQLite's zero-default busy timeout. This combined
+  run is not a pass; the isolated inspection helper now uses the same 10-second
+  busy timeout as the disposable MX server. `/tmp/mx-eight-user-5D2ilH` passed the
+  source-loss guard/eight-client retention-renewal scope, not full WebKit recovery.
+- `/tmp/mx-upload-scheduling-benchmark.json`: controlled scheduler evidence, not
+  real network throughput. Logs: `/tmp/mx-upload-unit-final.log`,
+  `/tmp/mx-upload-rust-final.log`, `/tmp/mx-upload-frontend-final-build.log`.
+
+Run `npm run test:drive:recovery` from `frontend` after building Rust/frontend.
+`MX_TEST_BROWSERS=chromium,firefox` selects the passing full scope; the default
+three-engine run retains the WebKit gate. Only
+`MX_TEST_BROWSERS=webkit MX_TEST_RECOVERY_SOURCE_FALLBACK=1` selects the separate
+limited safe-failure check. These tests do not use or change deployment config,
+secrets, databases, certificates/trust, desktop audio devices or the N1 repository.
+They use fixture storage, **not live N1**. Browser closure does not continue uploads;
+retained MX metadata cannot guarantee survival of N1 parts outside N1's own
+durability/retention settings. Existing Office/call/live-storage release gates
+below remain open; this is not complete production qualification.
+
 ## MX 4.1.0 relationships and standalone Office — 2026-10-10
 
 Status: native module relationships and the bundled browser Office integration

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { writeFileSync } from 'node:fs';
 const { json, upload, part } = vi.hoisted(() => ({ json: vi.fn(), upload: vi.fn(), part: vi.fn() }));
 vi.mock('./client', () => ({ apiJson: json, apiUpload: upload, apiUploadPart: part, apiFile: vi.fn() }));
 import { uploadDriveFile, uploadDriveBatch, driveList, driveNeighbors, driveSpaceGrant, guestDrive, guestNeighbors } from './drive';
@@ -83,6 +84,44 @@ it('matches partial batch results by stable operation rather than response order
 it('accepts console 50 MiB parts instead of imposing the former 32 MiB part ceiling', async () => {
   json.mockResolvedValueOnce({ part_size: 50*1024*1024, workers: 4 }).mockResolvedValueOnce({uid:'saved'});
   expect(await uploadDriveFile(new File(['small last part'],'large.MP4'),options())).toEqual({uid:'saved'});
+});
+
+it('keeps acknowledged bytes and retry indicators separate from in-flight progress',async()=>{
+  json.mockResolvedValueOnce({part_size:4,workers:1,uploaded_parts:[0]}).mockResolvedValueOnce({uid:'done'});
+  part.mockImplementation(async(_path,body,onProgress,_signal,onRetry)=>{onProgress(body.size,body.size);onRetry();});
+  const progress=vi.fn();await uploadDriveFile(new File(['abcdefgh'],'retry.txt'),{...options(),previousStoredBytes:4,onProgress:progress});
+  expect(progress.mock.calls[0][0].storedBytes).toBe(4);
+  expect(progress.mock.calls.find(([value])=>value.phase==='retrying')?.[0]).toMatchObject({loaded:4,storedBytes:4,etaSeconds:null,bytesPerSecond:0});
+  expect(progress.mock.calls.at(-1)?.[0]).toMatchObject({phase:'finalizing',storedBytes:8});
+});
+
+it('grows large-file concurrency after acknowledgements while sharing the eight-part budget',async()=>{
+  vi.useFakeTimers();
+  try {
+    // Virtual 2-GiB file, zero large allocations: this tests scheduling under
+    // controlled per-part latency, NOT real storage/network transfer speed.
+    const virtual=()=>({name:'large.mp4',type:'video/mp4',lastModified:1,size:2*1024**3,slice:(start:number,end:number)=>Object.defineProperty(new Blob(['x']),'size',{value:end-start})}) as File;
+    const run=async(maximum:number,count=1)=>{
+      let active=0,peak=0,done=false;const slots=new Set<string>();
+      json.mockImplementation(async(path:string)=>path.endsWith('/uploads')?{part_size:50*1024**2,workers:4,max_workers:maximum}:{uid:'saved'});
+      part.mockImplementation((path:string)=>new Promise(resolve=>{expect(slots.has(path)).toBe(false);slots.add(path);active++;peak=Math.max(peak,active);setTimeout(()=>{active--;resolve({stored:true});},100);}));
+      const start=Date.now();const work=Promise.all(Array.from({length:count},()=>uploadDriveFile(virtual(),options()))).then(()=>done=true);
+      while(!done&&Date.now()-start<10000)await vi.advanceTimersByTimeAsync(100);
+      await work;return{milliseconds:Date.now()-start,peak,parts:slots.size};
+    };
+    const baseline=await run(4),adaptive=await run(8),shared=await run(8,2);
+    expect(baseline.peak).toBe(4);expect(adaptive.peak).toBe(8);expect(adaptive.milliseconds).toBeLessThan(baseline.milliseconds);
+    expect(adaptive.parts).toBe(baseline.parts);expect(shared.peak).toBe(8);expect(shared.parts).toBe(2*baseline.parts);
+    console.info('Controlled multipart scheduling benchmark',JSON.stringify({baseline,adaptive,shared}));
+    if (process.env.MX_TEST_UPLOAD_BENCHMARK_REPORT) writeFileSync(process.env.MX_TEST_UPLOAD_BENCHMARK_REPORT, JSON.stringify({ baseline, adaptive, shared, scope: 'Virtual 2-GiB file, 100-ms acknowledgement latency per part; scheduling only, not real network/N1 throughput' }, null, 2));
+  } finally {vi.useRealTimers();}
+});
+
+it('settles all adaptive workers and never finalizes after a later worker fails',async()=>{
+  json.mockResolvedValue({part_size:1,workers:1,max_workers:8});
+  part.mockImplementation(async(path:string)=>{if(path.endsWith('/parts/5'))throw Error('late failure');return{stored:true};});
+  await expect(uploadDriveFile(new File(['abcdefghijklmnopqrst'],'adaptive-fail'),options())).rejects.toThrow('late failure');
+  expect(json.mock.calls.some(([path])=>path.endsWith('/finish'))).toBe(false);
 });
 
 it('rejects invalid server part metadata and stops scheduling after a part fails',async()=>{

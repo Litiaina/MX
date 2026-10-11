@@ -135,6 +135,13 @@ class FakeUpload {
 }
 describe('upload progress deadlines', () => {
   beforeEach(() => { FakeUpload.instances = []; vi.stubGlobal('XMLHttpRequest', FakeUpload); });
+  it('cleans its deadline and cancellation listener when a native source fails synchronously',async()=>{
+    const controller=new AbortController(), failure=new DOMException('Source unavailable','NotReadableError');
+    const sending=vi.spyOn(FakeUpload.prototype,'send').mockImplementationOnce(()=>{throw failure;});
+    await expect(apiUploadPart('/parts/0',new Blob(['same']),undefined,controller.signal)).rejects.toBe(failure);
+    expect(vi.getTimerCount()).toBe(0);controller.abort();expect(FakeUpload.instances[0].aborted).toBe(false);
+    sending.mockRestore();
+  });
   it('sends native Blob PUT parts with in-flight progress and identical-body retries',async()=>{
     const opening=vi.spyOn(FakeUpload.prototype,'open'); const sending=vi.spyOn(FakeUpload.prototype,'send');
     const body=new Blob(['immutable part']); const progress=vi.fn();

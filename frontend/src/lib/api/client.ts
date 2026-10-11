@@ -330,18 +330,20 @@ export async function apiUpload<T>(
     if (signal?.aborted) { reject(signal.reason || new DOMException('Cancelled', 'AbortError')); return; }
     signal?.addEventListener('abort', cancel, { once: true });
     progressDeadline();
-    request.send(body);
+    try { request.send(body); }
+    catch (reason) { cleanup(); reject(reason); }
   });
 }
 
 /** Replay only an immutable multipart slot, never an arbitrary upload mutation. */
-export async function apiUploadPart(path: string, body: Blob, onProgress?: (loaded: number, total: number) => void, signal?: AbortSignal): Promise<unknown> {
+export async function apiUploadPart(path: string, body: Blob, onProgress?: (loaded: number, total: number) => void, signal?: AbortSignal, onRetry?: () => void): Promise<unknown> {
   for (let attempt = 0; ; attempt++) {
     signal?.throwIfAborted();
     try { return await apiUpload(path, body, onProgress, true, signal, 'PUT'); }
     catch (reason) {
       if (signal?.aborted) throw signal.reason || reason;
       if (attempt >= 4 || !(reason instanceof ConnectionError || reason instanceof ApiError && TRANSIENT_STATUS.has(reason.status))) throw reason;
+      onRetry?.();
       onProgress?.(0, body.size);
       await pause(Math.min(1000 * 2 ** attempt, 12_000) + Math.random() * 250, signal);
     }
