@@ -23,6 +23,7 @@ use crate::{
             schema::{
                 FieldDefinition, ensure_dynamic_schema, field_map_by_key,
                 load_active_module_schema, load_module_fields_db,
+                load_module_fields_initialized_db,
             },
         },
         notifications::notify_module_readers,
@@ -78,6 +79,8 @@ pub struct FieldConflict {
     pub current_revision: i64,
     pub current_value: Value,
     pub your_value: Value,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub related_values: BTreeMap<String, Value>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -112,6 +115,7 @@ pub struct DynamicPage {
     pub has_next: bool,
     pub total: usize,
     pub total_pages: usize,
+    pub summaries: BTreeMap<String, super::column_summaries::ColumnSummary>,
 }
 
 #[derive(Debug, Clone)]
@@ -351,6 +355,32 @@ fn normalize_field_value(
     }
 }
 
+pub(super) fn validate_autofill_value(
+    field: &FieldDefinition,
+    value: &Value,
+) -> Result<(), String> {
+    normalize_field_value(field, value).map(|_| ())
+}
+
+pub(super) fn canonical_rule_value(
+    field: &FieldDefinition,
+    value: &Value,
+) -> Result<Value, String> {
+    let normalized = normalize_field_value(field, value)?;
+    if field.field_type == "relationship" && field.config["multiple"] == true {
+        return Ok(normalized
+            .map(|v| match v {
+                NormalizedValue::Text(s) => serde_json::from_str(&s).unwrap_or(Value::Null),
+                _ => Value::Null,
+            })
+            .unwrap_or(Value::Null));
+    }
+    Ok(normalized
+        .as_ref()
+        .map(normalized_to_json)
+        .unwrap_or(Value::Null))
+}
+
 fn validate_payload(
     fields: &[FieldDefinition],
     raw_values: &BTreeMap<String, Value>,
@@ -588,7 +618,7 @@ fn apply_formula_values(
     Ok(())
 }
 
-fn calculate_formula_json_values(
+pub(super) fn calculate_formula_json_values(
     fields: &[FieldDefinition],
     values: &mut BTreeMap<String, Value>,
 ) -> Result<(), String> {
@@ -619,7 +649,7 @@ fn calculate_formula_json_values(
 }
 
 fn load_normalized_record_values(
-    transaction: &rusqlite::Transaction<'_>,
+    transaction: &rusqlite::Connection,
     record_uid: &str,
     fields: &[FieldDefinition],
 ) -> rusqlite::Result<BTreeMap<String, NormalizedValue>> {
@@ -672,7 +702,12 @@ pub(crate) fn recalculate_module_formulas(
         .prepare("SELECT uid FROM mx_records WHERE module_uid=?1 AND deleted_at IS NULL")?
         .query_map(params![module_uid], |row| row.get::<_, String>(0))?
         .collect::<Result<Vec<_>, _>>()?;
-    let transaction = connection.unchecked_transaction()?;
+    let owned = if connection.is_autocommit() {
+        Some(connection.unchecked_transaction()?)
+    } else {
+        None
+    };
+    let transaction = owned.as_ref().map(|tx| &**tx).unwrap_or(connection);
     for record_uid in record_uids {
         let mut values = load_normalized_record_values(&transaction, &record_uid, &fields)?;
         apply_formula_values(&fields, &mut values)
@@ -687,11 +722,14 @@ pub(crate) fn recalculate_module_formulas(
             set_field_revision(&transaction, &record_uid, &field.uid, revision, actor_uid)?;
         }
     }
-    transaction.commit()
+    if let Some(tx) = owned {
+        tx.commit()?;
+    }
+    Ok(())
 }
 
 fn insert_record_value(
-    transaction: &rusqlite::Transaction<'_>,
+    transaction: &rusqlite::Connection,
     record_uid: &str,
     field: &FieldDefinition,
     value: &NormalizedValue,
@@ -834,8 +872,8 @@ fn normalized_to_legacy_text(value: Option<&NormalizedValue>) -> String {
     }
 }
 
-fn current_field_revision(
-    transaction: &rusqlite::Transaction<'_>,
+pub(super) fn current_field_revision(
+    transaction: &rusqlite::Connection,
     record_uid: &str,
     field_uid: &str,
 ) -> rusqlite::Result<i64> {
@@ -914,7 +952,7 @@ fn field_changed_after_base(
 }
 
 fn set_field_revision(
-    transaction: &rusqlite::Transaction<'_>,
+    transaction: &rusqlite::Connection,
     record_uid: &str,
     field_uid: &str,
     revision: i64,
@@ -978,7 +1016,7 @@ fn bump_all_field_revisions(
 }
 
 fn write_single_dynamic_value(
-    transaction: &rusqlite::Transaction<'_>,
+    transaction: &rusqlite::Connection,
     record_uid: &str,
     field: &FieldDefinition,
     value: Option<&NormalizedValue>,
@@ -1049,12 +1087,10 @@ fn update_legacy_mirror_field(
     Ok(())
 }
 
-fn load_record_revisions(
+fn load_record_revisions_initialized(
     connection: &rusqlite::Connection,
     record_uids: &[String],
 ) -> rusqlite::Result<HashMap<String, i64>> {
-    ensure_record_collaboration_schema(connection)?;
-
     if record_uids.is_empty() {
         return Ok(HashMap::new());
     }
@@ -1079,10 +1115,93 @@ fn load_record_revisions(
     Ok(revisions)
 }
 
+fn rule_restore_values(
+    c: &rusqlite::Connection,
+    fields: &[FieldDefinition],
+    current: &BTreeMap<String, Value>,
+    changes: &BTreeMap<String, Value>,
+    key: &str,
+    actor: &str,
+) -> rusqlite::Result<BTreeMap<String, Value>> {
+    if !super::form_rules::configured(fields) {
+        return Ok(BTreeMap::new());
+    }
+    let Some(field) = fields.iter().find(|f| f.key == key) else {
+        return Ok(BTreeMap::new());
+    };
+    let mut prospective = current.clone();
+    for (k, v) in changes {
+        if let Some(f) = fields.iter().find(|f| f.key == *k) {
+            if super::form_rules::writable(&f.field_type) {
+                prospective.insert(
+                    k.clone(),
+                    canonical_rule_value(f, v).map_err(rusqlite::Error::InvalidParameterName)?,
+                );
+            }
+        }
+    }
+    if super::form_rules::state(field, &prospective).visible
+        || !super::form_rules::empty(changes.get(key).unwrap_or(&Value::Null))
+    {
+        return Ok(BTreeMap::new());
+    }
+    let mut roots = super::form_rules::ancestors(fields, key)
+        .into_iter()
+        .filter(|k| changes.contains_key(k) && changes.get(k) != current.get(k))
+        .collect::<std::collections::BTreeSet<_>>();
+    for root in roots.clone() {
+        if let Some(group) = fields
+            .iter()
+            .find(|f| f.key == root)
+            .and_then(|f| f.config["form_rules"]["exclusive_group"].as_str())
+        {
+            roots.extend(
+                fields
+                    .iter()
+                    .filter(|f| f.config["form_rules"]["exclusive_group"] == group)
+                    .map(|f| f.key.clone()),
+            );
+        }
+    }
+    if roots.is_empty() {
+        return Ok(BTreeMap::new());
+    }
+    let level: i64 = c.query_row(
+        "SELECT access_level FROM users WHERE uid=?1",
+        [actor],
+        |r| r.get(0),
+    )?;
+    let mut restored = BTreeMap::new();
+    for f in fields
+        .iter()
+        .filter(|f| super::form_rules::writable(&f.field_type))
+    {
+        if roots.contains(&f.key)
+            || !super::form_rules::ancestors(fields, &f.key).is_disjoint(&roots)
+        {
+            if f.field_type == "relationship"
+                && !module_can_for_user(
+                    c,
+                    f.config["target_module_uid"].as_str().unwrap_or(""),
+                    actor,
+                    level,
+                    "read",
+                )?
+            {
+                continue;
+            }
+            restored.insert(
+                f.key.clone(),
+                current.get(&f.key).cloned().unwrap_or(Value::Null),
+            );
+        }
+    }
+    Ok(restored)
+}
+
 fn patch_record_db(
     module_uid: String,
     uid: String,
-    changes: BTreeMap<String, Option<NormalizedValue>>,
     raw_changes: BTreeMap<String, Value>,
     base_revision: i64,
     actor_uid: String,
@@ -1092,8 +1211,6 @@ fn patch_record_db(
         ensure_record_collaboration_schema(connection)?;
         ensure_record_lifecycle_schema(connection)?;
 
-        let fields = load_module_fields_db(connection, &module_uid, false)?;
-        let field_map = field_map_by_key(&fields);
         for _ in 0..3 {
             let transaction = rusqlite::Transaction::new_unchecked(
                 connection,
@@ -1107,12 +1224,104 @@ fn patch_record_db(
             let Some(current_record_revision) = current_record_revision else {
                 return Ok(PatchDbResult::NotFound);
             };
-            super::relationships::validate_selection(
+            let fields = load_module_fields_initialized_db(&transaction, &module_uid, false)?;
+            let field_map = field_map_by_key(&fields);
+            let mut raw_changes = raw_changes.clone();
+            if base_revision < 1 || base_revision > current_record_revision {
+                return Err(rusqlite::Error::InvalidParameterName("MX_REVISION:The loaded record revision is invalid. Reload the record and try again.".into()));
+            }
+            let current_values = if super::form_rules::configured(&fields) {
+                load_record_values(&transaction, std::slice::from_ref(&uid))?
+                    .remove(&uid)
+                    .unwrap_or_default()
+            } else {
+                BTreeMap::new()
+            };
+            if super::form_rules::configured(&fields) {
+                let mut guarded = Vec::new();
+                for (key, value) in &raw_changes {
+                    let Some(field) = field_map.get(key) else {
+                        continue;
+                    };
+                    let own_revision = current_field_revision(&transaction, &uid, &field.uid)?;
+                    let mut changed_parent = None;
+                    for parent in super::form_rules::ancestors(&fields, key)
+                        .into_iter()
+                        .filter(|parent| !raw_changes.contains_key(parent))
+                    {
+                        if let Some(source) = field_map.get(&parent) {
+                            let revision = current_field_revision(&transaction, &uid, &source.uid)?;
+                            if revision > base_revision {
+                                changed_parent = Some((source, revision));
+                                break;
+                            }
+                        }
+                    }
+                    if own_revision > base_revision || changed_parent.is_some() {
+                        let label = changed_parent
+                            .as_ref()
+                            .map(|(source, _)| {
+                                format!("{} — {} changed", field.label, source.label)
+                            })
+                            .unwrap_or_else(|| field.label.clone());
+                        let revision = changed_parent.map(|(_, rev)| rev).unwrap_or(own_revision);
+                        let mut current_value = current_field_value(&transaction, &uid, field)?;
+                        if field.field_type == "relationship" {
+                            let level: i64 = transaction.query_row(
+                                "SELECT access_level FROM users WHERE uid=?1",
+                                [&actor_uid],
+                                |r| r.get(0),
+                            )?;
+                            if !module_can_for_user(
+                                &transaction,
+                                field.config["target_module_uid"].as_str().unwrap_or(""),
+                                &actor_uid,
+                                level,
+                                "read",
+                            )? {
+                                current_value = Value::Null;
+                            }
+                        }
+                        guarded.push(FieldConflict {
+                            field_uid: field.uid.clone(),
+                            field_key: key.clone(),
+                            label,
+                            base_revision,
+                            current_revision: revision,
+                            current_value,
+                            your_value: value.clone(),
+                            related_values: rule_restore_values(
+                                &transaction,
+                                &fields,
+                                &current_values,
+                                &raw_changes,
+                                key,
+                                &actor_uid,
+                            )?,
+                        });
+                    }
+                }
+                if !guarded.is_empty() {
+                    return Ok(PatchDbResult::Conflict {
+                        conflicts: guarded,
+                        current_revision: current_record_revision,
+                    });
+                }
+            }
+            super::relationships::fill_missing(
                 &transaction,
                 &fields,
-                &raw_changes,
+                &mut raw_changes,
                 &actor_uid,
             )?;
+            raw_changes = super::form_rules::prepare(&fields, &raw_changes, &current_values, true)
+                .map_err(rusqlite::Error::InvalidParameterName)?;
+            let current_values_for_conflicts = current_values.clone();
+            let mut prospective = current_values;
+            prospective.extend(raw_changes.clone());
+            let effective_fields = super::form_rules::effective_fields(&fields, &prospective);
+            let changes = validate_patch_payload(&effective_fields, &raw_changes)
+                .map_err(rusqlite::Error::InvalidParameterName)?;
             if base_revision < 1 || base_revision > current_record_revision {
                 return Err(rusqlite::Error::InvalidParameterName(
                     "MX_REVISION:The loaded record revision is invalid. Reload the record and try again.".to_string(),
@@ -1152,6 +1361,14 @@ fn patch_record_db(
                         current_revision: field_revision,
                         current_value,
                         your_value: raw_changes.get(key).cloned().unwrap_or(Value::Null),
+                        related_values: rule_restore_values(
+                            &transaction,
+                            &fields,
+                            &current_values_for_conflicts,
+                            &raw_changes,
+                            key,
+                            &actor_uid,
+                        )?,
                     });
                 }
             }
@@ -1303,13 +1520,13 @@ fn create_record_db(
         // fields changed while its acknowledgement was lost. New creates are
         // validated against the actual schema inside the write transaction.
         let fields = load_module_fields_db(&transaction, &module_uid, false)?;
-        super::relationships::validate_selection(
-            &transaction,
-            &fields,
-            &request_values,
-            &actor_uid,
-        )?;
-        let mut values = validate_payload(&fields, &request_values)
+        let mut request_values = request_values;
+        super::relationships::fill_missing(&transaction, &fields, &mut request_values, &actor_uid)?;
+        request_values =
+            super::form_rules::prepare(&fields, &request_values, &BTreeMap::new(), false)
+                .map_err(rusqlite::Error::InvalidParameterName)?;
+        let effective_fields = super::form_rules::effective_fields(&fields, &request_values);
+        let mut values = validate_payload(&effective_fields, &request_values)
             .map_err(rusqlite::Error::InvalidParameterName)?;
         let uid = Uuid::new_v4().to_string();
 
@@ -1381,7 +1598,7 @@ fn create_record_db(
 fn update_record_db(
     module_uid: String,
     uid: String,
-    request_values: BTreeMap<String, NormalizedValue>,
+    request_values: BTreeMap<String, Value>,
     actor_uid: String,
     base_revision: Option<i64>,
 ) -> Result<(), SqliteDatabaseError> {
@@ -1389,11 +1606,11 @@ fn update_record_db(
         ensure_dynamic_schema(connection)?;
         ensure_record_collaboration_schema(connection)?;
         ensure_record_lifecycle_schema(connection)?;
-        let fields = load_module_fields_db(connection, &module_uid, false)?;
         let transaction = rusqlite::Transaction::new_unchecked(
             connection,
             rusqlite::TransactionBehavior::Immediate,
         )?;
+        let fields = load_module_fields_initialized_db(&transaction, &module_uid, false)?;
 
         let existing = transaction.query_row(
             r#"
@@ -1426,25 +1643,16 @@ fn update_record_db(
             |row| row.get(0),
         )?;
         validate_replacement_revision(base_revision, current_revision)?;
-        let relationship_values = request_values
-            .iter()
-            .map(|(key, v)| {
-                let value = match v {
-                    NormalizedValue::Text(text) if text.starts_with('[') => {
-                        serde_json::from_str(text).unwrap_or_else(|_| json!(text))
-                    }
-                    _ => normalized_to_json(v),
-                };
-                (key.clone(), value)
-            })
-            .collect();
-        super::relationships::validate_selection(
-            &transaction,
-            &fields,
-            &relationship_values,
-            &actor_uid,
-        )?;
-        let mut values = request_values;
+        let mut raw_values = request_values;
+        super::relationships::fill_missing(&transaction, &fields, &mut raw_values, &actor_uid)?;
+        let current = load_record_values(&transaction, std::slice::from_ref(&uid))?
+            .remove(&uid)
+            .unwrap_or_default();
+        raw_values = super::form_rules::prepare(&fields, &raw_values, &current, false)
+            .map_err(rusqlite::Error::InvalidParameterName)?;
+        let effective = super::form_rules::effective_fields(&fields, &raw_values);
+        let mut values = validate_payload(&effective, &raw_values)
+            .map_err(rusqlite::Error::InvalidParameterName)?;
         let existing_auto = load_existing_auto_numbers(&transaction, &uid, &fields)?;
 
         for (key, value) in existing_auto {
@@ -1577,7 +1785,7 @@ fn value_from_row(
     }
 }
 
-fn load_record_values(
+pub(super) fn load_record_values(
     connection: &rusqlite::Connection,
     record_uids: &[String],
 ) -> rusqlite::Result<HashMap<String, BTreeMap<String, Value>>> {
@@ -1641,7 +1849,13 @@ fn load_attachments(
     record_uids: &[String],
 ) -> rusqlite::Result<HashMap<String, Vec<FileAttachment>>> {
     ensure_attachment_fields_schema(connection)?;
+    load_attachments_initialized(connection, record_uids)
+}
 
+fn load_attachments_initialized(
+    connection: &rusqlite::Connection,
+    record_uids: &[String],
+) -> rusqlite::Result<HashMap<String, Vec<FileAttachment>>> {
     if record_uids.is_empty() {
         return Ok(HashMap::new());
     }
@@ -1928,7 +2142,14 @@ fn list_records_db(
     with_sql_connection(|connection| {
         ensure_dynamic_schema(connection)?;
         ensure_record_lifecycle_schema(connection)?;
-        let fields = load_module_fields_db(connection, &module_uid, false)?;
+        ensure_record_collaboration_schema(connection)?;
+        if include_attachments {
+            ensure_attachment_fields_schema(connection)?;
+        }
+        let transaction = connection.unchecked_transaction()?;
+        let connection = &transaction;
+        let fields =
+            super::schema::load_module_fields_initialized_db(connection, &module_uid, false)?;
 
         let page = query.page.unwrap_or(1).max(1);
         let limit = query
@@ -1955,6 +2176,8 @@ fn list_records_db(
             })?;
 
         let order_clause = build_order_clause(&query, &fields);
+        let summaries =
+            super::column_summaries::calculate(connection, &fields, &where_clause, &base_params)?;
         let data_sql = format!(
             r#"
             SELECT e.uid
@@ -1976,9 +2199,9 @@ fn list_records_db(
             .collect::<Result<Vec<_>, _>>()?;
 
         let mut values = load_record_values(connection, &record_uids)?;
-        let mut revisions = load_record_revisions(connection, &record_uids)?;
+        let mut revisions = load_record_revisions_initialized(connection, &record_uids)?;
         let mut attachments = if include_attachments {
-            load_attachments(connection, &record_uids)?
+            load_attachments_initialized(connection, &record_uids)?
         } else {
             HashMap::new()
         };
@@ -2009,6 +2232,7 @@ fn list_records_db(
             has_next: page < total_pages,
             total,
             total_pages,
+            summaries,
         })
     })
 }
@@ -2247,7 +2471,11 @@ async fn update_record_for_module(
             );
         }
     };
-    let normalized = match validate_payload(&schema.fields, &request.values) {
+    let mut preliminary = schema.fields.clone();
+    for field in &mut preliminary {
+        field.required = false;
+    }
+    let _normalized = match validate_payload(&preliminary, &request.values) {
         Ok(values) => values,
         Err(error) => return api_json(StatusCode::BAD_REQUEST, json!({"response":error})),
     };
@@ -2256,7 +2484,13 @@ async fn update_record_for_module(
     let actor_uid = claims.uid.clone();
     let base_revision = request.base_revision;
     match tokio::task::spawn_blocking(move || {
-        update_record_db(db_module_uid, db_uid, normalized, actor_uid, base_revision)
+        update_record_db(
+            db_module_uid,
+            db_uid,
+            request.values,
+            actor_uid,
+            base_revision,
+        )
     })
     .await
     {
@@ -2342,7 +2576,11 @@ async fn patch_record_for_module(
             );
         }
     };
-    let normalized = match validate_patch_payload(&schema.fields, &request.changes) {
+    let mut preliminary = schema.fields.clone();
+    for field in &mut preliminary {
+        field.required = false;
+    }
+    let normalized = match validate_patch_payload(&preliminary, &request.changes) {
         Ok(values) => values,
         Err(error) => return api_json(StatusCode::BAD_REQUEST, json!({"response":error})),
     };
@@ -2355,14 +2593,7 @@ async fn patch_record_for_module(
     let db_uid = uid.clone();
     let db_module_uid = module_uid.clone();
     let outcome = match tokio::task::spawn_blocking(move || {
-        patch_record_db(
-            db_module_uid,
-            db_uid,
-            normalized,
-            raw_changes,
-            base_revision,
-            actor_uid,
-        )
+        patch_record_db(db_module_uid, db_uid, raw_changes, base_revision, actor_uid)
     })
     .await
     {

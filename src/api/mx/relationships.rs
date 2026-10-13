@@ -1,6 +1,6 @@
 //! Persistent record links, not edit sessions. Values participate in normal
 //! record revisions; the indexed edges enforce referential integrity.
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::schema::{FieldDefinition, load_module_fields_initialized_db};
 use crate::{
@@ -13,7 +13,7 @@ use axum::{
     extract::{Path, Query},
     http::StatusCode,
     response::{IntoResponse, Response},
-    routing::get,
+    routing::{get, post},
 };
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::Deserialize;
@@ -39,8 +39,35 @@ pub(crate) fn config(kind: &str, value: &Value) -> Result<Value, String> {
     if kind == "relationship" {
         let module = required("target_module_uid")?;
         let label = required("label_field")?;
+        let mappings = value.get("auto_fill").cloned().unwrap_or_else(|| json!([]));
+        let Some(items) = mappings.as_array() else {
+            return Err("Auto-fill must be a list of field mappings.".into());
+        };
+        if items.len() > 64 {
+            return Err("Configure at most 64 auto-fill mappings.".into());
+        }
+        let mut destinations = BTreeSet::new();
+        for item in items {
+            for key in ["source_field", "target_field"] {
+                if item
+                    .get(key)
+                    .and_then(Value::as_str)
+                    .is_none_or(|s| s.trim().is_empty())
+                {
+                    return Err("Choose both a linked source field and a field to fill.".into());
+                }
+            }
+            if !destinations.insert(item["target_field"].as_str().unwrap()) {
+                return Err("Each destination field can only be filled once.".into());
+            }
+        }
+        if !items.is_empty() && value.get("multiple") == Some(&Value::Bool(true)) {
+            return Err(
+                "Auto-fill requires a single linked record, not multiple selections.".into(),
+            );
+        }
         Ok(
-            json!({"target_module_uid":module,"label_field":label,"multiple":value.get("multiple").and_then(Value::as_bool).unwrap_or(false),"on_delete":"restrict"}),
+            json!({"target_module_uid":module,"label_field":label,"multiple":value.get("multiple").and_then(Value::as_bool).unwrap_or(false),"on_delete":"restrict","auto_fill":mappings}),
         )
     } else {
         let relationship = required("relationship_field")?;
@@ -68,6 +95,7 @@ pub(crate) fn config(kind: &str, value: &Value) -> Result<Value, String> {
 pub(crate) fn validate_config(
     c: &Connection,
     module: &str,
+    field_key: &str,
     kind: &str,
     config: &Value,
 ) -> rusqlite::Result<()> {
@@ -93,6 +121,37 @@ pub(crate) fn validate_config(
             return Err(invalid(
                 "MX_CONFIG:Choose a regular display field in the target module.",
             ));
+        }
+        let local = load_module_fields_initialized_db(c, module, false)?;
+        for mapping in config["auto_fill"].as_array().into_iter().flatten() {
+            let source = fields
+                .iter()
+                .find(|f| Some(f.key.as_str()) == mapping["source_field"].as_str())
+                .ok_or_else(|| invalid("MX_CONFIG:Choose an active linked source field."))?;
+            let destination = local
+                .iter()
+                .find(|f| Some(f.key.as_str()) == mapping["target_field"].as_str())
+                .ok_or_else(|| {
+                    invalid("MX_CONFIG:Choose an existing active field to fill in this module.")
+                })?;
+            if !compatible(&source.field_type, &destination.field_type) {
+                return Err(invalid(
+                    "MX_CONFIG:Auto-fill fields must have compatible types. Calculated fields, links and attachments cannot be filled.",
+                ));
+            }
+            if local.iter().any(|f| {
+                f.field_type == "relationship"
+                    && f.key != field_key
+                    && f.config["auto_fill"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .any(|m| m["target_field"] == mapping["target_field"])
+            }) {
+                return Err(invalid(
+                    "MX_CONFIG:This destination is already filled by another relationship.",
+                ));
+            }
         }
     } else if computed(kind) {
         let fields = load_module_fields_initialized_db(c, module, false)?;
@@ -130,6 +189,104 @@ pub(crate) fn validate_config(
                 "MX_CONFIG:Unsupported lookup or nonnumeric rollup target.",
             ));
         }
+    }
+    Ok(())
+}
+
+fn compatible(source: &str, target: &str) -> bool {
+    match target {
+        "text" | "long_text" | "select" => matches!(source, "text" | "long_text" | "select"),
+        "integer" => matches!(source, "integer" | "auto_number"),
+        "decimal" => matches!(source, "integer" | "auto_number" | "decimal" | "formula"),
+        "date" => source == "date",
+        "boolean" => source == "boolean",
+        _ => false,
+    }
+}
+
+// Copies are ordinary record values. No edit sessions or extra version store.
+fn mapped_values(
+    c: &Connection,
+    fields: &[FieldDefinition],
+    field: &FieldDefinition,
+    value: &Value,
+    explicit: &BTreeMap<String, Value>,
+) -> rusqlite::Result<BTreeMap<String, Value>> {
+    let mappings = field.config["auto_fill"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    if mappings.is_empty() {
+        return Ok(BTreeMap::new());
+    }
+    validate_config(
+        c,
+        &c.query_row(
+            "SELECT module_uid FROM mx_fields WHERE uid=?1",
+            [&field.uid],
+            |r| r.get::<_, String>(0),
+        )?,
+        &field.key,
+        "relationship",
+        &field.config,
+    )?;
+    let linked = ids(value);
+    let source_values = if let Some(id) = linked.first() {
+        let target = field.config["target_module_uid"].as_str().unwrap_or("");
+        let source_fields = load_module_fields_initialized_db(c, target, false)?;
+        let mut values = super::records::load_record_values(c, std::slice::from_ref(id))?
+            .remove(id)
+            .unwrap_or_default();
+        super::records::calculate_formula_json_values(&source_fields, &mut values)
+            .map_err(invalid)?;
+        values
+    } else {
+        BTreeMap::new()
+    };
+    let mut result = BTreeMap::new();
+    for mapping in mappings {
+        let key = mapping["target_field"].as_str().unwrap_or("");
+        if explicit.contains_key(key) {
+            continue;
+        }
+        let destination = fields
+            .iter()
+            .find(|f| f.key == key)
+            .ok_or_else(|| invalid("Refresh this module's auto-fill configuration."))?;
+        let value = source_values
+            .get(mapping["source_field"].as_str().unwrap_or(""))
+            .cloned()
+            .unwrap_or(Value::Null);
+        super::records::validate_autofill_value(destination, &value).map_err(invalid)?;
+        result.insert(key.to_owned(), value);
+    }
+    Ok(result)
+}
+
+pub(crate) fn fill_missing(
+    c: &Connection,
+    fields: &[FieldDefinition],
+    changes: &mut BTreeMap<String, Value>,
+    actor: &str,
+) -> rusqlite::Result<()> {
+    validate_selection(c, fields, changes, actor)?;
+    let mut fills = BTreeMap::new();
+    for field in fields.iter().filter(|f| f.field_type == "relationship") {
+        if let Some(value) = changes.get(&field.key) {
+            // Explicitly supplied destination values are intentional overrides.
+            if field.config["auto_fill"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .all(|m| changes.contains_key(m["target_field"].as_str().unwrap_or("")))
+            {
+                continue;
+            }
+            fills.extend(mapped_values(c, fields, field, value, changes)?);
+        }
+    }
+    for (key, value) in fills {
+        changes.entry(key).or_insert(value);
     }
     Ok(())
 }
@@ -409,6 +566,50 @@ fn present_fields(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn auto_fill_configuration_requires_unambiguous_single_record_mappings() {
+        let base = json!({"target_module_uid":"employees","label_field":"name"});
+        assert_eq!(
+            config("relationship", &base).unwrap()["auto_fill"],
+            json!([])
+        );
+        let mut config_value = base;
+        config_value["auto_fill"] =
+            json!([{"source_field":"class","target_field":"classification"}]);
+        assert_eq!(
+            config("relationship", &config_value).unwrap()["auto_fill"],
+            config_value["auto_fill"]
+        );
+        config_value["multiple"] = json!(true);
+        assert!(config("relationship", &config_value).is_err());
+        config_value["multiple"] = json!(false);
+        config_value["auto_fill"] = json!([{"source_field":"a","target_field":"b"},{"source_field":"c","target_field":"b"}]);
+        assert!(config("relationship", &config_value).is_err());
+        config_value["auto_fill"] = json!([{"source_field":"a"}]);
+        assert!(config("relationship", &config_value).is_err());
+        config_value["auto_fill"] = json!({});
+        assert!(config("relationship", &config_value).is_err());
+    }
+    #[test]
+    fn auto_fill_type_compatibility_does_not_allow_calculated_or_lossy_destinations() {
+        assert!(compatible("select", "text"));
+        assert!(compatible("text", "select"));
+        assert!(compatible("auto_number", "integer"));
+        assert!(compatible("formula", "decimal"));
+        assert!(compatible("boolean", "boolean"));
+        assert!(!compatible("decimal", "integer"));
+        assert!(!compatible("text", "boolean"));
+        for kind in [
+            "relationship",
+            "lookup",
+            "rollup",
+            "attachments",
+            "formula",
+            "auto_number",
+        ] {
+            assert!(!compatible("text", kind));
+        }
+    }
     fn db() -> Connection {
         let c = Connection::open_in_memory().unwrap();
         c.execute_batch("PRAGMA foreign_keys=ON;CREATE TABLE mx_modules(uid TEXT PRIMARY KEY);INSERT INTO mx_modules VALUES('a'),('b');CREATE TABLE mx_records(uid TEXT PRIMARY KEY,module_uid TEXT,deleted_at INTEGER);INSERT INTO mx_records VALUES('source','a',NULL),('target','b',NULL),('other','a',NULL);CREATE TABLE mx_fields(uid TEXT PRIMARY KEY,module_uid TEXT,field_type TEXT,config_json TEXT,active INTEGER);INSERT INTO mx_fields VALUES('link','a','relationship','{\"target_module_uid\":\"b\"}',1);CREATE TABLE mx_record_values(record_uid TEXT,field_uid TEXT,value_text TEXT);").unwrap();
@@ -498,11 +699,50 @@ struct Options {
 pub fn routes() -> Router {
     Router::new()
         .route("/mx/v1/relationships/{field}/options", get(options))
+        .route("/mx/v1/relationships/{field}/preview", post(preview))
         .route(
             "/mx/v1/relationships/{module}/{record}/related",
             get(related),
         )
         .layer(axum::middleware::from_fn(auth))
+}
+#[derive(Deserialize)]
+struct PreviewRequest {
+    value: Value,
+}
+
+async fn preview(
+    claims: Claims,
+    Path(uid): Path<String>,
+    Json(request): Json<PreviewRequest>,
+) -> Response {
+    let result = tokio::task::spawn_blocking(move || with_sql_connection(|c| {
+        let tx = c.unchecked_transaction()?;
+        let module: String = tx.query_row("SELECT module_uid FROM mx_fields WHERE uid=?1 AND active=1 AND field_type='relationship'", [&uid], |r| r.get(0))?;
+        if !module_can_for_user_initialized(&tx, &module, &claims.uid, claims.access_level, "read")? { return Err(invalid("Access denied.")); }
+        let fields = load_module_fields_initialized_db(&tx, &module, false)?;
+        let field = fields.iter().find(|f| f.uid == uid).ok_or(rusqlite::Error::QueryReturnedNoRows)?;
+        normalize(field, &request.value).map_err(invalid)?;
+        let target = field.config["target_module_uid"].as_str().unwrap_or("");
+        if !ids(&request.value).is_empty() && !module_can_for_user_initialized(&tx, target, &claims.uid, claims.access_level, "read")? { return Err(invalid("Access to linked records is restricted.")); }
+        let selected = BTreeMap::from([(field.key.clone(), request.value.clone())]);
+        validate_selection(&tx, &fields, &selected, &claims.uid)?;
+            let fills = mapped_values(&tx, &fields, field, &request.value, &BTreeMap::new())?;
+        let mut record = json!({"values":selected});
+        present_fields(&tx, &claims, &mut record, &fields, &mut BTreeMap::new())?;
+        let computed = fields.iter().filter(|f| computed(&f.field_type) && f.config["relationship_field"] == field.key)
+            .map(|f| (f.key.clone(), record["values"][&f.key].clone())).collect::<BTreeMap<_,_>>();
+        tx.commit()?;
+        Ok(json!({"values":fills,"computed":computed}))
+    })).await;
+    match result {
+        Ok(result) => response(result),
+        Err(_) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"response":"Relationship preview failed. Retry the selection."})),
+        )
+            .into_response(),
+    }
 }
 fn response(result: Result<Value, SqliteDatabaseError>) -> Response {
     match result {

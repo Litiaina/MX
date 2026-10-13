@@ -93,6 +93,35 @@ describe('network-safe API requests', () => {
 });
 
 describe('buffered file recovery', () => {
+  it('reports actual file chunks and known byte totals without passing observers to fetch', async () => {
+    const progress = vi.fn();
+    const fetcher = vi.fn(async (_path: string, _options: RequestInit) => new Response(new ReadableStream({ start(controller) {
+      controller.enqueue(new Uint8Array([1,2])); controller.enqueue(new Uint8Array([3,4,5])); controller.close();
+    } }), { headers: { 'content-length': '5' } }));
+    vi.stubGlobal('fetch', fetcher);
+    const file = await apiFile('/progress', { onProgress: progress });
+    expect(progress.mock.calls).toEqual([[0,5],[2,5],[5,5],[5,5]]);
+    expect([...new Uint8Array(await file.blob.arrayBuffer())]).toEqual([1,2,3,4,5]);
+    expect(fetcher.mock.calls[0][1]).not.toHaveProperty('onProgress');
+  });
+  it('keeps compressed or absent byte totals unknown until the complete file is received', async () => {
+    for (const headers of [new Headers(), new Headers({ 'content-length': '2', 'content-encoding': 'gzip' })]) {
+      const progress = vi.fn(); vi.stubGlobal('fetch', vi.fn(async () => new Response('decoded', { headers })));
+      await apiFile('/unknown-length', { onProgress: progress });
+      expect(progress.mock.calls[0]).toEqual([0,null]);
+      expect(progress.mock.calls.at(-1)).toEqual([7,7]);
+    }
+  });
+  it('does not report error bodies as document download progress and resets retry progress', async () => {
+    const progress = vi.fn();
+    vi.stubGlobal('fetch', vi.fn().mockImplementationOnce(() => json({},503)).mockImplementationOnce(() => new Response(new ReadableStream({ start(controller) {
+      controller.enqueue(new Uint8Array([1,2])); setTimeout(() => controller.error(new Error('reset')), 10);
+    } }), { headers: { 'content-length': '5' } })).mockImplementationOnce(() => new Response('whole', { headers: { 'content-length': '5' } })));
+    const promise = apiFile('/retry-progress', { onProgress: progress });
+    await vi.runAllTimersAsync();
+    expect(await (await promise).blob.text()).toBe('whole');
+    expect(progress.mock.calls).toEqual([[0,5],[2,5],[0,5],[5,5],[5,5]]);
+  });
   it('cancels a stalled body instead of reporting a truncated file as successful', async () => {
     const cancel = vi.fn();
     vi.stubGlobal('fetch', vi.fn(async () => new Response(new ReadableStream({ cancel }))));

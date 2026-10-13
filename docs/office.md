@@ -1,0 +1,207 @@
+# Office editor reference
+
+[Documentation index](README.md) · [Project overview](../README.md)
+
+## Office Preview
+
+MX previews supported files directly where possible.
+
+```text
+Images       -> browser image viewer
+PDF          -> embedded PDF viewer
+Text         -> text viewer
+Audio        -> range-streamed browser audio player
+Video        -> range-streamed browser video player
+Office in Drive -> locally bundled browser Office editor
+Office-to-PDF   -> optional server-side LibreOffice conversion
+Other files  -> download
+```
+
+### Optional server-side PDF conversion
+
+The bundled browser Office editor does **not** require installing LibreOffice
+on the MX server. The older Office-to-PDF attachment-preview route is a separate
+capability: it invokes a host LibreOffice converter and can fail if that converter
+is unavailable. Downloading the original or using the supported Drive Office
+action is independent of installing that converter.
+
+Only deployments deliberately using server-side Office-to-PDF conversion need
+the extra components. On Debian, that optional path can use:
+
+```bash
+sudo apt update
+
+sudo apt install -y \
+  libreoffice-writer \
+  libreoffice-calc \
+  libreoffice-impress
+```
+
+Verify:
+
+```bash
+libreoffice --headless --version
+```
+
+LibreOffice is used as a headless conversion worker. The original N1 object is not replaced by the generated preview.
+
+### Standalone Office editing
+
+MX deployment must remain MX + SQLite + N1. No Collabora/ONLYOFFICE server,
+Docker stack, database service, public Office API or runtime CDN is required by
+the bundled editor. In Drive, use the Office action / **Edit in MX Office** on a
+supported file. Viewers open a read-only editor. This opens a separate browser tab
+running a locally bundled LibreOffice/ZetaOffice WebAssembly engine; MX owns
+authorization, metadata and versions, while N1 stores the bytes.
+
+The editor fills the window beneath a single 38-pixel MX bar: filename, compact
+save status, Save and **⋯ Document options**. There are no additional status,
+offline or information rows and no MX footer. Open from Drive, Download copy,
+Save as a copy, offline settings and detailed save/certificate information are
+in Document options. The menu and actionable error/recovery messages overlay
+the editor rather than resizing it while you type. LibreOffice's own editing
+menus, formatting controls and formula bar are retained.
+
+While opening a file, Office shows five loading stages: prepare the document,
+download it, load bundled editor resources, initialize the editor on your device
+and render the document. The loading card includes the filename, elapsed time,
+received bytes and measured download percentages when a valid byte total is
+available. Initialization/rendering stay indeterminate: there is no invented
+overall percentage or startup ETA. Failures stop the loading animation. This
+card disappears once the editor opens; it does not add rows to the editing UI.
+
+Editing is offered for DOC/DOCX/ODT/RTF and XLS/XLSX/ODS, using explicit matching
+export filters. PPT/PPTX/ODP open **read-only**: native presentation editing
+failed acceptance tests and is not enabled in this build. Macro execution and automatic linked-data
+updates are disabled; macro-enabled DOCM/XLSM/PPTM files are not offered for
+editing. Format availability is not a guarantee of perfect fidelity for every
+document. See [TESTING.md](../TESTING.md) for the formats and browser engines actually tested.
+Current acceptance testing still catches intermittent missing leading input in
+freshly opened spreadsheets and a Firefox native-canvas rendering failure.
+Office editing is not release-qualified yet; keep separate copies of important
+documents and do not confuse confirmed MX snapshot storage with validation of
+every native editing interaction.
+
+#### Offline operation
+
+There are two independent cases:
+
+- **No public internet, MX/N1 reachable on the LAN:** open, edit and save normally.
+  Every engine/SDK/font asset is served from MX. Deployment needs only the Rust
+  binary, the complete `frontend/dist` package, SQLite and N1; Node.js and a host
+  LibreOffice installation are not needed for this editor.
+- **MX/LAN itself unreachable:** previously prepared documents can reopen and
+  remain editable. Visit Office once while connected, open **Document options**
+  and wait for **Editor
+  available offline**. Enable **Keep offline copy on this device** for each
+  document, then bookmark `/office/index.html` for the offline document list.
+  Unsaved snapshots are retained in IndexedDB after a short typing pause and
+  periodically while editing. Reconnect, sign in if necessary, and explicitly
+  choose **Save to MX**. Reconnection never silently uploads or overwrites files.
+
+The editor-only service worker caches public application/engine assets, **not**
+API responses, credentials or documents. Document retention is a separate,
+explicit opt-in. Local copies are readable by anyone using the same browser
+profile; do not enable this on shared/untrusted workstations. Offline copies
+are not backups or cloud saves. Browser storage limits, eviction/private mode,
+device failure or clearing site data can remove them. Download a separate copy
+when needed. Changes not yet checkpointed can be lost in a process/power crash.
+Removing a local copy does not delete MX versions, and revoking server access
+cannot retract a copy already downloaded to a user's machine.
+
+Office requires a secure context, WebAssembly threads/SharedArrayBuffer, worker
+WebGL and
+browser-trusted HTTPS. LAN deployments can use an internally trusted CA; a public
+internet connection is not necessary. Merely accepting a self-signed certificate
+warning may prevent service-worker installation. Preserve MX's isolation headers
+through any reverse proxy. They apply only to `/office/`, not the workspace/calls.
+Offline caching failures have a concise, expandable explanation in **Document
+options**, technical
+details and a retry action. They are separate from MX save errors: an expired or
+untrusted certificate can prevent offline preparation even when the browser
+lets you open MX after bypassing its certificate warning. Renew the certificate
+and establish browser trust; bypassing the warning is not an offline-mode fix.
+If the engine cannot
+start, an already loaded document/local copy remains downloadable. A disposable
+worker checks actual graphics support before the large runtime starts: merely
+having `OffscreenCanvas` or main-page WebGL is not enough. The tested WebKit/WPE
+runtime lacks worker WebGL; its download fallback is tested, not Office editing.
+Chromium/Firefox editing results are listed separately in `TESTING.md`.
+
+Each frontend build changes the offline worker's generation as well as its asset
+manifest, so already-cached browsers can receive editor updates. Before closing
+an old editor tab, save successfully to MX or download a copy of unsaved edits;
+then reopen the document to use the updated interface.
+
+#### Saving and concurrency
+
+Use **Save to MX**, Ctrl/Cmd+S, or the native File → Save/Save toolbar action.
+The compact bar shows **Unsaved → Saving… → Saved**, with success only after MX
+acknowledges the commit. Hover its status or open **Document options** for
+**Saved to MX · revision … · time** and detailed progress; the full status is
+also announced to assistive technology. Unsaved/newer edits and failures stay marked
+unsaved; a local draft or native temporary file is not proof of an MX save.
+Saving an unchanged document explains that there are no unsaved changes rather
+than creating another version. **Sign in to save** is a recovery action shown
+only when authentication is missing/expired, not an extra Office account.
+Recovery keeps the open edits and requires the original MX account.
+Save also accepts the spreadsheet cell currently being typed, without requiring
+Enter first. The native spreadsheet address box identifies the active cell; its
+local-only accessible selection is also retained. It does not create server edit
+sessions or presence tracking.
+
+Native File → Open, the folder toolbar action and Ctrl/Cmd+O guide you to
+**Open from Drive** in **Document options**. Each editor tab remains bound to its original MX file.
+Opening a different local file through the engine's unsupported native picker
+is not enabled; upload/open it through Drive in a separate editor tab. This also
+prevents accidentally saving a different displayed document over the original.
+
+`GET /mx/v1/drive/items/{uid}/office` returns an ACL-checked snapshot with the
+current MX revision, exact version UID and `editing_supported` flag; the editor downloads that pinned
+version. Editing stays entirely local, with no edit locks, edit-presence heartbeat
+or server Office sessions. A read-only connection check shows an offline icon
+without tracking edits. MX's existing resumable multipart upload publishes saves:
+
+1. Export the document in its original format in the browser.
+2. Upload it as a **new uniquely keyed N1 object**, preserving the original
+   extension. Never replace an earlier Office version's content.
+3. Atomically recheck access, owner quota and the original MX revision, insert a
+   normal MX file version and switch the current-version pointer.
+
+An uncertain save or separate-file save retains its exact upload operation/payload
+for idempotent retry. With local retention enabled, this intent also survives
+closing/reopening the tab. Save and Download queue behind an in-flight local
+checkpoint; the user does not need to click a second time.
+Concurrent whole-document edits do **not** automatically merge paragraphs/cells:
+a stale save asks the user to save a separate file, deliberately add a version
+after the latest version, or discard/load the latest. Each explicit replacement
+is checked again; previous versions remain in history. Native Office Save and
+Ctrl/Cmd+S route through MX, not just the engine's temporary filesystem.
+
+#### Packaging and current limits
+
+`frontend/public/office/vendor/manifest.json` pins executable/data checksums;
+`npm run build` verifies them without downloading assets. Brotli engine assets
+include approximately 51 MiB of Brotli binaries plus approximately 80 MiB of
+generated gzip alternatives for browsers/connections that do not advertise
+Brotli. The engine expands to approximately 250 MiB before additional runtime/
+document memory. Large documents require the
+client to load/export the full file: Drive's unlimited-per-file multipart policy
+does not imply unlimited browser editing memory. Editor tabs consume client RAM;
+small server hardware still needs to serve assets and handle storage transfers.
+
+The pinned upstream engine assets are dated 2025-05-13. This integration is **not
+a completed current-engine security/support or third-party distribution-license
+audit**; those are release gates. Provenance, source links and license notices are
+in `frontend/public/office/vendor/THIRD-PARTY.md`. Physical low-memory devices,
+mobile ergonomics and complex/legacy-format fidelity need target-device testing.
+Direct Office editing currently starts from Drive, not record/message attachment
+modals. The older optional headless LibreOffice PDF preview remains separate,
+read-only and dependent on a host installation; it is not needed by this editor.
+The native engine toolbar is desktop-oriented. Narrow windows scroll an
+initialized-width canvas instead of distorting its text and hit targets. The MX
+bar stays one row, with keyboard-operable scroll buttons available in Document
+options. This is not a mobile-native Office interface.
+
+---
+

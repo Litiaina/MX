@@ -474,6 +474,7 @@ async fn restore_version_for_module(
             relationship_values.insert(field.key.clone(),value);
         }
         crate::api::mx::relationships::validate_selection(&transaction,&fields,&relationship_values,&actor_uid)?;
+        crate::api::mx::form_rules::validate_version(&transaction,&module_uid,&version_uid)?;
         transaction.execute("DELETE FROM mx_unique_values WHERE record_uid=?1", params![record_uid])?;
         transaction.execute("DELETE FROM mx_record_values WHERE record_uid=?1", params![record_uid])?;
         transaction.execute(
@@ -517,6 +518,11 @@ async fn restore_version_for_module(
                 StatusCode::OK,
                 json!({"response":"record version restored"}),
             )
+        }
+        Ok(Err(SqliteDatabaseError::Sqlite(rusqlite::Error::InvalidParameterName(message))))
+            if message.starts_with("Version does not satisfy current form rules:") =>
+        {
+            api_json(StatusCode::CONFLICT, json!({"response":message}))
         }
         Ok(Err(SqliteDatabaseError::Sqlite(rusqlite::Error::InvalidParameterName(_)))) => api_json(
             StatusCode::FORBIDDEN,

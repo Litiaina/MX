@@ -6,7 +6,7 @@ import {join} from 'node:path';
 import {writeFile} from 'node:fs/promises';
 import {chromium,firefox,webkit} from 'playwright';
 import {startIsolatedMx} from './isolated-mx.mjs';
-import {isolatedBrowserAudio} from './silent-audio.mjs';
+import {disconnectedBrowserAudio} from './silent-audio.mjs';
 import {verifyFileManager} from './drive-file-manager.mjs';
 const mx=await startIsolatedMx(fileURLToPath(new URL('../',import.meta.url)));
 const browsers=[];const results=[];const failures=[];const base='/mx/v1/drive';
@@ -15,7 +15,7 @@ try {
   console.log(`File-manager artifacts: ${mx.directory}`);const password=`Test-only!${randomUUID()}`;
   const created=await mx.api.post('/mx/v1/auth/create',{headers:{Authorization:`Bearer ${mx.signupKey}`},data:{email:'manager@test.invalid',name:'Manager',password}});assert.equal(created.status(),201);
   const user=await call('/mx/v1/auth/authenticate',null,'POST',{email:'manager@test.invalid',password});
-  const environment=isolatedBrowserAudio();
+  const environment=disconnectedBrowserAudio(mx.directory);
   for(const engine of(process.env.MX_TEST_BROWSERS||'chromium,firefox,webkit').split(',')) {
     const executablePath=engine==='chromium'?'/home/altear/.cache/ms-playwright/chromium-1228/chrome-linux64/chrome':engine==='firefox'?'/home/altear/.cache/ms-playwright/firefox-1543/firefox/firefox':'/home/altear/.cache/mx-network-audit-2026-10-08.fnCQvP/webkit-launch.sh';
     const browser=await({chromium,firefox,webkit})[engine].launch({headless:true,executablePath,env:environment,...(engine==='chromium'?{args:['--no-sandbox','--mute-audio']}:{})});browsers.push(browser);

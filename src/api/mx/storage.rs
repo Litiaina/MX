@@ -181,33 +181,6 @@ pub(crate) fn ensure_storage_layout_schema(
     )
 }
 
-pub(crate) fn field_used_by_storage_layout_db(
-    connection: &rusqlite::Connection,
-    field_uid: &str,
-) -> rusqlite::Result<bool> {
-    ensure_storage_layout_schema(connection)?;
-
-    let used = connection.query_row(
-        r#"
-        SELECT EXISTS(
-            SELECT 1
-            FROM mx_module_storage_layout_folders
-            WHERE field_uid = ?1
-
-            UNION ALL
-
-            SELECT 1
-            FROM mx_module_storage_layout_meta
-            WHERE file_prefix_field_uid = ?1
-        )
-        "#,
-        params![field_uid],
-        |row| row.get::<_, i64>(0),
-    )?;
-
-    Ok(used != 0)
-}
-
 fn load_field(
     connection: &rusqlite::Connection,
     module_uid: &str,

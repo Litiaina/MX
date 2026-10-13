@@ -1,5 +1,315 @@
 # MX validation
 
+## Drive styling recovery and Deployment gap — 2026-10-14
+
+- Reproduced the regression against the withdrawn production bundle: the new
+  browser assertion failed because Drive file rows computed to **flex**, not grid.
+  Evidence: `/tmp/mx-eight-user-Q7Y4Di/cascade-failure.png`.
+- Restored unlayered component styling and removed the application-wide polish
+  layer/metrics. Drive component source matches its pre-polish version. Earlier
+  feature changes are retained; no live database/configuration/N1 changes.
+- Deployment now uses independent section columns. Branding and Terminology
+  have a normal 16-px section gap instead of sharing a row with tall Appearance.
+  Only Deployment controls receive its scoped sizing adjustments.
+- `npm --prefix frontend test`: **253 tests pass across 41 files**. Three new
+  source-level cascade/scope guards replace four withdrawn polish assertions.
+- Production build passes with zero Svelte errors/warnings. The existing main
+  JavaScript chunk-size advisory remains; frontend/offline assets are rebuilt.
+- `test:ui:cascade` passes in Chromium, Firefox and WebKit: list rows remain grids,
+  file columns align, sharing dialogs retain their dimensions, Deployment gaps
+  and control heights align, and both pages fit 1440/1024/390/320 px in light/dark.
+  Artifacts: `/tmp/mx-eight-user-O0pkAh/ui-cascade-results.json` and screenshots.
+- `test:drive:file-manager` passes in all three engines: real uploads, image
+  preview, Ctrl/Shift selection, drag-selection, context menus, copy/cut/paste,
+  clipboard-image upload, file/folder drops, aligned columns, activity tabs and
+  cleanup across module navigation. Folder entry readers are simulated; the MX
+  drop/upload handlers and stored metadata are real. Artifacts:
+  `/tmp/mx-eight-user-sNZArI/file-manager-results.json`.
+- `test:drive:polish` also passes in all three engines: 135-item pagination,
+  cross-page previews with bounded 256-KiB text reads, people/space sharing,
+  membership-revocation cleanup, guest pagination and shared-root ACL confinement.
+  Artifacts: `/tmp/mx-eight-user-QM21K4/`.
+- A read-only request to the running local MX server confirms it serves the
+  rebuilt recovery frontend, not the withdrawn bundle. Existing open tabs still
+  need reloading to replace their in-memory JavaScript and styles.
+- Tests use temporary MX/SQLite and an N1 HTTP contract fixture. UI browser
+  processes are disconnected from workstation audio servers; no devices/sinks
+  are created or changed. These checks do not constitute full release qualification.
+
+## Withdrawn UI polish: insufficient layout coverage — 2026-10-13
+
+**Superseded by the 2026-10-14 recovery.** The test runs below passed, but missed
+a genuine production-style regression: Drive rows became flex rows instead of
+their file-column grid. Component CSS was emitted before the named layer order,
+so shared styles took precedence. Input dimensions and lack of overflow were not
+adequate acceptance criteria for a file manager. The broad polish, its stylesheet
+and its test command have been withdrawn; these artifacts are historical evidence,
+not proof that the withdrawn UI was correct. The replacement suite checks grids,
+column alignment and the exact Branding-to-Terminology gap.
+
+- `npm --prefix frontend test`: **254 tests pass across 41 files**, including
+  shared control metrics, density/text scaling, multiline/compact exceptions and
+  existing application regressions.
+- `npm --prefix frontend run build`: Office assets verified; Svelte reports zero
+  errors/warnings; production frontend and offline manifests rebuilt. The existing
+  Vite advisory about the main JavaScript chunk exceeding 500 kB remains.
+- `npm --prefix frontend run test:ui:polish`: real disposable MX API/SQLite forms
+  in Chromium, Firefox and WebKit. Twelve screens in light/dark themes at 1440,
+  1024, 390 and 320 px: Deployment, audit, schema, rules, reporting configuration,
+  account creation, dashboard filters, preferences, record editing, Drive, sharing
+  and sign-in. Check actual theme tokens, consistent control fonts/heights,
+  unclipped values, viewport containment and dialog geometry after layout settles.
+- Deployment checks also cover compact/normal/comfortable density, large base
+  text with 85%/160% interface scaling, top-aligned fieldsets, identical text/select/
+  color-control edges and heights, predictable gaps and open mobile navigation.
+  Exercise actual Deployment identity and record saves; compare stored results.
+- Cross-browser regressions pass for native dropdown keyboard selection, inset
+  chevrons, system themes/high contrast, Drive roles/guest expiries/sorting/pages,
+  named field-archive dialogs and the reachable horizontal record scrollbar.
+  The modular form-rule suite also passes in all three engines, including its
+  eight-account stale-edit/branch checks and held-upload admission race.
+- Screenshots reviewed for desktop/mobile Deployment, schema, rules, records and
+  sharing. This is UI/regression evidence, not complete release qualification or
+  new live-N1/network/Office-device testing. All test writes use temporary SQLite
+  and an N1 HTTP fixture. No deployment data/configuration or audio devices changed.
+
+Artifacts:
+
+- UI layout: `/tmp/mx-eight-user-JLULzd/ui-polish-results.json` and per-screen PNGs.
+- Dropdowns/sharing: `/tmp/mx-eight-user-mbmTP0/`.
+- Field archive: `/tmp/mx-eight-user-qzM1b3/`.
+- Record scrolling: `/tmp/mx-eight-user-mYIkSj/`.
+- Form rules: `/tmp/mx-eight-user-tZQ8iQ/`.
+
+## User-authorized existing OFF/LEAVE configuration — 2026-10-13
+
+- Identified the existing Inventory Status Select with OFF/LEAVE choices through
+  the authenticated application API. Added optional Start date and End date Date
+  fields, and configured the existing File Attachments visibility, using Status
+  equals OFF for all three details. Retained other fields and their requirements.
+- Read back all three rules from the running server. Actual new-record form
+  checks pass in Chromium, Firefox and WebKit: OFF shows the file field and both
+  dates; LEAVE hides them; Status stays available to change the selection.
+- This was an explicitly requested configuration change, not a reset or a test
+  against production record contents. No business records were saved/deleted,
+  no attachments were uploaded/deleted, and no runtime configuration or N1 code
+  was changed. Credentials were supplied in memory without terminal echo and
+  were not written to documentation or screenshots.
+
+Evidence: `/tmp/mx-off-setup-LwyVol/`, with new-form-only OFF/LEAVE screenshots.
+This verifies visibility configuration, not a new approval workflow, mandatory
+file-byte enforcement, date-range validation or file-transfer acceptance test.
+
+## Documentation organization — 2026-10-13
+
+- Documentation-only follow-up: README reduced from 2,578 to 86 lines. Detailed
+  material moved into topic references under `docs/`; operator, relationship,
+  conditional-form and deployment walkthroughs added alongside a documentation index.
+- Checked operator labels against the current module, relationship and login
+  components. Explain Lookup versus editable copy, the single/multiple relationship
+  setting, unsupported copy destinations, current CSV scope and save-error placement.
+- Read-only local-link/heading validation: **19 Markdown documents, 114 local links,
+  zero missing targets or anchors**.
+  Recheck links when moving or renaming documentation headings.
+- `git diff --check` passes. No application code or frontend build changed in this
+  documentation pass, no destructive commands ran and no UI-error-placement fix
+  is claimed. The subsequent user-authorized module setup is recorded separately above.
+
+## Modular conditional forms — 2026-10-13
+
+- Rust: **140 passed, one opt-in live-N1 test ignored**. Rule tests cover nested
+  predicates, typed numeric/Boolean zero/false values, stable option labels/copies,
+  explicit overrides, cascading mappings, exclusive groups, required details,
+  dependent options, disabled writes, full-replacement semantics, named cycles,
+  missing/competing controllers and rejection of scripts/file requirements.
+- Frontend: **250 passed across 40 files**. Shared-engine checks cover local
+  predicates, choice filtering, requirements, multiple/cascading fills, explicit
+  overrides, exclusivity and clear detection. Production build passes with zero
+  Svelte errors/warnings; Vite's existing large-chunk advisory remains.
+- `npm run test:forms:rules` passes with real disposable MX HTTP/SQLite and a
+  contract N1 fixture. Create two different configurable modules; verify relationship
+  copies can drive conditions, nested predicates, choices plus multiple ordinary
+  cells, zero/false, unavailable options, direct API validation, PATCH/PUT and normal
+  history. Old versions violating tightened current requirements return an explained
+  conflict. Stored files remain after switching branches.
+- Eight accounts save different fields from one revision: all merge. A newer
+  detail cannot be erased by a stale parent switch; its conflict includes current
+  controls for cancelling that switch. Eight competing switches have one winner
+  and seven conflicts. Stale dependent edits/uploads are rejected. Administrator
+  configuration is protected; archiving names form-condition/mapping dependencies.
+- Hold a **17 MiB multipart** part in fixture N1 after upload admission, change
+  the branch, then finish the transfer. Final metadata admission returns a named
+  `409`; no attachment is admitted, the upload's own orphan is cleaned, and existing
+  objects are retained. This is a contract/race test, not a live-N1 durability test.
+- Actual UI passes in **Chromium, Firefox and WebKit**: focused configuration,
+  in-dialog cycle error, option-to-field mapping through controls, checkbox/radio
+  presentation, immediate local copies, relationship-driven available choices,
+  required branch details, cancelling/confirming a clear, typed zero-value save,
+  inline choice opening a completion form and exclusive Boolean groups. Verify
+  cancelling a radio switch leaves the original button selected. A typed numeric
+  control hides its detail but does not clear the saved value until the user confirms
+  Save. Keeping latest branch-conflict details also restores the current controls
+  while preserving an unrelated local note.
+- Validate light/dark and 390px rule-dialog layout and focused keyboard entry.
+  Existing relationship auto-fill, field archive and record-summary suites also
+  pass in all three engines. No deployment database/configuration, N1 repository,
+  live objects or audio devices were changed; test audio stays disconnected.
+
+Artifacts: `/tmp/mx-eight-user-sS0G9w/form-rules-results.json` and rule screenshots.
+Regression artifacts: `/tmp/mx-eight-user-vS8vY1/relationship-autofill-results.json`,
+`/tmp/mx-eight-user-M8ruUZ/field-archive-results.json` and
+`/tmp/mx-eight-user-DUngrK/record-summaries-results.json`.
+
+Limits: calculated/file fields support visibility only; dynamic file-byte requirements
+are not atomic with record saves. Rules are not read-access isolation or an automatic
+old-row migration. This focused matrix is not blanket production, mobile-device,
+million-row performance or unreliable-network certification.
+
+## Field archive dependency dialog — 2026-10-13
+
+- Rust: **125 passed, one opt-in live-N1 test ignored**. New tests cover named
+  cross-module dependencies without confusing duplicate keys, inactive dependents,
+  lookup/rollup and auto-fill references, formula references, active/trashed link
+  counts, storage folders/prefixes and attachment ownership. Archive checks do
+  not remove data. Rust build passes without warnings.
+- Frontend: **240 passed across 39 files**. Structured archive failures must
+  match the requested field; old unstructured and network errors remain distinct.
+  Production build/check passes with zero Svelte errors/warnings; Vite's existing
+  large-chunk advisory remains.
+- `npm run test:fields:archive`: real disposable MX HTTP/SQLite and fixture N1.
+  Verify all blocker categories through real schema/record/file/storage APIs,
+  eight concurrent checks without a schema revision change, administrator-only
+  access, missing-field handling and retained historical values after a safe archive.
+- Actual UI passes in **Chromium, Firefox and WebKit**: popup names the module
+  and dependent fields, explains the fix, disables unsafe archive, and jumps to
+  the exact settings with focus/highlight. Test light/dark/390px layout with balanced
+  viewport margins, forward/reverse Tab trapping, Escape/opener focus restoration,
+  failed-check retry inside the dialog and absence of an off-screen page error.
+- Add a dependency after a successful preflight and attempt Archive: the commit
+  rejects it and updates the same dialog with the new named blocker. Archive only
+  succeeds after explicitly removing that dependency and checking again. Keep the
+  popup pending until the refreshed field card displays its archived/Restore state.
+- Relationship auto-fill regression also passes in all three engines, including
+  eight-account field merging/conflicts, immediate previews, drafts and inline
+  per-field conflict decisions. No deployment configuration/database, N1 repository,
+  live objects or workstation audio devices were changed; test audio stays disconnected.
+
+Artifacts: `/tmp/mx-eight-user-SF8mB2/field-archive-results.json` and screenshots;
+auto-fill regression `/tmp/mx-eight-user-etDL8u/relationship-autofill-results.json`.
+
+One intermediate UI run produced a blank initial page; it did not reproduce in
+the subsequent Chromium check, cross-browser auto-fill regression or final full
+archive-dialog rerun. This focused validation is not a blanket deployment or
+unreliable-network certification.
+
+## Relationship auto-fill — 2026-10-13
+
+- `cargo test --locked --bin litiaina-mx -- --test-threads=2`: **122 passed,
+  one opt-in live-N1 test ignored**. Validate mapping structure, compatible
+  types, unique destinations and single-selection requirements. Rust build passes.
+- `npm test`: **238 passed across 38 files**. Verify ordinary revision-based
+  editing and pure preview application, preservation of typing during requests,
+  null/zero/false handling and click isolation while an inline save is pending.
+  Frontend build/check passes with zero Svelte errors/warnings; Vite's existing
+  large-chunk advisory remains.
+- `npm run test:relationships:autofill`: disposable real MX HTTP/SQLite with
+  an N1 fixture, not deployment configuration or live storage. Verify configured
+  source/destination mappings, numeric/boolean/date copies including zero/false,
+  current formula values, missing required data, invalid dropdown values, explicit
+  overrides, foreign/missing selections, mapped-field archive dependencies and
+  denial of inaccessible/unauthenticated source reads. Previously saved copies
+  remain historical after source and formula changes.
+- Eight editor accounts concurrently change independent fields successfully.
+  Eight competing relationship changes produce one winner and seven conflicts;
+  copied Classification fields are included in those conflicts. Relationship
+  and copies share the normal atomic record version, not new collaboration state.
+  This is real HTTP concurrency, not eight simultaneous browser tabs.
+- Actual production UI passes in **Chromium, Firefox and WebKit**: save mappings
+  in administration; select/change/clear names; immediate copies and live lookup
+  previews; form and inline saves; delayed obsolete responses; preserved typing
+  and draft overrides; interrupted-draft retry; failed-preview save blocking;
+  reset during a held response; and separate stored/mine choices for two copied
+  field conflicts. Inspect light/dark and 390px layouts. Early tests caught a
+  missing JSON request header, draft-startup timing and cell-click bubbling during
+  an in-flight commit; all were corrected before the passing rerun.
+- Column-summary regression suite also passes in all three engines, including
+  paging/filtering, totals, inline edits and concurrent snapshot reads/writes.
+  Browser audio uses disconnected per-process endpoints; no workstation audio,
+  deployment database/configuration, N1 repository or live objects were changed.
+
+Artifacts: `/tmp/mx-eight-user-ciyomp/relationship-autofill-results.json` and
+screenshots; summary regression `/tmp/mx-eight-user-fOPyoU/record-summaries-results.json`.
+Copied data follows destination-module access after saving; it is not redacted
+when source access later changes. Use read-only lookups for live source values.
+
+## Configurable record-column summaries — 2026-10-13
+
+- `cargo test --locked --bin litiaina-mx -- --test-threads=2`: **120 passed, one
+  opt-in live-N1 test ignored**. New tests validate summary configuration, scalar
+  aggregates, null/zero/negative values, module/trash exclusion, empty results and
+  current formula definitions over 300 records spanning several bounded batches.
+- `npm test`: **235 passed across 37 files**. Summary rendering distinguishes
+  an unavailable result, an empty average and genuine zero; display precision
+  and whole-number counts are verified. Rust build and frontend build/check
+  pass; zero Svelte errors/warnings, with Vite's existing large-chunk advisory.
+- `npm run test:records:summaries`: disposable real MX HTTP/SQLite and the N1
+  fixture. Verify 120 records across three pages (50 + 50 + 20), matching totals
+  on every page, search/field filters, null/negative/zero values, empty sums/counts
+  versus empty averages, delete/restore and a changed formula definition without
+  relying on its older stored results. Unauthorized reads/configuration and
+  unsupported field functions/precision are rejected.
+- Eight simultaneous read requests run alongside seven different editor-account
+  commits. Every returned full-page dataset has a matching record count and
+  numeric/formula totals from one SQLite read snapshot. An initial migration
+  write inside that snapshot caused a locked-database failure; revision and
+  attachment schema initialization was moved outside it, with read-only helpers
+  inside. The concurrent rerun passes. This is HTTP concurrency, not eight UI tabs.
+- Actual UI passes in **Chromium, Firefox and WebKit**: administrator settings,
+  aligned column footer, paging/search updates, real inline edits using different
+  values per browser, live deletion/restoration and empty filtered results. Inspect
+  light/dark and 390px layouts after navigation transitions settle. An initial
+  mobile footer clipped numeric values; row sizing/overflow were corrected and
+  element-bound checks now verify that each number fits inside its cell/footer.
+- Test browsers remain disconnected from physical audio endpoints. No live N1
+  data, deployment database/configuration or module relationships were changed.
+
+Artifacts: `/tmp/mx-eight-user-zEt6R1/record-summaries-results.json` and screenshots.
+Configured formulas are recalculated in 128-record batches, while plain numeric
+fields use SQL aggregates; this is not a million-row latency benchmark. These
+table summaries use existing numeric precision, not a new fixed-point ledger.
+
+## Detailed Office loading — 2026-10-13
+
+- `npm test`: **233 passed across 36 files**. Added loading-stage/format feedback,
+  byte-unit and valid-total checks, real streamed-download progress, unknown or
+  compressed totals and retry resets without counting error bodies as file bytes.
+  Existing file-transfer idle-deadline and byte-preservation tests still pass.
+- `npm run build`: zero Svelte errors/warnings, bundled Office checksums verified,
+  and rebuilt `frontend/dist` with an updated offline-cache generation. Vite's
+  existing large-chunk advisory remains. No Office vendor binary was changed.
+- `npm run test:office:loading`: disposable real MX/SQLite, the N1 contract fixture
+  and loopback-only traffic. Chromium/Firefox open a real DOCX in the pinned
+  WebAssembly engine and show all five stages. Hold metadata and the engine
+  script, split/pause an actual document download and delay only the real worker's
+  ready/open acknowledgements to inspect loading feedback deterministically.
+- Received document bytes and a partial measured percentage appear even while
+  the server pauses after the first chunk; an initial UI-throttle bug found by
+  this check was fixed with a trailing update. Unmeasured startup has no invented
+  percentage. Inspect light/dark/390px layouts; the ready view has no loading UI
+  and retains the 38px toolbar/862px canvas stage in a 900px viewport. Warm reload
+  opens the real document again without creating another saved version.
+- Missing/inaccessible-file failures stop animation and remain stopped after
+  dismissing the error banner. WebKit/WPE's **existing unsupported worker graphics**
+  are rejected before engine startup; the exact loaded original remains
+  downloadable. This is fallback validation, not a WebKit Office editing pass.
+- Browsers use disconnected per-process audio endpoints and ALSA null output.
+  No deployment SQLite/configuration/certificates, live N1 data or desktop audio
+  settings were changed. Module relationships/lookup behavior are unchanged.
+
+Artifacts: `/tmp/mx-eight-user-llyzkq/office-loading-results.json` and screenshots.
+This focused loading suite does not clear the existing Office native input,
+Firefox rendering, presentation-editing or live-storage qualification gates.
+
 ## MX 4.1.1 release packaging — 2026-10-11
 
 Rust/frontend manifests and both lockfiles are aligned on **4.1.1**. This patch

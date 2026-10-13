@@ -9,10 +9,13 @@ const workspace = readFileSync(new URL('./components/Workspace.svelte', import.m
 describe('stateless record editing', () => {
   it('opens table cells immediately and saves against the loaded record revision', () => {
     expect(records).toContain('baseRevision: row.revision');
-    expect(records).toContain('patchRecord(row.uid, { [field.key]: nextValue }, edit.baseRevision');
+    expect(records).toContain('patchRecord(row.uid, { ...edit.fills,[field.key]: nextValue }, edit.baseRevision');
+    expect(records).toContain('if(edit.previewLoading||edit.previewError||cellConflict)return');
     expect(records).not.toContain('patchRecord(row.uid, { [field.key]: nextValue }, row.revision');
     expect(records).not.toContain('claimRecordEdit');
     expect(records).not.toContain('maintainEditLease');
+    const begin = records.slice(records.indexOf('function beginCellEdit'), records.indexOf('function cancelCellEdit'));
+    expect(begin.indexOf('event.stopPropagation()')).toBeLessThan(begin.indexOf('cellSaving) return'));
   });
 
   it('provides a visible row-level edit action without opening view mode first', () => {

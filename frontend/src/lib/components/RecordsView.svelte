@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, tick, untrack } from 'svelte';
+  import { onMount, onDestroy, tick, untrack } from 'svelte';
   import ChevronDown from '@lucide/svelte/icons/chevron-down';
   import ChevronUp from '@lucide/svelte/icons/chevron-up';
   import Ellipsis from '@lucide/svelte/icons/ellipsis';
@@ -10,17 +10,21 @@
   import { ApiError } from '../api/client';
   import type { LiveMessage } from '../live/client';
   import { requestConfirmation } from '../confirmation';
-  import type { FieldConflict, ModulePermission, MxRecord, SchemaResponse } from '../api/domain';
+  import type { ColumnSummary, FieldConflict, JsonValue, ModulePermission, MxRecord, SchemaResponse } from '../api/domain';
+  import {relationshipPreview} from '../api/relationships';
+  import { summaryNames, summaryValue } from '../util/columnSummaries';
   import type { Session } from '../api/types';
   import { deleteRecord, getRecord, listRecords, loadModuleSchema, loadSchema, patchRecord } from '../api/workspace';
   import RecordEditor from './RecordEditor.svelte';
   import RelationshipInput from './RelationshipInput.svelte';
+  import {fieldState,optionLabel,availableOptions,prepareForm} from '../util/formRules';
   import TableScrollbar from './TableScrollbar.svelte';
   import { floatingMenu } from '../util/floating';
 
   let { session, accessLevel, moduleUid = '', modulePermission = null, openRecordUid = '', openRequestRevision = 0, focusLinkedAttachments = false, revision = 0, liveMessage = null, recordSingular = 'Record', recordPlural = 'Records' }: { session: Session; accessLevel: number; moduleUid?: string; modulePermission?: ModulePermission | null; openRecordUid?: string; openRequestRevision?: number; focusLinkedAttachments?: boolean; revision?: number; liveMessage?: LiveMessage | null; recordSingular?: string; recordPlural?: string } = $props();
   let schema = $state<SchemaResponse | null>(null);
   let rows = $state<MxRecord[]>([]);
+  let summaries = $state<Record<string, ColumnSummary>>({});
   let page = $state(1); let pageInput = $state(1); let pages = $state(0); let total = $state(0); let pageSize = $state(50);
   let search = $state(''); let sortBy = $state(''); let sortDir = $state('asc');
   let matchMode = $state<'contains' | 'prefix' | 'exact'>('contains');
@@ -34,10 +38,13 @@
   let tableViewport = $state<HTMLDivElement>();
   const menuRow = $derived(rows.find((row) => row.uid === rowMenuUid));
   let editor = $state<MxRecord | null | undefined>(undefined);
+  let editorChanges=$state<Record<string,JsonValue>|null>(null);
   let editorWritable = $state(false);
-  let cellEdit = $state<{ rowUid: string; fieldKey: string; value: string; baseRevision: number } | null>(null);
+  let cellEdit = $state<{ rowUid: string; fieldKey: string; value: string; baseRevision: number; fills:Record<string,JsonValue>; computed:Record<string,JsonValue>; previewLoading:boolean; previewError:string } | null>(null);
+  let cellRequest:AbortController|undefined;
+  onDestroy(()=>cellRequest?.abort());
   let cellSaving = $state(false);
-  let cellConflict = $state<{ conflict: FieldConflict; recordRevision: number } | null>(null);
+  let cellConflict = $state<{ conflicts: FieldConflict[]; recordRevision: number } | null>(null);
   let focusAttachments = $state(false);
   let lastRevision = $state(0);
   let columnOverrides = $state<{ shown: string[]; hidden: string[] }>({ shown: [], hidden: [] });
@@ -58,6 +65,7 @@
   const canAttachments = $derived(modulePermission ? modulePermission.can_attachments : true);
   const eligibleFields = $derived(schema?.fields.filter((field) => field.active && (canAttachments || field.field_type !== 'attachments')).sort((a, b) => a.position - b.position) || []);
   const visibleFields = $derived(eligibleFields.filter((field) => selectedKeys.includes(field.key)));
+  const summaryFields = $derived(visibleFields.filter(field => !!field.config.table_summary && field.config.table_summary !== 'none'));
   const searchableFields = $derived(schema?.fields.filter((field) => field.active && field.searchable && field.field_type !== 'attachments').sort((a, b) => a.position - b.position) || []);
 
   const columnStorageKey = $derived(`mx_record_columns_v3_${moduleUid || 'default'}`);
@@ -114,7 +122,7 @@
 
   async function refresh(withSchema = false) {
     const request = ++refreshSequence;
-    loading = true; error = '';
+    loading = true; error = ''; summaries = {};
     try {
       if (withSchema || !schema) {
         const nextSchema = moduleUid ? await loadModuleSchema(moduleUid) : await loadSchema();
@@ -134,11 +142,13 @@
       const result = await listRecords({ page, limit: pageSize, q: search.trim(), match: matchMode, filters: activeFilters, attachments: attachmentMode, sort_by: sortBy || undefined, sort_dir: sortDir }, moduleUid || undefined);
       if (request !== refreshSequence) return;
       rows = result.data.filter((row) => !deletedRecordUids.has(row.uid)); page = result.page; pageInput = result.page; pages = result.total_pages; total = Math.max(0, result.total - (result.data.length - rows.length));
+      summaries = result.summaries || {};
     } catch (reason) { if (request === refreshSequence) error = reason instanceof Error ? reason.message : 'Records could not be loaded.'; }
     finally { if (request === refreshSequence) loading = false; }
   }
 
   function forgetDeletedRecord(uid: string) {
+    ++refreshSequence; loading=false; summaries={};
     deletedRecordUids.add(uid);
     deletionGenerations.set(uid, ++deletionGeneration);
     if (rows.some((row) => row.uid === uid)) total = Math.max(0, total - 1);
@@ -166,17 +176,20 @@
 
   function display(row: MxRecord, key: string) {
     const field = schema?.fields.find((item) => item.key === key);
+    if(field&&!fieldState(field,row.values).visible)return 'Not applicable';
     if (field?.field_type === 'attachments') {
       const files = row.attached_files.filter((item) => item.attachment_field_uid === field.uid);
       if (!files.length) return '—';
       return files.length === 1 ? files[0].file_name : `${files.length} files`;
     }
-    const value = row.values[key];
+    const preview=cellEdit?.rowUid===row.uid?{...cellEdit.fills,...cellEdit.computed}:{};
+    const value = Object.hasOwn(preview,key)?preview[key]:row.values[key];
     if (field?.field_type === 'relationship' && row.relationships?.[key]?.restricted) return 'Access restricted';
     if (value == null || value === '') return '—';
     if (typeof value === 'boolean') return value ? 'Yes' : 'No';
     if (field?.field_type === 'relationship') return row.relationships?.[key]?.restricted ? 'Access restricted' : row.relationships?.[key]?.items.map(item=>item.label).join(', ') || '—';
     if (Array.isArray(value)) return value.map(item=>String(item ?? '—')).join(', ');
+    if(field?.field_type==='select')return optionLabel(field,value);
     if (field?.field_type === 'auto_number') {
       const prefix = String(field.config.prefix || ''); const padding = Number(field.config.padding || 0);
       return `${prefix}${String(value).padStart(padding, '0')}`;
@@ -184,40 +197,47 @@
     return String(value);
   }
 
-  function canEditCell(field: SchemaResponse['fields'][number]) {
-    return canUpdate && !['attachments', 'auto_number', 'formula', 'lookup', 'rollup'].includes(field.field_type);
+  function canEditCell(field: SchemaResponse['fields'][number],row?:MxRecord) {
+    return canUpdate && !['attachments', 'auto_number', 'formula', 'lookup', 'rollup'].includes(field.field_type)&&(!row||fieldState(field,row.values).enabled);
   }
   function beginCellEdit(event: MouseEvent, row: MxRecord, field: SchemaResponse['fields'][number]) {
-    if (!canEditCell(field) || cellSaving) return;
     event.preventDefault(); event.stopPropagation();
+    if (!canEditCell(field,row) || cellSaving) return;
     error = '';
     const raw = row.values[field.key];
     cellConflict = null;
-    cellEdit = { rowUid: row.uid, fieldKey: field.key, value: field.field_type === 'boolean' ? String(raw === true) : Array.isArray(raw) ? JSON.stringify(raw) : raw == null ? '' : String(raw), baseRevision: row.revision };
+    cellRequest?.abort();
+    cellEdit = { rowUid: row.uid, fieldKey: field.key, value: field.field_type === 'boolean' ? String(raw === true) : Array.isArray(raw) ? JSON.stringify(raw) : raw == null ? '' : String(raw), baseRevision: row.revision, fills:{},computed:{},previewLoading:false,previewError:'' };
     void tick().then(() => {
       const control = document.querySelector<HTMLInputElement | HTMLSelectElement>('[data-active-cell-editor]');
       control?.focus();
       if (control instanceof HTMLInputElement && control.type === 'text') control.select();
     });
   }
-  function cancelCellEdit(event?: Event) { event?.stopPropagation(); cellEdit = null; }
-  function useStoredCellValue() {
-    if (!cellConflict || !cellEdit) return;
-    const { conflict, recordRevision } = cellConflict;
-    rows = rows.map((row) => row.uid === cellEdit!.rowUid ? { ...row, revision: recordRevision, values: { ...row.values, [conflict.field_key]: conflict.current_value } } : row);
-    cellConflict = null; cellEdit = null; error = '';
-  }
-  async function keepProposedCellValue() {
+  function cancelCellEdit(event?: Event) { event?.stopPropagation(); cellRequest?.abort();cellEdit = null;cellConflict=null; }
+  async function resolveCellConflict(conflict:FieldConflict,keepMine:boolean) {
     if (!cellConflict || !cellEdit || !schema) return;
     const { recordRevision } = cellConflict;
+    if(!keepMine&&Object.keys(conflict.related_values||{}).length){cancelCellEdit();error='The latest values were kept; the conflicting choice change was cancelled.';await refresh();return;}
+    if(!keepMine){if(conflict.field_key===cellEdit.fieldKey)cellEdit.value=Array.isArray(conflict.current_value)?JSON.stringify(conflict.current_value):String(conflict.current_value??'');else cellEdit.fills[conflict.field_key]=conflict.current_value;}
+    cellConflict.conflicts=cellConflict.conflicts.filter(item=>item.field_key!==conflict.field_key);
+    if(cellConflict.conflicts.length)return;
     const row = rows.find((item) => item.uid === cellEdit!.rowUid);
     const field = schema.fields.find((item) => item.key === cellEdit!.fieldKey);
     if (!row || !field) return;
-    const latest = { ...row, revision: recordRevision };
     cellEdit.baseRevision = recordRevision;
-    rows = rows.map((item) => item.uid === latest.uid ? latest : item);
     cellConflict = null; error = '';
-    await commitCellEdit(latest, field);
+    await commitCellEdit(row, field);
+  }
+  async function selectCellRelationship(field:SchemaResponse['fields'][number],value:JsonValue){
+    if(!cellEdit)return;
+    cellRequest?.abort();const edit=cellEdit;
+    edit.value=Array.isArray(value)?JSON.stringify(value):String(value??'');edit.fills={};edit.computed={};edit.previewError='';
+    if(!schema?.fields.some(f=>['lookup','rollup'].includes(f.field_type)&&f.config.relationship_field===field.key)&&!(Array.isArray(field.config.auto_fill)&&field.config.auto_fill.length))return;
+    const controller=new AbortController();cellRequest=controller;edit.previewLoading=true;
+    try{const preview=await relationshipPreview(field.uid,value,controller.signal);if(controller.signal.aborted||cellEdit!==edit)return;edit.fills=preview.values;edit.computed=preview.computed;}
+    catch(reason){if(!controller.signal.aborted&&cellEdit===edit)edit.previewError=reason instanceof Error?reason.message:'Could not load linked fields.';}
+    finally{if(cellRequest===controller&&cellEdit===edit)edit.previewLoading=false;}
   }
   function cellEditValue(field: SchemaResponse['fields'][number], value: string) {
     if (value === '') return null;
@@ -230,19 +250,25 @@
   async function commitCellEdit(row: MxRecord, field: SchemaResponse['fields'][number]) {
     if (!cellEdit || cellSaving || cellEdit.rowUid !== row.uid || cellEdit.fieldKey !== field.key) return;
     const edit = cellEdit;
+    if(edit.previewLoading||edit.previewError||cellConflict)return;
     const nextValue = cellEditValue(field, edit.value);
-    if (field.required && (nextValue === null || nextValue === '')) { error = `${field.label} is required.`; return; }
-    if (JSON.stringify(nextValue) === JSON.stringify(row.values[field.key] ?? null)) { cellEdit = null; return; }
+    if (!Object.keys(edit.fills).length&&JSON.stringify(nextValue) === JSON.stringify(row.values[field.key] ?? null)) { cellEdit = null; return; }
     cellSaving = true; error = '';
     try {
-      const saved = await patchRecord(row.uid, { [field.key]: nextValue }, edit.baseRevision, moduleUid || undefined);
+      const input={...edit.fills,[field.key]:nextValue};
+      const prepared=prepareForm(eligibleFields,row.values,input);
+      if(prepared.resets.length&&!await requestConfirmation({title:'Clear details from the previous choice?',description:`The following fields no longer apply: ${prepared.resets.map(key=>eligibleFields.find(f=>f.key===key)?.label||key).join(', ')}. Their values will be cleared in the next record version. Stored files are retained.`,confirmLabel:'Change choice',tone:'danger'}))return;
+      if(cellEdit!==edit)return;
+      if(prepared.errors.length){openRecord(row,false,true);editorChanges=input;return;}
+      const saved = await patchRecord(row.uid, { ...edit.fills,[field.key]: nextValue }, edit.baseRevision, moduleUid || undefined);
       if (!deletedRecordUids.has(saved.uid)) rows = rows.map((item) => item.uid === saved.uid ? saved : item);
       cellEdit = null;
+      await refresh();
     } catch (reason) {
       error = reason instanceof Error ? reason.message : `The ${field.label.toLowerCase()} cell could not be saved.`;
       if (reason instanceof ApiError && reason.status === 409 && reason.payload && typeof reason.payload === 'object') {
         const payload = reason.payload as { conflicts?: FieldConflict[]; current_record_revision?: number };
-        if (payload.conflicts?.[0]) cellConflict = { conflict: payload.conflicts[0], recordRevision: Number(payload.current_record_revision || row.revision) };
+        if (payload.conflicts?.length) cellConflict = { conflicts: payload.conflicts, recordRevision: Number(payload.current_record_revision || row.revision) };
       }
     } finally { cellSaving = false; }
   }
@@ -268,8 +294,8 @@
   function resetColumns() { columnOverrides = { shown: [], hidden: [] }; selectedKeys = eligibleFields.filter((field) => field.table_visible).map((field) => field.key); saveColumnOverrides(); }
   async function changePageSize() { page = 1; await refresh(); }
   async function clearFilters() { filters = {}; search = ''; attachmentMode = ''; sortBy = ''; sortDir = 'asc'; page = 1; await refresh(); }
-  function openRecord(row: MxRecord, attachments = false, edit = false) { if (deletedRecordUids.has(row.uid)) return; rowMenuUid = ''; if (cellEdit) cancelCellEdit(); focusAttachments = attachments; editorWritable = edit && canUpdate; editor = row; }
-  function closeEditor() { focusAttachments = false; editorWritable = false; editor = undefined; if (openRecordUid) location.hash = `module/${encodeURIComponent(moduleUid || 'mx-default-records')}`; }
+  function openRecord(row: MxRecord, attachments = false, edit = false) { if (deletedRecordUids.has(row.uid)) return; editorChanges=null;rowMenuUid = ''; if (cellEdit) cancelCellEdit(); focusAttachments = attachments; editorWritable = edit && canUpdate; editor = row; }
+  function closeEditor() { editorChanges=null;focusAttachments = false; editorWritable = false; editor = undefined; if (openRecordUid) location.hash = `module/${encodeURIComponent(moduleUid || 'mx-default-records')}`; }
   async function removeRecord(row: MxRecord, event: MouseEvent) {
     event.stopPropagation();
     closeRowMenuAndFocus();
@@ -287,14 +313,14 @@
 
 <section class="workspace-page records-page">
   <div class="toolbar">
-    {#if canCreate}<button class="button primary records-new-button" onclick={() => { focusAttachments = false; editorWritable = true; editor = null; }}>+ New {recordSingular.toLowerCase()}</button>{/if}
+    {#if canCreate}<button class="button primary records-new-button" onclick={() => { editorChanges=null;focusAttachments = false; editorWritable = true; editor = null; }}>+ New {recordSingular.toLowerCase()}</button>{/if}
     <form class="search-form" onsubmit={searchSubmit}><label class="records-search-input"><Search size={16} aria-hidden="true" /><input bind:value={search} oninput={scheduleSearch} type="search" placeholder={canAttachments ? 'Search configured fields and attachment filenames…' : 'Search configured fields…'} aria-label={`Search ${recordPlural.toLowerCase()}`} /></label><select bind:value={matchMode} onchange={() => { page = 1; void refresh(); }} aria-label="Search matching"><option value="contains">Contains</option><option value="prefix">Starts with</option><option value="exact">Exact</option></select><button class="button" type="submit">Search</button></form>
     <details class="toolbar-menu"><summary class="button">Columns</summary><div class="toolbar-popover">{#each eligibleFields as field}<label class="checkbox"><input type="checkbox" checked={selectedKeys.includes(field.key)} onchange={(event) => toggleColumn(field.key, event.currentTarget.checked)} /> {field.label}</label>{/each}<button class="button small" type="button" onclick={resetColumns}>Use administrator defaults</button><small>Only your overrides are saved, so new fields can follow the deployment defaults.</small></div></details>
     <button class="button" onclick={() => refresh(true)}>Refresh</button>
   </div>
     <details class="advanced-search"><summary>Advanced filters and sorting</summary><form class="filter-grid" onsubmit={searchSubmit}>{#each searchableFields as field}<label>{field.label}{#if field.field_type === 'select'}<select value={filters[field.key] || ''} onchange={(event) => filters[field.key] = event.currentTarget.value}><option value="">Any value</option>{#each (field.config.options as (string | number | boolean)[] || []) as option}<option value={String(option)}>{String(option)}</option>{/each}</select>{:else if field.field_type === 'boolean'}<select value={filters[field.key] || ''} onchange={(event) => filters[field.key] = event.currentTarget.value}><option value="">Either</option><option value="true">Yes</option><option value="false">No</option></select>{:else}<input type={field.field_type === 'date' ? 'date' : ['integer', 'decimal', 'formula'].includes(field.field_type) ? 'number' : 'text'} value={filters[field.key] || ''} oninput={(event) => filters[field.key] = event.currentTarget.value} placeholder={field.field_type === 'date' ? undefined : 'Field contains…'} />{/if}</label>{/each}{#if canAttachments}<label>Attachments<select bind:value={attachmentMode}><option value="">With or without files</option><option value="with">With attachments</option><option value="without">Without attachments</option></select></label>{/if}<label>Sort field<select bind:value={sortBy}><option value="">Default order</option>{#each eligibleFields.filter((field) => field.sortable) as field}<option value={field.key}>{field.label}</option>{/each}</select></label><label>Sort direction<select bind:value={sortDir}><option value="asc">Ascending</option><option value="desc">Descending</option></select></label><div class="button-row"><button class="button primary">Apply filters</button><button class="button" type="button" onclick={clearFilters}>Clear all</button></div></form></details>
   {#if error}<div class="notice error">{error}</div>{/if}
-  {#if cellConflict}<div class="notice record-cell-conflict"><div><strong>{cellConflict.conflict.label} changed elsewhere</strong><small>Stored: {String(cellConflict.conflict.current_value ?? 'Empty')} · Yours: {String(cellConflict.conflict.your_value ?? 'Empty')}</small></div><div class="inline-actions"><button class="button small" type="button" onclick={useStoredCellValue}>Use stored</button><button class="button primary small" type="button" onclick={() => void keepProposedCellValue()}>Keep mine</button></div></div>{/if}
+  {#if cellConflict}{#each cellConflict.conflicts as conflict}<div class="notice record-cell-conflict"><div><strong>{conflict.label} changed elsewhere</strong><small>Stored: {String(conflict.current_value ?? 'Empty')} · Yours: {String(conflict.your_value ?? 'Empty')}</small></div><div class="inline-actions"><button class="button small" type="button" onclick={()=>void resolveCellConflict(conflict,false)}>Use stored</button><button class="button primary small" type="button" onclick={() => void resolveCellConflict(conflict,true)}>Keep mine</button></div></div>{/each}{/if}
   <div class="records-result-summary" aria-live="polite" aria-label={`${total.toLocaleString()} ${total === 1 ? recordSingular.toLowerCase() : recordPlural.toLowerCase()}`}><span><strong>{total.toLocaleString()}</strong> {total === 1 ? 'result' : 'results'}</span><small>{rows.length ? `Showing ${((page - 1) * pageSize + 1).toLocaleString()}–${Math.min(page * pageSize, total).toLocaleString()}` : 'No rows in this view'}</small></div>
   <div class="table-wrap records-table" id={`records-table-${moduleUid || 'default'}`} bind:this={tableViewport}>
     <table>
@@ -310,25 +336,28 @@
               <td class="row-index-column" data-label="Row"><span title={`${recordSingular} ${row.uid}`}>{(page - 1) * pageSize + rowIndex + 1}</span></td>
               {#each visibleFields as field}
                 {@const editingCell = cellEdit?.rowUid === row.uid && cellEdit.fieldKey === field.key}
-                <td class:inline-editable-cell={canEditCell(field)} class:editing-cell={editingCell} class={field.field_type === 'long_text' ? 'long-text-cell' : ''} data-label={field.label} data-field-type={field.field_type} title={editingCell || canEditCell(field) || field.field_type === 'long_text' ? undefined : display(row, field.key)}>
-                  {#if field.field_type === 'attachments'}
+                <td class:inline-editable-cell={canEditCell(field,row)} class:editing-cell={editingCell} class={field.field_type === 'long_text' ? 'long-text-cell' : ''} data-label={field.label} data-field-type={field.field_type} title={editingCell || canEditCell(field,row) || field.field_type === 'long_text' ? undefined : display(row, field.key)}>
+                  {#if !fieldState(field,row.values).visible}<span class="muted">Not applicable</span>
+                  {:else if field.field_type === 'attachments'}
                     {@const fieldFiles = row.attached_files.filter((file) => file.attachment_field_uid === field.uid)}
                     <button class="attachment-cell-button" class:empty={!fieldFiles.length} onclick={(event) => { event.stopPropagation(); openRecord(row, true); }}>{fieldFiles.length ? `${fieldFiles.length} file${fieldFiles.length === 1 ? '' : 's'}` : 'No files'}</button>
                   {:else if editingCell && cellEdit}
                     {#if field.field_type === 'relationship'}
-                      <RelationshipInput {field} value={field.config.multiple === true ? JSON.parse(cellEdit.value || '[]') : cellEdit.value || null} labels={row.relationships?.[field.key]} disabled={cellSaving} onChange={value=>{if(cellEdit)cellEdit.value=Array.isArray(value)?JSON.stringify(value):String(value ?? '');}} />
-                      <div class="inline-actions"><button type="button" class="button small primary" disabled={cellSaving} onclick={event=>{event.stopPropagation();void commitCellEdit(row,field);}}>Save link</button><button type="button" class="button small" onclick={event=>{event.stopPropagation();cancelCellEdit();}}>Cancel</button></div>
+                      <RelationshipInput {field} value={field.config.multiple === true ? JSON.parse(cellEdit.value || '[]') : cellEdit.value || null} labels={row.relationships?.[field.key]} disabled={cellSaving||!!cellConflict} onChange={value=>void selectCellRelationship(field,value)} />
+                      {#if cellEdit.previewLoading}<small role="status">Loading linked fields…</small>{/if}
+                      {#if cellEdit.previewError}<p role="alert">{cellEdit.previewError}</p><button class="button small" type="button" onclick={()=>void selectCellRelationship(field,cellEditValue(field,cellEdit!.value))}>Retry linked fields</button>{/if}
+                      <div class="inline-actions"><button type="button" class="button small primary" disabled={cellSaving||cellEdit.previewLoading||!!cellEdit.previewError||!!cellConflict} onclick={event=>{event.stopPropagation();void commitCellEdit(row,field);}}>Save link</button><button type="button" class="button small" disabled={cellSaving} onclick={event=>{event.stopPropagation();cancelCellEdit();}}>Cancel</button></div>
                     {:else if field.field_type === 'long_text'}
                       <textarea class="cell-editor long-text-cell-editor" data-active-cell-editor bind:value={cellEdit.value} disabled={cellSaving} rows="4" onclick={(event) => event.stopPropagation()} onkeydown={(event) => cellEditorKeydown(event, row, field)} onblur={() => void commitCellEdit(row, field)} aria-label={`Edit ${field.label}`} placeholder="Enter text · Shift + Enter for a new line"></textarea>
                     {:else if field.field_type === 'select'}
-                      <select class="cell-editor" data-active-cell-editor bind:value={cellEdit.value} disabled={cellSaving} onclick={(event) => event.stopPropagation()} onkeydown={(event) => cellEditorKeydown(event, row, field)} onblur={() => void commitCellEdit(row, field)}><option value="">Select…</option>{#each (field.config.options as (string | number | boolean)[] || []) as option}<option value={String(option)}>{String(option)}</option>{/each}</select>
+                      <select class="cell-editor" aria-label={`Edit ${field.label}`} data-active-cell-editor bind:value={cellEdit.value} disabled={cellSaving} onclick={(event) => event.stopPropagation()} onkeydown={(event) => cellEditorKeydown(event, row, field)} onblur={() => void commitCellEdit(row, field)}><option value="">Select…</option>{#each availableOptions(field,row.values) as option}<option value={option}>{optionLabel(field,option)}</option>{/each}</select>
                     {:else if field.field_type === 'boolean'}
                       <select class="cell-editor" data-active-cell-editor bind:value={cellEdit.value} disabled={cellSaving} onclick={(event) => event.stopPropagation()} onkeydown={(event) => cellEditorKeydown(event, row, field)} onblur={() => void commitCellEdit(row, field)}><option value="true">Yes</option><option value="false">No</option></select>
                     {:else}
                       <input class="cell-editor" data-active-cell-editor bind:value={cellEdit.value} disabled={cellSaving} type={field.field_type === 'date' ? 'date' : ['integer', 'decimal'].includes(field.field_type) ? 'number' : 'text'} step={field.field_type === 'decimal' ? 'any' : field.field_type === 'integer' ? 1 : undefined} onclick={(event) => event.stopPropagation()} onkeydown={(event) => cellEditorKeydown(event, row, field)} onblur={() => void commitCellEdit(row, field)} />
                     {/if}
-                  {:else if canEditCell(field)}
-                    <button class="cell-edit-button" type="button" title={`Edit ${field.label}`} aria-label={`Edit ${field.label} for row ${(page - 1) * pageSize + rowIndex + 1}`} onclick={(event) => beginCellEdit(event, row, field)}><span>{display(row, field.key)}</span><Pencil size={12} /></button>
+                  {:else if canEditCell(field,row)}
+                    <button class="cell-edit-button" type="button" disabled={cellSaving} title={`Edit ${field.label}`} aria-label={`Edit ${field.label} for row ${(page - 1) * pageSize + rowIndex + 1}`} onclick={(event) => beginCellEdit(event, row, field)}><span>{display(row, field.key)}</span><Pencil size={12} /></button>
                   {:else}
                     {display(row, field.key)}
                   {/if}
@@ -344,8 +373,10 @@
           {/each}
         {/if}
       </tbody>
+      {#if summaryFields.length}<tfoot aria-label="Filtered column summaries"><tr><th scope="row" class="summary-caption">Totals</th>{#each visibleFields as field}<td data-label={field.label}>{#if field.config.table_summary && field.config.table_summary !== 'none'}<span class="column-summary"><small>{summaryNames[field.config.table_summary as keyof typeof summaryNames]}</small><strong aria-label={`${field.label} summary`}>{loading ? 'Calculating…' : summaryValue(summaries[field.key])}</strong></span>{/if}</td>{/each}<td></td></tr></tfoot>{/if}
     </table>
   </div>
+  {#if summaryFields.length}<p class="summary-scope" role="status">Summaries cover all {total.toLocaleString()} matching records across every page, not only the rows shown. Search and filters apply.</p>{/if}
   <div class="pagination records-pagination"><span>{rows.length ? `${((page - 1) * pageSize + 1).toLocaleString()}–${Math.min(page * pageSize, total).toLocaleString()} of ${total.toLocaleString()}` : 'No records'}</span><label>Rows<select bind:value={pageSize} onchange={changePageSize}><option value={25}>25</option><option value={50}>50</option><option value={100}>100</option><option value={256}>256</option></select></label><button class="button" disabled={page <= 1 || loading} onclick={() => movePage(1)}>First</button><button class="button" disabled={page <= 1 || loading} onclick={() => movePage(page - 1)}>Previous</button><form onsubmit={goToPage}><label>Page<input type="number" min="1" max={Math.max(1, pages)} bind:value={pageInput} /></label><button class="button" aria-label="Go to page">Go</button></form><span>of {pages}</span><button class="button" disabled={page >= pages || loading} onclick={() => movePage(page + 1)}>Next</button><button class="button" disabled={page >= pages || loading} onclick={() => movePage(pages)}>Last</button></div>
 </section>
 
@@ -357,4 +388,4 @@
   </div>
 {/if}
 
-{#if editor !== undefined && schema}<RecordEditor {schema} {moduleUid} record={editor} canWrite={editor === null ? canCreate : editorWritable && canUpdate} canDelete={editorWritable && canDelete} {canAttachments} allowEdit={editor !== null && canUpdate} {liveMessage} {focusAttachments} recordLabel={recordSingular} onEdit={() => editorWritable = true} onClose={closeEditor} onSaved={() => refresh(true)} />{/if}
+{#if editor !== undefined && schema}<RecordEditor {schema} {moduleUid} record={editor} initialChanges={editorChanges} canWrite={editor === null ? canCreate : editorWritable && canUpdate} canDelete={editorWritable && canDelete} {canAttachments} allowEdit={editor !== null && canUpdate} {liveMessage} {focusAttachments} recordLabel={recordSingular} onEdit={() => editorWritable = true} onClose={closeEditor} onSaved={() => refresh(true)} />{/if}

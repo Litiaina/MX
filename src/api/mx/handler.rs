@@ -89,6 +89,7 @@ pub enum MxOperationError {
     Sqlite(SqliteError),
     N1(String),
     InvalidRequest(String),
+    Conflict(String),
 }
 
 impl From<SqliteError> for MxOperationError {
@@ -255,6 +256,9 @@ fn mx_access_denied() -> Response {
 
 fn map_mx_error(error: MxOperationError) -> Response {
     match error {
+        MxOperationError::Conflict(reason) => {
+            api_json(StatusCode::CONFLICT, json!({"response":reason}))
+        }
         MxOperationError::Sqlite(SqliteError::Conflict) => api_json(
             StatusCode::CONFLICT,
             json!({
@@ -1839,7 +1843,7 @@ async fn execute_insert_attachment(
     entry_uid: String,
     attachment: FileAttachment,
     base_revision: i64,
-) -> Result<i64, SqliteError> {
+) -> Result<i64, MxOperationError> {
     let database_result =
         tokio::task::spawn_blocking(move || -> Result<i64, SqliteDatabaseError> {
             with_sql_connection(|connection| {
@@ -1858,6 +1862,7 @@ async fn execute_insert_attachment(
                 if base_revision < 1 || base_revision > current_revision {
                     return Err(rusqlite::Error::InvalidParameterName("invalid attachment base revision".to_string()));
                 }
+                if let Some(field)=attachment.attachment_field_uid.as_deref(){super::form_rules::validate_attachment(&transaction,&entry_uid,field,Some(base_revision))?;}
                 let revision: i64 = transaction.query_row(
                     "UPDATE mx_records SET revision=revision+1 WHERE uid=?1 AND deleted_at IS NULL RETURNING revision",
                     params![entry_uid],
@@ -1908,14 +1913,16 @@ async fn execute_insert_attachment(
         Ok(Err(SqliteDatabaseError::Sqlite(rusqlite::Error::SqliteFailure(error, _))))
             if error.code == rusqlite::ErrorCode::ConstraintViolation =>
         {
-            Err(SqliteError::Conflict)
+            Err(SqliteError::Conflict.into())
         }
 
-        Ok(Err(SqliteDatabaseError::Sqlite(rusqlite::Error::InvalidParameterName(_)))) => {
-            Err(SqliteError::Conflict)
+        Ok(Err(SqliteDatabaseError::Sqlite(rusqlite::Error::InvalidParameterName(message)))) => {
+            Err(MxOperationError::Conflict(format!(
+                "{message} Reload the record and retry the upload if the field still applies."
+            )))
         }
-        Ok(Err(_)) => Err(SqliteError::SqliteDatabaseError),
-        Err(_) => Err(SqliteError::JoinError),
+        Ok(Err(_)) => Err(SqliteError::SqliteDatabaseError.into()),
+        Err(_) => Err(SqliteError::JoinError.into()),
     }
 }
 
@@ -2088,9 +2095,16 @@ pub async fn execute_upload_mx_attachment(
     }
 
     let field_uid_for_lookup = field_uid.clone();
+    let record_for_rules = entry_uid.clone();
     let result = tokio::task::spawn_blocking(move || -> Result<_, SqliteDatabaseError> {
         with_sql_connection(|connection| {
             ensure_attachment_fields_schema(connection)?;
+            super::form_rules::validate_attachment(
+                connection,
+                &record_for_rules,
+                &field_uid_for_lookup,
+                Some(base_revision),
+            )?;
             load_attachment_field_db(connection, &field_uid_for_lookup, true)
         })
     })
@@ -2098,6 +2112,9 @@ pub async fn execute_upload_mx_attachment(
 
     let field = match result {
         Ok(Ok(Some(field))) => field,
+        Ok(Err(SqliteDatabaseError::Sqlite(rusqlite::Error::InvalidParameterName(message)))) => {
+            return Err(MxOperationError::InvalidRequest(message));
+        }
         Ok(Ok(None)) => {
             return Err(MxOperationError::InvalidRequest(
                 "The selected File Attachment field does not exist or is archived.".to_string(),
@@ -2198,7 +2215,7 @@ pub async fn execute_upload_mx_attachment(
             Ok(revision) => revision,
             Err(error) => {
                 let _ = n1_soft_delete(&object_key).await;
-                return Err(MxOperationError::Sqlite(error));
+                return Err(error);
             }
         };
 

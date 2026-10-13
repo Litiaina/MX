@@ -144,8 +144,10 @@ export interface FieldConflict {
   current_revision: number;
   current_value: JsonValue;
   your_value: JsonValue;
+  related_values?:Record<string,JsonValue>;
 }
 
+export interface ColumnSummary { function: 'sum' | 'average' | 'min' | 'max' | 'count'; value: number | null; count: number; decimals: number }
 export interface RecordPage {
   data: MxRecord[];
   page: number;
@@ -153,6 +155,7 @@ export interface RecordPage {
   has_next: boolean;
   total: number;
   total_pages: number;
+  summaries?: Record<string, ColumnSummary>;
 }
 
 export interface DeploymentConfig {

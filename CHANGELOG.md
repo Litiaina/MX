@@ -5,6 +5,120 @@ deployment maintainer's local date.
 
 ## [Unreleased]
 
+### Drive styling recovery and scoped Deployment layout — 2026-10-14
+
+- Withdraw the broad UI polish and restore the original component style
+  precedence. Moving component CSS into a named layer let shared styles override
+  Drive's row grid and other component layouts in the production bundle.
+- Remove the application-wide polish overrides; preserve the preceding feature
+  changes. No record, attachment, permission or N1 data changes are needed.
+- Fix the Branding-to-Terminology gap using independent Deployment columns, with
+  control sizing scoped to Deployment rather than changing Drive or other screens.
+- Replace the inadequate control-only polish checks with rendered Drive grid,
+  column-alignment and Deployment-gap regression tests; retain file-manager tests.
+
+### Documentation organization and operator instructions — 2026-10-13
+
+- Replace the 2,578-line README with a concise project overview, build instructions
+  and documentation entry points. Preserve detailed reference material under `docs/`.
+- Add an indexed documentation collection, deployment/upgrade guide and first-module
+  operator walkthrough using the current UI labels and explicit verification steps.
+- Explain Relationship versus Lookup versus editable auto-fill with complete
+  employee/issuer/classification setup recipes. Explain single/multiple linked
+  record selection and why another Relationship is not an auto-fill destination.
+- Add conditional-form instructions, troubleshooting tables, access requirements
+  and cautions about changing existing schemas, uncertain saves and release limits.
+- This documentation pass does not convert existing fields, wipe data, change
+  runtime configuration, or fix the remaining field-settings save-error placement.
+
+### Modular conditional forms — 2026-10-13
+
+- Add a focused **Form rules** configuration dialog per module field: nested
+  All/Any conditions for visibility, editability and requirements; dependent
+  select options; dropdown/radio/exclusive-checkbox presentation; exclusive
+  Boolean groups and option-to-field automatic values with stable stored choices.
+- Apply immediate local selection behavior, retain editable copies and require
+  confirmation before clearing old branch details or queued files. Keep stored
+  attachments and normal version history. Preserve the selected radio button
+  when cancelling a switch, and warn on save-time numeric/text branch resets.
+- Show inactive table cells as Not applicable; inline changes needing required
+  detail fields open the record form with the proposed selection already applied.
+- Enforce typed conditions and automatic values on the server, serialize schema
+  graph checks, reject named cycles/missing controls/competing mappings, and add
+  named form-rule archive blockers with navigation to the rules dialog.
+- Expand/reset ordinary fields in the existing atomic record save. Preserve
+  independent-field merging; guard changed controllers and copied/cleared fields.
+  Keeping latest branch details also restores the current controls while retaining
+  unrelated local edits. Recheck attachment admission after transfer and reject
+  version restores that violate current rules with an actionable conflict response.
+- No editing sessions, collaboration locks, cell-version tables, new storage
+  services or attendance-specific hardcoding. Attachments/calculated fields support
+  visibility only; rules do not introduce field-level read permissions or atomic
+  conditional file-byte requirements. Existing rows are not migrated by rule saves.
+
+### Explain field archive dependencies in a dialog — 2026-10-13
+
+- Replace the off-screen archive error with a focused dialog showing the field
+  and module, every named dependency, why it blocks archiving and how to fix it.
+  Link directly to the dependent field's settings, storage layout or module records.
+- Check relationships, lookups, rollups, auto-fill mappings, formulas, stored
+  active/trashed links, owned attachments and storage folder/prefix usage. Keep
+  Archive disabled until clear; preserve historical values and files.
+- Add an administrator-only read-only archive-check endpoint and structured
+  blockers in rejected archive responses. Check again in the archive write
+  transaction, so a stale preflight cannot bypass newly committed dependencies.
+- Keep check/save failures and retry within the dialog, trap keyboard focus,
+  restore focus on dismissal and highlight the exact destination settings.
+  Provide balanced mobile margins and light/dark styling. Warn before cross-module
+  navigation discards unsaved field settings as well as module/storage edits.
+
+### Configurable relationship auto-fill — 2026-10-13
+
+- Add **Fill fields automatically** mappings to single-record relationships.
+  Select an employee name once to populate existing compatible fields such as
+  Classification and Department immediately in forms and inline table editors.
+- Keep copied values editable and historical; save them through normal record
+  revisions and version history. Refresh dependent read-only lookups/rollups
+  immediately without creating editing sessions, locks or separate cell versions.
+- Provide an access-checked read-only selection preview. Cancel obsolete
+  requests, preserve destination typing during loading, block partial saves on
+  errors and offer retry. Reset/closing cannot apply an obsolete response.
+- Fill omitted destinations on create/PATCH atomically, preserve explicit
+  overrides and include copied fields in optimistic conflict detection. Allow
+  separate decisions for every conflicting inline field. Validate compatible
+  types, single selection, unique destinations and mapped-field dependencies.
+
+### Configurable record-column summaries — 2026-10-13
+
+- Add optional sum, average, minimum, maximum and non-empty numeric-value count
+  below integer, decimal and formula columns. Auto-number columns support count.
+  Configure calculations and display precision in Administration → Modules &
+  fields → Column summaries; disabled by default for existing modules.
+- Calculate summaries over every matching active record, not just the current
+  page. Reuse record search/filter/module-access checks and exclude trash. Read
+  rows, count and summaries in one SQLite snapshot; use read-only revision/file
+  helpers so concurrent readers do not attempt migration writes inside it.
+- Aggregate stored numeric fields in SQL. Recalculate formula summaries from
+  current definitions in bounded 128-record batches; do not trust stale stored
+  formula results or transfer all matching records to the browser.
+- Refresh totals after edits and live deletion/restoration, invalidate obsolete
+  totals on refresh/deletion, and retain aligned desktop and readable mobile
+  footers. Distinguish empty averages/min/max from genuine zero sums/counts.
+
+### Office loading feedback — 2026-10-13
+
+- Replace the single Office loading message with document preparation, download,
+  bundled-resource loading, device initialization and document-rendering stages.
+  Show the filename, measured received bytes, per-download percentages when a
+  valid total is known, elapsed time and a completed/current/waiting checklist.
+- Use actual streamed document bytes and bundled-engine progress callbacks, not
+  simulated overall percentages or estimated startup times. Stop animation on
+  failures and keep the stopped state after dismissing an error message.
+- Keep feedback within the loading area; remove it once the document opens.
+  Preserve the compact 38-pixel toolbar and full editing area, light/dark and
+  narrow-screen layouts, offline operation and MX-owned file versioning.
+- Leave module relationships and lookup behavior unchanged.
+
 ## [4.1.1] - 2026-10-11
 
 ### Patch release

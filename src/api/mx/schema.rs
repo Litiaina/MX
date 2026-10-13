@@ -19,7 +19,7 @@ use crate::{
             formula::{referenced_fields, validate_expression},
             handler::ensure_mx_record_schema,
             records::recalculate_module_formulas,
-            storage::{ensure_storage_layout_schema, field_used_by_storage_layout_db},
+            storage::ensure_storage_layout_schema,
         },
     },
     db::connector::{SqliteDatabaseError, with_sql_connection},
@@ -237,6 +237,12 @@ fn normalize_attachment_storage_name(value: &str) -> String {
 }
 
 fn validate_config(field_type: &str, config: &Value) -> Result<Value, String> {
+    let clean = validate_type_config(field_type, config)?;
+    let clean = super::column_summaries::validate(field_type, config, clean)?;
+    super::form_rules::normalize(field_type, config, clean)
+}
+
+fn validate_type_config(field_type: &str, config: &Value) -> Result<Value, String> {
     match field_type {
         "relationship" | "lookup" | "rollup" => super::relationships::config(field_type, config),
         "select" => {
@@ -1526,12 +1532,18 @@ pub async fn create_schema_field(
         tokio::task::spawn_blocking(move || -> Result<FieldDefinition, SqliteDatabaseError> {
             with_sql_connection(|connection| {
                 ensure_dynamic_schema(connection)?;
+                let schema_transaction = rusqlite::Transaction::new_unchecked(
+                    connection,
+                    rusqlite::TransactionBehavior::Immediate,
+                )?;
+                let connection = &*schema_transaction;
                 if load_module_db(connection, &module_uid_for_db)?.is_none() {
                     return Err(rusqlite::Error::QueryReturnedNoRows);
                 }
                 super::relationships::validate_config(
                     connection,
                     &module_uid_for_db,
+                    &module_key_for_db,
                     &field_type_for_db,
                     &config,
                 )?;
@@ -1543,6 +1555,15 @@ pub async fn create_schema_field(
                         &config,
                     )?;
                 }
+
+                super::form_rules::validate_config(
+                    connection,
+                    &module_uid_for_db,
+                    &module_key_for_db,
+                    &label_for_db,
+                    &field_type_for_db,
+                    &config,
+                )?;
 
                 let position = match requested_position {
                     Some(value) => value.max(0),
@@ -1625,7 +1646,7 @@ pub async fn create_schema_field(
                     )?;
                 }
 
-                connection.query_row(
+                let created = connection.query_row(
                     r#"
                     SELECT
                         uid,
@@ -1646,7 +1667,9 @@ pub async fn create_schema_field(
                     "#,
                     params![uid],
                     row_to_field,
-                )
+                )?;
+                schema_transaction.commit()?;
+                Ok(created)
             })
         })
         .await;
@@ -2154,6 +2177,11 @@ async fn update_schema_order_for_module(
     }
 }
 
+enum FieldUpdate {
+    Updated(FieldDefinition),
+    ArchiveBlocked(super::field_archive::ArchiveCheck),
+}
+
 pub async fn update_schema_field(
     claims: Claims,
     Path(uid): Path<String>,
@@ -2176,9 +2204,12 @@ pub async fn update_schema_field(
     let formula_actor_uid = claims.uid.clone();
 
     let database_result =
-        tokio::task::spawn_blocking(move || -> Result<FieldDefinition, SqliteDatabaseError> {
+        tokio::task::spawn_blocking(move || -> Result<FieldUpdate, SqliteDatabaseError> {
             with_sql_connection(|connection| {
                 ensure_dynamic_schema(connection)?;
+                ensure_storage_layout_schema(connection)?;
+                let archive_transaction = Some(rusqlite::Transaction::new_unchecked(connection, rusqlite::TransactionBehavior::Immediate)?);
+                let connection = archive_transaction.as_ref().map(|tx| &**tx).unwrap_or(connection);
 
                 let existing = connection.query_row(
                     r#"
@@ -2209,52 +2240,9 @@ pub async fn update_schema_field(
                 )?;
 
                 if request.active == Some(false) {
-                    ensure_storage_layout_schema(connection)?;
-
-                    let dependency: bool = connection.query_row(
-                        "SELECT EXISTS(SELECT 1 FROM mx_fields d WHERE d.active=1 AND d.uid!=?1 AND (
-                          (d.field_type='relationship' AND json_extract(d.config_json,'$.target_module_uid')=?2 AND json_extract(d.config_json,'$.label_field')=?3)
-                          OR (d.field_type IN ('lookup','rollup') AND d.module_uid=?2 AND json_extract(d.config_json,'$.relationship_field')=?3)
-                          OR (d.field_type IN ('lookup','rollup') AND json_extract(d.config_json,'$.target_field')=?3 AND EXISTS(
-                            SELECT 1 FROM mx_fields l WHERE l.module_uid=d.module_uid AND l.field_type='relationship'
-                              AND COALESCE(l.module_key,l.field_key)=json_extract(d.config_json,'$.relationship_field')
-                              AND json_extract(l.config_json,'$.target_module_uid')=?2))))",
-                        params![&uid_for_db, &module_uid, &existing.key],
-                        |row| row.get(0),
-                    )?;
-                    if dependency {
-                        return Err(rusqlite::Error::InvalidParameterName(
-                            "MX_CONFIG:Reconfigure or archive the relationship, lookup and rollup fields that use this field first.".into(),
-                        ));
-                    }
-                    if existing.field_type == "relationship" {
-                        let linked: bool = connection.query_row(
-                            "SELECT EXISTS(SELECT 1 FROM mx_record_links WHERE field_uid=?1)",
-                            [&uid_for_db], |row| row.get(0),
-                        )?;
-                        if linked { return Err(rusqlite::Error::InvalidParameterName(
-                            "MX_CONFIG:Clear this relationship's stored links before archiving the field.".into(),
-                        )); }
-                    }
-
-                    if field_used_by_storage_layout_db(connection, &uid_for_db)? {
-                        return Err(rusqlite::Error::InvalidParameterName(
-                            "MX_STORAGE_LAYOUT_FIELD".to_string(),
-                        ));
-                    }
-
-                    if existing.field_type == "attachments" {
-                        let attached_count: i64 = connection.query_row(
-                            "SELECT COUNT(*) FROM mx_attachments WHERE attachment_field_uid = ?1",
-                            params![&uid_for_db],
-                            |row| row.get(0),
-                        )?;
-
-                        if attached_count > 0 {
-                            return Err(rusqlite::Error::InvalidParameterName(
-                                "MX_ATTACHMENT_FIELD_HAS_FILES".to_string(),
-                            ));
-                        }
+                    let check = super::field_archive::check(connection, &uid_for_db)?;
+                    if !check.blockers.is_empty() {
+                        return Ok(FieldUpdate::ArchiveBlocked(check));
                     }
                 }
 
@@ -2320,7 +2308,8 @@ pub async fn update_schema_field(
                     )?;
                 }
 
-                super::relationships::validate_config(connection, &module_uid, &existing.field_type, &next_config)?;
+                super::relationships::validate_config(connection, &module_uid, &existing.key, &existing.field_type, &next_config)?;
+                if request.active!=Some(false){super::form_rules::validate_config(connection,&module_uid,&existing.key,&existing.label,&existing.field_type,&next_config)?;}
                 if existing.field_type == "relationship" && next_config != existing.config {
                     if next_config["target_module_uid"] != existing.config["target_module_uid"] {
                         let dependent:bool = connection.query_row("SELECT EXISTS(SELECT 1 FROM mx_fields WHERE module_uid=?1 AND active=1 AND field_type IN ('lookup','rollup') AND json_extract(config_json,'$.relationship_field')=?2)",params![&module_uid,&existing.key],|r|r.get(0))?;
@@ -2441,13 +2430,17 @@ pub async fn update_schema_field(
                     recalculate_module_formulas(connection, &module_uid, &formula_actor_uid)?;
                 }
 
-                Ok(updated)
+                if let Some(tx) = archive_transaction { tx.commit()?; }
+                Ok(FieldUpdate::Updated(updated))
             })
         })
         .await;
 
     match database_result {
-        Ok(Ok(field)) => {
+        Ok(Ok(FieldUpdate::ArchiveBlocked(check))) => {
+            api_json(check.status(), check.blocked_response())
+        }
+        Ok(Ok(FieldUpdate::Updated(field))) => {
             publish_live_event(
                 "schema.updated",
                 Some(&claims.uid),

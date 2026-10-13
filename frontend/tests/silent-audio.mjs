@@ -1,6 +1,15 @@
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
+// UI-only suites do not need playback. Disconnect from both audio servers
+// instead of inspecting or creating any desktop sink or device.
+export function disconnectedBrowserAudio(directory) {
+  return { ...process.env, PULSE_SERVER: `unix:${directory}/no-audio.sock`,
+    PIPEWIRE_REMOTE: 'mx_ui_disconnected',
+    ALSA_CONFIG_PATH: fileURLToPath(new URL('./alsa-null.conf', import.meta.url)),
+    SDL_AUDIODRIVER: 'dummy', ALSOFT_DRIVERS: 'null' };
+}
+
 // Fail closed: browser test tones must never use the workstation's speakers.
 // This helper only inspects an explicitly supplied null sink; it does not
 // create devices, alter defaults/volume, or restart the user's audio services.

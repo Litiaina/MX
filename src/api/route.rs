@@ -144,6 +144,7 @@ fn admin_routes() -> Router {
             put(update_module_schema_order),
         )
         .route("/mx/v1/admin/schema/fields/{uid}", put(update_schema_field))
+        .route("/mx/v1/admin/schema/fields/{uid}/archive-check", get(crate::api::mx::field_archive::get_archive_check))
         .route(
             "/mx/v1/admin/schema/system/{key}",
             put(update_system_schema_field),

@@ -8,7 +8,7 @@ import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {chromium,firefox,webkit} from 'playwright';
 import {startIsolatedMx} from './isolated-mx.mjs';
-import {isolatedBrowserAudio} from './silent-audio.mjs';
+import {disconnectedBrowserAudio} from './silent-audio.mjs';
 const mx=await startIsolatedMx(fileURLToPath(new URL('../',import.meta.url)));
 const browsers=[],results=[],failures=[];const base='/mx/v1/drive';
 const call=async(path,user,method='GET',data,expected=[200])=>(await mx.call(path,user?.access_token,method,data,expected)).body;
@@ -42,7 +42,7 @@ try{
   const owner=await call('/mx/v1/auth/authenticate',null,'POST',{email:'owner@test.invalid',password});
   await call('/mx/v1/user/create',owner,'POST',{email:'glaydejhonnmendoza@example.test',name:'Glayde Jhon Mendoza',password,access_level:2},[201]);
   const member=await call('/mx/v1/auth/authenticate',null,'POST',{email:'glaydejhonnmendoza@example.test',password});
-  const source=await upload(owner);const environment=isolatedBrowserAudio();
+  const source=await upload(owner);const environment=disconnectedBrowserAudio(mx.directory);
   for(const engine of(process.env.MX_TEST_BROWSERS||'chromium,firefox,webkit').split(',')){
     const folder=await call(`${base}/folders`,owner,'POST',{operation_uid:randomUUID(),name:`Polish ${engine}`});const ids=seed(owner,folder,source);
     const group=await call('/mx/v1/collaboration/channels',owner,'POST',{kind:'group',name:`Operations ${engine}`,member_uids:[member.uid]},[201]);

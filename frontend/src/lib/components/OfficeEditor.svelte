@@ -19,6 +19,8 @@
   import { listDrafts, storeDraft, removeDraft, draftKey, type OfficeDraft } from '../office/drafts';
   import { OfficeOperations } from '../office/operations';
   import { checkOfficeGraphics } from '../office/capabilities';
+  import OfficeLoading from './OfficeLoading.svelte';
+  import { openingDetail, type OfficeLoadingProgress } from '../office/loading';
 
   let canvas: HTMLCanvasElement;
   let viewport: HTMLDivElement; let viewportWidth = $state(innerWidth);
@@ -29,6 +31,8 @@
   let item = $state<DriveItem | null>(null);
   let accountUid = $state(''); let extension = $state('');
   let ready = $state(false); let working = $state(false); let status = $state('Preparing MX Office…');
+  let loading = $state<OfficeLoadingProgress>({ phase: 'access', detail: 'Checking saved copies on this device and preparing your MX session.' });
+  let loadingFailed = $state(false);
   let error = $state(''); let notice = $state(''); let offline = $state(!navigator.onLine);
   let saveConfirmation = $state(''); let saving = $state(false);
   let selectedCell = $state('');
@@ -60,7 +64,7 @@
   onMount(() => {
     document.documentElement.dataset.theme = sessionStorage.getItem('mx_office_theme') || 'light';
     needsSignIn = !hasAuthTokens();
-    engine = new OfficeEngine((value) => { generation = value; saveConfirmation=''; if(!working)status='Changes not yet saved to MX'; if (persist) scheduleDraft(); }, (message) => { error = message; ready = false; status='Office stopped · your loaded copy is still downloadable'; }, (copy) => { if(copy)offerCopy();else void save(); }, message=>{notice=message;void focusDocument();}, cell=>selectedCell=cell);
+    engine = new OfficeEngine((value) => { generation = value; saveConfirmation=''; if(!working)status='Changes not yet saved to MX'; if (persist) scheduleDraft(); }, (message) => { error = message; ready = false; loadingFailed=true; status='Office stopped · your loaded copy is still downloadable'; }, (copy) => { if(copy)offerCopy();else void save(); }, message=>{notice=message;void focusDocument();}, cell=>selectedCell=cell, progress=>{if(!disposed&&!ready&&!loadingFailed&&['engine','runtime'].includes(loading.phase))loading=progress;});
     void prepareOffline();
     void initialize();
     const network = () => { void checkConnection(); };
@@ -147,6 +151,7 @@
     try { drafts = await listDrafts(); } catch (reason) { offlineError = message(reason); }
     if (!requestedUid) { status = 'Choose an offline copy, or open an Office file from MX Drive.'; return; }
     try {
+      loading = { phase: 'access', detail: 'Checking your MX account and looking for an offline copy of this document.' };
       const session = await documentSession(); accountUid = session.uid;
       const draft = drafts.find(value => value.key === draftKey(accountUid, requestedUid));
       if (draft) { offered = draft; status = 'An offline copy exists on this device.'; return; }
@@ -154,12 +159,13 @@
     } catch (reason) {
       const draft = drafts.find(value => value.item.uid === requestedUid);
       if (draft && !(reason instanceof ApiError && [401,403,404].includes(reason.status))) { offered = draft; status = 'MX is unreachable. You can continue with your offline copy.'; offline = true; }
-      else { error = message(reason); status = 'Open the editor from MX Drive after signing in.'; if (reason instanceof ApiError && reason.status === 401) requireSignIn(); }
+      else { error = message(reason); loadingFailed=true; status = 'Open the editor from MX Drive after signing in.'; if (reason instanceof ApiError && reason.status === 401) requireSignIn(); }
     }
   }
   async function startEngine() {
     if (engineStarted) return;
     status = 'Starting the bundled Office engine on your device…';
+    loading = { phase: 'engine', detail: 'Loading the locally bundled editor and preparing WebAssembly. First launches can take longer; later launches can use this browser’s cache.' };
     await engine.start(canvas); engineStarted = true;
   }
   async function captureSnapshot() {
@@ -169,18 +175,33 @@
     return exported;
   }
   async function openCurrent(uid: string) {
-    working = true; ready = false; error = '';
+    working = true; ready = false; error = ''; loadingFailed=false;
+    loading = { phase: 'access', detail: 'Checking document permissions and the exact saved version to open.' };
+    if(viewport)viewport.scrollLeft=0;
     try {
       await localWork.idle();
       const context = await apiJson<OpenContext>(`/mx/v1/drive/items/${encodeURIComponent(uid)}/office`);
       const ext = officeExtension(context.item.original_file_name || context.item.name);
       if (!ext) throw new Error('This Office format is not supported for editing.');
-      status = 'Loading your document from MX…';
-      // Pin the exact persistent version selected in the metadata snapshot.
-      const file = await apiFile(`/mx/v1/drive/items/${encodeURIComponent(uid)}/download?version_uid=${encodeURIComponent(context.version_uid)}`);
       item = context.item; extension = ext;
+      status = 'Loading your document from MX…';
+      loading = { phase: 'document', detail: `Downloading saved revision ${context.item.revision} from your MX server. Your file is not being saved or modified.` };
+      let progressAt = 0;
+      let progressTimer: ReturnType<typeof setTimeout> | undefined;
+      let received = { loaded: 0, total: null as number | null };
+      const displayProgress = () => {
+        clearTimeout(progressTimer); progressTimer=undefined; progressAt=performance.now();
+        if(!disposed&&loading.phase==='document')loading={...loading,...received};
+      };
+      // Pin the exact persistent version selected in the metadata snapshot.
+      const file = await apiFile(`/mx/v1/drive/items/${encodeURIComponent(uid)}/download?version_uid=${encodeURIComponent(context.version_uid)}`, { onProgress: (loaded,total)=>{
+        received={loaded,total}; const delay=100-(performance.now()-progressAt);
+        if(loaded===0||loaded===total||delay<=0)displayProgress();
+        else if(progressTimer===undefined)progressTimer=setTimeout(displayProgress,delay);
+      } }).finally(()=>clearTimeout(progressTimer));
       snapshot = { blob: file.blob, generation: 0 };
       await startEngine();
+      loading = { phase: 'opening', detail: openingDetail(ext) };
       await engine.open(file.blob, ext, readOnly);
       generation = 0; acknowledged = 0; snapshot = { blob: file.blob, generation: 0 };
       uncommittedInput = false;
@@ -191,16 +212,19 @@
       document.title = `${item.name} · MX Office`;
       await showCanvas();
       if (persist) await checkpoint(true);
-    } catch (reason) { error = message(reason); status='Office could not open · download the loaded copy or return to MX Drive'; if (reason instanceof ApiError && reason.status === 401) requireSignIn(); }
+    } catch (reason) { error = message(reason); loadingFailed=true; status='Office could not open · download the loaded copy or return to MX Drive'; if (reason instanceof ApiError && reason.status === 401) requireSignIn(); }
     finally { working = false; }
   }
   async function openLocal(draft: OfficeDraft) {
-    working = true; ready = false; error = ''; offered = null;
+    working = true; ready = false; error = ''; loadingFailed=false; offered = null;
+    loading = { phase: 'document', detail: 'Loading the offline copy saved in this browser. MX access and the latest revision will be checked when you save.', loaded: draft.blob.size, total: draft.blob.size };
+    if(viewport)viewport.scrollLeft=0;
     try {
       await localWork.idle();
       item = draft.item; accountUid = draft.accountUid; extension = draft.extension; persist = true;
       snapshot = { blob: draft.blob, generation: 0 };
       await startEngine();
+      loading = { phase: 'opening', detail: openingDetail(extension) };
       await engine.open(draft.blob, extension, readOnly);
       generation = 0; acknowledged = draft.generation === draft.acknowledgedGeneration && !draft.saveFile && !draft.copyFile ? 0 : -1;
       snapshot = { blob: draft.blob, generation: 0 }; pendingFile = draft.saveFile;
@@ -213,7 +237,7 @@
       notice = 'Opened the local copy. MX will check the latest revision and your access before saving.';
       status = 'Offline copy opened'; document.title = `${item.name} · MX Office`;
       await showCanvas();
-    } catch (reason) { error = message(reason); status='Office could not open · your local copy is still downloadable'; }
+    } catch (reason) { error = message(reason); loadingFailed=true; status='Office could not open · your local copy is still downloadable'; }
     finally { working = false; }
   }
   function scheduleDraft() { clearTimeout(draftTimer); draftTimer = setTimeout(() => { if (!working) void checkpoint(); }, 3000); }
@@ -406,8 +430,8 @@
   {#if signIn}<form class="inline-form" onsubmit={login}><label>Email<input type="email" autocomplete="username" required bind:value={email}/></label><label>Password<input type="password" autocomplete="current-password" required bind:value={password}/></label><label>OTP or recovery code<input autocomplete="one-time-code" bind:value={factor}/></label><button disabled={working}>Sign in to save</button><button type="button" onclick={()=>signIn=false}>Cancel</button></form>{/if}
   </div>
   {#if offered}<section class="recovery"><h1>Continue your local copy?</h1><p>{offered.item.name} · saved on this device {new Date(offered.updatedAt).toLocaleString()}</p><p>It may contain changes that were not saved to MX. Saving to your MX server will check your access and the original revision.</p><button class="primary" onclick={()=>void openLocal(offered!)}>Open local copy</button><button disabled={offline} onclick={()=>{if(offered&&confirm('Discard this local draft and open the current MX version?')){const uid=offered.item.uid;void removeDraft(offered.key).then(()=>openCurrent(uid));}}}>Discard local draft and open MX version</button></section>
-  {:else if !requestedUid && !ready}<section class="recovery"><h1>Offline documents</h1><p>Only documents you explicitly kept on this device appear here. Open other files from MX Drive while connected.</p>{#each drafts as draft}<div class="draft-row"><button onclick={()=>void openLocal(draft)}>{draft.item.name}<small>{new Date(draft.updatedAt).toLocaleString()}</small></button><button onclick={()=>void deleteLocal(draft)}>Remove local copy</button></div>{:else}<p>No offline copies have been saved in this browser profile.</p>{/each}<a href="/">Open MX</a></section>{/if}
-  <div class="editor-stage" bind:this={viewport} class:inactive={!ready} role="region" aria-label="Scrollable Office editor"><canvas id="qtcanvas" bind:this={canvas} style:width={`${canvasWidth}px`} contenteditable="true" aria-label="Office document" data-native-focused={nativeFocused} onfocus={()=>void focusDocument()} oncontextmenu={event=>event.preventDefault()} onkeydown={event=>event.preventDefault()} onwheel={event=>event.preventDefault()}></canvas>{#if !ready && !offered}<div class="loading" role="status">{status}</div>{/if}</div>
+  {:else if !requestedUid && !ready && !working && !item}<section class="recovery"><h1>Offline documents</h1><p>Only documents you explicitly kept on this device appear here. Open other files from MX Drive while connected.</p>{#each drafts as draft}<div class="draft-row"><button onclick={()=>void openLocal(draft)}>{draft.item.name}<small>{new Date(draft.updatedAt).toLocaleString()}</small></button><button onclick={()=>void deleteLocal(draft)}>Remove local copy</button></div>{:else}<p>No offline copies have been saved in this browser profile.</p>{/each}<a href="/">Open MX</a></section>{/if}
+  <div class="editor-stage" bind:this={viewport} class:inactive={!ready} role="region" aria-label="Scrollable Office editor"><canvas id="qtcanvas" bind:this={canvas} style:width={`${canvasWidth}px`} contenteditable="true" aria-label="Office document" data-native-focused={nativeFocused} onfocus={()=>void focusDocument()} oncontextmenu={event=>event.preventDefault()} onkeydown={event=>event.preventDefault()} onwheel={event=>event.preventDefault()}></canvas>{#if !ready && !offered}{#if requestedUid || item}<OfficeLoading progress={loading} fileName={item?.name || ''} failed={loadingFailed} />{:else}<div class="loading" role="status">{status}</div>{/if}{/if}</div>
 </main>
 
 <style>

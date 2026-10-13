@@ -1,10 +1,13 @@
 import { officeFormats } from './formats';
 import { installOfficeCompatibility } from './compatibility';
 import { checkOfficeGraphics } from './capabilities';
+import { officeEngineProgress, type OfficeLoadingProgress } from './loading';
 interface EngineModule {
   canvas: HTMLCanvasElement; uno_scripts: string[]; locateFile: (name: string) => string;
   mainScriptUrlOrBlob: Blob; uno_main: Promise<MessagePort>;
   onAbort: (message: string) => void; printErr: (message: string) => void;
+  setStatus: (message: string) => void; monitorRunDependencies: (remaining: number) => void;
+  onRuntimeInitialized: () => void;
 }
 interface EngineFS { mkdir: (path: string) => void; writeFile: (path: string, bytes: Uint8Array) => void; readFile: (path: string) => Uint8Array }
 declare global { interface Window { Module: EngineModule; FS: EngineFS } }
@@ -17,7 +20,7 @@ export class OfficeEngine {
   private canvasResize?: ResizeObserver;
   private resizeFrame?: number;
   private pending = new Map<number, { resolve: (message: Record<string, unknown>) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }>();
-  constructor(private modified: (generation: number) => void, private fatal: (message: string) => void, private saveRequested: (copy: boolean) => void, private announce: (message: string) => void, private selected: (cell: string) => void = () => {}) {}
+  constructor(private modified: (generation: number) => void, private fatal: (message: string) => void, private saveRequested: (copy: boolean) => void, private announce: (message: string) => void, private selected: (cell: string) => void = () => {}, private loading: (progress: OfficeLoadingProgress) => void = () => {}) {}
   async start(canvas: HTMLCanvasElement): Promise<void> {
     if (!isSecureContext || !crossOriginIsolated || typeof SharedArrayBuffer === 'undefined') throw new Error('MX Office requires HTTPS and browser isolation headers. Open it directly from MX; check reverse-proxy headers if needed.');
     await checkOfficeGraphics();
@@ -33,19 +36,29 @@ export class OfficeEngine {
     };
     this.runtimeError = (event: ErrorEvent) => fail(`Office runtime error: ${event.message || 'browser runtime failure'}`);
     window.addEventListener('error', this.runtimeError);
+    let receivingData = false, runtimeInitialized = false;
     window.Module = {
       canvas, uno_scripts: [`${vendor}zeta.js`, `${location.origin}/office/office-thread.js`],
       locateFile: (name) => vendor + name,
       mainScriptUrlOrBlob: new Blob([`importScripts('${vendor}soffice.js');`], { type: 'text/javascript' }),
       uno_main: undefined as unknown as Promise<MessagePort>,
       onAbort: (message) => fail(`The Office engine stopped: ${message}`),
-      printErr: (message) => console.warn('Office:', message)
+      printErr: (message) => console.warn('Office:', message),
+      setStatus: (message) => {
+        const progress = officeEngineProgress(message);
+        if (progress && !(runtimeInitialized && progress.phase === 'engine')) { receivingData = progress.phase === 'engine'; this.loading(progress); }
+      },
+      monitorRunDependencies: (remaining) => {
+        if (!runtimeInitialized && !receivingData && remaining > 0) this.loading({ phase: 'engine', detail: `Preparing ${remaining.toLocaleString()} editor resources and the WebAssembly runtime.` });
+      },
+      onRuntimeInitialized: () => { runtimeInitialized = true; this.loading({ phase: 'runtime', detail: 'Starting the editor’s graphics and document workers on your device.' }); }
     };
     const script = document.createElement('script'); script.src = `${vendor}soffice.js`;
     script.onerror = () => fail('The bundled Office engine could not be loaded. Reconnect once to prepare offline editing.');
     script.onload = () => {
       window.Module.uno_main.then((port) => {
         this.port = port;
+        this.loading({ phase: 'runtime', detail: 'The editor runtime is initialized. Connecting the document engine.' });
         console.info('MX Office: engine channel connected');
         port.onmessage = ({ data }) => {
           if (data.cmd === 'ready') { console.info('MX Office: document engine ready'); ready(); return; }

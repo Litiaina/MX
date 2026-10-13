@@ -235,13 +235,23 @@ export async function apiJson<T>(
 
 /** Buffered files use a per-read idle deadline; native media URL/range playback
  * continues to stream directly and is never forced through this buffer. */
-export async function apiFile(path: string, options: ApiRequestOptions = {}): Promise<{ blob: Blob; headers: Headers }> {
+export interface FileRequestOptions extends ApiRequestOptions {
+  onProgress?: (loaded: number, total: number | null) => void;
+}
+export async function apiFile(path: string, options: FileRequestOptions = {}): Promise<{ blob: Blob; headers: Headers }> {
+  const { onProgress, ...requestOptions } = options;
   let refreshed = false;
   for (;;) {
-    const result = await request(path, { timeoutMs: 30 * 60_000, ...options }, async (response) => {
+    const result = await request(path, { timeoutMs: 30 * 60_000, ...requestOptions }, async (response) => {
       const reader = response.body?.getReader();
       const chunks: BlobPart[] = [];
+      const length = Number(response.headers.get('content-length'));
+      // The stream is decoded by fetch. Compressed Content-Length is not its
+      // byte total, so do not present a misleading percentage for that case.
+      const total = !response.headers.get('content-encoding') && Number.isSafeInteger(length) && length > 0 ? length : null;
+      let loaded = 0;
       try {
+        if (response.ok) onProgress?.(0, total);
         if (reader) for (;;) {
           let timer: ReturnType<typeof setTimeout> | undefined;
           try {
@@ -254,10 +264,13 @@ export async function apiFile(path: string, options: ApiRequestOptions = {}): Pr
             ]);
             if (next.done) break;
             chunks.push(next.value);
+            loaded += next.value.byteLength;
+            if (response.ok) onProgress?.(loaded, total);
           } finally { clearTimeout(timer); }
         }
         const blob = reader ? new Blob(chunks, { type: response.headers.get('content-type') || '' }) : await response.blob();
         if (!response.ok) return { status: response.status, payload: await readJson(new Response(blob, { status: response.status, headers: response.headers })), file: null };
+        onProgress?.(blob.size, blob.size);
         return { status: response.status, payload: null, file: { blob, headers: response.headers } };
       } finally { reader?.releaseLock(); }
     }, true);

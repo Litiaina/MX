@@ -1,0 +1,58 @@
+# MX documentation
+
+[Project overview](../README.md)
+
+Use the operator guides first. They describe the actual buttons and field types
+without requiring knowledge of the API or database. Reference pages explain
+implementation details and advanced configuration.
+
+## Operators and module administrators
+
+| Task | Start here |
+|---|---|
+| Create modules and enter your first records | [Getting started](getting-started.md) |
+| Select an employee once and display their classification | [Relationships and automatic values](relationships.md) |
+| Understand “Allow multiple linked records” | [Single versus multiple selection](relationships.md#what-allow-multiple-linked-records-means) |
+| Choose between Lookup and editable auto-fill | [Which method to use](relationships.md#choose-the-result-you-need) |
+| Show different fields for different choices | [Conditional forms](conditional-forms.md) |
+| Show an OFF attachment, dates and status | [OFF/LEAVE worked example](conditional-forms.md#your-off-fields-attachment-dates-and-status) |
+| Configure totals beneath numeric columns | [Column summaries](modules-and-fields.md#record-column-summaries) |
+| Understand a field archive dependency | [Archiving fields](modules-and-fields.md#understand-why-a-field-cannot-be-archived) |
+| Organize, upload and share files | [MX Drive](drive.md) |
+| Message, call and share screens | [Collaboration](collaboration.md) |
+| Open, edit, save or prepare an offline Office document | [Office editor](office.md) |
+
+## Deployment administrators
+
+- [Deployment and upgrade procedure](deployment.md)
+- [Configuration reference](configuration.md)
+- [Accounts, permissions, audit and backups](administration-and-security.md)
+- [N1 storage layouts and frozen namespaces](n1-storage.md)
+- [Migration and release notes](migration-and-releases.md)
+- [Validation evidence and known limitations](../TESTING.md)
+
+## Reference and integration
+
+- [Modules, field types and permissions](modules-and-fields.md)
+- [Records, attachments, numbering, formulas and search](records-and-search.md)
+- [Dashboards, reports and CSV exports](dashboards-and-reports.md)
+- [HTTP API](http-api.md)
+- [Platform and architecture](platform.md)
+- [Development and testing](development.md)
+- [Changelog](../CHANGELOG.md) and [contributing](../CONTRIBUTING.md)
+
+## Reading conventions
+
+**Bold names** identify UI labels or buttons. Names such as Employees, Inventory,
+Issuer and Classification are examples of modules and fields you create; they
+are not built-in requirements. Replace them with your organization's names.
+
+Administrator configuration defines the forms. Operators then enter records
+through those forms. A business module named Users or Employees is separate from
+**Administration → Accounts**, which manages MX sign-in accounts and permissions.
+The same distinction applies if your custom business module is itself named Accounts.
+
+These guides describe the checked-in implementation. A deployed executable and
+frontend must be updated together for matching UI and backend behavior. Released
+and unreleased changes are distinguished in the changelog; passing tests do not
+remove the documented acceptance limits.

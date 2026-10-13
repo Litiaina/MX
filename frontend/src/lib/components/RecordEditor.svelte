@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { tick } from 'svelte';
+  import { tick, onDestroy, untrack } from 'svelte';
   import ArrowLeft from '@lucide/svelte/icons/arrow-left';
   import DownloadIcon from '@lucide/svelte/icons/download';
   import Eye from '@lucide/svelte/icons/eye';
@@ -22,13 +22,26 @@
   import RecordAttachmentThumbnail from './RecordAttachmentThumbnail.svelte';
   import RelationshipInput from './RelationshipInput.svelte';
   import RelatedRecords from './RelatedRecords.svelte';
+  import {relationshipPreview} from '../api/relationships';
+  import {applyRelationshipPreview} from '../util/relationshipAutofill';
+  import SelectFieldInput from './SelectFieldInput.svelte';
+  import {fieldState,fieldRules,optionDetails,prepareForm,writable as ruleWritable} from '../util/formRules';
 
-  let { schema, moduleUid = '', record, canWrite, canDelete, canAttachments = true, allowEdit = false, liveMessage = null, focusAttachments = false, recordLabel = 'Record', onEdit = () => undefined, onClose, onSaved }:
-    { schema: SchemaResponse; moduleUid?: string; record: MxRecord | null; canWrite: boolean; canDelete: boolean; canAttachments?: boolean; allowEdit?: boolean; liveMessage?: LiveMessage | null; focusAttachments?: boolean; recordLabel?: string; onEdit?: () => void; onClose: () => void; onSaved: () => Promise<void> } = $props();
+  let { schema, moduleUid = '', record, canWrite, canDelete, canAttachments = true, allowEdit = false, liveMessage = null, focusAttachments = false, recordLabel = 'Record', initialChanges = null, onEdit = () => undefined, onClose, onSaved }:
+    { schema: SchemaResponse; moduleUid?: string; record: MxRecord | null; canWrite: boolean; canDelete: boolean; canAttachments?: boolean; allowEdit?: boolean; liveMessage?: LiveMessage | null; focusAttachments?: boolean; recordLabel?: string; initialChanges?:Record<string,JsonValue>|null; onEdit?: () => void; onClose: () => void; onSaved: () => Promise<void> } = $props();
 
   type PreviewEntry = { key: string; name: string; mimeType: string; detail: string; storedUid?: string; pendingFile?: File };
 
   let values = $state<Record<string, JsonValue>>({});
+  let destroyed=false;onDestroy(()=>destroyed=true);
+  const relationshipRequests = new Map<string,AbortController>();
+  let relationshipLoading = $state<Record<string,boolean>>({});
+  let relationshipErrors = $state<Record<string,string>>({});
+  let recoveredRelationshipPending = new Set<string>();
+  const relationshipPending = $derived(Object.values(relationshipLoading).some(Boolean));
+  const relationshipFailed = $derived(Object.values(relationshipErrors).some(Boolean));
+  function cancelRelationshipRequests(){for(const controller of relationshipRequests.values())controller.abort();relationshipRequests.clear();relationshipLoading={};relationshipErrors={};}
+  onDestroy(cancelRelationshipRequests);
   let original = $state<Record<string, JsonValue>>({});
   let pending = $state<Record<string, File[]>>({});
   let busy = $state(false);
@@ -71,7 +84,9 @@
 
   $effect(() => {
     const source = record?.values || {};
+    untrack(cancelRelationshipRequests);
     const base = cloneJson(source);
+    if(!record)for(const field of schema.fields.filter(f=>f.active&&f.field_type==='boolean'))base[field.key]=false;
     if (!record && schema.fields.some((field) => field.active && field.key === 'date' && field.field_type === 'date')) {
       const now = new Date();
       base.date = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
@@ -80,8 +95,10 @@
     let restoredDraft = false;
     let restoredRevision = record?.revision || 1;
     let restoredSubmission: typeof createSubmission = null;
+    recoveredRelationshipPending = new Set();
     try {
-      const saved = canWrite ? JSON.parse(sessionStorage.getItem(draftStorageKey()) || 'null') as { values?: Record<string, JsonValue>; original?: Record<string, JsonValue>; base_revision?: number; create_submission?: {uid:string;values:Record<string,JsonValue>} } | null : null;
+      const saved = canWrite ? JSON.parse(sessionStorage.getItem(draftStorageKey()) || 'null') as { values?: Record<string, JsonValue>; original?: Record<string, JsonValue>; base_revision?: number; create_submission?: {uid:string;values:Record<string,JsonValue>}; relationship_pending?:string[] } | null : null;
+      recoveredRelationshipPending = new Set(Array.isArray(saved?.relationship_pending)?saved.relationship_pending:[]);
       if (!record && saved?.create_submission?.uid) restoredSubmission = saved.create_submission;
       if (saved?.values && typeof saved.values === 'object') {
         const editable = new Set(schema.fields.filter((field) => field.active && !['attachments', 'auto_number', 'formula', 'lookup', 'rollup'].includes(field.field_type)).map((field) => field.key));
@@ -96,19 +113,21 @@
         restoredDraft = JSON.stringify(initial) !== JSON.stringify(base);
       }
     } catch { /* A malformed or unavailable session store should not block the editor. */ }
-    values = initial;
+    values = initialChanges?prepareForm(schema.fields.filter(f=>f.active),initial,initialChanges).values:initial;
     createSubmission = restoredSubmission;
     original = cloneJson(base);
     pending = {};
     persisted = null;
     workingRevision = restoredRevision;
     conflicts = [];
-    liveNotice = restoredDraft ? 'Your unsaved entries from this tab were restored.' : '';
+    liveNotice = initialChanges?'Complete the fields for this selection, then save the record.':restoredDraft ? 'Your unsaved entries from this tab were restored.' : '';
     deletedRemotely = false;
     uploadProgress = 0;
     uploadLabel = '';
     fileProgress = {};
     focusedAttachments = false;
+    relationshipErrors = Object.fromEntries(schema.fields.filter(f=>f.active&&f.field_type==='relationship'&&recoveredRelationshipPending.has(f.key)).map(f=>[f.key,'Linked fields were not finished in this draft. Retry before saving.']));
+    if(restoredDraft)untrack(()=>{for(const field of schema.fields.filter(f=>f.active&&f.field_type==='relationship'))if(isDirty(field.key)&&!recoveredRelationshipPending.has(field.key))void selectRelationship(field,values[field.key]??null,true);});
   });
 
   $effect(() => {
@@ -126,6 +145,7 @@
   });
 
   const fields = $derived(schema.fields.filter((field) => field.active && (canAttachments || field.field_type !== 'attachments')).sort((a, b) => a.position - b.position));
+  const states=$derived(Object.fromEntries(fields.map(field=>[field.key,fieldState(field,values)])));
   const unassignedFiles = $derived(current?.attached_files.filter((file) => !file.attachment_field_uid) || []);
 
   function fieldValue(field: FieldDefinition): string | number | boolean {
@@ -149,11 +169,50 @@
   }
 
   function setValue(field: FieldDefinition, target: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement) {
-    if (field.field_type === 'boolean') values[field.key] = (target as HTMLInputElement).checked;
+    if (field.field_type === 'boolean'){const next=(target as HTMLInputElement).checked;(target as HTMLInputElement).checked=values[field.key]===true;void changeValues({[field.key]:next});return;}
     else if (field.field_type === 'integer') values[field.key] = target.value === '' ? null : Number.parseInt(target.value, 10);
     else if (field.field_type === 'decimal') values[field.key] = target.value === '' ? null : Number(target.value);
     else values[field.key] = target.value || null;
     persistDraft();
+  }
+
+  async function changeValues(input:Record<string,JsonValue>,knownResets:string[]=[]){
+    const baseBeforeChoice=workingRevision;
+    const result=prepareForm(fields,values,input);
+    const cleared=[...new Set([...result.resets,...knownResets])].filter(key=>values[key]!=null&&values[key]!==''&&values[key]!==false&&(!!current||isDirty(key)));
+    const hiddenUploads=fields.filter(f=>f.field_type==='attachments'&&!fieldState(f,result.values).visible&&pending[f.uid]?.length);
+    if((cleared.length||hiddenUploads.length)&&!await requestConfirmation({title:'Clear details from the previous choice?',description:`This selection no longer uses ${[...cleared.map(key=>fields.find(f=>f.key===key)?.label||key),...hiddenUploads.map(f=>`${f.label} queued uploads`)].join(', ')}. Those entries will be cleared from this edit. Stored files are kept, and previously saved values remain in version history.`,confirmLabel:'Switch and clear',tone:'danger'}))return false;
+    if(destroyed)return false;
+    // Updates received while the user considered the confirmation must still
+    // participate in normal stale-field checks, especially automatic clears.
+    if(cleared.length||hiddenUploads.length)workingRevision=Math.min(workingRevision,baseBeforeChoice);
+    const next=prepareForm(fields,values,input);values=next.values;
+    for(const f of hiddenUploads){for(const file of pending[f.uid]||[])delete fileProgress[fileKey(file)];pending[f.uid]=[];}
+    persistDraft();return true;
+  }
+
+  async function selectRelationship(field:FieldDefinition,value:JsonValue,preserveCopies=false) {
+    relationshipRequests.get(field.key)?.abort();
+    if(!preserveCopies&&!await changeValues({[field.key]:value}))return;
+    const affected=fields.filter(f=>['lookup','rollup'].includes(f.field_type)&&f.config.relationship_field===field.key);
+    const needsPreview=affected.length>0||(Array.isArray(field.config.auto_fill)&&field.config.auto_fill.length>0);
+    if(!needsPreview){persistDraft();return;}
+    const before=cloneJson(values);
+    for(const item of affected)values[item.key]=null;
+    const controller=new AbortController();relationshipRequests.set(field.key,controller);
+    relationshipLoading[field.key]=true;relationshipErrors[field.key]='';
+    persistDraft();
+    try {
+      const preview=await relationshipPreview(field.uid,value,controller.signal);
+      if(controller.signal.aborted||relationshipRequests.get(field.key)!==controller)return;
+      const next=applyRelationshipPreview(values,before,preserveCopies?{...preview,values:{}}:preview);
+      if(!preserveCopies){const changed=Object.fromEntries(Object.entries(next).filter(([key,value])=>JSON.stringify(value)!==JSON.stringify(values[key])));if(!await changeValues(changed))throw new Error('Linked auto-fill was cancelled. Choose the previous name or retry the linked fields.');}
+      else values=next;
+    } catch(reason) {
+      if(!controller.signal.aborted)relationshipErrors[field.key]=reason instanceof Error?reason.message:'Could not fill the linked fields. Retry before saving.';
+    } finally {
+      if(relationshipRequests.get(field.key)===controller){relationshipRequests.delete(field.key);relationshipLoading[field.key]=false;persistDraft();}
+    }
   }
 
   function draftStorageKey() {
@@ -168,7 +227,7 @@
     if (!canWrite) return;
     const changed = schema.fields.some((field) => !['attachments', 'auto_number', 'formula', 'lookup', 'rollup'].includes(field.field_type) && JSON.stringify(values[field.key] ?? null) !== JSON.stringify(original[field.key] ?? null));
     try {
-      if (changed || createSubmission) sessionStorage.setItem(draftStorageKey(), JSON.stringify({ values: cloneJson(values), original: cloneJson(original), base_revision: workingRevision, create_submission: createSubmission, saved_at: Date.now() }));
+      if (changed || createSubmission) sessionStorage.setItem(draftStorageKey(), JSON.stringify({ values: cloneJson(values), original: cloneJson(original), base_revision: workingRevision, create_submission: createSubmission, relationship_pending:fields.filter(f=>relationshipLoading[f.key]||relationshipErrors[f.key]).map(f=>f.key), saved_at: Date.now() }));
       else sessionStorage.removeItem(draftStorageKey());
     } catch { /* The editor continues even when private browsing blocks storage. */ }
   }
@@ -242,7 +301,7 @@
     } catch { liveNotice = 'Live data changed, but this open record could not be refreshed yet. Saving will still check for conflicts.'; }
   }
 
-  function useLatest(conflict: FieldConflict) { values[conflict.field_key] = cloneJson(conflict.current_value); original[conflict.field_key] = cloneJson(conflict.current_value); conflicts = conflicts.filter((item) => item.field_key !== conflict.field_key); if (!conflicts.length) error = ''; }
+  function useLatest(conflict: FieldConflict) { const restored={...conflict.related_values,[conflict.field_key]:conflict.current_value};for(const[key,value]of Object.entries(restored)){values[key]=cloneJson(value);original[key]=cloneJson(value);}conflicts = conflicts.filter((item) => !Object.hasOwn(restored,item.field_key));if(Object.keys(conflict.related_values||{}).length)liveNotice='The branch change was cancelled to keep the latest stored details. Other unsaved fields remain local.'; if (!conflicts.length) error = '';persistDraft(); }
   function keepMine(conflict: FieldConflict) { conflicts = conflicts.filter((item) => item.field_key !== conflict.field_key); if (!conflicts.length) error = ''; liveNotice = 'Your value is ready to save over the latest stored revision.'; }
   function queueFiles(field: FieldDefinition, list: FileList | File[]) {
     const queued = [...(pending[field.uid] || [])];
@@ -276,6 +335,7 @@
       return;
     }
     createSubmission = null;
+    cancelRelationshipRequests();
     values = cloneJson(original); pending = {}; fileProgress = {}; uploadProgress = 0; uploadLabel = ''; conflicts = []; error = ''; liveNotice = ''; clearDraft();
   }
   async function copyRecordLink() {
@@ -289,9 +349,15 @@
   async function submit(event: SubmitEvent) {
     event.preventDefault();
     if (!canWrite || deletedRemotely || busy) return;
+    if(relationshipPending||relationshipFailed){error='Wait for linked fields to load, or retry the failed selection before saving.';return;}
     if (driveCopying) { error = 'Wait for the Drive file to finish copying before saving.'; return; }
     if (conflicts.length) { error = 'Resolve the live field conflicts before saving.'; return; }
-    for (const field of fields.filter((item) => item.field_type === 'attachments')) {
+    const inputs=Object.fromEntries(fields.filter(f=>ruleWritable(f)&&isDirty(f.key)).map(f=>[f.key,values[f.key]??null]));
+    for(const f of fields.filter(f=>f.field_type==='select'&&isDirty(f.key)))for(const detail of optionDetails(f))for(const key of Object.keys(detail.fill||{}))inputs[key]=values[key]??null;
+    const prepared=prepareForm(fields,original,inputs);
+    if(!await changeValues(Object.fromEntries(Object.entries(prepared.values).filter(([key,value])=>JSON.stringify(value)!==JSON.stringify(values[key]))),prepared.resets))return;
+    const problems=prepareForm(fields,values,{}).errors;if(problems.length){error=problems.join(' ');return;}
+    for (const field of fields.filter((item) => item.field_type === 'attachments'&&states[item.key]?.visible)) {
       const totalFiles = filesFor(field).length + (pending[field.uid]?.length || 0);
       const maximum = attachmentLimit(field);
       if (field.required && totalFiles === 0) { error = `${field.label} requires at least one file.`; return; }
@@ -308,12 +374,18 @@
             changes[field.key] = values[field.key] ?? null;
           }
         }
+        // Keep intentional overrides, including ones equal to the loaded value.
+        // Otherwise the API would correctly fill omitted destinations again.
+        for(const relation of fields.filter(f=>f.field_type==='relationship'&&isDirty(f.key))) {
+          for(const mapping of (Array.isArray(relation.config.auto_fill)?relation.config.auto_fill:[]) as {target_field:string}[]) changes[mapping.target_field]=values[mapping.target_field]??null;
+        }
+        for(const choice of fields.filter(f=>f.field_type==='select'&&isDirty(f.key)))for(const detail of optionDetails(choice))for(const key of Object.keys(detail.fill||{}))changes[key]=values[key]??null;
         const hasPendingAttachments = fields.some((field) => field.field_type === 'attachments' && (pending[field.uid]?.length || 0) > 0);
         if (!Object.keys(changes).length && !hasPendingAttachments) { liveNotice = 'There are no changes to save.'; return; }
         saved = Object.keys(changes).length ? await patchRecord(current.uid, changes, workingRevision, moduleUid || undefined) : cloneJson(current);
       } else {
         const payload: Record<string, JsonValue> = {};
-        for (const field of fields) if (!['attachments', 'auto_number', 'formula', 'lookup', 'rollup'].includes(field.field_type)) payload[field.key] = values[field.key] ?? null;
+        for (const field of fields) if (!['attachments', 'auto_number', 'formula', 'lookup', 'rollup'].includes(field.field_type)) payload[field.key] = states[field.key]?.visible?values[field.key]??null:null;
         if (!createSubmission) createSubmission = { uid: operationUid(), values: cloneJson(payload) };
         persistDraft();
         saved = await createRecord(createSubmission.values, moduleUid || undefined, createSubmission.uid);
@@ -492,9 +564,12 @@
     {#if error}<div class="notice error">{error}</div>{/if}
     {#if liveNotice}<div class="notice live-notice">{liveNotice}</div>{/if}
     {#if conflicts.length}<section class="conflict-panel"><strong>Resolve concurrent changes</strong><p>Another user saved these fields after you opened the record.</p>{#each conflicts as conflict}<div class="conflict-row"><div><strong>{conflict.label}</strong><small>Latest: {String(conflict.current_value ?? 'Empty')} · Yours: {String(conflict.your_value ?? 'Empty')}</small></div><div class="inline-actions"><button class="button small" type="button" onclick={() => useLatest(conflict)}>Use latest</button><button class="button primary small" type="button" onclick={() => keepMine(conflict)}>Keep mine</button></div></div>{/each}</section>{/if}
-    <form class="record-form" onsubmit={submit}>
+    <form class="record-form" novalidate onsubmit={submit}>
       {#if !fields.length}<div class="empty-state compact full"><strong>This deployment has no record fields yet.</strong><p>Open Administration → Record structure and add the first field.</p></div>{/if}
-      {#each fields as field}
+      {#each fields as definition}
+        {@const availability=states[definition.key]}
+        {@const field={...definition,required:availability.required}}
+        {#if availability.visible}
         {#if field.field_type === 'attachments'}
           <fieldset class="field-block full attachment-drop attachment-section"><legend>{field.label}{#if field.required}<b class="required-mark"> *</b>{/if}</legend>
             {#if field.config.description}<p class="muted small">{String(field.config.description)}</p>{/if}
@@ -516,17 +591,22 @@
         {:else if field.field_type === 'formula'}
           <label><span>{field.label}<small class="field-kind-hint">Calculated</small></span><input value={String(fieldValue(field))} disabled placeholder="Calculated when saved" /></label>
         {:else if field.field_type === 'relationship'}
-          <RelationshipInput {field} value={values[field.key] ?? null} labels={current?.relationships?.[field.key]} disabled={!canWrite} onChange={value=>values[field.key]=value} />
+          <div class="record-relationship full"><RelationshipInput {field} value={values[field.key] ?? null} labels={current?.relationships?.[field.key]} disabled={!canWrite||busy||!availability.enabled} onChange={value=>void selectRelationship(field,value)} />
+            {#if Array.isArray(field.config.auto_fill)&&field.config.auto_fill.length}<small class="muted">Automatically fills: {field.config.auto_fill.map(m=>fields.find(f=>f.key===(m as {target_field:string}).target_field)?.label).filter(Boolean).join(', ')}. Copied values remain editable.</small>{/if}
+            {#if relationshipLoading[field.key]}<small role="status">Loading linked fields…</small>{/if}
+            {#if relationshipErrors[field.key]}<div role="alert"><p>{relationshipErrors[field.key]}</p><button class="button small" type="button" onclick={()=>void selectRelationship(field,values[field.key]??null)}>Retry linked fields</button></div>{/if}
+          </div>
         {:else if field.field_type === 'lookup' || field.field_type === 'rollup'}
-          <label><span>{field.label}</span><input disabled value={Array.isArray(values[field.key]) ? (values[field.key] as JsonValue[]).join(', ') : String(values[field.key] ?? '—')} /><small class="muted">Calculated from linked records when loaded</small></label>
+          <label><span>{field.label}</span><input disabled value={Array.isArray(values[field.key]) ? (values[field.key] as JsonValue[]).join(', ') : String(values[field.key] ?? '—')} /><small class="muted">Calculated from linked records</small></label>
         {:else if field.field_type === 'long_text'}
-          <label class="full"><span>{field.label}{#if field.required}<b class="required-mark"> *</b>{/if}</span><textarea rows="4" required={field.required} disabled={!canWrite} value={String(fieldValue(field))} oninput={(event) => setValue(field, event.currentTarget)}></textarea></label>
+          <label class="full"><span>{field.label}{#if field.required}<b class="required-mark"> *</b>{/if}</span><textarea rows="4" required={field.required} disabled={!canWrite||!availability.enabled} value={String(fieldValue(field))} oninput={(event) => setValue(field, event.currentTarget)}></textarea></label>
         {:else if field.field_type === 'select'}
-          <label><span>{field.label}{#if field.required}<b class="required-mark"> *</b>{/if}</span><select required={field.required} disabled={!canWrite} value={String(fieldValue(field))} onchange={(event) => setValue(field, event.currentTarget)}><option value="">Select…</option>{#each (field.config.options as JsonValue[] || []) as option}<option value={String(option)}>{String(option)}</option>{/each}</select></label>
+          <SelectFieldInput {field} value={values[field.key]??null} {values} disabled={!canWrite||!availability.enabled} required={field.required} onChange={value=>void changeValues({[field.key]:value})}/>
         {:else if field.field_type === 'boolean'}
-          <label class="checkbox field-checkbox"><input type="checkbox" checked={Boolean(fieldValue(field))} disabled={!canWrite} onchange={(event) => setValue(field, event.currentTarget)} /><span>{field.label}</span></label>
+          <label class="checkbox field-checkbox"><input type="checkbox" aria-label={field.label} checked={Boolean(fieldValue(field))} disabled={!canWrite||!availability.enabled} onchange={(event) => setValue(field, event.currentTarget)} /><span>{field.label}{#if fieldRules(field).exclusive_group}<small class="muted">Choose one in {fieldRules(field).exclusive_group}{fieldRules(field).exclusive_required?' (required)':''}</small>{/if}</span></label>
         {:else}
-          <label><span>{field.label}{#if field.required}<b class="required-mark"> *</b>{/if}</span><input type={field.field_type === 'date' ? 'date' : field.field_type === 'integer' || field.field_type === 'decimal' ? 'number' : 'text'} step={field.field_type === 'decimal' ? 'any' : field.field_type === 'integer' ? 1 : undefined} required={field.required} disabled={!canWrite} value={String(fieldValue(field))} oninput={(event) => setValue(field, event.currentTarget)} /></label>
+          <label><span>{field.label}{#if field.required}<b class="required-mark"> *</b>{/if}</span><input type={field.field_type === 'date' ? 'date' : field.field_type === 'integer' || field.field_type === 'decimal' ? 'number' : 'text'} step={field.field_type === 'decimal' ? 'any' : field.field_type === 'integer' ? 1 : undefined} required={field.required} disabled={!canWrite||!availability.enabled} value={String(fieldValue(field))} oninput={(event) => setValue(field, event.currentTarget)} /></label>
+        {/if}
         {/if}
       {/each}
       {#if current}<RelatedRecords module={moduleUid || 'mx-default-records'} record={current.uid} />{/if}
@@ -535,7 +615,7 @@
       <footer class="dialog-actions">
         {#if current && canDelete}<button class="button danger" type="button" onclick={removeRecord} disabled={busy || driveCopying}>Delete {recordLabel.toLowerCase()}</button>{/if}
         <span class="spacer"></span><button class="button" type="button" onclick={resetForm} disabled={busy || driveCopying}>{current ? 'Reset changes' : 'Clear form'}</button><button class="button" type="button" onclick={attemptClose} disabled={busy || driveCopying}>Cancel</button>
-        {#if canWrite}<button class="button primary" type="submit" disabled={busy || driveCopying || deletedRemotely}>{driveCopying ? 'Copying Drive file…' : busy ? 'Saving and uploading…' : current ? `Update ${recordLabel}` : `Save ${recordLabel}`}</button>{/if}
+        {#if canWrite}<button class="button primary" type="submit" disabled={busy || driveCopying || deletedRemotely || relationshipPending || relationshipFailed}>{relationshipPending ? 'Loading linked fields…' : driveCopying ? 'Copying Drive file…' : busy ? 'Saving and uploading…' : current ? `Update ${recordLabel}` : `Save ${recordLabel}`}</button>{/if}
       </footer>
     </form>
   </div>

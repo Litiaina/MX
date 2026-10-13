@@ -22,8 +22,14 @@
     "test:drive:recovery": "node tests/drive-recovery.browser.mjs",
     "test:drive:sharing": "node tests/drive-sharing.browser.mjs",
     "test:relationships:browser": "node tests/relationships.browser.mjs",
+    "test:relationships:autofill": "node tests/relationship-autofill.browser.mjs",
+    "test:fields:archive": "node tests/field-archive.browser.mjs",
+    "test:forms:rules": "node tests/form-rules.browser.mjs",
+    "test:ui:cascade": "node tests/ui-cascade.browser.mjs",
     "test:records:scroll": "node tests/record-scroll.browser.mjs",
+    "test:records:summaries": "node tests/record-summaries.browser.mjs",
     "test:office:browser": "node tests/office.browser.mjs",
+    "test:office:loading": "node tests/office-loading.browser.mjs",
     "preview": "vite preview"
   },
   "devDependencies": {

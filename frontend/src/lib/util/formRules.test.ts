@@ -1,0 +1,18 @@
+import {describe,it,expect} from 'vitest';
+import type {FieldDefinition,JsonValue} from '../api/domain';
+import {matches,fieldState,prepareForm,availableOptions,orderedFields,optionLabel} from './formRules';
+const field=(key:string,kind:string,config:Record<string,JsonValue>={})=>({key,uid:key,label:key,field_type:kind,config,active:true,required:false} as FieldDefinition);
+const when=(field:string,value:JsonValue)=>({match:'all' as const,conditions:[{field,operator:'eq',value}]});
+const fields=()=>[field('kind','select',{options:['A','B'],option_details:[{value:'A',label:'Type A',fill:{code:'01',paid:false}},{value:'B',fill:{code:'02',paid:true}}]}),field('code','text'),field('paid','boolean'),field('amount','decimal',{form_rules:{visible_when:when('kind','B'),required_when:when('kind','B')}}),field('notes','text')];
+describe('declarative module form rules',()=>{
+  it('keeps ordinary fields unchanged',()=>expect(prepareForm([field('notes','text')],{notes:'a'},{}).values).toEqual({notes:'a'}));
+  it('evaluates nested AND/OR and numeric/Boolean values without losing zero/false',()=>expect(matches({match:'all',conditions:[{field:'n',operator:'gte',value:0}],groups:[{match:'any',conditions:[{field:'flag',operator:'eq',value:false}]}]},{n:0,flag:false})).toBe(true));
+  it('fills two ordinary fields while preserving unrelated entries and labels',()=>{const f=fields(),r=prepareForm(f,{notes:'keep'},{kind:'A'});expect(r.values).toMatchObject({code:'01',paid:false,notes:'keep'});expect(optionLabel(f[0],'A')).toBe('Type A');});
+  it('requires a branch detail then warns before clearing it',()=>{const f=fields();expect(prepareForm(f,{}, {kind:'B'}).errors).toContain('amount is required for the current selections.');const r=prepareForm(f,{kind:'B',amount:0},{kind:'A'});expect(r.values.amount).toBeNull();expect(r.resets).toContain('amount');expect(fieldState(f[3],r.values).visible).toBe(false);});
+  it('honors explicit editable-copy overrides',()=>expect(prepareForm(fields(),{},{kind:'A',code:'custom'}).values.code).toBe('custom'));
+  it('toggles Boolean siblings exclusively and requires one',()=>{const config={form_rules:{exclusive_group:'type',exclusive_required:true}},f=[field('a','boolean',config),field('b','boolean',config)];expect(prepareForm(f,{a:true},{b:true}).values.a).toBe(false);expect(prepareForm(f,{},{a:true,b:true}).errors).toHaveLength(1);expect(prepareForm(f,{},{}).errors).toHaveLength(1);});
+  it('filters dependent choices and clears an obsolete selection',()=>{const f=[field('parent','text'),field('choice','select',{options:['x','y'],option_details:[{value:'x',available_when:when('parent','yes')} ]})];expect(availableOptions(f[1],{parent:'no'})).toEqual(['y']);expect(prepareForm(f,{parent:'yes',choice:'x'},{parent:'no'}).resets).toContain('choice');});
+  it('rejects cycles rather than repeatedly recomputing',()=>expect(()=>orderedFields([field('a','text',{form_rules:{visible_when:when('b','x')}}),field('b','text',{form_rules:{visible_when:when('a','x')}})])).toThrow('Circular'));
+  it('cascades option-to-option mappings regardless of display order',()=>{const f=[field('result','text'),field('second','select',{options:['x'],option_details:[{value:'x',fill:{result:'done'}}]}),field('first','select',{options:['a'],option_details:[{value:'a',fill:{second:'x'}}]})];expect(prepareForm(f,{},{first:'a'}).values.result).toBe('done');});
+  it('reports clearing old option mappings as well as hidden fields',()=>{const f=[field('kind','select',{options:['a','b'],option_details:[{value:'a',fill:{detail:'old'}}]}),field('detail','text')];expect(prepareForm(f,{kind:'a',detail:'old'},{kind:'b'}).resets).toContain('detail');});
+});
