@@ -47,3 +47,8 @@ rustls = { version = "0.23.31", features = ["ring"] }
 rusqlite = { version = "0.40", features = ["bundled", "chrono"] }
 r2d2 = "0.8"
 r2d2_sqlite = "0.35"
+calamine = { version = "0.36.1", features = ["chrono"] }
+csv = "1.4"
+zip = { version = "8", default-features = false, features = ["deflate"] }
+quick-xml = "0.41"
+libc = "0.2"

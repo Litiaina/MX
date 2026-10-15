@@ -14,7 +14,7 @@ mod uploads;
 
 use crate::{
     api::mx::{
-        handler::{generate_office_pdf_preview, n1_download, n1_stream, office_preview_supported},
+        handler::{check_office_preview_size, generate_office_pdf_preview, n1_download, n1_stream, office_preview_supported},
         model::FileAttachment,
     },
     config::load_config::CONFIG,
@@ -563,6 +563,7 @@ async fn serve(item: store::Item, query: Content, headers: HeaderMap) -> Result<
         )
     })?;
     if query.office && office_preview_supported(&item.original_file_name) {
+        check_office_preview_size(item.size.max(0) as u64).map_err(|message|error(422,&message))?;
         let bytes = n1_download(key, &item.name)
             .await
             .map_err(|_| error(502, "N1 could not read this file. Try again."))?;
@@ -577,11 +578,8 @@ async fn serve(item: store::Item, query: Content, headers: HeaderMap) -> Result<
             attachment_field_label: None,
             attachment_field_storage_name: None,
         };
-        let preview =
-            tokio::task::spawn_blocking(move || generate_office_pdf_preview(attachment, bytes))
-                .await
-                .map_err(|_| error(500, "Document preview task failed."))?
-                .map_err(|message| error(422, &message))?;
+        let preview = generate_office_pdf_preview(attachment, bytes)
+            .await.map_err(|message| error(422, &message))?;
         let mut response = Body::from(preview).into_response();
         response.headers_mut().insert(
             header::CONTENT_TYPE,
@@ -591,9 +589,10 @@ async fn serve(item: store::Item, query: Content, headers: HeaderMap) -> Result<
         return Ok(response);
     }
     let range = headers.get(header::RANGE).and_then(|v| v.to_str().ok());
-    let upstream = n1_stream(key, range)
-        .await
-        .map_err(|_| error(502, "N1 could not stream this file. Try again."))?;
+    let upstream = match n1_stream(key, range).await {
+        Ok(response) => response,
+        Err(failure) => return Ok(crate::api::mx::handler::map_mx_error(failure)),
+    };
     let status = upstream.status();
     if status != StatusCode::OK
         && status != StatusCode::PARTIAL_CONTENT

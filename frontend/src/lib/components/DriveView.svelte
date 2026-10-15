@@ -96,7 +96,7 @@
   }
   function navigate(uid: string | null, next = tab, fromLink = false) { if (!fromLink) closePreview(); parent = uid; tab = next; query = ''; offset = 0; error = ''; chosen = new Set(); anchor = null; menu = null; void load(); }
   function pageTo(next:number){closePreview();offset=next;chosen=new Set();anchor=null;menu=null;void load();fileArea?.scrollTo({top:0});}
-  function open(item: DriveItem) { if (tab === 'trash') return; if (item.kind === 'folder') navigate(item.uid, item.permission === 'owner' ? 'mine' : 'shared'); else { closePreview(); preview = item; } }
+  function open(item: DriveItem) { if (tab === 'trash') return; if (item.kind === 'folder') navigate(item.uid, item.permission === 'owner' ? 'mine' : 'shared'); else { closePreview(); if(canOpenOffice(item))launchOffice(item);else preview = item; } }
   function launchOffice(item: DriveItem) { sessionStorage.setItem('mx_office_theme',document.documentElement.dataset.theme || 'light'); if(!openOffice(item)) error='The browser blocked the editor tab. Allow popups for MX and try again.'; }
   async function action(operation: () => Promise<unknown>, message = '') { busy = true; error = ''; try { await operation(); if (message) notice = message; await load(true); } catch (reason) { error = reason instanceof Error ? reason.message : 'This operation failed.'; } finally { busy = false; } }
   function edit(item: DriveItem) { selected = item; label = item.name; dialogError = ''; dialog = 'rename'; }
@@ -308,7 +308,7 @@
   </div></div>
 {/if}
 {#if moving}<DrivePicker foldersOnly excludeUids={moving.map(i=>i.uid)} onChooseFolder={(uid) => { const items = moving!; moving = null; void action(() => driveTransfer(items, 'move', uid),`${items.length} items moved.`); }} onClose={() => moving = null} />{/if}
-{#if preview}{#key `${preview.uid}:${previewVersion || ''}`}{#if previewVersion}<FilePreview fileName={preview.name} load={()=>drivePreview(preview!,previewVersion)} onClose={closePreview}/>{:else}<DrivePreview item={preview} view={tab} {parent} {query} {sort} onNavigate={stepPreview} onClose={closePreview}/>{/if}{/key}{/if}
+{#if preview}{#key `${preview.uid}:${previewVersion || ''}`}{#if previewVersion}<FilePreview fileName={preview.name} load={()=>drivePreview(preview!,previewVersion)} onDownloadOriginal={()=>driveDownload(preview!,previewVersion)} onClose={closePreview}/>{:else}<DrivePreview item={preview} view={tab} {parent} {query} {sort} onNavigate={stepPreview} onClose={closePreview}/>{/if}{/key}{/if}
 
 <style>
   .drive { padding: 1.2rem var(--shell-gutter, 1rem); position:relative; }

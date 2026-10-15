@@ -34,7 +34,18 @@ pub(crate) fn config(kind: &str, value: &Value) -> Result<Value, String> {
             .and_then(Value::as_str)
             .filter(|s| !s.trim().is_empty())
             .map(str::to_owned)
-            .ok_or_else(|| format!("Configure {key} for this {kind} field."))
+            .ok_or_else(|| match key {
+                "target_module_uid" => {
+                    "Choose a module in ‘Linked module’ for this relationship field.".to_string()
+                }
+                "label_field" => {
+                    "Choose a field in ‘Display field’ from the linked module.".to_string()
+                }
+                "relationship_field" => format!(
+                    "Choose a field in ‘Relationship’ before configuring this {kind} field."
+                ),
+                _ => format!("Complete the {kind} field configuration."),
+            })
     };
     if kind == "relationship" {
         let module = required("target_module_uid")?;
@@ -107,7 +118,9 @@ pub(crate) fn validate_config(
             |r| r.get(0),
         )?;
         if !valid {
-            return Err(invalid("MX_CONFIG:Choose an active target module."));
+            return Err(invalid(
+                "MX_CONFIG:The selected linked module is unavailable or archived. Choose an active module in ‘Linked module’.",
+            ));
         }
         let label = config["label_field"].as_str().unwrap_or("");
         let fields = load_module_fields_initialized_db(c, target, false)?;
@@ -119,7 +132,7 @@ pub(crate) fn validate_config(
                 )
         }) {
             return Err(invalid(
-                "MX_CONFIG:Choose a regular display field in the target module.",
+                "MX_CONFIG:The selected display field is unavailable. Choose an active display field in ‘Display field’ from the linked module.",
             ));
         }
         let local = load_module_fields_initialized_db(c, module, false)?;
@@ -566,6 +579,24 @@ fn present_fields(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn missing_relationship_settings_name_the_operator_controls() {
+        assert!(
+            config("relationship", &json!({}))
+                .unwrap_err()
+                .contains("Linked module")
+        );
+        assert!(
+            config("relationship", &json!({"target_module_uid":"employees"}))
+                .unwrap_err()
+                .contains("Display field")
+        );
+        assert!(
+            config("lookup", &json!({}))
+                .unwrap_err()
+                .contains("Relationship")
+        );
+    }
     #[test]
     fn auto_fill_configuration_requires_unambiguous_single_record_mappings() {
         let base = json!({"target_module_uid":"employees","label_field":"name"});

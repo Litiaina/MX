@@ -25,6 +25,7 @@ an inventory, attendance or registration schema.
   [Relationship setup, step by step](docs/relationships.md).
 - **Show different fields for different choices:**
   [Conditional forms, step by step](docs/conditional-forms.md).
+- **Import spreadsheet rows:** [Import, inspect failures and resume](docs/importing-records.md).
 - **Install or upgrade MX:** [Deployment guide](docs/deployment.md).
 - **All guides and reference material:** [Documentation index](docs/README.md).
 

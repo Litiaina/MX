@@ -656,12 +656,25 @@ impl<'a> N1Storage<'a> {
         }
 
         let response = request.send().await.map_err(|error| {
-            MxOperationError::N1(format!("failed to stream '{object_key}' from N1: {error}"))
+            if error.is_timeout() {
+                MxOperationError::N1Stream { status: StatusCode::GATEWAY_TIMEOUT, retry_after: None }
+            } else {
+                MxOperationError::N1(format!("failed to stream '{object_key}' from N1: {error}"))
+            }
         })?;
         let status = response.status();
 
         if status.is_success() || status == StatusCode::RANGE_NOT_SATISFIABLE {
             return Ok(response);
+        }
+
+        // Keep upstream admission/service failures distinct from a broken
+        // gateway. No MX rate limiter, sleep, retry loop or full-file buffering.
+        if matches!(status, StatusCode::TOO_MANY_REQUESTS | StatusCode::SERVICE_UNAVAILABLE | StatusCode::GATEWAY_TIMEOUT | StatusCode::NOT_FOUND) {
+            return Err(MxOperationError::N1Stream {
+                status,
+                retry_after: response.headers().get(reqwest::header::RETRY_AFTER).cloned(),
+            });
         }
 
         let text = response.text().await.unwrap_or_default();

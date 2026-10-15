@@ -1,5 +1,310 @@
 # MX validation
 
+## Office launch prompt layout — 2026-10-15
+
+`npm run test:office:prompt` reproduces the old left-aligned action row (about
+102 px off center), then verifies the fixed production bundle in Brave, Chromium,
+Firefox and WebKit. All 80 editor/guest × light/dark × 1440/900/768/390/320 px
+checks pass: icon/prompt/action rows align, controls fit, original downloads are
+byte-identical, guest access stays download-only and the editor action opens the
+correct file tab. No Office engine or server PDF conversion is started by this
+layout suite. Screenshots inspected. Evidence: `mx-eight-user-bonusk` (baseline
+failure), `mx-eight-user-G5opQ3/office-prompt-layout-results.json` (pass), under
+`/mnt/ST1000LM049/tests`. Frontend: 290 unit tests; zero Svelte errors/warnings;
+production build passes with its existing chunk-size advisory.
+The frontend-only test deployment also passes read-only prompt checks in all
+four engines. Both service PIDs/binaries and record/Drive metadata hashes remain
+unchanged (`deployed-office-prompt-results.json`, `office-prompt-deployment-check.json`).
+
+## Cross-browser playback recovery and Office scroll diagnosis — 2026-10-15
+
+- Rust: 158 passed, two opt-in tests ignored. Frontend: 290 tests across 46
+  files; Svelte check has zero errors/warnings. Release/backend and production
+  frontend builds pass; the existing Vite large-chunk advisory remains.
+- `npm run test:media:recovery` uses disposable SQLite/N1 contract storage,
+  eight accounts and real browser media elements. Each simultaneous storage
+  rejection produces the original 429/503 and Retry-After, with exactly one
+  upstream request per client. Exact-byte ranges recover after the fault clears.
+  No streaming rate limit or server retry loop was added.
+- The first focused run (`mx-eight-user-mqU1HX`) passes Brave, Chromium, Firefox
+  and Linux WebKit: an actual HTTP 429 blocks the initial synthetic VP8 video,
+  visible feedback appears and native video playback recovers. Mid-play audio
+  recovery injects the terminal network-error event/property; HTTP diagnosis,
+  reload, position restoration and subsequent playback are real. It is not a
+  claim of a real packet-loss media soak. Closing/navigation cancels recovery.
+- A late-probe race is covered separately: if playback recovers during a
+  connection check, its late result cannot restart healthy playback. Unit tests
+  also cover finite retries, HTTP-date Retry-After, revoked/expired access,
+  unsupported codecs, paused state, persistent stalls and teardown cancellation.
+- The production-bundle rerun (`mx-eight-user-AVZeb4`) passes all four
+  browsers after the late-probe fix, including visible desktop feedback and
+  dark/mobile wrapping. Screenshots were inspected. This is synthetic media and
+  contract storage, not a full playback soak of the live 12.5-GB MP4.
+- The final terminal-error guard bundle (`mx-eight-user-ZHm3yw`) repeats that
+  four-browser pass. Once access/codec failure or the recovery budget stops
+  automatic recovery, later native waiting/error events cannot restart checks.
+- Existing Drive sharing/navigation regression (`mx-eight-user-fyiBBI`) passes
+  Chromium, Firefox and WebKit, including delayed metadata, module changes,
+  Back/Forward, dismissed-video non-resurrection, ACL revocation and light/dark/
+  narrow layouts. All browser audio is disconnected from desktop audio servers.
+
+Read-only Office diagnostics use the actual current saved workbook, revision 2,
+served from memory after one download to isolate native rendering from storage.
+The corrected drag targets advance the native view to row 91 and column 33 in
+Brave, Chromium and Firefox. Post-drag controller acknowledgements are about
+21–37 ms. Outer-page frame timing is not native-canvas paint timing. These short
+headless probes do **not** reproduce or fix the reported desktop scroll freeze.
+Opening remains slow (approximately 123–186 seconds); some runs overlap release
+compilation, so these are not controlled speed comparisons. File revision stays
+unchanged and no Office runtime/vendor patch is being represented as a fix.
+
+Linux WebKit fails the required worker-WebGL capability check and offers the
+unchanged original as a download. This is an editor **unsupported/fallback**
+result, not a passed spreadsheet editing/scrolling test. Real Safari/iOS and
+the user's GPU/compositor path remain unverified. Read-only diagnostic reports
+are under `/mnt/ST1000LM049/tests/office-scroll-*-recheck.json`.
+
+The user reports the N1 limiter fixed; inspection confirms the reciprocal-period
+fix in their source checkout. The external test service still had the previous
+N1 binary when checked. N1 source, binary, configuration and service are left
+unchanged by this work. This is separate from the MX transport/player fixes.
+
+The MX-only release build is deployed at the external-drive test URL. The
+deployed UI smoke passes all four engines with stream failures mocked in-browser
+(no real video bytes downloaded): `deployed-media-results.json`. Ten bounded
+direct-N1/MX probes of the live MP4 return HTTP 206 with matching sample hashes
+and Content-Range: `video-stream-after-media-recovery.json`. These samples do not
+qualify a complete long-video playback soak. Before/after hashes of schema,
+records, values, history and Drive metadata match; N1 binary/config/PID match:
+`media-deployment-data-check.json`. Binary/frontend rollback copies are retained.
+
+## Import results layout and safe field widening — 2026-10-15
+
+- Rust: 156 passed, two opt-in tests ignored. Frontend: 270 passed across 45
+  files. Production build: zero Svelte errors/warnings; existing chunk advisory.
+- `test:records:import-layout`: Chromium/Firefox/WebKit, light/dark at
+  1440/1024/700/390/320 px. Actual failed rows include long field labels,
+  unbroken source values and long error messages. Visible text does not overlap
+  the action, mobile actions stack below issues, expanded details fit, results
+  paginate, and the ordinary correction form opens above an inert importer.
+  This adds the failed-row geometry coverage missing from earlier tests.
+- `test:fields:datatype`: 800 real imports in disposable SQLite. Hashes of all
+  stored records, values and versions stay identical after Text → Long text.
+  Field ID/key stay unchanged, schema revision advances once and sorting is
+  disabled. Unsafe/narrowing types and stale bases are rejected. Eight parallel
+  conversions have one winner/seven conflicts; required uniqueness survives.
+  Three browser engines verify confirmation, multiline editing and stale-sort
+  recovery. No deployed user field is automatically converted.
+- Existing full importer tests (eight accounts, restart/replay, row correction,
+  mapping/history), error popups and Drive/Deployment layout regressions pass
+  again in all three engines.
+
+Evidence under `/mnt/ST1000LM049/tests`: `mx-eight-user-jPamNl/import-layout-results.json`,
+`mx-eight-user-4WcTXH/field-type-change-results.json`,
+`mx-eight-user-TWIOAs/import-results.json`,
+`mx-eight-user-Nb58wT/field-errors-results.json` and
+`mx-eight-user-zwzxqy/ui-cascade-results.json`. All implementation tests use
+disposable storage and disconnected browser audio.
+
+Deployment verification: `deployed-customization-results.json` passes with the
+provided operator account in Chromium, Firefox and WebKit. It checks the real
+datatype selector and actual failed import log at desktop/mobile widths, using
+only schema/log reads; no field or record is changed. Field-error popup smoke
+checks also pass. `customization-deployment-data-check.json` verifies matching
+pre/post hashes of live fields, records, values, history and Drive metadata.
+Release binary/frontend installed with rollback copies; one scoped MX restart,
+N1 unchanged. Private screenshots have owner-only permissions.
+
+### Earlier video/Office diagnosis (superseded by the verification section above)
+
+`video-stream-diagnostic.json` reproduces N1 429 responses followed by MX 502
+for the same Drive video. Initial bounded head/middle/tail ranges succeed.
+MX discards the upstream throttling status/retry information. The N1 read
+limiter passes `view_limit_per_second=30` to a builder whose argument is the
+replenishment interval in seconds, not requests per second; the bucket is shared
+by fragment. N1 source/configuration and services were not changed by diagnosis.
+
+`office-scroll-current-diagnostic.json` uses the actual saved workbook bytes,
+served locally after one download to separate rendering from storage throttling.
+Opening takes about 132 seconds in headless Chromium. The outer page stays at
+approximately 60 fps during the short interaction probe; native input and paint
+are asynchronous. Vertical view movement is observed; the attempted horizontal
+drag does not establish a changed column, so it is **not** a successful horizontal
+scroll qualification. These probes do not establish or fix the reported desktop
+scroll freeze. The original/saved workbook revision remains unchanged.
+
+## Visible field configuration errors — 2026-10-15
+
+- Frontend unit suite: 270 passed across 45 files. Rust: 156 passed, two opt-in
+  tests ignored. Production build/Svelte check: zero errors and warnings;
+  the existing JavaScript chunk-size advisory remains.
+- `test:fields:errors`: real disposable release MX/SQLite, fixture N1, production
+  frontend; Chromium, Firefox and WebKit pass the archive/recreate workflow.
+  Coverage includes immediate popups, preserved drafts, archived-field jumps,
+  suggested-key application, stale suggestions, non-key relationship errors,
+  existing-field save failures, focus trapping/Escape and 320/390/1440 px
+  light/dark popup bounds. Eight concurrent creates commit exactly one field;
+  the seven conflicts identify the winner. Archived values and the schema
+  revision remain unchanged on rejected creation.
+- API checks cover active/archived and case-insensitive duplicates, per-module
+  keys, the default module and legacy namespaced long-key collisions.
+- Existing archive/dependency dialogs pass in all three engines, including
+  changed dependencies after preflight and preservation of historical values.
+  Drive row/column alignment and Deployment spacing regressions also pass
+  across the same engines, themes and four viewport sizes.
+
+Evidence: `/mnt/ST1000LM049/tests/mx-eight-user-ddaR3W/field-errors-results.json`
+(final release binary),
+`mx-eight-user-EFGirz/field-archive-results.json` and
+`mx-eight-user-kseBvM/ui-cascade-results.json`. All these checks use disposable
+data on the external drive, disconnected browser audio and no live N1.
+
+Deployed release smoke checks also pass in Chromium, Firefox and WebKit:
+`/mnt/ST1000LM049/tests/deployed-field-errors-results.json`. These use real
+authentication/frontend/schema reads but mock the rejected write in-browser;
+no deployed field or record is created/edited. Before/after hashes of fields,
+records, values, history and Drive item/version metadata match exactly
+(`field-errors-deployment-data-check.json`). One scoped MX restart; N1's binary
+and running process are unchanged. Rollback copies are
+`/mnt/ST1000LM049/mx/litiaina-mx.before-field-errors-fix-20261015` and
+`/mnt/ST1000LM049/mx/frontend/dist.before-field-errors-fix-20261015`.
+
+## Office/Drive opening reliability — 2026-10-15
+
+The reported workbook failure was reproduced on the external-drive deployment:
+N1 returned the exact 9,079,199-byte original in under a second; the old editor
+failed its 60-second opening acknowledgement deadline. Four duplicate native PDF
+conversions of the same workbook were also running, consuming about 6 GiB combined.
+Those four jobs were stopped without stopping MX/N1 or changing the stored file.
+
+Verification for this scoped fix:
+
+- Rust: `cargo test --offline --locked`, 155 passed, two opt-in tests ignored.
+  The host-converter opt-in test was run separately and passed. New regressions
+  cover eight duplicate callers, failure cooldown, one-converter admission,
+  expanded ZIP budgets and process-group termination on deadline.
+- Frontend: 267 tests passed across 44 files. Production build and Svelte check
+  report zero errors/warnings; the existing main-chunk size advisory remains.
+  Timeout/cancellation tests use fake clocks; ZIP inspection tests verify bounded
+  slices rather than a complete-file read or decompression.
+- Uploaded communication workbook: real Chromium and Firefox rendering reviewed;
+  a keyboard edit was exported with its complete marker and all ten sheet entries.
+  Stored original stays at revision 1 and matches its original SHA-256. Opening
+  measured roughly 2–3.5 minutes under varying test/build load; export took roughly
+  8–16 seconds. No cells/styles were stripped before opening. These checks are not
+  a complete fidelity comparison of every cell/style in the workbook.
+- Focused actual XLSX saves: native toolbar Save, Ctrl+S, File → Save, pending
+  cell input, edits during a delayed commit, original-account re-login after
+  revocation, wrong-account rejection and exact exported text passed in Chromium
+  and Firefox. Eight editor accounts produce one winning version and seven
+  conflicts. Initial Calc input is primed again only after final layout/focus;
+  ordinary refocus does not reset a user's unaccepted input.
+- Recovery: Chromium/Firefox/WebKit direct Drive launches and linked-file choices
+  start no PDF preview. Cancellation before session completion cannot start a
+  late editor; Chromium/Firefox cancellation terminates real runtime workers and
+  retains the exact original download. Retry opens the actual engine. A synthetic
+  20-GiB metadata response triggers streamed original-download fallback without
+  buffering that document. WebKit coverage is fallback, not Office editing.
+- Actual preview API with disposable N1: eight identical requests return one
+  identical PDF; oversized metadata is rejected before any N1 read, and the real
+  complex workbook is rejected by the PDF expansion budget without conversion.
+- Loading and UI cascade: real five-stage loading, warm reload, original-download
+  fallback, Drive row/column alignment and Deployment spacing passed across the
+  three browser engines. Tests disconnect audio and block public Internet traffic.
+
+Evidence is under `/mnt/ST1000LM049/tests`: `office-workbook-chromium.json`,
+`office-workbook-firefox.json`, their screenshots/private edited copies,
+`mx-eight-user-QrPK02/office-results.json`,
+`mx-eight-user-w5z0tG/office-recovery-results.json`,
+`mx-eight-user-N2MLP8/office-preview-results.json`,
+`mx-eight-user-ZmAB8i/office-loading-results.json`, and
+`mx-eight-user-BALdWG/ui-cascade-results.json`.
+
+Deployment: release MX binary and production frontend installed on the external
+drive with rollback copies. One MX restart; N1 not restarted or modified. Temp
+preview work/cache now uses the external drive. This does not certify all Office
+formats, mobile hardware, every browser/driver combination or offline recovery
+scenario; previous broader qualification limits still apply.
+
+Final deployed HTTPS check: the original workbook opens/renders in Chromium in
+about 112 seconds (`office-workbook-deployed.json`), with its original revision
+unchanged. Eight real requests for its optional PDF preview return actionable 422
+responses in 143 ms total with zero native conversion processes remaining
+(`deployed-preview-rejection.json`). No live save/upload or workbook rewrite was
+performed by these checks.
+
+## Module import menu recovery — 2026-10-15
+
+- Reproduced the production regression: adding the import details control put
+  Refresh and Module actions before Search, and the popover was partly hidden
+  beneath the sidebar. Baseline screenshots are under the external-drive tests
+  directory, `mx-eight-user-jigpjS`.
+- `test:records:import-menu` passes in **Chromium, Firefox and WebKit** at
+  1440/1024/390/320 px in light/dark themes. It checks matching control heights,
+  square icon sizing, toolbar order, mobile alignment, viewport bounds, stacking,
+  repeated open/close, arrow/Home/End navigation, Escape/Tab, click-away,
+  mutually exclusive row menus, and both import actions.
+- Menu focus is bounded, paint-aware and cancelled when the user navigates;
+  repeated Firefox/WebKit openings do not leave keyboard focus on the trigger.
+- The full importer workflow and Drive/Deployment layout regressions pass in
+  all three engines. **258 frontend tests pass across 42 files**; Svelte check
+  reports **0 errors and 0 warnings**, and the production build succeeds with
+  the existing chunk-size advisory. No global stylesheet or Drive styling changed.
+- Evidence under `/mnt/ST1000LM049/tests`: `mx-eight-user-2x6VTY/module-menu-results.json`,
+  `mx-eight-user-TmtX4q/import-results.json`, and `mx-eight-user-LHnzbF/ui-cascade-results.json`.
+  Browser audio is disconnected from workstation devices; databases and N1 fixtures
+  are isolated. No live records, N1 objects or deployment configuration were altered.
+- The verified frontend was atomically deployed to the external-drive MX test
+  instance. The previous bundle is retained as
+  `/mnt/ST1000LM049/mx/frontend/dist.before-module-menu-fix-20261014`.
+  Existing immutable assets remain available for open tabs. MX/N1 binaries did
+  not change and neither server required a restart; reload the browser for the fix.
+
+## Module spreadsheet importer — 2026-10-14
+
+- Rust suite: **150 passed, 1 ignored** (live N1 integration remains opt-in).
+  Added streaming/parser checks for sparse XLSX dimensions, 1904 dates, cached
+  formulas, missing formula caches, ODS repetitions/entities, CSV multiline/CRLF
+  positions, UTF-8 cell errors and malformed/oversized shared-string metadata.
+  Import authority, log cleanup after account/module deletion and success-marker
+  transaction rollback have dedicated tests. Date/time and duration preservation
+  are covered, and archive sizes are checked against actual bounded decompression.
+- Frontend suite: **258 passed across 42 files**. Svelte check reports **0 errors,
+  0 warnings**; the production build passes with the pre-existing chunk-size advisory.
+- `test:records:import` passes with a real disposable MX/SQLite server: eight
+  accounts × 45 records, eight concurrent requests for one job, server restart
+  mid-import, private logs, grant revocation, typed/required/unique/select/date
+  failures, correction replay, normal versions and 20-row result pagination.
+- An injected SQLite success-marker failure rolls back the entire record write;
+  the row stays pending, not incorrectly failed. Removing the fault and resuming
+  commits exactly once. Unique-field errors name the offending field.
+- Relationship tests exercise ID-based selection, auto-fill preview and saved
+  classification, conditional required/hidden fields and denied source-module access.
+  Select values are canonicalized so case differences do not bypass conditions;
+  a file made required after preview causes a manual-entry skip at commit, with
+  no incomplete record created.
+- Browser workflows pass in **Chromium, Firefox and WebKit**: mapping, preview,
+  progress, a deliberately lost post-commit response, correction and history.
+  Light/dark and 1440/390-px layouts are captured; testing found and fixed dialog
+  overflow on mobile. Browser audio is disconnected from physical devices.
+- Read the supplied 8.7-MB Communication workbook: nine usable sheets and one
+  independently flagged October sheet with headers repeated across thousands of
+  columns. Its January/February sheets import **2,327 records** using independent
+  header rows/mappings into a disposable ten-text-column module. This demonstrates
+  file parsing and multi-sheet commits, not automatic inference of business types.
+- Existing Drive grid/alignment and Deployment-gap regressions also pass in all
+  three engines. No Drive/global cascade styling was changed for this addition.
+- All new test databases, fixtures, logs, screenshots, caches and build output
+  are under `/home/altear/Temp Environment/mx-import-tests`. Final importer evidence:
+  `mx-eight-user-qTn0aW/import-results.json`; layout-regression evidence:
+  `mx-eight-user-LCxME1/ui-cascade-results.json`.
+- No live MX database/configuration/N1 data was reset or modified. The verified
+  frontend is in the temporary directory's `dist`, not the deployment's existing
+  `frontend/dist`; build the deployment frontend and restart/rebuild MX to activate.
+- Scope: create-only XLSX/ODS/UTF-8 CSV/TSV; no XLS/upsert/fuzzy relationship-name
+  matching or automatic attachment migration. Parser budgets and log cleanup are
+  documented in [the operator guide](docs/importing-records.md).
+
 ## Drive styling recovery and Deployment gap — 2026-10-14
 
 - Reproduced the regression against the withdrawn production bundle: the new

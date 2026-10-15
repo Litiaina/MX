@@ -54,6 +54,11 @@ supported file. Viewers open a read-only editor. This opens a separate browser t
 running a locally bundled LibreOffice/ZetaOffice WebAssembly engine; MX owns
 authorization, metadata and versions, while N1 stores the bytes.
 
+Double-clicking a supported Office file in Drive now opens this editor directly.
+Opening an Office file from a shared-file link first offers **Open in MX Office**
+and **Download original**; guest links offer downloading, not authenticated editor
+access. These paths do not automatically request a server PDF conversion.
+
 The editor fills the window beneath a single 38-pixel MX bar: filename, compact
 save status, Save and **⋯ Document options**. There are no additional status,
 offline or information rows and no MX footer. Open from Drive, Download copy,
@@ -70,15 +75,43 @@ available. Initialization/rendering stay indeterminate: there is no invented
 overall percentage or startup ETA. Failures stop the loading animation. This
 card disappears once the editor opens; it does not add rows to the editing UI.
 
+Large/format-heavy spreadsheets may take several minutes even when downloading
+the original is fast. Opening and export have a ten-minute deadline; runtime
+startup is bounded too. **Cancel opening** stops document downloads and editor
+workers without changing the original or a retained local copy. A failed/cancelled
+opening offers **Retry opening**, **Download loaded copy** (or streamed **Download
+original** if it was not loaded), and **Return to Drive**. Readiness includes native
+input focus, not merely loading the engine.
+
+Calc's first input selection is initialized again after the final layout/focus
+acknowledgement; ordinary refocus does not reset unfinished cell input.
+
+The pinned engine has a fixed 1 GiB WebAssembly heap; increasing a JavaScript
+setting does not increase its compiled memory limit. MX reads at most a 2 MiB ZIP
+directory plus its small trailing header to identify complex documents, without
+decompressing/scanning the whole file or removing cells/styles. The editor rejects
+inputs over 128 MiB before buffering, and archives reporting over 256 MiB expanded
+content before starting the engine. These are editor safety budgets, not Drive
+upload/file-size limits. Download the original for a document outside these budgets.
+
+Optional server PDF previews have separate limits: one conversion at a time,
+16 MiB original input, 32 MiB archive expansion, 32 MiB PDF output and 45 seconds
+runtime. Identical inputs share an in-flight conversion; failures are cooled down
+for 30 seconds. Unix process-group cleanup stops the launcher and its descendants;
+Linux additionally bounds converter address space and generated file size. Size
+rejections happen before the preview download when metadata already exceeds the
+budget. A client disconnect does not leave an unbounded conversion running.
+
 Editing is offered for DOC/DOCX/ODT/RTF and XLS/XLSX/ODS, using explicit matching
 export filters. PPT/PPTX/ODP open **read-only**: native presentation editing
 failed acceptance tests and is not enabled in this build. Macro execution and automatic linked-data
 updates are disabled; macro-enabled DOCM/XLSM/PPTM files are not offered for
 editing. Format availability is not a guarantee of perfect fidelity for every
 document. See [TESTING.md](../TESTING.md) for the formats and browser engines actually tested.
-Current acceptance testing still catches intermittent missing leading input in
-freshly opened spreadsheets and a Firefox native-canvas rendering failure.
-Office editing is not release-qualified yet; keep separate copies of important
+Earlier expanded acceptance runs caught intermittent missing leading input in
+fresh spreadsheets and a Firefox native-canvas rendering failure. The scoped
+opening/input fix has passed current focused Chromium/Firefox XLSX and DOCX checks,
+but does not requalify every format or recovery scenario. Keep separate copies of important
 documents and do not confuse confirmed MX snapshot storage with validation of
 every native editing interaction.
 

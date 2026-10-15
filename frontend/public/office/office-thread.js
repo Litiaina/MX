@@ -112,6 +112,13 @@ Module.zetajs.then((zeta) => {
         const frame = model.getCurrentController().getFrame();
         frame.activate();
         frame.getComponentWindow().setFocus();
+        // Initial document input must be primed AFTER the final browser canvas
+        // resize/focus, not solely during loadComponentFromURL. Do not do this
+        // on ordinary refocus: the user may still have unaccepted cell input.
+        if(data.initializeInput && ['.xls','.xlsx','.ods'].includes(path.slice(path.lastIndexOf('.')))) {
+          const controller=model.getCurrentController();
+          controller.select(controller.getSelection());
+        }
         send({cmd:'focused',id:data.id});
       }
     } catch (error) {

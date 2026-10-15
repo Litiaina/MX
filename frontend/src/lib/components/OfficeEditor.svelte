@@ -13,7 +13,7 @@
   import { savedToMx, offlinePreparationSummary } from '../office/feedback';
   import { apiJson, apiFile, ApiError, ConnectionError, AUTH_EXPIRED_EVENT, hasAuthTokens } from '../api/client';
   import { authenticate, loadSession } from '../api/auth';
-  import { uploadDriveFile, type DriveItem } from '../api/drive';
+  import { uploadDriveFile, driveDownload, type DriveItem } from '../api/drive';
   import { OfficeEngine, type OfficeSnapshot } from '../office/engine';
   import { officeFormats, officeExtension, officePresentation } from '../office/formats';
   import { listDrafts, storeDraft, removeDraft, draftKey, type OfficeDraft } from '../office/drafts';
@@ -21,6 +21,7 @@
   import { checkOfficeGraphics } from '../office/capabilities';
   import OfficeLoading from './OfficeLoading.svelte';
   import { openingDetail, type OfficeLoadingProgress } from '../office/loading';
+  import { officeResources, checkOfficeInputSize } from '../office/resources';
 
   let canvas: HTMLCanvasElement;
   let viewport: HTMLDivElement; let viewportWidth = $state(innerWidth);
@@ -50,6 +51,10 @@
   let pendingOperation: string | undefined;
   let pendingCopy = $state<File | undefined>(); let copyOperation: string | undefined; let copyGeneration = -1;
   let engine: OfficeEngine; let engineStarted = false; let disposed = false;
+  let openingController: AbortController | undefined;
+  let openingCancelled = false;
+  let openingFocus = $state(false);
+  let largeDocument = false;
   const localWork = new OfficeOperations();
   let draftTimer: ReturnType<typeof setTimeout> | undefined;
   let connectionSequence = 0;
@@ -91,7 +96,7 @@
     window.addEventListener('online', network); window.addEventListener('offline', network);
     window.addEventListener(AUTH_EXPIRED_EVENT, expired); window.addEventListener('beforeunload', unload); window.addEventListener('keydown', key, true);
     window.addEventListener('pointerdown', outsideOptions);
-    return () => { disposed = true; clearInterval(interval); clearInterval(connectionInterval); clearTimeout(draftTimer); engine.dispose(); window.removeEventListener('online', network); window.removeEventListener('offline', network); window.removeEventListener(AUTH_EXPIRED_EVENT, expired); window.removeEventListener('beforeunload', unload); window.removeEventListener('keydown', key, true); window.removeEventListener('pointerdown', outsideOptions); };
+    return () => { disposed = true; openingController?.abort(); clearInterval(interval); clearInterval(connectionInterval); clearTimeout(draftTimer); engine.dispose(); window.removeEventListener('online', network); window.removeEventListener('offline', network); window.removeEventListener(AUTH_EXPIRED_EVENT, expired); window.removeEventListener('beforeunload', unload); window.removeEventListener('keydown', key, true); window.removeEventListener('pointerdown', outsideOptions); };
   });
 
   async function toggleOptions() {
@@ -153,10 +158,12 @@
     try {
       loading = { phase: 'access', detail: 'Checking your MX account and looking for an offline copy of this document.' };
       const session = await documentSession(); accountUid = session.uid;
+      if(openingCancelled || disposed)return;
       const draft = drafts.find(value => value.key === draftKey(accountUid, requestedUid));
       if (draft) { offered = draft; status = 'An offline copy exists on this device.'; return; }
       await openCurrent(requestedUid);
     } catch (reason) {
+      if(openingCancelled || disposed)return;
       const draft = drafts.find(value => value.item.uid === requestedUid);
       if (draft && !(reason instanceof ApiError && [401,403,404].includes(reason.status))) { offered = draft; status = 'MX is unreachable. You can continue with your offline copy.'; offline = true; }
       else { error = message(reason); loadingFailed=true; status = 'Open the editor from MX Drive after signing in.'; if (reason instanceof ApiError && reason.status === 401) requireSignIn(); }
@@ -164,6 +171,9 @@
   }
   async function startEngine() {
     if (engineStarted) return;
+    const resources = snapshot ? await officeResources(snapshot.blob, extension) : {large:false};
+    openingController?.signal.throwIfAborted();
+    largeDocument=resources.large;
     status = 'Starting the bundled Office engine on your device…';
     loading = { phase: 'engine', detail: 'Loading the locally bundled editor and preparing WebAssembly. First launches can take longer; later launches can use this browser’s cache.' };
     await engine.start(canvas); engineStarted = true;
@@ -175,15 +185,20 @@
     return exported;
   }
   async function openCurrent(uid: string) {
+    if(openingCancelled || disposed)return;
+    openingController=new AbortController();
+    const signal=openingController.signal;
     working = true; ready = false; error = ''; loadingFailed=false;
+    openingFocus=true;
     loading = { phase: 'access', detail: 'Checking document permissions and the exact saved version to open.' };
     if(viewport)viewport.scrollLeft=0;
     try {
       await localWork.idle();
-      const context = await apiJson<OpenContext>(`/mx/v1/drive/items/${encodeURIComponent(uid)}/office`);
+      const context = await apiJson<OpenContext>(`/mx/v1/drive/items/${encodeURIComponent(uid)}/office`,{signal});
       const ext = officeExtension(context.item.original_file_name || context.item.name);
       if (!ext) throw new Error('This Office format is not supported for editing.');
       item = context.item; extension = ext;
+      checkOfficeInputSize(context.item.size);
       status = 'Loading your document from MX…';
       loading = { phase: 'document', detail: `Downloading saved revision ${context.item.revision} from your MX server. Your file is not being saved or modified.` };
       let progressAt = 0;
@@ -194,14 +209,15 @@
         if(!disposed&&loading.phase==='document')loading={...loading,...received};
       };
       // Pin the exact persistent version selected in the metadata snapshot.
-      const file = await apiFile(`/mx/v1/drive/items/${encodeURIComponent(uid)}/download?version_uid=${encodeURIComponent(context.version_uid)}`, { onProgress: (loaded,total)=>{
+      const file = await apiFile(`/mx/v1/drive/items/${encodeURIComponent(uid)}/download?version_uid=${encodeURIComponent(context.version_uid)}`, { signal, onProgress: (loaded,total)=>{
         received={loaded,total}; const delay=100-(performance.now()-progressAt);
         if(loaded===0||loaded===total||delay<=0)displayProgress();
         else if(progressTimer===undefined)progressTimer=setTimeout(displayProgress,delay);
       } }).finally(()=>clearTimeout(progressTimer));
       snapshot = { blob: file.blob, generation: 0 };
       await startEngine();
-      loading = { phase: 'opening', detail: openingDetail(ext) };
+      signal.throwIfAborted();
+      loading = { phase: 'opening', detail: openingDetail(ext)+(largeDocument?' This is a large workbook: opening may take several minutes on your device. You can cancel without changing the original.':'') };
       await engine.open(file.blob, ext, readOnly);
       generation = 0; acknowledged = 0; snapshot = { blob: file.blob, generation: 0 };
       uncommittedInput = false;
@@ -211,20 +227,27 @@
       status = readOnly ? 'Read-only · you can download this document.' : `No unsaved changes · MX revision ${item.revision}`;
       document.title = `${item.name} · MX Office`;
       await showCanvas();
+      if(openingCancelled || disposed)return;
+      openingFocus=false;
       if (persist) await checkpoint(true);
-    } catch (reason) { error = message(reason); loadingFailed=true; status='Office could not open · download the loaded copy or return to MX Drive'; if (reason instanceof ApiError && reason.status === 401) requireSignIn(); }
+    } catch (reason) { ready=false;openingFocus=false;error = message(reason); loadingFailed=true; status='Office could not open · download the loaded copy or return to MX Drive'; if (reason instanceof ApiError && reason.status === 401) requireSignIn(); }
     finally { working = false; }
   }
   async function openLocal(draft: OfficeDraft) {
+    if(openingCancelled || disposed)return;
+    openingController=new AbortController();
     working = true; ready = false; error = ''; loadingFailed=false; offered = null;
+    openingFocus=true;
     loading = { phase: 'document', detail: 'Loading the offline copy saved in this browser. MX access and the latest revision will be checked when you save.', loaded: draft.blob.size, total: draft.blob.size };
     if(viewport)viewport.scrollLeft=0;
     try {
       await localWork.idle();
       item = draft.item; accountUid = draft.accountUid; extension = draft.extension; persist = true;
+      checkOfficeInputSize(draft.blob.size);
       snapshot = { blob: draft.blob, generation: 0 };
       await startEngine();
-      loading = { phase: 'opening', detail: openingDetail(extension) };
+      openingController.signal.throwIfAborted();
+      loading = { phase: 'opening', detail: openingDetail(extension)+(largeDocument?' This large document may take several minutes on your device. Your saved local copy is retained.':'') };
       await engine.open(draft.blob, extension, readOnly);
       generation = 0; acknowledged = draft.generation === draft.acknowledgedGeneration && !draft.saveFile && !draft.copyFile ? 0 : -1;
       snapshot = { blob: draft.blob, generation: 0 }; pendingFile = draft.saveFile;
@@ -237,16 +260,23 @@
       notice = 'Opened the local copy. MX will check the latest revision and your access before saving.';
       status = 'Offline copy opened'; document.title = `${item.name} · MX Office`;
       await showCanvas();
-    } catch (reason) { error = message(reason); loadingFailed=true; status='Office could not open · your local copy is still downloadable'; }
+      if(openingCancelled || disposed)return;
+      openingFocus=false;
+    } catch (reason) { ready=false;openingFocus=false;error = message(reason); loadingFailed=true; status='Office could not open · your local copy is still downloadable'; }
     finally { working = false; }
   }
   function scheduleDraft() { clearTimeout(draftTimer); draftTimer = setTimeout(() => { if (!working) void checkpoint(); }, 3000); }
-  async function focusDocument() {
+  function cancelOpening() {
+    openingCancelled=true;
+    openingController?.abort(new Error('Opening cancelled. Your original file and saved local copies are unchanged.'));
+    engine.dispose();ready=false;openingFocus=false;working=false;loadingFailed=true;error='Opening cancelled. Your original file and saved local copies are unchanged.';status='Opening cancelled';
+  }
+  async function focusDocument(initializeInput = false) {
     if(!ready || disposed)return;
     const sequence=++focusSequence;nativeFocused=false;
     await tick();await new Promise<void>(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve())));
     if(disposed || sequence!==focusSequence)return;
-    try{await engine.focus();if(!disposed&&sequence===focusSequence)nativeFocused=true;}
+    try{await engine.focus(initializeInput);if(!disposed&&sequence===focusSequence)nativeFocused=true;}
     catch(reason){if(!disposed&&sequence===focusSequence){error=message(reason);}}
   }
   async function showCanvas() {
@@ -254,7 +284,8 @@
     await new Promise<void>(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve())));
     // Establish native focus after layout, not before another resize which can
     // steal Calc's input focus while the first characters are being delivered.
-    canvas.focus(); await focusDocument();
+    canvas.focus(); await focusDocument(true);
+    if(!nativeFocused && !openingCancelled && !disposed)throw new Error('The document opened, but the editor could not establish input focus. No changes were saved. Retry opening or download the loaded copy.');
   }
   async function checkpoint(force = false) {
     return localWork.run(async () => {
@@ -431,7 +462,7 @@
   </div>
   {#if offered}<section class="recovery"><h1>Continue your local copy?</h1><p>{offered.item.name} · saved on this device {new Date(offered.updatedAt).toLocaleString()}</p><p>It may contain changes that were not saved to MX. Saving to your MX server will check your access and the original revision.</p><button class="primary" onclick={()=>void openLocal(offered!)}>Open local copy</button><button disabled={offline} onclick={()=>{if(offered&&confirm('Discard this local draft and open the current MX version?')){const uid=offered.item.uid;void removeDraft(offered.key).then(()=>openCurrent(uid));}}}>Discard local draft and open MX version</button></section>
   {:else if !requestedUid && !ready && !working && !item}<section class="recovery"><h1>Offline documents</h1><p>Only documents you explicitly kept on this device appear here. Open other files from MX Drive while connected.</p>{#each drafts as draft}<div class="draft-row"><button onclick={()=>void openLocal(draft)}>{draft.item.name}<small>{new Date(draft.updatedAt).toLocaleString()}</small></button><button onclick={()=>void deleteLocal(draft)}>Remove local copy</button></div>{:else}<p>No offline copies have been saved in this browser profile.</p>{/each}<a href="/">Open MX</a></section>{/if}
-  <div class="editor-stage" bind:this={viewport} class:inactive={!ready} role="region" aria-label="Scrollable Office editor"><canvas id="qtcanvas" bind:this={canvas} style:width={`${canvasWidth}px`} contenteditable="true" aria-label="Office document" data-native-focused={nativeFocused} onfocus={()=>void focusDocument()} oncontextmenu={event=>event.preventDefault()} onkeydown={event=>event.preventDefault()} onwheel={event=>event.preventDefault()}></canvas>{#if !ready && !offered}{#if requestedUid || item}<OfficeLoading progress={loading} fileName={item?.name || ''} failed={loadingFailed} />{:else}<div class="loading" role="status">{status}</div>{/if}{/if}</div>
+  <div class="editor-stage" bind:this={viewport} class:inactive={!ready} role="region" aria-label="Scrollable Office editor"><canvas id="qtcanvas" bind:this={canvas} style:width={`${canvasWidth}px`} contenteditable="true" aria-label="Office document" data-native-focused={nativeFocused} onfocus={()=>void focusDocument()} oncontextmenu={event=>event.preventDefault()} onkeydown={event=>event.preventDefault()} onwheel={event=>event.preventDefault()}></canvas>{#if (!ready || openingFocus) && !offered}{#if requestedUid || item}<OfficeLoading progress={loading} fileName={item?.name || ''} failed={loadingFailed} onCancel={cancelOpening} onRetry={()=>location.reload()} onDownload={snapshot?()=>void downloadCopy():item?()=>void driveDownload(item!).catch(reason=>error=message(reason)):undefined} downloadLabel={snapshot?'Download loaded copy':'Download original'} onReturn={()=>location.assign('/#drive')} />{:else}<div class="loading" role="status">{status}</div>{/if}{/if}</div>
 </main>
 
 <style>

@@ -28,6 +28,46 @@ that person's work.
 
 Create modules and maintain each module's identity, access matrix, dynamic schema, and N1 layout.
 
+#### Replacing a field with the wrong datatype
+
+**If you need Text → Long text, do not archive the field or re-import records.**
+Go to **Administration → Modules & Fields**, select the module, find the existing
+field under **record structure**, choose **Long text** under **Datatype**, click
+**Save field**, then confirm **Change datatype**. This widens the same field:
+the key, ID, stored values, record IDs/revisions and version history remain intact.
+Record forms use a multiline text box afterwards. Required/unique settings and
+relationship links are kept. Long text is not sortable; existing sort choices
+for that field are cleared when the records view refreshes its schema.
+
+Other datatype conversions are not automatically supported by this workflow.
+MX rejects narrowing or incompatible changes instead of silently converting or
+discarding values. If another administrator changes the datatype while you are
+editing, reload the settings before saving again.
+
+A **label** is the name users see. A **field key** is its stable identifier for
+relationships, formulas and imports. Keys must be unique within a module,
+including archived fields. Archiving hides a field; it does not remove its key
+or historical values. The **No duplicate record values** checkbox is different:
+it prevents records from saving the same value in that field.
+
+If you archive `Classification` (key `classification`) because its datatype is
+wrong:
+
+1. In **Add a record field**, enter the label and choose the correct datatype.
+2. If the generated key is still reserved, MX shows the existing field beside
+   the key input. Submitting opens a popup with its module, datatype and status.
+3. Choose **Use key classification_2** (or the available key MX suggests), then
+   click **Add field**. This keeps the new-field settings and creates a separate
+   field; it does not convert or copy archived record values.
+4. Alternatively choose **View existing field** to review its settings. **Restore**
+   brings that same field back with its original datatype and values.
+
+Configuration failures appear in a popup without scrolling to the top. Close it
+to correct the settings; new-field entries are retained. A suggested key is not
+reserved until creation, so MX checks it again if another administrator creates
+it meanwhile. No archive, restore, key replacement or retry is performed merely
+by dismissing an error.
+
 ### N1 Storage
 
 Choose the dynamic fields used in the storage hierarchy and optional filename-prefix behavior.

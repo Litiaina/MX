@@ -4,6 +4,42 @@
 
 ## HTTP API
 
+### Module spreadsheet imports
+
+All endpoints require authentication, current module read/create permission and
+ownership of the import job. Imports are create-only. Results/history use 20-item pages.
+
+```http
+GET    /mx/v1/modules/{module}/imports?page=1
+POST   /mx/v1/modules/{module}/imports
+GET    /mx/v1/modules/{module}/imports/{job}
+PUT    /mx/v1/modules/{module}/imports/{job}/configure
+POST   /mx/v1/modules/{module}/imports/{job}/process
+GET    /mx/v1/modules/{module}/imports/{job}/rows?state=failed&page=1
+POST   /mx/v1/modules/{module}/imports/{job}/retry
+DELETE /mx/v1/modules/{module}/imports/{job}
+```
+
+Upload multipart fields: `job_uid` (client UUID), `delimiter` (`comma`, `semicolon`,
+`tab`), `file` (one XLSX/ODS/CSV/TSV). Replaying the same UUID/file/delimiter returns
+the existing job. Source cells are staged in SQLite; no N1 object is created.
+
+Configure body: `{"sheets":[{"index":0,"header_row":1,"first_data_row":2,
+"columns":[{"column":1,"key":"name","fill_down":false,"date_format":"iso"}]}]}`.
+Columns/rows are one-based; sheet indices are zero-based. Date formats:
+`iso`, `dmy`, `mdy`, `mdy-short-dot`, `month-short`, `month-long`.
+
+Process saves up to 20 pending rows per call. Success is committed atomically
+with the ordinary record/version. Infrastructure failures pause rather than
+marking rows invalid. Results states: `pending`, `failed`, `imported`, `source`;
+optional `sheet` restricts a results page. Row errors include field/message and,
+when conversion failed, source column/value. Corrections POST
+`{"sheet":0,"row":2,"values":{"name":"Corrected"}}` to retry and receive
+`record_uid`; successful-row replay returns its existing ID. Configuration cannot
+be replaced after processing starts. DELETE removes the log/staged cells only.
+
+See [operator instructions and safety budgets](importing-records.md).
+
 MX uses the `/mx/v1` API namespace.
 
 ### Authentication
@@ -49,6 +85,21 @@ PUT /mx/v1/account/preferences
 Authenticator enrollment uses a pending secret. Password-only login remains possible while setup is incomplete, but once confirmation activates the secret every password login requires a valid TOTP or single-use recovery code.
 
 ### Modules
+
+`PUT /mx/v1/admin/schema/fields/{uid}` accepts optional `field_type` and
+`base_field_type`. A changed datatype is currently supported only for
+`text` → `long_text`; other changes return `400`. A stale `base_field_type`
+returns `409` without saving settings. The check, field metadata change and
+schema revision increment share an immediate transaction. Stored record values,
+record revisions and historical versions are not rewritten. Long text disables
+sorting while retaining the existing key, ID and required/unique settings.
+
+Creating a schema field with a reserved key returns `409`,
+`error: "field_key_conflict"`, and `field_key_conflict` containing `field`
+(`uid`, `key`, `label`, `field_type`, `active`, `module_uid`, `module_name`) and
+`suggested_key`. Archived fields keep their keys. Suggestions are advisory;
+the key check and insert share one immediate transaction. Failed creation does
+not advance the schema revision or change historical record values.
 
 ```http
 GET  /mx/v1/modules

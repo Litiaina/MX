@@ -63,6 +63,8 @@ export async function startN1Fixture() {
       if (path.startsWith(meta)) { const object = objects.get(path.slice(meta.length)); return json(object ? { version_id: object.version_id, total_size_bytes: object.bytes.length } : {}, object ? 200 : 404); }
       const stream = '/noa/v1/objects/stream/';
       if (path.startsWith(stream) || path === '/noa/v1/objects/download') {
+        await control.beforeStream?.(request, response);
+        if (response.writableEnded) return;
         const object = objects.get(path.startsWith(stream) ? path.slice(stream.length) : url.searchParams.get('object_key'));
         if (!object) return json({}, 404);
         const range = request.headers.range?.match(/^bytes=(\d+)-(\d*)$/);

@@ -229,7 +229,7 @@ export const resetUserPassword = (uid: string, data: object) => apiJson(`/mx/v1/
 export const resetUserSecurity = (uid: string, data: object) => apiJson(`/mx/v1/admin/accounts/${encodeURIComponent(uid)}/security-reset`, jsonRequest('POST', data));
 
 export const createField = (field: Omit<FieldDefinition, 'uid' | 'position' | 'active'>, moduleUid?: string) => apiJson(moduleUid ? `/mx/v1/admin/modules/${encodeURIComponent(moduleUid)}/fields` : '/mx/v1/admin/schema/fields', jsonRequest('POST', field));
-export const updateField = (uid: string, changes: Partial<FieldDefinition>) => apiJson(`/mx/v1/admin/schema/fields/${encodeURIComponent(uid)}`, jsonRequest('PUT', changes));
+export const updateField = (uid: string, changes: Partial<FieldDefinition> & { base_field_type?: FieldDefinition['field_type'] }) => apiJson<FieldDefinition>(`/mx/v1/admin/schema/fields/${encodeURIComponent(uid)}`, jsonRequest('PUT', changes));
 export const updateSystemField = (key: string, changes: object) => apiJson(`/mx/v1/admin/schema/system/${encodeURIComponent(key)}`, jsonRequest('PUT', changes));
 export const updateSchemaOrder = (items: { kind: string; id: string }[], moduleUid?: string) => apiJson(moduleUid && moduleUid !== 'mx-default-records' ? `/mx/v1/admin/modules/${encodeURIComponent(moduleUid)}/schema/order` : '/mx/v1/admin/schema/order', jsonRequest('PUT', { items }));
 export const loadStorageLayout = (moduleUid?: string) => apiJson<StorageLayout>(moduleUid ? `/mx/v1/admin/modules/${encodeURIComponent(moduleUid)}/storage-layout` : '/mx/v1/admin/storage-layout');

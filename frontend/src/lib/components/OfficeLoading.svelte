@@ -4,7 +4,7 @@
   import Check from '@lucide/svelte/icons/check';
   import X from '@lucide/svelte/icons/x';
   import { officeLoadingSteps, loadingBytes, loadingPercent, type OfficeLoadingProgress } from '../office/loading';
-  let { progress, fileName = '', failed = false }: { progress: OfficeLoadingProgress; fileName?: string; failed?: boolean } = $props();
+  let { progress, fileName = '', failed = false, onCancel, onRetry, onDownload, onReturn, downloadLabel='Download loaded copy' }: { progress: OfficeLoadingProgress; fileName?: string; failed?: boolean; onCancel?:()=>void;onRetry?:()=>void;onDownload?:()=>void;onReturn?:()=>void;downloadLabel?:string } = $props();
   let elapsed = $state(0);
   const index = $derived(officeLoadingSteps.findIndex(step => step.phase === progress.phase));
   const percent = $derived(loadingPercent(progress.loaded, progress.total));
@@ -41,6 +41,12 @@
       {/each}
     </ol>
     <p class="loading-note">{failed ? 'No save is performed by opening this file.' : elapsed >= 20 ? 'First launches and large documents can take longer. Download progress and device initialization are separate steps.' : 'The editor runs on your device. Resources come from MX or its local browser cache; no Internet service is required.'}</p>
+    <div class="recovery-actions">
+      {#if !failed && onCancel}<button onclick={onCancel}>Cancel opening</button>{/if}
+      {#if failed && onRetry}<button onclick={onRetry}>Retry opening</button>{/if}
+      {#if failed && onDownload}<button onclick={onDownload}>{downloadLabel}</button>{/if}
+      {#if failed && onReturn}<button onclick={onReturn}>Return to Drive</button>{/if}
+    </div>
   </div>
 </section>
 
@@ -55,6 +61,7 @@
   :global(html[data-theme='dark']) .office-loading{background:#16191d;color:#e5e7eb;}:global(html[data-theme='dark']) .loading-card{background:#20242a;border-color:#3e4754;box-shadow:none;}:global(html[data-theme='dark']) .document-icon,:global(html[data-theme='dark']) .current .step-icon{background:#23314b;color:#acc5ff;}:global(html[data-theme='dark']) .file-name,:global(html[data-theme='dark']) .current-status p,:global(html[data-theme='dark']) .transfer-detail,:global(html[data-theme='dark']) li,:global(html[data-theme='dark']) .loading-note{color:#a5b0bf;}:global(html[data-theme='dark']) ol,:global(html[data-theme='dark']) .step-icon{border-color:#3e4754;}:global(html[data-theme='dark']) li.current{color:#acc5ff;}:global(html[data-theme='dark']) .complete .step-icon{background:#1d3026;color:#a4d4b7;}:global(html[data-theme='dark']) .stopped{color:#ffb6b6;}
   :global(html[data-theme='dark']) .loading-track{background:#354052;}:global(html[data-theme='dark']) .loading-track>span{background:#92b5ff;}
   @keyframes loading{from{transform:translateX(-100%);}to{transform:translateX(400%);}}
+  .recovery-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;}.recovery-actions button{font:inherit;font-size:12px;padding:7px 10px;border:1px solid #cdd4df;border-radius:6px;background:transparent;color:inherit;cursor:pointer;}.recovery-actions button:focus-visible{outline:2px solid #4773c9;outline-offset:2px;}:global(html[data-theme='dark']) .recovery-actions button{border-color:#3e4754;}
   @media(prefers-reduced-motion:reduce){.loading-track>span{animation:none;margin-left:35%;}}
   @media(max-width:480px){.office-loading{padding:12px;}.loading-card{padding:20px;}h1{font-size:18px;}}
 </style>

@@ -1501,6 +1501,45 @@ fn create_record_db(
     actor_uid: String,
     operation: Option<ClientOperation>,
 ) -> Result<(String, bool), SqliteDatabaseError> {
+    create_record_commit(module_uid, request_values, actor_uid, operation, None)
+}
+
+pub(super) fn import_validate(
+    connection: &rusqlite::Connection,
+    fields: &[FieldDefinition],
+    values: &BTreeMap<String, Value>,
+    actor: &str,
+) -> Result<BTreeMap<String, Value>, String> {
+    let mut values = values.clone();
+    super::relationships::fill_missing(connection, fields, &mut values, actor)
+        .map_err(|e| e.to_string())?;
+    let prepared = super::form_rules::prepare(fields, &values, &BTreeMap::new(), false)?;
+    let effective = super::form_rules::effective_fields(fields, &prepared);
+    validate_payload(&effective, &prepared)?;
+    import_required_files(&effective)?;
+    Ok(prepared)
+}
+
+fn import_required_files(fields: &[FieldDefinition]) -> Result<(), String> {
+    if let Some(field) = fields
+        .iter()
+        .find(|f| f.field_type == "attachments" && f.required)
+    {
+        return Err(format!(
+            "{} requires a file. Spreadsheet import cannot supply it. Enter this row manually through the ordinary record form with its required attachment.",
+            field.label
+        ));
+    }
+    Ok(())
+}
+
+pub(super) fn create_record_commit(
+    module_uid: String,
+    request_values: BTreeMap<String, Value>,
+    actor_uid: String,
+    operation: Option<ClientOperation>,
+    import: Option<super::imports::Commit>,
+) -> Result<(String, bool), SqliteDatabaseError> {
     with_sql_connection(|connection| {
         ensure_dynamic_schema(connection)?;
         ensure_record_collaboration_schema(connection)?;
@@ -1511,9 +1550,22 @@ fn create_record_db(
             rusqlite::TransactionBehavior::Immediate,
         )?;
         let scope = format!("record:create:{module_uid}");
+        if let Some(import) = &import {
+            super::imports::admit(
+                &transaction,
+                import,
+                &module_uid,
+                &actor_uid,
+                &request_values,
+            )?;
+        }
         if let Some(uid) =
             operations::existing(&transaction, &actor_uid, &scope, operation.as_ref())?
         {
+            if let Some(import) = &import {
+                super::imports::complete(&transaction, import, &uid)?;
+                transaction.commit()?;
+            }
             return Ok((uid, false));
         }
         // A committed operation must remain reconcilable even if required
@@ -1528,12 +1580,35 @@ fn create_record_db(
         let effective_fields = super::form_rules::effective_fields(&fields, &request_values);
         let mut values = validate_payload(&effective_fields, &request_values)
             .map_err(rusqlite::Error::InvalidParameterName)?;
+        if import.is_some() {
+            import_required_files(&effective_fields)
+                .map_err(rusqlite::Error::InvalidParameterName)?;
+        }
         let uid = Uuid::new_v4().to_string();
 
         fill_auto_numbers(&transaction, &fields, &mut values)?;
         apply_formula_values(&fields, &mut values).map_err(|error| {
             rusqlite::Error::InvalidParameterName(format!("MX_FORMULA:{error}"))
         })?;
+
+        if import.is_some() {
+            // Explain the exact offending field instead of exposing a generic
+            // UNIQUE constraint. This check shares the final write transaction.
+            for field in fields
+                .iter()
+                .filter(|f| f.unique_value && f.field_type != "auto_number")
+            {
+                if let Some(value) = values.get(&field.key) {
+                    let exists:bool=transaction.query_row("SELECT EXISTS(SELECT 1 FROM mx_unique_values WHERE field_uid=?1 AND normalized_value=?2)",params![field.uid,value.normalized_unique()],|r|r.get(0))?;
+                    if exists {
+                        return Err(rusqlite::Error::InvalidParameterName(format!(
+                            "{} must be unique. This submitted value already exists; correct this field or leave the row skipped.",
+                            field.label
+                        )));
+                    }
+                }
+            }
+        }
 
         let date = value_as_text(&values, "date", "");
         let office = value_as_text(&values, "office", "");
@@ -1589,6 +1664,9 @@ fn create_record_db(
         initialize_field_revisions(&transaction, &uid, &fields, &values, &actor_uid)?;
         capture_record_version(&transaction, &uid, &module_uid, "created", &actor_uid)?;
         operations::complete(&transaction, &actor_uid, &scope, operation.as_ref(), &uid)?;
+        if let Some(import) = &import {
+            super::imports::complete(&transaction, import, &uid)?;
+        }
         transaction.commit()?;
 
         Ok((uid, true))

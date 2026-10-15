@@ -40,7 +40,7 @@ busy_timeout_milliseconds=10000
 login_token_expiration=900
 refresh_token_expiration=2592000
 [static_site_hosting]
-static_site_path=${resolve(root, 'dist')}
+static_site_path=${process.env.MX_TEST_STATIC_SITE_PATH || resolve(root, 'dist')}
 [n1]
 base_url=${n1.url}
 fragment=${n1.live ? (process.env.MX_TEST_N1_RAW_FRAGMENT ? n1Secret : n1.fragment) : 'isolated-no-external-storage'}

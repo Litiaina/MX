@@ -31,7 +31,7 @@ use crate::{
         live::publish_user_event,
         modules::module_can_for_user,
         mx::handler::{
-            generate_office_pdf_preview, inline_attachment_response, n1_access_token, n1_download,
+            check_office_preview_size, generate_office_pdf_preview, inline_attachment_response, n1_access_token, n1_download,
             n1_soft_delete, n1_stream, n1_upload, office_preview_supported,
         },
         mx::model::FileAttachment,
@@ -2500,10 +2500,7 @@ pub async fn stream_message_file(Path(ticket): Path<String>, headers: HeaderMap)
         Ok(response) => response,
         Err(error) => {
             crate::report_error!(format!("{error:?}"), "n1", "stream_message_file()");
-            return api_json(
-                StatusCode::BAD_GATEWAY,
-                json!({"response":"N1 could not stream the shared file"}),
-            );
+            return crate::api::mx::handler::map_mx_error(error);
         }
     };
 
@@ -2584,22 +2581,22 @@ pub async fn download_message_file(claims: Claims, Path(file_uid): Path<String>)
 pub async fn preview_message_file(claims: Claims, Path(file_uid): Path<String>) -> Response {
     let user_uid = claims.uid;
     let query_file_uid = file_uid.clone();
-    let result = tokio::task::spawn_blocking(move || -> Result<(String, String, String), SqliteDatabaseError> {
+    let result = tokio::task::spawn_blocking(move || -> Result<(String, String, String, i64), SqliteDatabaseError> {
         with_sql_connection(|connection| {
             ensure_collaboration_schema(connection)?;
             let value = connection.query_row(
-                "SELECT f.object_key, f.file_name, f.mime_type, m.channel_uid FROM mx_message_files f JOIN mx_messages m ON m.uid = f.message_uid WHERE f.uid = ?1 AND f.deleted_at IS NULL",
+                "SELECT f.object_key, f.file_name, f.mime_type, m.channel_uid, f.size FROM mx_message_files f JOIN mx_messages m ON m.uid = f.message_uid WHERE f.uid = ?1 AND f.deleted_at IS NULL",
                 params![query_file_uid],
-                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, String>(3)?)),
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, String>(3)?, row.get::<_, i64>(4)?)),
             )?;
             if member_role(connection, &value.3, &user_uid)?.is_none() {
                 return Err(rusqlite::Error::QueryReturnedNoRows);
             }
-            Ok((value.0, value.1, value.2))
+            Ok((value.0, value.1, value.2, value.4))
         })
     })
     .await;
-    let (object_key, file_name, mime_type) = match result {
+    let (object_key, file_name, mime_type, file_size) = match result {
         Ok(Ok(value)) => value,
         _ => {
             return api_json(
@@ -2608,6 +2605,11 @@ pub async fn preview_message_file(claims: Claims, Path(file_uid): Path<String>) 
             );
         }
     };
+    if office_preview_supported(&file_name) {
+        if let Err(error)=check_office_preview_size(file_size.max(0) as u64) {
+            return api_json(StatusCode::UNPROCESSABLE_ENTITY,json!({"response":error}));
+        }
+    }
     let bytes = match n1_download(&object_key, &file_name).await {
         Ok(bytes) => bytes,
         Err(_) => {
@@ -2630,27 +2632,14 @@ pub async fn preview_message_file(claims: Claims, Path(file_uid): Path<String>) 
             attachment_field_label: None,
             attachment_field_storage_name: None,
         };
-        let preview =
-            tokio::task::spawn_blocking(move || generate_office_pdf_preview(attachment, bytes))
-                .await;
+        let preview = generate_office_pdf_preview(attachment, bytes).await;
         let pdf_bytes = match preview {
-            Ok(Ok(bytes)) => bytes,
-            Ok(Err(error)) => {
-                crate::report_error!(error, "preview", "preview_message_file()");
+            Ok(bytes) => bytes,
+            Err(error) => {
+                crate::report_error!(&error, "preview", "preview_message_file()");
                 return api_json(
                     StatusCode::SERVICE_UNAVAILABLE,
-                    json!({"response":"MX could not generate the Office preview. Verify that LibreOffice Writer, Calc, and Impress are installed on the MX server."}),
-                );
-            }
-            Err(error) => {
-                crate::report_error!(
-                    format!("Collaboration preview blocking task failed: {error}"),
-                    "preview",
-                    "preview_message_file()"
-                );
-                return api_json(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    json!({"response":"MX Office preview task failed."}),
+                    json!({"response":error}),
                 );
             }
         };

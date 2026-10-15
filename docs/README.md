@@ -11,6 +11,7 @@ implementation details and advanced configuration.
 | Task | Start here |
 |---|---|
 | Create modules and enter your first records | [Getting started](getting-started.md) |
+| Import Excel, ODS, CSV or TSV rows | [Spreadsheet import walkthrough](importing-records.md) |
 | Select an employee once and display their classification | [Relationships and automatic values](relationships.md) |
 | Understand “Allow multiple linked records” | [Single versus multiple selection](relationships.md#what-allow-multiple-linked-records-means) |
 | Choose between Lookup and editable auto-fill | [Which method to use](relationships.md#choose-the-result-you-need) |

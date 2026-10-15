@@ -9,6 +9,7 @@ export default defineConfig(({ mode }) => {
   const backendOrigin = environment.MX_BACKEND_ORIGIN || 'https://127.0.0.1:21001';
 
   return {
+    cacheDir: process.env.MX_TEST_CACHE_DIR || 'node_modules/.vite',
     plugins: [svelte(), {
       name: 'mx-office-offline-manifest',
       async generateBundle(_options, bundle) {

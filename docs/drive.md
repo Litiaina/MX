@@ -73,6 +73,22 @@ at most 256 KiB with HTTP Range; larger text stays available through Download.
 Images/video retain native streaming and range behavior. Visible image thumbnails
 remain original-image previews, not generated small thumbnails.
 
+If video/audio playback loses its connection, the preview shows a recovery
+message and makes at most three automatic reconnect attempts. It retains the
+playback position, volume, mute state and speed, and resumes only if playback was
+active. **Retry playback** is available after recoverable failures. A diagnostic
+request asks for one byte and immediately cancels its response; MX never buffers
+the whole video just to check its connection. Upstream `Retry-After` is respected
+for automatic retries. Long waits require a manual retry rather than an indefinite
+background loop. Closing the preview or leaving the module cancels recovery.
+
+Expired links or revoked access require reopening/signing in, not repeated
+background requests. Unsupported codecs explain that the original can be
+downloaded. Browser format support still applies; reconnecting cannot make an
+unsupported codec playable. MX forwards storage 429/503 statuses and retry
+information instead of presenting every storage rejection as a 502. This adds no
+MX streaming rate limit or server-side retry loop.
+
 Click once to select; double-click to open a folder or preview a file. Use the
 checkboxes, Ctrl/Cmd-click to toggle items, Shift-click for a range, or drag a
 rectangle from the blank area below the file rows. Ctrl/Cmd+A selects the current

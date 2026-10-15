@@ -8,8 +8,9 @@
   import Plus from '@lucide/svelte/icons/plus';
   import X from '@lucide/svelte/icons/x';
   import {focusDialog} from '../util/focusDialog';
+  import {MediaRecovery, type MediaRecoveryState} from '../util/mediaRecovery';
 
-  let { fileName, load, navigationItems = [], activeIndex = 0, onNavigate = (_index: number) => undefined, externalNavigation, navigationNoun = 'attachment', onStep = (_direction: -1|1) => undefined, onClose }: {
+  let { fileName, load, navigationItems = [], activeIndex = 0, onNavigate = (_index: number) => undefined, externalNavigation, navigationNoun = 'attachment', onStep = (_direction: -1|1) => undefined, onClose, officeActions, onDownloadOriginal }: {
     fileName: string;
     load: () => Promise<{ blob?: Blob; url?: string; fileName: string; mimeType: string }>;
     navigationItems?: { key: string; name: string; detail?: string }[];
@@ -19,11 +20,14 @@
     navigationNoun?: string;
     onStep?: (direction:-1|1)=>void;
     onClose: () => void;
+    officeActions?: {open?:()=>void;download:()=>void};
+    onDownloadOriginal?:()=>void|Promise<void>;
   } = $props();
 
-  let stage = $state<'loading' | 'ready' | 'error'>('loading');
+  let stage = $state<'loading' | 'ready' | 'error' | 'office'>('loading');
   let status = $state('Loading preview…');
   let error = $state('');
+  let downloadingOriginal=$state(false);
   let previewUrl = $state('');
   let previewName = $state('');
   let previewMime = $state('');
@@ -49,11 +53,18 @@
   const showNavigator = $derived(!externalNavigation && navigationItems.length > 1);
   let textTruncated=$state(false);
   const previewController=new AbortController();let disposed=false;
+  let mediaState=$state<MediaRecoveryState>({phase:'idle',message:'',retryable:false});
+  let mediaRecovery:MediaRecovery|undefined;
+  function recoverMedia(node:HTMLMediaElement){
+    const recovery=new MediaRecovery(node,state=>{if(!disposed)mediaState=state;});
+    mediaRecovery=recovery;
+    return {destroy(){recovery.dispose();if(mediaRecovery===recovery)mediaRecovery=undefined;}};
+  }
 
   onMount(() => {
     previewName = fileName;
     if (/\.(docx?|xlsx?|pptx?|odt|ods|odp)$/i.test(fileName)) status = 'Converting document to a browser preview…';
-    void loadPreview();
+    if(officeActions)stage='office';else void loadPreview();
     const keydown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') { event.preventDefault(); onClose(); return; }
       if (event.target instanceof Element && event.target.closest('input,textarea,select,[contenteditable="true"],video,audio')) return;
@@ -145,6 +156,7 @@
     }
   }
   function openPreview() { if (previewUrl) window.open(previewUrl, '_blank', 'noopener,noreferrer'); }
+  async function downloadOriginal(){if(!onDownloadOriginal || downloadingOriginal)return;downloadingOriginal=true;try{await onDownloadOriginal();}catch(reason){error=reason instanceof Error?reason.message:'Could not download the original.';}finally{downloadingOriginal=false;}}
   function downloadPreview() {
     if (!previewUrl) return;
     const link = document.createElement('a'); link.href = previewUrl; link.download = previewName || fileName; link.click();
@@ -218,7 +230,7 @@
     <header class:has-navigation={hasNavigation} class="dialog-head preview-head">
       <div class="preview-heading">
         <h2 id="collaboration-preview-title">{fileName}</h2>
-        <p class="muted preview-meta">{stage === 'loading' ? status : previewMime}{stage === 'ready' && previewName !== fileName ? ` · generated preview: ${previewName}` : ''}</p>
+        <p class="muted preview-meta">{stage === 'office'?'Office document':stage === 'loading' ? status : previewMime}{stage === 'ready' && previewName !== fileName ? ` · generated preview: ${previewName}` : ''}</p>
       </div>
       {#if hasNavigation}
         <div class="preview-navigation" role="toolbar" aria-label="Attachment navigation">
@@ -256,6 +268,7 @@
       <button class="icon-button preview-close" type="button" aria-label="Close preview" onclick={onClose}><X size={18} /></button>
       {#if externalNavigation?.error}<p role="alert" class="preview-navigation-error" style="grid-column:1/-1">{externalNavigation.error}</p>{/if}
       {#if textTruncated}<p role="status" class="preview-navigation-error" style="grid-column:1/-1">Showing the first 256 KiB. Download or open the file separately to read the rest.</p>{/if}
+      {#if mediaState.message}<div class="preview-media-notice" role={mediaState.phase==='failed'?'alert':'status'}><span>{mediaState.message}</span>{#if mediaState.retryable}<button class="button small" type="button" disabled={mediaState.phase==='loading'} onclick={()=>mediaRecovery?.retry()}>Retry playback</button>{/if}</div>{/if}
     </header>
     <div class:with-navigator={showNavigator} class="preview-workspace">
       {#if showNavigator}
@@ -266,7 +279,17 @@
       {/if}
       <div class:media-preview={stage === 'ready' && ['image', 'pdf', 'video'].includes(previewKind)} class:image-preview={previewKind === 'image'} class="preview-content">
       {#if stage === 'loading'}<div class="ghost-document" aria-live="polite"><aside><i></i><i></i><i></i><i></i></aside><main><div class="ghost-page"><b></b><span></span><span></span><span></span><em></em><span></span><span></span></div><p><strong>{status}</strong><small>MX is preparing the shared file inside this preview. You can close it without interrupting the conversation.</small></p></main></div>
-      {:else if stage === 'error'}<div class="preview-fallback"><h3>Preview unavailable</h3><p class="muted">{error}</p><button class="button" type="button" onclick={onClose}>Close</button></div>
+      {:else if stage === 'office' && officeActions}
+        <div class="preview-fallback preview-office-prompt">
+          <FileText size={38}/>
+          <h3>{officeActions.open?'Open in MX Office':'Download this Office document'}</h3>
+          <p class="muted">{officeActions.open?'View or edit this document in a new tab.':'Download this document to open it in your Office application.'}</p>
+          <div class="preview-prompt-actions">
+            {#if officeActions.open}<button class="button primary" onclick={officeActions.open}>Open in MX Office</button>{/if}
+            <button class="button" onclick={officeActions.download}>Download original</button>
+          </div>
+        </div>
+      {:else if stage === 'error'}<div class="preview-fallback"><h3>Preview unavailable</h3><p class="muted">{error}</p><div class="inline-actions">{#if onDownloadOriginal}<button class="button" disabled={downloadingOriginal} onclick={()=>void downloadOriginal()}>{downloadingOriginal?'Preparing download…':'Download original'}</button>{/if}<button class="button" type="button" onclick={onClose}>Close</button></div></div>
       {:else if previewKind === 'image'}
         <div class="preview-image-viewer">
           <div class:panning={imagePanning} class="preview-image-viewport" bind:this={imageViewport} role="region" aria-label="Zoomable image preview" onwheel={imageWheel} onpointerdown={startImagePan} onpointermove={moveImagePan} onpointerup={stopImagePan} onpointercancel={stopImagePan}>
@@ -277,11 +300,22 @@
           <p class="preview-image-hint">Ctrl/⌘ + wheel to zoom · Drag to pan</p>
         </div>
       {:else if previewKind === 'pdf'}<iframe title={`Preview of ${fileName}`} src={pdfSource}></iframe>
-      {:else if previewKind === 'video'}<video src={previewUrl} controls><track kind="captions" /></video>
-      {:else if previewKind === 'audio'}<audio src={previewUrl} controls><track kind="captions" /></audio>
+      {:else if previewKind === 'video'}<video src={previewUrl} controls use:recoverMedia><track kind="captions" /></video>
+      {:else if previewKind === 'audio'}<audio src={previewUrl} controls use:recoverMedia><track kind="captions" /></audio>
       {:else if previewKind === 'text'}<pre style={`font-size:${.76 * textZoom}rem`}>{previewText}</pre>
       {:else}<div class="preview-fallback"><h3>Browser preview unavailable</h3><p class="muted">This file type cannot be rendered safely in the browser. Use Download to open the original file with the appropriate application.</p></div>{/if}
       </div>
     </div>
   </div>
 </div>
+
+<style>
+  .preview-office-prompt{display:grid;justify-items:center;gap:.75rem;box-sizing:border-box;width:min(100%,34rem);padding:clamp(1rem,4vw,2rem);}
+  .preview-office-prompt h3,.preview-office-prompt p{margin:0;}
+  .preview-office-prompt p{max-width:40ch;line-height:1.6;overflow-wrap:anywhere;}
+  .preview-prompt-actions{display:flex;justify-content:center;align-items:center;flex-wrap:wrap;gap:.5rem;width:100%;margin-top:.25rem;}
+  .preview-prompt-actions .button{max-width:100%;white-space:normal;text-align:center;}
+  .preview-media-notice{grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;gap:.75rem;flex-wrap:wrap;padding:.6rem .75rem;border:1px solid var(--line);border-radius:.5rem;font-size:.85rem;}
+  .preview-media-notice span{flex:1;min-width:12rem;overflow-wrap:anywhere;}
+  .preview-media-notice button{flex:none;}
+</style>

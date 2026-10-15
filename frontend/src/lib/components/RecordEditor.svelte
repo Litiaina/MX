@@ -27,8 +27,8 @@
   import SelectFieldInput from './SelectFieldInput.svelte';
   import {fieldState,fieldRules,optionDetails,prepareForm,writable as ruleWritable} from '../util/formRules';
 
-  let { schema, moduleUid = '', record, canWrite, canDelete, canAttachments = true, allowEdit = false, liveMessage = null, focusAttachments = false, recordLabel = 'Record', initialChanges = null, onEdit = () => undefined, onClose, onSaved }:
-    { schema: SchemaResponse; moduleUid?: string; record: MxRecord | null; canWrite: boolean; canDelete: boolean; canAttachments?: boolean; allowEdit?: boolean; liveMessage?: LiveMessage | null; focusAttachments?: boolean; recordLabel?: string; initialChanges?:Record<string,JsonValue>|null; onEdit?: () => void; onClose: () => void; onSaved: () => Promise<void> } = $props();
+  let { schema, moduleUid = '', record, canWrite, canDelete, canAttachments = true, allowEdit = false, liveMessage = null, focusAttachments = false, recordLabel = 'Record', initialChanges = null, submitCreate, draftScope = '', onEdit = () => undefined, onClose, onSaved }:
+    { schema: SchemaResponse; moduleUid?: string; record: MxRecord | null; canWrite: boolean; canDelete: boolean; canAttachments?: boolean; allowEdit?: boolean; liveMessage?: LiveMessage | null; focusAttachments?: boolean; recordLabel?: string; initialChanges?:Record<string,JsonValue>|null; submitCreate?: (values: Record<string, JsonValue>) => Promise<MxRecord>; draftScope?: string; onEdit?: () => void; onClose: () => void; onSaved: () => Promise<void> } = $props();
 
   type PreviewEntry = { key: string; name: string; mimeType: string; detail: string; storedUid?: string; pendingFile?: File };
 
@@ -216,7 +216,7 @@
   }
 
   function draftStorageKey() {
-    return `mx-record-draft:${moduleUid || 'mx-default-records'}:${record?.uid || 'new'}`;
+    return `mx-record-draft:${moduleUid || 'mx-default-records'}:${draftScope || record?.uid || 'new'}`;
   }
 
   function clearDraft() {
@@ -388,7 +388,7 @@
         for (const field of fields) if (!['attachments', 'auto_number', 'formula', 'lookup', 'rollup'].includes(field.field_type)) payload[field.key] = states[field.key]?.visible?values[field.key]??null:null;
         if (!createSubmission) createSubmission = { uid: operationUid(), values: cloneJson(payload) };
         persistDraft();
-        saved = await createRecord(createSubmission.values, moduleUid || undefined, createSubmission.uid);
+        saved = submitCreate ? await submitCreate(createSubmission.values) : await createRecord(createSubmission.values, moduleUid || undefined, createSubmission.uid);
         // A user may amend retained entries after an uncertain create. First
         // acknowledge that original operation, then merge the subsequent edit.
         persisted = saved;

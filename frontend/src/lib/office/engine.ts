@@ -2,6 +2,7 @@ import { officeFormats } from './formats';
 import { installOfficeCompatibility } from './compatibility';
 import { checkOfficeGraphics } from './capabilities';
 import { officeEngineProgress, type OfficeLoadingProgress } from './loading';
+import { OFFICE_STARTUP_TIMEOUT, officeOperationTimeout, officeTimeoutMessage } from './resources';
 interface EngineModule {
   canvas: HTMLCanvasElement; uno_scripts: string[]; locateFile: (name: string) => string;
   mainScriptUrlOrBlob: Blob; uno_main: Promise<MessagePort>;
@@ -10,7 +11,7 @@ interface EngineModule {
   onRuntimeInitialized: () => void;
 }
 interface EngineFS { mkdir: (path: string) => void; writeFile: (path: string, bytes: Uint8Array) => void; readFile: (path: string) => Uint8Array }
-declare global { interface Window { Module: EngineModule; FS: EngineFS } }
+declare global { interface Window { Module: EngineModule; FS: EngineFS; PThread?: { terminateAllThreads: () => void } } }
 export interface OfficeSnapshot { blob: Blob; generation: number }
 export class OfficeEngine {
   private port?: MessagePort;
@@ -19,17 +20,23 @@ export class OfficeEngine {
   private runtimeError?: (event: ErrorEvent) => void;
   private canvasResize?: ResizeObserver;
   private resizeFrame?: number;
+  private stopped = false;
+  private rejectBoot?: (reason: Error) => void;
   private pending = new Map<number, { resolve: (message: Record<string, unknown>) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }>();
   constructor(private modified: (generation: number) => void, private fatal: (message: string) => void, private saveRequested: (copy: boolean) => void, private announce: (message: string) => void, private selected: (cell: string) => void = () => {}, private loading: (progress: OfficeLoadingProgress) => void = () => {}) {}
   async start(canvas: HTMLCanvasElement): Promise<void> {
+    if (this.stopped) throw new Error('Editor stopped. Reload to start a new editor.');
     if (!isSecureContext || !crossOriginIsolated || typeof SharedArrayBuffer === 'undefined') throw new Error('MX Office requires HTTPS and browser isolation headers. Open it directly from MX; check reverse-proxy headers if needed.');
     await checkOfficeGraphics();
+    if (this.stopped) throw new Error('Opening cancelled. Your original file is unchanged.');
     this.restoreCompatibility = installOfficeCompatibility();
     const vendor = `${location.origin}/office/vendor/`;
     let ready!: () => void;
     let failed!: (reason: Error) => void;
     const boot = new Promise<void>((resolve, reject) => { ready = resolve; failed = reject; });
+    this.rejectBoot = failed;
     const fail = (message: string) => {
+      if (this.stopped) return;
       const error = new Error(message); failed(error); this.fatal(message);
       for(const pending of this.pending.values()){clearTimeout(pending.timer);pending.reject(error);}
       this.pending.clear();
@@ -51,12 +58,13 @@ export class OfficeEngine {
       monitorRunDependencies: (remaining) => {
         if (!runtimeInitialized && !receivingData && remaining > 0) this.loading({ phase: 'engine', detail: `Preparing ${remaining.toLocaleString()} editor resources and the WebAssembly runtime.` });
       },
-      onRuntimeInitialized: () => { runtimeInitialized = true; this.loading({ phase: 'runtime', detail: 'Starting the editor’s graphics and document workers on your device.' }); }
+      onRuntimeInitialized: () => { if(this.stopped){window.PThread?.terminateAllThreads();return;} runtimeInitialized = true; this.loading({ phase: 'runtime', detail: 'Starting the editor’s graphics and document workers on your device.' }); }
     };
     const script = document.createElement('script'); script.src = `${vendor}soffice.js`;
     script.onerror = () => fail('The bundled Office engine could not be loaded. Reconnect once to prepare offline editing.');
     script.onload = () => {
       window.Module.uno_main.then((port) => {
+        if(this.stopped){port.close();window.PThread?.terminateAllThreads();return;}
         this.port = port;
         this.loading({ phase: 'runtime', detail: 'The editor runtime is initialized. Connecting the document engine.' });
         console.info('MX Office: engine channel connected');
@@ -74,7 +82,7 @@ export class OfficeEngine {
     document.body.append(script);
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      await Promise.race([boot, new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('Office startup took too long. Your saved drafts are retained.')), 120_000); })]);
+      await Promise.race([boot, new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('Office startup did not finish within 10 minutes. Your original file and saved local copies are retained. Retry or return to Drive.')), OFFICE_STARTUP_TIMEOUT); })]);
       // Save/status/recovery bars change canvas height without resizing the
       // browser window. Keep native rendering and pointer hit targets aligned.
       this.canvasResize = new ResizeObserver(() => {
@@ -83,13 +91,14 @@ export class OfficeEngine {
       });
       this.canvasResize.observe(canvas);
     }
-    finally { clearTimeout(timer); }
+    catch(reason){this.dispose();throw reason;}
+    finally { clearTimeout(timer); this.rejectBoot=undefined; }
   }
   private request(cmd: string, extra: Record<string, unknown>): Promise<Record<string, unknown>> {
-    if (!this.port) return Promise.reject(new Error('Office is not ready.'));
+    if (this.stopped || !this.port) return Promise.reject(new Error('Office is not ready.'));
     const id = ++this.sequence;
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => { this.pending.delete(id); reject(new Error('Office did not acknowledge this operation. Your document is still open.')); }, 60_000);
+      const timer = setTimeout(() => { this.pending.delete(id); reject(new Error(officeTimeoutMessage(cmd))); }, officeOperationTimeout(cmd));
       this.pending.set(id, { resolve, reject, timer }); this.port!.postMessage({ cmd, id, ...extra });
     });
   }
@@ -97,7 +106,8 @@ export class OfficeEngine {
     if (!officeFormats[extension]) throw new Error('This file format is not supported for editing.');
     try { window.FS.mkdir('/tmp/mx-office'); } catch { /* Directory already exists. */ }
     window.FS.writeFile(`/tmp/mx-office/document${extension}`, new Uint8Array(await blob.arrayBuffer()));
-    await this.request('open', { extension, readOnly });
+    try { await this.request('open', { extension, readOnly }); }
+    catch(reason){this.dispose();throw reason;}
     window.dispatchEvent(new Event('resize'));
   }
   async snapshot(extension: string): Promise<OfficeSnapshot> {
@@ -107,6 +117,6 @@ export class OfficeEngine {
     return { blob: new Blob([new Uint8Array(bytes)], { type: format.mime }), generation: Number(message.generation) };
   }
   committed(generation: number) { this.port?.postMessage({ cmd: 'committed', generation }); }
-  async focus() { if(this.port)await this.request('focus', {}); }
-  dispose() { this.canvasResize?.disconnect();if(this.resizeFrame !== undefined)cancelAnimationFrame(this.resizeFrame);for (const pending of this.pending.values()) { clearTimeout(pending.timer); pending.reject(new Error('Editor closed.')); } this.pending.clear(); this.port?.close(); this.restoreCompatibility?.(); if(this.runtimeError)window.removeEventListener('error',this.runtimeError); }
+  async focus(initializeInput = false) { if(this.port)await this.request('focus', {initializeInput}); }
+  dispose() { this.stopped=true;this.rejectBoot?.(new Error('Opening cancelled. Your original file and saved local copies are unchanged.'));this.rejectBoot=undefined;this.canvasResize?.disconnect();if(this.resizeFrame !== undefined)cancelAnimationFrame(this.resizeFrame);for (const pending of this.pending.values()) { clearTimeout(pending.timer); pending.reject(new Error('Opening cancelled. Your original file and saved local copies are unchanged.')); } this.pending.clear(); this.port?.close();window.PThread?.terminateAllThreads(); this.restoreCompatibility?.(); if(this.runtimeError)window.removeEventListener('error',this.runtimeError); }
 }

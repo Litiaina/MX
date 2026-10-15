@@ -100,6 +100,8 @@ pub struct CreateFieldRequest {
 
 #[derive(Debug, Deserialize)]
 pub struct UpdateFieldRequest {
+    pub field_type: Option<String>,
+    pub base_field_type: Option<String>,
     pub label: Option<String>,
     pub required: Option<bool>,
     pub unique_value: Option<bool>,
@@ -1426,6 +1428,101 @@ pub async fn get_admin_record_schema(claims: Claims) -> Response {
     }
 }
 
+#[derive(Debug, Serialize)]
+struct FieldKeyOwner {
+    uid: String,
+    key: String,
+    label: String,
+    field_type: String,
+    active: bool,
+    module_uid: String,
+    module_name: String,
+}
+
+#[derive(Debug, Serialize)]
+struct FieldKeyConflict {
+    field: FieldKeyOwner,
+    suggested_key: String,
+}
+
+enum CreateFieldOutcome {
+    Created(FieldDefinition),
+    KeyConflict(FieldKeyConflict),
+}
+
+fn field_key_conflict(
+    connection: &rusqlite::Connection,
+    module_uid: &str,
+    key: &str,
+    internal_key: &str,
+) -> rusqlite::Result<Option<FieldKeyConflict>> {
+    // Archived fields still own their keys. Check both public and legacy
+    // internal keys under the same write transaction as the eventual insert.
+    let owner = connection
+        .query_row(
+            "SELECT f.uid, COALESCE(f.module_key,f.field_key), f.label, f.field_type,
+                f.active, f.module_uid, m.name
+         FROM mx_fields f JOIN mx_modules m ON m.uid=f.module_uid
+         WHERE (f.module_uid=?1 AND COALESCE(f.module_key,f.field_key)=?2 COLLATE NOCASE)
+            OR f.field_key=?3 COLLATE NOCASE
+         ORDER BY (f.module_uid=?1) DESC LIMIT 1",
+            params![module_uid, key, internal_key],
+            |row| {
+                Ok(FieldKeyOwner {
+                    uid: row.get(0)?,
+                    key: row.get(1)?,
+                    label: row.get(2)?,
+                    field_type: row.get(3)?,
+                    active: row.get::<_, i64>(4)? != 0,
+                    module_uid: row.get(5)?,
+                    module_name: row.get(6)?,
+                })
+            },
+        )
+        .optional()?;
+    let Some(field) = owner else { return Ok(None) };
+    // The old namespaced storage key truncates long public keys. Put the
+    // suffix inside that limit so the suggestion cannot collide in storage.
+    let prefix = if module_uid == DEFAULT_MODULE_UID {
+        String::new()
+    } else {
+        format!(
+            "m_{}__",
+            module_uid
+                .chars()
+                .filter(|c| c.is_ascii_alphanumeric())
+                .take(16)
+                .collect::<String>()
+        )
+    };
+    let capacity = 64usize.saturating_sub(prefix.len());
+    let mut number = 2_u64;
+    let suggested_key = loop {
+        let suffix = format!("_{number}");
+        let base = key
+            .chars()
+            .take(capacity.saturating_sub(suffix.len()))
+            .collect::<String>();
+        let candidate = format!("{base}{suffix}");
+        let stored = format!("{prefix}{candidate}");
+        let used: bool = connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM mx_fields
+             WHERE (module_uid=?1 AND COALESCE(module_key,field_key)=?2 COLLATE NOCASE)
+                OR field_key=?3 COLLATE NOCASE)",
+            params![module_uid, candidate, stored],
+            |row| row.get(0),
+        )?;
+        if !used {
+            break candidate;
+        }
+        number += 1;
+    };
+    Ok(Some(FieldKeyConflict {
+        field,
+        suggested_key,
+    }))
+}
+
 pub async fn create_schema_field(
     claims: Claims,
     Json(request): Json<CreateFieldRequest>,
@@ -1529,7 +1626,7 @@ pub async fn create_schema_field(
     let formula_actor_uid = claims.uid.clone();
 
     let database_result =
-        tokio::task::spawn_blocking(move || -> Result<FieldDefinition, SqliteDatabaseError> {
+        tokio::task::spawn_blocking(move || -> Result<CreateFieldOutcome, SqliteDatabaseError> {
             with_sql_connection(|connection| {
                 ensure_dynamic_schema(connection)?;
                 let schema_transaction = rusqlite::Transaction::new_unchecked(
@@ -1539,6 +1636,14 @@ pub async fn create_schema_field(
                 let connection = &*schema_transaction;
                 if load_module_db(connection, &module_uid_for_db)?.is_none() {
                     return Err(rusqlite::Error::QueryReturnedNoRows);
+                }
+                if let Some(conflict) = field_key_conflict(
+                    connection,
+                    &module_uid_for_db,
+                    &module_key_for_db,
+                    &key_for_db,
+                )? {
+                    return Ok(CreateFieldOutcome::KeyConflict(conflict));
                 }
                 super::relationships::validate_config(
                     connection,
@@ -1669,19 +1774,35 @@ pub async fn create_schema_field(
                     row_to_field,
                 )?;
                 schema_transaction.commit()?;
-                Ok(created)
+                Ok(CreateFieldOutcome::Created(created))
             })
         })
         .await;
 
     match database_result {
-        Ok(Ok(field)) => {
+        Ok(Ok(CreateFieldOutcome::Created(field))) => {
             publish_live_event(
                 "schema.updated",
                 Some(&claims.uid),
                 json!({"reason":"field.created","field_uid":field.uid}),
             );
             api_json(StatusCode::CREATED, json!(field))
+        }
+
+        Ok(Ok(CreateFieldOutcome::KeyConflict(conflict))) => {
+            let field = &conflict.field;
+            let state = if field.active { "active" } else { "archived" };
+            api_json(
+                StatusCode::CONFLICT,
+                json!({
+                    "error": "field_key_conflict",
+                    "response": format!(
+                        "Cannot create this field: key '{key}' is already used by the {state} field '{}' ({}) in '{}'. Archiving keeps its key and historical data. Use a different key for the new datatype, or review the existing field.",
+                        field.label, field.field_type, field.module_name,
+                    ),
+                    "field_key_conflict": conflict,
+                }),
+            )
         }
 
         Ok(Err(SqliteDatabaseError::Sqlite(rusqlite::Error::QueryReturnedNoRows))) => api_json(
@@ -1695,7 +1816,7 @@ pub async fn create_schema_field(
             api_json(
                 StatusCode::CONFLICT,
                 json!({
-                    "response": format!("A field with key '{key}' already exists.")
+                    "response": "This field could not be created because a schema constraint was violated. Reload the module settings and review the field key and configuration."
                 }),
             )
         }
@@ -2182,6 +2303,16 @@ enum FieldUpdate {
     ArchiveBlocked(super::field_archive::ArchiveCheck),
 }
 
+fn validate_field_type_change(existing: &str, next: &str) -> Result<(), String> {
+    if existing == next || (existing == "text" && next == "long_text") {
+        Ok(())
+    } else {
+        Err(format!(
+            "Cannot change this field from {existing} to {next} automatically. Text → Long text is supported in place without deleting records. Other conversions need a validated data migration; existing values have not been changed."
+        ))
+    }
+}
+
 pub async fn update_schema_field(
     claims: Claims,
     Path(uid): Path<String>,
@@ -2199,6 +2330,16 @@ pub async fn update_schema_field(
             json!({ "response": "Field label cannot be empty." }),
         );
     }
+
+    let requested_type = match request
+        .field_type
+        .as_deref()
+        .map(normalize_type)
+        .transpose()
+    {
+        Ok(value) => value,
+        Err(message) => return api_json(StatusCode::BAD_REQUEST, json!({"response":message})),
+    };
 
     let uid_for_db = uid.clone();
     let formula_actor_uid = claims.uid.clone();
@@ -2239,6 +2380,13 @@ pub async fn update_schema_field(
                     |row| row.get(0),
                 )?;
 
+                if request.base_field_type.as_deref().is_some_and(|base| base != existing.field_type) {
+                    return Err(rusqlite::Error::InvalidParameterName("MX_FIELD_TYPE_CHANGED".into()));
+                }
+                let next_type = requested_type.as_deref().unwrap_or(&existing.field_type);
+                validate_field_type_change(&existing.field_type, next_type)
+                    .map_err(|message|rusqlite::Error::InvalidParameterName(format!("MX_CONFIG:{message}")))?;
+
                 if request.active == Some(false) {
                     let check = super::field_archive::check(connection, &uid_for_db)?;
                     if !check.blockers.is_empty() {
@@ -2247,16 +2395,16 @@ pub async fn update_schema_field(
                 }
 
                 let next_unique =
-                    if matches!(existing.field_type.as_str(), "attachments" | "formula" | "relationship" | "lookup" | "rollup") {
+                    if matches!(next_type, "attachments" | "formula" | "relationship" | "lookup" | "rollup") {
                         false
                     } else {
                         request.unique_value.unwrap_or(existing.unique_value)
-                            || existing.field_type == "auto_number"
+                            || next_type == "auto_number"
                     };
 
                 if next_unique
                     && !existing.unique_value
-                    && existing.field_type != "auto_number"
+                    && next_type != "auto_number"
                     && duplicate_value_exists(connection, &uid_for_db)?
                 {
                     return Err(rusqlite::Error::InvalidParameterName(
@@ -2293,13 +2441,13 @@ pub async fn update_schema_field(
 
                 let mut next_config = match request.config {
                     Some(config) => {
-                        validate_config(&existing.field_type, &config).map_err(|message| {
+                        validate_config(next_type, &config).map_err(|message| {
                             rusqlite::Error::InvalidParameterName(format!("MX_CONFIG:{message}"))
                         })?
                     }
                     None => existing.config.clone(),
                 };
-                if existing.field_type == "formula" {
+                if next_type == "formula" {
                     validate_formula_references(
                         connection,
                         &module_uid,
@@ -2308,9 +2456,9 @@ pub async fn update_schema_field(
                     )?;
                 }
 
-                super::relationships::validate_config(connection, &module_uid, &existing.key, &existing.field_type, &next_config)?;
-                if request.active!=Some(false){super::form_rules::validate_config(connection,&module_uid,&existing.key,&existing.label,&existing.field_type,&next_config)?;}
-                if existing.field_type == "relationship" && next_config != existing.config {
+                super::relationships::validate_config(connection, &module_uid, &existing.key, next_type, &next_config)?;
+                if request.active!=Some(false){super::form_rules::validate_config(connection,&module_uid,&existing.key,&existing.label,next_type,&next_config)?;}
+                if next_type == "relationship" && next_config != existing.config {
                     if next_config["target_module_uid"] != existing.config["target_module_uid"] {
                         let dependent:bool = connection.query_row("SELECT EXISTS(SELECT 1 FROM mx_fields WHERE module_uid=?1 AND active=1 AND field_type IN ('lookup','rollup') AND json_extract(config_json,'$.relationship_field')=?2)",params![&module_uid,&existing.key],|r|r.get(0))?;
                         if dependent {return Err(rusqlite::Error::InvalidParameterName("MX_CONFIG:Archive or reconfigure dependent lookup and rollup fields before changing this relationship's module.".into()));}
@@ -2321,7 +2469,7 @@ pub async fn update_schema_field(
                     }
                 }
 
-                if existing.field_type == "attachments"
+                if next_type == "attachments"
                     && next_config
                         .get("storage_name")
                         .and_then(Value::as_str)
@@ -2348,7 +2496,7 @@ pub async fn update_schema_field(
                 }
 
                 let next_sortable = request.sortable.unwrap_or(existing.sortable)
-                    && !matches!(existing.field_type.as_str(), "long_text" | "attachments" | "relationship" | "lookup" | "rollup");
+                    && !matches!(next_type, "long_text" | "attachments" | "relationship" | "lookup" | "rollup");
 
                 connection.execute(
                     r#"
@@ -2363,22 +2511,23 @@ pub async fn update_schema_field(
                         table_priority = ?8,
                         position = ?9,
                         active = ?10,
-                        config_json = ?11
+                        config_json = ?11,
+                        field_type = ?12
                     WHERE uid = ?1
                     "#,
                     params![
                         &uid_for_db,
                         next_label,
-                        if !matches!(existing.field_type.as_str(), "formula" | "lookup" | "rollup")
+                        if !matches!(next_type, "formula" | "lookup" | "rollup")
                             && (request.required.unwrap_or(existing.required)
-                                || existing.field_type == "auto_number")
+                                || next_type == "auto_number")
                         {
                             1_i64
                         } else {
                             0_i64
                         },
                         if next_unique { 1_i64 } else { 0_i64 },
-                        if request.searchable.unwrap_or(existing.searchable) && !matches!(existing.field_type.as_str(), "relationship" | "lookup" | "rollup") {
+                        if request.searchable.unwrap_or(existing.searchable) && !matches!(next_type, "relationship" | "lookup" | "rollup") {
                             1_i64
                         } else {
                             0_i64
@@ -2397,6 +2546,7 @@ pub async fn update_schema_field(
                             0_i64
                         },
                         next_config.to_string(),
+                        next_type,
                     ],
                 )?;
 
@@ -2453,6 +2603,15 @@ pub async fn update_schema_field(
             StatusCode::NOT_FOUND,
             json!({ "response": "MX field was not found." }),
         ),
+
+        Ok(Err(SqliteDatabaseError::Sqlite(rusqlite::Error::InvalidParameterName(message))))
+            if message == "MX_FIELD_TYPE_CHANGED" =>
+        {
+            api_json(
+                StatusCode::CONFLICT,
+                json!({"response":"This field's datatype changed while you were editing. No settings were saved. Reload the module settings before trying again."}),
+            )
+        }
 
         Ok(Err(SqliteDatabaseError::Sqlite(rusqlite::Error::InvalidParameterName(message))))
             if message == "MX_DUPLICATE_VALUES" =>

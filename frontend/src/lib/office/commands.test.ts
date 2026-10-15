@@ -99,4 +99,9 @@ describe('Office native file command boundary', () => {
     expect(messages).toContainEqual({cmd:'selection',cell:'D1'});
     expect(messages.at(-1)).toMatchObject({cmd:'opened',id:1,generation:0});
   });
+  it('reinitializes input only for the first post-layout focus, not ordinary refocus',async()=>{
+    const {open,request,operations}=await worker();open();operations.length=0;
+    request({cmd:'focus',id:78,initializeInput:true});expect(operations).toEqual(['activate-frame','restore-selection']);
+    operations.length=0;request({cmd:'focus',id:79,initializeInput:false});expect(operations).toEqual(['activate-frame']);
+  });
 });

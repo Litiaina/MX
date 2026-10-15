@@ -1,8 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
-    env, fs,
-    path::PathBuf,
-    process::Command,
+    env,
     sync::{Mutex, OnceLock},
     time::{Duration, Instant},
 };
@@ -88,6 +86,10 @@ fn record_media_tickets() -> &'static Mutex<HashMap<String, RecordMediaTicket>> 
 pub enum MxOperationError {
     Sqlite(SqliteError),
     N1(String),
+    N1Stream {
+        status: StatusCode,
+        retry_after: Option<HeaderValue>,
+    },
     InvalidRequest(String),
     Conflict(String),
 }
@@ -254,8 +256,23 @@ fn mx_access_denied() -> Response {
     )
 }
 
-fn map_mx_error(error: MxOperationError) -> Response {
+pub(crate) fn map_mx_error(error: MxOperationError) -> Response {
     match error {
+        MxOperationError::N1Stream { status, retry_after } => {
+            let message = match status {
+                StatusCode::TOO_MANY_REQUESTS => "Storage is temporarily limiting requests. Retry playback shortly; your file is unchanged.",
+                StatusCode::SERVICE_UNAVAILABLE => "Storage is temporarily unavailable. Retry playback shortly.",
+                StatusCode::GATEWAY_TIMEOUT => "Storage took too long to respond. Retry playback or check the server connection.",
+                StatusCode::NOT_FOUND => "The file bytes are unavailable in storage. Contact your administrator.",
+                _ => "Storage could not stream this file. Try again.",
+            };
+            let mut response = api_json(status, json!({"response":message}));
+            response.headers_mut().insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
+            if let Some(value) = retry_after {
+                response.headers_mut().insert(axum::http::header::RETRY_AFTER, value);
+            }
+            response
+        }
         MxOperationError::Conflict(reason) => {
             api_json(StatusCode::CONFLICT, json!({"response":reason}))
         }
@@ -666,126 +683,14 @@ pub(crate) fn office_preview_supported(file_name: &str) -> bool {
     )
 }
 
-fn safe_cache_component(value: &str) -> String {
-    let mut result = String::with_capacity(value.len());
-
-    for character in value.chars() {
-        if character.is_ascii_alphanumeric()
-            || character == '-'
-            || character == '_'
-            || character == '.'
-        {
-            result.push(character);
-        } else {
-            result.push('_');
-        }
-    }
-
-    if result.is_empty() {
-        "unknown".to_string()
-    } else {
-        result
-    }
-}
-
-fn mx_preview_cache_path(attachment: &FileAttachment) -> PathBuf {
-    let cache_root = env::temp_dir().join("mx-preview-cache");
-
-    let version = attachment.version_id.as_deref().unwrap_or("original");
-
-    cache_root.join(format!(
-        "{}__{}.pdf",
-        safe_cache_component(&attachment.uid),
-        safe_cache_component(version),
-    ))
-}
-
-pub(crate) fn generate_office_pdf_preview(
+pub(crate) async fn generate_office_pdf_preview(
     attachment: FileAttachment,
     original_bytes: Vec<u8>,
 ) -> Result<Vec<u8>, String> {
-    let cache_path = mx_preview_cache_path(&attachment);
-
-    if cache_path.is_file() {
-        return fs::read(&cache_path).map_err(|error| {
-            format!(
-                "failed to read cached MX preview '{}': {error}",
-                cache_path.display()
-            )
-        });
-    }
-
-    let extension = attachment_extension(&attachment.file_name)
-        .ok_or_else(|| "attachment has no supported Office extension".to_string())?;
-
-    let work_dir = env::temp_dir().join(format!("mx-preview-work-{}", Uuid::new_v4()));
-
-    let profile_dir = work_dir.join("lo-profile");
-    let source_path = work_dir.join(format!("source.{extension}"));
-    let generated_pdf = work_dir.join("source.pdf");
-
-    let result = (|| -> Result<Vec<u8>, String> {
-        fs::create_dir_all(&profile_dir)
-            .map_err(|error| format!("failed to create MX preview work directory: {error}"))?;
-
-        fs::write(&source_path, original_bytes)
-            .map_err(|error| format!("failed to stage Office attachment for preview: {error}"))?;
-
-        let profile_uri = format!("file://{}", profile_dir.to_string_lossy());
-
-        let output = Command::new("libreoffice")
-            .arg("--headless")
-            .arg("--nologo")
-            .arg("--nodefault")
-            .arg("--nolockcheck")
-            .arg("--nofirststartwizard")
-            .arg(format!("-env:UserInstallation={profile_uri}"))
-            .arg("--convert-to")
-            .arg("pdf")
-            .arg("--outdir")
-            .arg(&work_dir)
-            .arg(&source_path)
-            .output()
-            .map_err(|error| {
-                if error.kind() == std::io::ErrorKind::NotFound {
-                    "LibreOffice is not installed or is not available in PATH".to_string()
-                } else {
-                    format!("failed to start LibreOffice: {error}")
-                }
-            })?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let stdout = String::from_utf8_lossy(&output.stdout);
-
-            return Err(format!(
-                "LibreOffice preview conversion failed. stdout='{}' stderr='{}'",
-                stdout.trim(),
-                stderr.trim(),
-            ));
-        }
-
-        if !generated_pdf.is_file() {
-            return Err("LibreOffice completed without producing a PDF preview".to_string());
-        }
-
-        let pdf_bytes = fs::read(&generated_pdf)
-            .map_err(|error| format!("failed to read generated PDF preview: {error}"))?;
-
-        if let Some(parent) = cache_path.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|error| format!("failed to create MX preview cache: {error}"))?;
-        }
-
-        fs::write(&cache_path, &pdf_bytes)
-            .map_err(|error| format!("failed to cache generated MX preview: {error}"))?;
-
-        Ok(pdf_bytes)
-    })();
-
-    let _ = fs::remove_dir_all(&work_dir);
-
-    result
+    super::office_previews::generate(attachment, original_bytes).await
+}
+pub(crate) fn check_office_preview_size(size: u64) -> Result<(), String> {
+    super::office_previews::check_size(size)
 }
 
 pub(crate) fn inline_attachment_response(
@@ -2800,6 +2705,9 @@ pub async fn preview_mx_attachment(
     };
 
     if office_preview_supported(&attachment.file_name) {
+        if let Err(error)=check_office_preview_size(attachment.size) {
+            return api_json(StatusCode::UNPROCESSABLE_ENTITY,json!({"response":error}));
+        }
         let original_bytes = match n1_download(&attachment.object_key, &attachment.file_name).await
         {
             Ok(bytes) => bytes,
@@ -2809,39 +2717,22 @@ pub async fn preview_mx_attachment(
         };
         let attachment_for_preview = attachment.clone();
 
-        let preview_result = tokio::task::spawn_blocking(move || {
-            generate_office_pdf_preview(attachment_for_preview, original_bytes)
-        })
-        .await;
+        let preview_result = generate_office_pdf_preview(attachment_for_preview, original_bytes).await;
 
         let pdf_bytes = match preview_result {
-            Ok(Ok(bytes)) => bytes,
+            Ok(bytes) => bytes,
 
-            Ok(Err(error)) => {
-                crate::report_error!(error, "preview", "preview_mx_attachment()");
+            Err(error) => {
+                crate::report_error!(&error, "preview", "preview_mx_attachment()");
 
                 return api_json(
                     StatusCode::SERVICE_UNAVAILABLE,
                     json!({
-                        "response": "MX could not generate the Office preview. Verify that LibreOffice Writer, Calc, and Impress are installed on the MX server."
+                        "response": error
                     }),
                 );
             }
 
-            Err(error) => {
-                crate::report_error!(
-                    format!("Office preview blocking task failed: {error}"),
-                    "preview",
-                    "preview_mx_attachment()"
-                );
-
-                return api_json(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    json!({
-                        "response": "MX Office preview task failed."
-                    }),
-                );
-            }
         };
 
         let preview_name = attachment

@@ -7,6 +7,8 @@
   import Pencil from '@lucide/svelte/icons/pencil';
   import Search from '@lucide/svelte/icons/search';
   import Trash2 from '@lucide/svelte/icons/trash-2';
+  import Upload from '@lucide/svelte/icons/upload';
+  import History from '@lucide/svelte/icons/history';
   import { ApiError } from '../api/client';
   import type { LiveMessage } from '../live/client';
   import { requestConfirmation } from '../confirmation';
@@ -16,6 +18,7 @@
   import type { Session } from '../api/types';
   import { deleteRecord, getRecord, listRecords, loadModuleSchema, loadSchema, patchRecord } from '../api/workspace';
   import RecordEditor from './RecordEditor.svelte';
+  import ImportRecords from './ImportRecords.svelte';
   import RelationshipInput from './RelationshipInput.svelte';
   import {fieldState,optionLabel,availableOptions,prepareForm} from '../util/formRules';
   import TableScrollbar from './TableScrollbar.svelte';
@@ -23,6 +26,10 @@
 
   let { session, accessLevel, moduleUid = '', modulePermission = null, openRecordUid = '', openRequestRevision = 0, focusLinkedAttachments = false, revision = 0, liveMessage = null, recordSingular = 'Record', recordPlural = 'Records' }: { session: Session; accessLevel: number; moduleUid?: string; modulePermission?: ModulePermission | null; openRecordUid?: string; openRequestRevision?: number; focusLinkedAttachments?: boolean; revision?: number; liveMessage?: LiveMessage | null; recordSingular?: string; recordPlural?: string } = $props();
   let schema = $state<SchemaResponse | null>(null);
+  let importer = $state<'new' | 'history' | null>(null);
+  let importMenuOpen = $state(false);
+  let importMenuAnchor = $state<HTMLButtonElement | null>(null);
+  let importFocusFrame = 0;
   let rows = $state<MxRecord[]>([]);
   let summaries = $state<Record<string, ColumnSummary>>({});
   let page = $state(1); let pageInput = $state(1); let pages = $state(0); let total = $state(0); let pageSize = $state(50);
@@ -42,7 +49,7 @@
   let editorWritable = $state(false);
   let cellEdit = $state<{ rowUid: string; fieldKey: string; value: string; baseRevision: number; fills:Record<string,JsonValue>; computed:Record<string,JsonValue>; previewLoading:boolean; previewError:string } | null>(null);
   let cellRequest:AbortController|undefined;
-  onDestroy(()=>cellRequest?.abort());
+  onDestroy(()=>{ cellRequest?.abort(); cancelAnimationFrame(importFocusFrame); });
   let cellSaving = $state(false);
   let cellConflict = $state<{ conflicts: FieldConflict[]; recordRevision: number } | null>(null);
   let focusAttachments = $state(false);
@@ -71,12 +78,14 @@
   const columnStorageKey = $derived(`mx_record_columns_v3_${moduleUid || 'default'}`);
   onMount(() => {
     try { const saved = JSON.parse(localStorage.getItem(columnStorageKey) || localStorage.getItem('mx_record_columns_v3') || 'null'); if (saved && Array.isArray(saved.shown) && Array.isArray(saved.hidden)) columnOverrides = { shown: saved.shown.filter((key: unknown): key is string => typeof key === 'string'), hidden: saved.hidden.filter((key: unknown): key is string => typeof key === 'string') }; else { const old = JSON.parse(localStorage.getItem('mx_record_columns_v2') || 'null'); if (Array.isArray(old)) legacyColumns = old.filter((key): key is string => typeof key === 'string'); } } catch { /* Use schema defaults. */ }
-    const closeRowMenu = (event: PointerEvent) => { const target = event.target instanceof Element ? event.target : null; if (!target?.closest('[data-record-actions]')) rowMenuUid = ''; };
-    const closeRowMenuWithKeyboard = (event: KeyboardEvent) => { if (event.key === 'Escape' && rowMenuUid) { event.preventDefault(); closeRowMenuAndFocus(); } };
+    const closeRowMenu = (event: PointerEvent) => { const target = event.target instanceof Element ? event.target : null; if (!target?.closest('[data-record-actions]')) rowMenuUid = ''; if (!target?.closest('[data-module-import-actions]')) importMenuOpen = false; };
+    const closeImportMenuOnFocus = (event: FocusEvent) => { if (importMenuOpen && !(event.target instanceof Element && event.target.closest('[data-module-import-actions]'))) importMenuOpen = false; };
+    const closeRowMenuWithKeyboard = (event: KeyboardEvent) => { if (event.key === 'Escape' && rowMenuUid) { event.preventDefault(); closeRowMenuAndFocus(); } if (event.key === 'Escape' && importMenuOpen) { event.preventDefault(); closeImportMenuAndFocus(); } };
     document.addEventListener('pointerdown', closeRowMenu);
     document.addEventListener('keydown', closeRowMenuWithKeyboard);
+    document.addEventListener('focusin', closeImportMenuOnFocus);
     void refresh(true);
-    return () => { window.clearTimeout(searchTimer); document.removeEventListener('pointerdown', closeRowMenu); document.removeEventListener('keydown', closeRowMenuWithKeyboard); };
+    return () => { window.clearTimeout(searchTimer); document.removeEventListener('pointerdown', closeRowMenu); document.removeEventListener('keydown', closeRowMenuWithKeyboard); document.removeEventListener('focusin', closeImportMenuOnFocus); };
   });
   $effect(() => {
     const message = liveMessage; const selected = moduleUid || 'mx-default-records';
@@ -105,6 +114,7 @@
   function closeRowMenuAndFocus() { rowMenuUid = ''; rowMenuAnchor?.focus({ preventScroll: true }); }
   function toggleRowMenu(event: MouseEvent, uid: string) {
     event.stopPropagation();
+    importMenuOpen = false;
     rowMenuAnchor = event.currentTarget as HTMLButtonElement;
     rowMenuUid = rowMenuUid === uid ? '' : uid;
   }
@@ -113,6 +123,58 @@
       event.preventDefault(); (event.currentTarget as HTMLElement).querySelector<HTMLElement>('[role="menuitem"]')?.focus();
     } else if (event.key === 'Tab') closeRowMenuAndFocus();
   }
+
+  function closeImportMenuAndFocus() {
+    cancelAnimationFrame(importFocusFrame);
+    importMenuOpen = false;
+    importMenuAnchor?.focus({ preventScroll: true });
+  }
+  async function openImportMenu(focusLast = false) {
+    rowMenuUid = '';
+    importMenuOpen = true;
+    await tick();
+    cancelAnimationFrame(importFocusFrame);
+    // Reopened portals may not admit focus until layout/paint finishes (Firefox/WebKit).
+    // Retry only a bounded number of frames, and stop on close or user navigation.
+    const focusItem = (remaining: number) => {
+      importFocusFrame = 0;
+      if (!importMenuOpen) return;
+      const items = document.getElementById('module-import-menu')?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]');
+      const target = items?.[focusLast ? items.length - 1 : 0];
+      target?.focus();
+      if (target !== document.activeElement && remaining > 0) importFocusFrame = requestAnimationFrame(() => focusItem(remaining - 1));
+    };
+    importFocusFrame = requestAnimationFrame(() => focusItem(8));
+  }
+  function toggleImportMenu(event: MouseEvent) {
+    importMenuAnchor = event.currentTarget as HTMLButtonElement;
+    if (importMenuOpen) closeImportMenuAndFocus();
+    else void openImportMenu();
+  }
+  function importTriggerKeydown(event: KeyboardEvent) {
+    if (event.key === 'Tab') { importMenuOpen = false; cancelAnimationFrame(importFocusFrame); return; }
+    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+    event.preventDefault();
+    importMenuAnchor = event.currentTarget as HTMLButtonElement;
+    void openImportMenu(event.key === 'ArrowUp');
+  }
+  function importMenuKeydown(event: KeyboardEvent) {
+    // Do not let deferred opening focus overwrite the user's next navigation key.
+    cancelAnimationFrame(importFocusFrame);
+    if (event.key === 'Tab') { closeImportMenuAndFocus(); return; }
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+    event.preventDefault();
+    const items = Array.from((event.currentTarget as HTMLElement).querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)'));
+    const active = items.indexOf(document.activeElement as HTMLButtonElement);
+    const next = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 : active < 0 ? (event.key === 'ArrowUp' ? items.length - 1 : 0) : (active + (event.key === 'ArrowUp' ? -1 : 1) + items.length) % items.length;
+    items[next]?.focus();
+  }
+  function importMenuKeyboard(node: HTMLElement) {
+    // Native listener keeps keyboard ownership local when this menu is portalled.
+    node.addEventListener('keydown', importMenuKeydown);
+    return { destroy() { node.removeEventListener('keydown', importMenuKeydown); } };
+  }
+  function openImporter(mode: 'new' | 'history') { importMenuOpen = false; importer = mode; }
 
   async function openLinkedRecord(uid: string) {
     rowMenuUid = ''; openedDeepLink = uid; openedRequestRevision = openRequestRevision; error = '';
@@ -128,6 +190,8 @@
         const nextSchema = moduleUid ? await loadModuleSchema(moduleUid) : await loadSchema();
         if (request !== refreshSequence) return;
         schema = nextSchema;
+        if (sortBy && !nextSchema.fields.some(field => field.key === sortBy && field.active && field.sortable)
+          && !nextSchema.system_fields.some(field => field.key === sortBy)) sortBy = '';
         const allowed = new Set(schema.fields.filter((field) => field.active).map((field) => field.key));
         const defaults = schema.fields.filter((field) => field.active && field.table_visible).sort((a, b) => a.position - b.position).map((field) => field.key);
         columnOverrides = { shown: columnOverrides.shown.filter((key) => allowed.has(key)), hidden: columnOverrides.hidden.filter((key) => allowed.has(key)) };
@@ -312,11 +376,12 @@
 </script>
 
 <section class="workspace-page records-page">
-  <div class="toolbar">
+  <div class="toolbar records-toolbar">
     {#if canCreate}<button class="button primary records-new-button" onclick={() => { editorChanges=null;focusAttachments = false; editorWritable = true; editor = null; }}>+ New {recordSingular.toLowerCase()}</button>{/if}
     <form class="search-form" onsubmit={searchSubmit}><label class="records-search-input"><Search size={16} aria-hidden="true" /><input bind:value={search} oninput={scheduleSearch} type="search" placeholder={canAttachments ? 'Search configured fields and attachment filenames…' : 'Search configured fields…'} aria-label={`Search ${recordPlural.toLowerCase()}`} /></label><select bind:value={matchMode} onchange={() => { page = 1; void refresh(); }} aria-label="Search matching"><option value="contains">Contains</option><option value="prefix">Starts with</option><option value="exact">Exact</option></select><button class="button" type="submit">Search</button></form>
     <details class="toolbar-menu"><summary class="button">Columns</summary><div class="toolbar-popover">{#each eligibleFields as field}<label class="checkbox"><input type="checkbox" checked={selectedKeys.includes(field.key)} onchange={(event) => toggleColumn(field.key, event.currentTarget.checked)} /> {field.label}</label>{/each}<button class="button small" type="button" onclick={resetColumns}>Use administrator defaults</button><small>Only your overrides are saved, so new fields can follow the deployment defaults.</small></div></details>
-    <button class="button" onclick={() => refresh(true)}>Refresh</button>
+    <button class="button records-refresh-button" onclick={() => refresh(true)}>Refresh</button>
+    {#if canCreate && schema}<button class="button module-import-trigger" type="button" data-module-import-actions aria-label="Module actions" title="Module actions" aria-haspopup="menu" aria-expanded={importMenuOpen} aria-controls={importMenuOpen ? 'module-import-menu' : undefined} onclick={toggleImportMenu} onkeydown={importTriggerKeydown}><Ellipsis size={18} aria-hidden="true" /></button>{/if}
   </div>
     <details class="advanced-search"><summary>Advanced filters and sorting</summary><form class="filter-grid" onsubmit={searchSubmit}>{#each searchableFields as field}<label>{field.label}{#if field.field_type === 'select'}<select value={filters[field.key] || ''} onchange={(event) => filters[field.key] = event.currentTarget.value}><option value="">Any value</option>{#each (field.config.options as (string | number | boolean)[] || []) as option}<option value={String(option)}>{String(option)}</option>{/each}</select>{:else if field.field_type === 'boolean'}<select value={filters[field.key] || ''} onchange={(event) => filters[field.key] = event.currentTarget.value}><option value="">Either</option><option value="true">Yes</option><option value="false">No</option></select>{:else}<input type={field.field_type === 'date' ? 'date' : ['integer', 'decimal', 'formula'].includes(field.field_type) ? 'number' : 'text'} value={filters[field.key] || ''} oninput={(event) => filters[field.key] = event.currentTarget.value} placeholder={field.field_type === 'date' ? undefined : 'Field contains…'} />{/if}</label>{/each}{#if canAttachments}<label>Attachments<select bind:value={attachmentMode}><option value="">With or without files</option><option value="with">With attachments</option><option value="without">Without attachments</option></select></label>{/if}<label>Sort field<select bind:value={sortBy}><option value="">Default order</option>{#each eligibleFields.filter((field) => field.sortable) as field}<option value={field.key}>{field.label}</option>{/each}</select></label><label>Sort direction<select bind:value={sortDir}><option value="asc">Ascending</option><option value="desc">Descending</option></select></label><div class="button-row"><button class="button primary">Apply filters</button><button class="button" type="button" onclick={clearFilters}>Clear all</button></div></form></details>
   {#if error}<div class="notice error">{error}</div>{/if}
@@ -388,4 +453,25 @@
   </div>
 {/if}
 
+{#if canCreate && schema && importMenuOpen && importMenuAnchor}
+  <div class="module-import-menu" id="module-import-menu" data-module-import-actions role="menu" aria-label="Module actions" tabindex="-1" use:importMenuKeyboard use:floatingMenu={{ anchor: importMenuAnchor, close: () => importMenuOpen = false }}>
+    <button role="menuitem" tabindex="-1" type="button" onclick={() => openImporter('new')}><Upload size={16} aria-hidden="true" /><span>Import records</span></button>
+    <button role="menuitem" tabindex="-1" type="button" onclick={() => openImporter('history')}><History size={16} aria-hidden="true" /><span>Import history</span></button>
+  </div>
+{/if}
+
 {#if editor !== undefined && schema}<RecordEditor {schema} {moduleUid} record={editor} initialChanges={editorChanges} canWrite={editor === null ? canCreate : editorWritable && canUpdate} canDelete={editorWritable && canDelete} {canAttachments} allowEdit={editor !== null && canUpdate} {liveMessage} {focusAttachments} recordLabel={recordSingular} onEdit={() => editorWritable = true} onClose={closeEditor} onSaved={() => refresh(true)} />{/if}
+
+{#if importer && schema}{#key moduleUid}<ImportRecords {schema} {moduleUid} history={importer === 'history'} onClose={() => { importer = null; importMenuAnchor?.focus({ preventScroll: true }); }} onChanged={() => refresh(true)} />{/key}{/if}
+
+<style>
+  .records-refresh-button { order: 4; }
+  .module-import-trigger { order: 5; flex: 0 0 auto; width: 2.2rem; padding-inline: 0; justify-content: center; }
+  .module-import-menu { position: fixed; visibility: hidden; min-width: 13rem; z-index: 120; overflow: auto; padding: .35rem; background: var(--surface); border: 1px solid var(--line); border-radius: .55rem; box-shadow: var(--shadow-popover); color: var(--text); font-size: calc(.8rem * var(--font-scale)); }
+  .module-import-menu button { display: flex; align-items: center; gap: .65rem; width: 100%; min-height: 2.5rem; padding: .65rem .75rem; border: 0; border-radius: .35rem; text-align: left; font: inherit; line-height: 1.35; color: inherit; background: transparent; cursor: pointer; }
+  .module-import-menu button:hover, .module-import-menu button:focus-visible { background: var(--surface-2); }
+  .module-import-menu button :global(svg) { flex-shrink: 0; }
+  @media (max-width: 760px) {
+    .records-toolbar { grid-template-columns: minmax(0, 1fr) auto auto; }
+  }
+</style>

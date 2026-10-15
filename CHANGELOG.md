@@ -5,6 +5,85 @@ deployment maintainer's local date.
 
 ## [Unreleased]
 
+### Office launch prompt alignment — 2026-10-15
+
+- Center the Office prompt's icon, text and actions as one responsive group.
+  Wrapped action rows remain centered on small screens; simplify the message.
+  Scope the layout to this prompt without changing Drive's shared control styles.
+
+### Media playback recovery — 2026-10-15
+
+- Preserve N1 streaming 429/503/504/404 responses and `Retry-After` across Drive,
+  record attachments and collaboration instead of masking them as generic 502s.
+  Do not add an MX streaming rate limiter or server-side retry loop.
+- Show video/audio connection failures with bounded automatic recovery and a
+  manual retry action. Retain playback position/settings, stop on access/codec
+  failures and cancel pending recovery when the preview is closed or unmounted.
+  Connection checks request a single byte and cancel the body, not a full video.
+
+### Import results layout and safe field widening — 2026-10-15
+
+- Give skipped-row errors and correction actions separate responsive columns.
+  Long values wrap; narrow screens stack the action below the issue. Preserve
+  row inspection, pagination and the ordinary correction form.
+- Allow Text → Long text on the existing field, without changing its ID/key,
+  stored values, record revisions or history. Confirm the change, retain
+  uniqueness/required settings, reject unsafe conversions and stale datatype
+  changes atomically, and clear a saved sort when its field is no longer sortable.
+
+### Visible field configuration errors — 2026-10-15
+
+- Show Modules & Fields failures immediately in an accessible error popup,
+  instead of only at the top of the page. Keep the new-field draft and show its
+  error beside the form after dismissal.
+- Name the active or archived field reserving a duplicate key, including its
+  module and datatype. Offer an available key or a direct jump to the existing
+  field. Recheck uniqueness atomically; archived history is never overwritten.
+- Explain field keys and distinguish them from duplicate record-value checks.
+
+### Office opening and preview reliability — 2026-10-15
+
+- Open supported Drive Office files directly in the on-device editor. Shared
+  links offer an explicit editor/download choice rather than automatically
+  starting an expensive server PDF conversion.
+- Allow longer document opening/export operations; show large-document guidance
+  and Cancel/Retry/Download/Return recovery. Keep the loading overlay until
+  native input focus is acknowledged. Cancellation aborts downloads and stops
+  editor workers; late responses cannot restart a cancelled opening.
+- Prime Calc's initial input after final layout/focus, without resetting pending
+  input during normal refocus. Preserve real MX save acknowledgements and version
+  conflict checks.
+- Inspect only bounded ZIP directory metadata. Reject impossible allocations
+  with original-download recovery; editor safety budgets do not change Drive
+  upload limits. Keep the pinned Office vendor binary unchanged.
+- Bound optional PDF conversions to one worker, share identical requests,
+  cool down failures, terminate process groups on deadline and protect temporary
+  files. Check file size before downloading bytes for server conversion, and
+  enforce expanded-input/output budgets across Drive, records and collaboration.
+
+### Module actions menu recovery — 2026-10-15
+
+- Keep Module actions after Refresh, with matching control sizing and a floating
+  import menu that stays above the sidebar and within the visible screen. Keep
+  Refresh and actions together on narrow screens; support keyboard navigation,
+  click-away dismissal and reliable focus on repeated browser openings.
+
+### Module spreadsheet importer — 2026-10-14
+
+- Add Module actions (⋯) → Import records / Import history for XLSX, ODS, UTF-8
+  CSV and TSV. Configure per-sheet mappings, header/data rows, date formats and
+  date fill-down; download stable field-key tagged templates.
+- Use normal validation, form rules, relationship access and version history.
+  Skip invalid rows atomically while continuing valid rows.
+- Show committed progress, paginated source/errors/results, downloadable failure
+  logs and correction through the ordinary record form.
+- Persist jobs and commit success markers with the record/version transaction;
+  pause, restart and request replay do not duplicate successfully imported rows.
+- Bound parser resources; avoid dense formatting grids and isolate unusable XLSX
+  sheets. Source stays in MX metadata, not N1. Removing logs preserves records.
+- Add an operator walkthrough. No live MX/N1 reset, version bump or release
+  publication is part of this addition.
+
 ### Drive styling recovery and scoped Deployment layout — 2026-10-14
 
 - Withdraw the broad UI polish and restore the original component style
