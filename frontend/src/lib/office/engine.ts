@@ -10,7 +10,7 @@ interface EngineModule {
   setStatus: (message: string) => void; monitorRunDependencies: (remaining: number) => void;
   onRuntimeInitialized: () => void;
 }
-interface EngineFS { mkdir: (path: string) => void; writeFile: (path: string, bytes: Uint8Array) => void; readFile: (path: string) => Uint8Array }
+interface EngineFS { mkdir: (path: string) => void; writeFile: (path: string, bytes: Uint8Array) => void; readFile: (path: string) => Uint8Array<ArrayBuffer>; unlink?: (path:string)=>void }
 declare global { interface Window { Module: EngineModule; FS: EngineFS; PThread?: { terminateAllThreads: () => void } } }
 export interface OfficeSnapshot { blob: Blob; generation: number }
 export class OfficeEngine {
@@ -21,6 +21,7 @@ export class OfficeEngine {
   private canvasResize?: ResizeObserver;
   private resizeFrame?: number;
   private stopped = false;
+  private cachedSnapshot?: OfficeSnapshot;
   private rejectBoot?: (reason: Error) => void;
   private pending = new Map<number, { resolve: (message: Record<string, unknown>) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }>();
   constructor(private modified: (generation: number) => void, private fatal: (message: string) => void, private saveRequested: (copy: boolean) => void, private announce: (message: string) => void, private selected: (cell: string) => void = () => {}, private loading: (progress: OfficeLoadingProgress) => void = () => {}) {}
@@ -102,19 +103,29 @@ export class OfficeEngine {
       this.pending.set(id, { resolve, reject, timer }); this.port!.postMessage({ cmd, id, ...extra });
     });
   }
-  async open(blob: Blob, extension: string, readOnly: boolean) {
+  async open(blob: Blob, extension: string, readOnly: boolean, fromRecovery = false) {
     if (!officeFormats[extension]) throw new Error('This file format is not supported for editing.');
     try { window.FS.mkdir('/tmp/mx-office'); } catch { /* Directory already exists. */ }
-    window.FS.writeFile(`/tmp/mx-office/document${extension}`, new Uint8Array(await blob.arrayBuffer()));
+    const bytes=new Uint8Array(await blob.arrayBuffer());
+    window.FS.writeFile(`/tmp/mx-office/document${extension}`, bytes);
+    // A restored IDB-backed Blob can hang Firefox's XHR upload after its
+    // originating document closes. Reuse the bytes already read for opening;
+    // only recovery gets a fresh memory-backed snapshot, never an extra export.
+    const preparedBlob=fromRecovery?new Blob([bytes],{type:blob.type}):blob;
     try { await this.request('open', { extension, readOnly }); }
     catch(reason){this.dispose();throw reason;}
     window.dispatchEvent(new Event('resize'));
+    return this.cachedSnapshot={blob:preparedBlob,generation:0};
   }
   async snapshot(extension: string): Promise<OfficeSnapshot> {
     const format = officeFormats[extension];
-    const message = await this.request('export', { extension, filter: format.filter });
+    const message = await this.request('export', { extension, filter: format.filter, reuseGeneration:this.cachedSnapshot?.generation });
+    if(message.reused && this.cachedSnapshot && this.cachedSnapshot.generation===Number(message.generation))return this.cachedSnapshot;
     const bytes = window.FS.readFile(`/tmp/mx-office/export${extension}`);
-    return { blob: new Blob([new Uint8Array(bytes)], { type: format.mime }), generation: Number(message.generation) };
+    // FS.readFile and Blob already copy their inputs; no extra full-file copy.
+    this.cachedSnapshot={ blob: new Blob([bytes], { type: format.mime }), generation: Number(message.generation) };
+    window.FS.unlink?.(`/tmp/mx-office/export${extension}`);
+    return this.cachedSnapshot;
   }
   committed(generation: number) { this.port?.postMessage({ cmd: 'committed', generation }); }
   async focus(initializeInput = false) { if(this.port)await this.request('focus', {initializeInput}); }

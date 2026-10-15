@@ -30,6 +30,7 @@
   import RecordsView from './RecordsView.svelte';
   import WorkspaceSidebar from './WorkspaceSidebar.svelte';
   import WorkspaceTopbar from './WorkspaceTopbar.svelte';
+  import UpdateNotice from './UpdateNotice.svelte';
 
   let { session, deployment, onSessionChanged, onSessionEnded, onDeploymentChanged }:
     { session: Session; deployment: DeploymentConfig; onSessionChanged: () => Promise<unknown>; onSessionEnded: (message: string) => void; onDeploymentChanged: () => Promise<void> } = $props();
@@ -579,12 +580,13 @@
   <WorkspaceSidebar {deployment} {session} {modules} {view} {selectedModuleUid} {selectedModule} {live} open={mobileOpen} onToggle={() => mobileOpen = !mobileOpen} onNavigate={go} onNavigateModule={goModule} onExport={() => exportReport('records', undefined, '', '', selectedModule?.uid || 'mx-default-records')} />
   <main class="main-stage">
     <WorkspaceTopbar productName={deployment.branding.display_name} {viewTitle} {live} navigationOpen={mobileOpen} {notificationRevision} {unreadNotifications} onToggleNavigation={() => mobileOpen = !mobileOpen} onRefresh={refreshCurrent} onOpenSettings={() => settingsOpen = true} onToggleTheme={toggleTheme} onOpenAccount={() => go('account')} onSignOut={() => onSessionEnded('Signed out.')} onUnread={(count) => unreadNotifications = count} onOpenNotification={openNotification} />
+    <UpdateNotice isAdmin={session.access_level===0} onOpenUpdates={()=>{localStorage.setItem('mx_admin_tab','updates');window.dispatchEvent(new Event('mx:open-updates'));go('admin');}} />
     {#if view === 'dashboard'}<DashboardView isAdmin={session.access_level === 0} revision={dashboardRevision} dashboardLabel={deployment.terminology.dashboard_label} recordSingular={deployment.terminology.record_singular} recordPlural={deployment.terminology.record_plural} />
     {:else if view === 'records' && selectedModule}{#key selectedModuleUid}<RecordsView {session} accessLevel={session.access_level} moduleUid={selectedModule.uid} modulePermission={selectedModulePermission} openRecordUid={linkedRecordUid} openRequestRevision={linkedRecordRequestRevision} focusLinkedAttachments={linkedRecordFocusAttachments} revision={recordRevision} liveMessage={lastRecordEvent} recordSingular={selectedModule.singular_name} recordPlural={selectedModule.name} />{/key}
     {:else if view === 'records'}<section class="panel module-access-empty"><h2>No module access</h2><p>Your account has not been granted access to any active record module. Ask an MX administrator to assign the modules needed for your work.</p><button class="button" type="button" onclick={() => go('collaboration')}>Open collaboration</button></section>
     {:else if view === 'collaboration'}<CollaborationView {session} openChannelUid={linkedChannelUid} revision={collaborationRevision} connected={live} liveEvent={lastCollaborationEvent} {callEvents} activeCalls={ongoingCalls} activeCallChannelUid={activeCall?.channelUid || ''} onStartCall={startCollaborationCall} onChannelChanged={setActiveCollaborationChannel} />
     {:else if view === 'drive'}<DriveView accountUid={session.uid} revision={dashboardRevision} uploads={driveUploads} itemUid={linkedDriveItemUid} onDismissLinkedItem={dismissLinkedDriveItem} />
-    {:else if view === 'admin' && session.access_level === 0}{#key adminRevision}<AdminView {session} administrationLabel={deployment.terminology.administration_label} dashboardLabel={deployment.terminology.dashboard_label} />{/key}
+    {:else if view === 'admin' && session.access_level === 0}<AdminView {session} revision={adminRevision} administrationLabel={deployment.terminology.administration_label} dashboardLabel={deployment.terminology.dashboard_label} />
     {:else}<AccountSecurity {session} {onSessionChanged} {onSessionEnded} />{/if}
   </main>
   {#if mobileOpen}<button class="sidebar-scrim" aria-label="Close menu" onclick={() => mobileOpen = false}></button>{/if}

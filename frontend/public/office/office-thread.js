@@ -100,6 +100,7 @@ Module.zetajs.then((zeta) => {
           controller.select(selection);
         }
         const exportedGeneration = generation;
+        if(data.reuseGeneration===exportedGeneration){send({cmd:'exported',id:data.id,generation:exportedGeneration,reused:true});return;}
         model.storeToURL(`file:///tmp/mx-office/export${data.extension}`, [
           property('Overwrite', true), property('FilterName', data.filter)
         ]);

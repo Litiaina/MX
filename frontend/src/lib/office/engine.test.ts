@@ -22,7 +22,7 @@ describe('Office long operation recovery',()=>{
     const {engine,port}=setup();await engine.start({} as HTMLCanvasElement);
     const opening=engine.open(new Blob(['workbook']),'.xlsx',false);await vi.advanceTimersByTimeAsync(61000);
     const request=port.postMessage.mock.calls[0][0];port.onmessage!({data:{cmd:'opened',id:request.id}});
-    await expect(opening).resolves.toBeUndefined();engine.dispose();
+    const prepared=await opening;expect(prepared.generation).toBe(0);expect(await prepared.blob.text()).toBe('workbook');engine.dispose();
   });
   it('terminates worker computation when opening is cancelled and rejects its promise',async()=>{
     const {engine,terminate}=setup();await engine.start({} as HTMLCanvasElement);

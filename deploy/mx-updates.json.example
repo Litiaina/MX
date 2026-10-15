@@ -1,0 +1,19 @@
+{
+  "format": 1,
+  "root": "/srv/mx-updates",
+  "deployment_dir": "/srv/mx",
+  "service": "mx.service",
+  "scope": "user",
+  "repository": "Litiaina/MX",
+  "channel": "rc",
+  "trusted_keys": {
+    "REPLACE_WITH_KEY_ID": "REPLACE_WITH_64_HEXADECIMAL_ED25519_PUBLIC_KEY"
+  },
+  "check_interval_seconds": 21600,
+  "notice_seconds": 60,
+  "drain_timeout_seconds": 60,
+  "health_timeout_seconds": 90,
+  "max_package_bytes": 2147483648,
+  "max_unpacked_bytes": 8589934592,
+  "auto_install": false
+}

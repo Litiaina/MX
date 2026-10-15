@@ -58,7 +58,7 @@ export async function startN1Fixture() {
         session.parts.clear(); return json({ version_id: finalize[1] });
       }
       const oneShot = '/noa/v1/upload/one-shot/';
-      if (path.startsWith(oneShot)) { objects.set(path.slice(oneShot.length), { bytes, version_id: randomUUID(), contentType: request.headers['content-type'] }); return json({}, 201); }
+      if (path.startsWith(oneShot)) { await control.beforeOneShot?.(request, response, bytes); if(response.writableEnded)return; objects.set(path.slice(oneShot.length), { bytes, version_id: randomUUID(), contentType: request.headers['content-type'] }); return json({}, 201); }
       const meta = '/noa/v1/objects/meta/';
       if (path.startsWith(meta)) { const object = objects.get(path.slice(meta.length)); return json(object ? { version_id: object.version_id, total_size_bytes: object.bytes.length } : {}, object ? 200 : 404); }
       const stream = '/noa/v1/objects/stream/';

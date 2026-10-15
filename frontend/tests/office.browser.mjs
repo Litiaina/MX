@@ -10,6 +10,7 @@ import { startIsolatedMx } from './isolated-mx.mjs';
 import { officeFixture, unzip } from './office-fixtures.mjs';
 import { createServer } from 'node:http';
 import { request as httpsRequest } from 'node:https';
+import {disconnectedBrowserAudio} from './silent-audio.mjs';
 const root=fileURLToPath(new URL('../',import.meta.url)),mx=await startIsolatedMx(root);
 // Localhost is a browser secure context. A test-only loopback proxy avoids
 // installing a test CA on the user's PC; deployed LAN Office still needs HTTPS.
@@ -31,7 +32,7 @@ async function openOptions(page){if(await page.getByRole('button',{name:'Documen
 async function closeOptions(page){if(await page.getByRole('button',{name:'Document options',exact:true}).getAttribute('aria-expanded')==='true')await page.getByRole('button',{name:'Close document options',exact:true}).click();}
 async function downloadCopy(page){await openOptions(page);await downloadButton(page).click();}
 function rows(sql,...args){const db=new DatabaseSync(join(mx.directory,'test.db'));try{return db.prepare(sql).all(...args);}finally{db.close();}}
-async function localDraft(page,account,item){return page.evaluate(async({account,item})=>{const database=await new Promise((resolve,reject)=>{const request=indexedDB.open('mx-office-local-drafts',1);request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error);});try{const draft=await new Promise((resolve,reject)=>{const request=database.transaction('drafts').objectStore('drafts').get(`${account}:${item}`);request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error);});return draft?{...draft,blob:Array.from(new Uint8Array(await draft.blob.arrayBuffer())),saveFile:!!draft.saveFile}:null;}finally{database.close();}},{account,item});}
+async function localDraft(page,account,item){return page.evaluate(async({account,item})=>{const database=await new Promise((resolve,reject)=>{const request=indexedDB.open('mx-office-local-drafts',2);request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error);});try{const drafts=await new Promise((resolve,reject)=>{const request=database.transaction('drafts').objectStore('drafts').index('document').getAll([account,item]);request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error);});const draft=drafts.sort((a,b)=>b.updatedAt-a.updatedAt)[0];return draft?{...draft,blob:Array.from(new Uint8Array(await draft.blob.arrayBuffer())),saveFile:!!draft.saveFile}:null;}finally{database.close();}},{account,item});}
 async function editedContents(uid,user){const response=await mx.api.get(`${base}/items/${uid}/download`,{headers:{Authorization:`Bearer ${user.access_token}`}});assert.equal(response.status(),200);return unzip(await response.body());}
 async function typeDocument(page,text){await page.locator('#qtcanvas').focus();await page.keyboard.press('Control+End',{delay:80});await page.keyboard.press('Enter',{delay:80});await page.keyboard.type(text,{delay:30});await page.waitForTimeout(300);}
 const launched=[],browserResults=[];
@@ -62,7 +63,7 @@ try{
   assert.equal(gzip.status(),200);assert.equal(gzip.headers()['content-encoding'],'gzip');assert.equal(gzip.headers()['content-type'],'application/wasm');
   for(const name of browserNames){
     const document=await upload(admin,`Test-${name}.docx`,officeFixture('.docx'));
-    const type={chromium,firefox,webkit}[name],options={headless:true};
+    const type={chromium,firefox,webkit}[name],options={headless:true,env:disconnectedBrowserAudio(mx.directory)};
     if(name==='chromium'){options.executablePath=process.env.MX_TEST_CHROMIUM||'/home/altear/.cache/ms-playwright/chromium-1228/chrome-linux64/chrome';options.args=['--mute-audio'];}
     if(name==='firefox')options.executablePath=process.env.MX_TEST_FIREFOX||'/home/altear/.cache/ms-playwright/firefox-1543/firefox/firefox';
     if(name==='webkit'&&process.env.MX_TEST_WEBKIT)options.executablePath=process.env.MX_TEST_WEBKIT;
@@ -287,6 +288,7 @@ try{
       await editor.goto(`${origin}/office/index.html#file=${file.uid}`);
       await wait(async()=>{const alerts=editor.locator('.alert:not(.warning)');if(await alerts.count())throw new Error(await alerts.innerText());return downloadButton(editor).isEnabled();},`real engine opens ${extension}`);
       await editor.waitForTimeout(1000);await editor.locator('#qtcanvas').focus();
+      if(extension==='.xlsx'){await openOptions(editor);await editor.getByRole('checkbox',{name:'Automatically save to MX when idle',exact:true}).uncheck();await closeOptions(editor);}
       assert.equal(await editor.getByRole('button',{name:/^Sign in(?: to save)?$/}).count(),0,'Authenticated Office must not display a sign-in action');
       if(extension==='.xlsx'){
           await editor.locator('#qtcanvas').click({position:{x:20,y:12}});
@@ -333,7 +335,7 @@ try{
         if(extension==='.xlsx')await editor.locator('#qtcanvas').click({position:{x:106,y:43}});else await editor.getByRole('button',{name:'Save to MX',exact:true}).click();
         await wait(()=>finishWaiting,`${extension} real save waits for commit`);
         assert.equal(await editor.getByRole('button',{name:'Saving…',exact:true}).isDisabled(),true);
-        assert.match(await editor.locator('.save-feedback').innerText(),/Saving to MX|Confirming saved version/);
+        assert.match(await editor.locator('.save-feedback').innerText(),/Uploading|Confirming/);
         assert.equal(await editor.locator('.save-feedback.saved').count(),0);
         assert.equal((await call(`${base}/items/${file.uid}`,admin)).revision,1,'Pending upload is not yet an acknowledged MX version');
         await editor.locator('#qtcanvas').focus();
@@ -478,4 +480,4 @@ try{
     await context.close();await browser.close();launched.splice(launched.indexOf(browser),1);
   }
   await writeFile(join(mx.directory,'office-results.json'),JSON.stringify({browsers:browserNames,results:browserResults,shellOnly:!!process.env.MX_TEST_OFFICE_SHELL_ONLY,formatsOnly:!!process.env.MX_TEST_OFFICE_FORMATS_ONLY,formats:(process.env.MX_TEST_OFFICE_FORMATS||'.xlsx,.pptx').split(','),presentationEditing:false,productionQualified:false,passed:true},null,2));
-}catch(error){if(inspectedPage&&!inspectedPage.isClosed()){await inspectedPage.screenshot({path:join(mx.directory,'office-failure.png')});console.log(await inspectedPage.locator('body').innerText());}throw error;}finally{for(const browser of launched)await browser.close();await new Promise(resolve=>proxy.close(resolve));await mx.close();}
+}catch(error){if(inspectedPage&&!inspectedPage.isClosed()){await inspectedPage.screenshot({path:join(mx.directory,'office-failure.png')});console.log(await inspectedPage.locator('body').innerText());}throw error;}finally{for(const browser of launched)await browser.close();proxy.closeAllConnections();await new Promise(resolve=>proxy.close(resolve));await mx.close();}

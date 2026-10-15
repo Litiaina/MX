@@ -11,7 +11,12 @@
 
 </div>
 
-Self-hosted, modular digital workplace platform. **Current release: 4.1.1.**
+Self-hosted, modular digital workplace platform. **Current candidate: 1.0.0-rc.1.**
+
+This is the first candidate for the new 1.0 release line, not the final stable
+release. The earlier 4.x labels remain development history. Read the
+[candidate notes and version-reset instructions](docs/releases/1.0.0-rc.1.md)
+before upgrading an existing installation.
 
 MX combines configurable records, relationships, dashboards, collaboration,
 voice/video calls, screen sharing, Drive and browser-based Office editing.
@@ -27,6 +32,7 @@ an inventory, attendance or registration schema.
   [Conditional forms, step by step](docs/conditional-forms.md).
 - **Import spreadsheet rows:** [Import, inspect failures and resume](docs/importing-records.md).
 - **Install or upgrade MX:** [Deployment guide](docs/deployment.md).
+- **Manage signed updates:** [Maintenance windows, offline packages and rollback](docs/updates.md).
 - **All guides and reference material:** [Documentation index](docs/README.md).
 
 The operator guides explain the actual UI labels, what to enter, what each
@@ -59,7 +65,8 @@ cd ..
 cargo build --release --locked
 ```
 
-The executable is `target/release/litiaina-mx`. Follow the
+The executable is `target/release/litiaina-mx`. Use `--version` or `-V` to print
+its built-in version without starting the server or creating configuration. Follow the
 [deployment guide](docs/deployment.md) before starting a new installation;
 empty configuration templates are not a working deployment.
 

@@ -1,7 +1,7 @@
 {
   "name": "litiaina-mx-frontend",
   "private": true,
-  "version": "4.1.1",
+  "version": "1.0.0-rc.1",
   "type": "module",
   "engines": {
     "node": ">=24.0.0"
@@ -9,7 +9,8 @@
   "packageManager": "npm@11.19.0",
   "scripts": {
     "dev": "vite",
-    "build": "node scripts/verify-office.mjs && svelte-check --tsconfig ./tsconfig.app.json && vite build",
+    "build": "node scripts/check-release.mjs && node scripts/verify-office.mjs && svelte-check --tsconfig ./tsconfig.app.json && vite build",
+    "check:release": "node scripts/check-release.mjs",
     "check": "svelte-check --tsconfig ./tsconfig.app.json",
     "test": "vitest run",
     "test:calls:browser": "node tests/call-media.browser.mjs",
@@ -29,7 +30,11 @@
     "test:fields:datatype": "node tests/field-type-change.browser.mjs",
     "test:forms:rules": "node tests/form-rules.browser.mjs",
     "test:ui:cascade": "node tests/ui-cascade.browser.mjs",
+    "test:backups:browser": "node tests/backups.browser.mjs",
+    "test:updates": "node --no-warnings tests/updates.integration.mjs",
+    "test:updates:cli": "node tests/update-cli.integration.mjs",
     "test:records:scroll": "node tests/record-scroll.browser.mjs",
+    "test:records:window": "node tests/record-window.browser.mjs",
     "test:records:summaries": "node tests/record-summaries.browser.mjs",
     "test:records:import": "node tests/import-records.browser.mjs",
     "test:records:import-menu": "node tests/module-import-menu.browser.mjs",
@@ -37,6 +42,7 @@
     "test:office:browser": "node tests/office.browser.mjs",
     "test:office:loading": "node tests/office-loading.browser.mjs",
     "test:office:recovery": "node tests/office-recovery.browser.mjs",
+    "test:office:durable": "node tests/office-durable.browser.mjs",
     "test:office:prompt": "node tests/office-prompt-layout.browser.mjs",
     "test:office:previews": "node tests/office-previews.integration.mjs",
     "preview": "vite preview"

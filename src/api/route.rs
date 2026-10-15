@@ -121,6 +121,10 @@ fn bootstrap_routes() -> Router {
 
 fn admin_routes() -> Router {
     Router::new()
+        .route("/mx/v1/admin/updates", get(crate::updates::api::status))
+        .route("/mx/v1/admin/updates/policy", put(crate::updates::api::save_policy))
+        .route("/mx/v1/admin/updates/{action}", post(crate::updates::api::action))
+        .route("/mx/v1/admin/updates/package", post(crate::updates::api::upload).layer(DefaultBodyLimit::disable()))
         .route("/mx/v1/admin/audit", get(get_audit_log))
         .route("/mx/v1/admin/trash", get(list_trash))
         .route("/mx/v1/admin/trash/{uid}", get(get_trashed_record))

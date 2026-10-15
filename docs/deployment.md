@@ -5,6 +5,11 @@
 This guide is for the deployment administrator. Module operators should start
 with [Getting started](getting-started.md).
 
+Current candidate: **1.0.0-rc.1**. This intentionally resets the earlier 4.x
+development numbering; it is not the final stable 1.0.0. Existing installations
+must follow the [one-time transition instructions](releases/1.0.0-rc.1.md#upgrading-a-4x-development-installation),
+without deleting their database or N1 objects.
+
 ## Deployment package and dependencies
 
 Deploy a matching MX executable and `frontend/dist`, plus your `mx.config`,
@@ -108,11 +113,68 @@ flow. Do not delete accounts or SQLite files merely to make that form reappear.
 
 ## Upgrade an existing installation
 
+The candidate includes an opt-in signed updater, offline package upload and
+manual/maintenance-window installation. It needs one-time managed-slot, trusted
+public-key and independent systemd-worker setup; an ordinary `cargo run` does
+not silently grant service-replacement authority. Follow [MX updates](updates.md).
+The steps below remain the manual deployment alternative.
+
 1. Back up SQLite and retain configuration, environment and TLS credentials.
 2. Read [CHANGELOG.md](../CHANGELOG.md) and [migration guidance](migration-and-releases.md).
 3. Deploy the matching new executable and rebuilt frontend together.
 4. Restart MX and inspect startup/schema-migration results.
 5. Reload the browser and verify records, files, authentication and key workflows.
+
+### Manual rollback during failed activation
+
+Use this procedure only while normal writes remain blocked after a failed
+upgrade. Restoring an older database after users have saved new work discards
+that newer work; do not perform that as an unattended response to a later crash.
+
+1. Stop the candidate MX service and all other processes that can write its
+   database. Keep clients and background jobs excluded until validation finishes.
+2. Identify the exact deployment database path and the verified pre-upgrade
+   snapshot. Validate the snapshot's SQLite integrity before replacing anything.
+3. Preserve the failed database for diagnosis. With every database connection
+   closed, move its exact database file and any associated `-wal` / `-shm` files
+   into a separate, access-restricted recovery directory. Do not use broad globs,
+   delete the recovery files or copy a live database one file at a time.
+4. Restore a copy of the verified standalone snapshot to the configured database
+   path, with the deployment's original owner and restrictive permissions. Do
+   not pair the restored database with WAL/SHM files from the failed candidate.
+   Keep the original rollback snapshot untouched.
+5. Restore the previous matching executable and frontend. Preserve configuration,
+   credentials and TLS files; restore their pre-upgrade copies only if the
+   attempted upgrade changed them. Leave N1's version and namespace alone.
+6. Start the previous release under restricted maintenance access. Verify
+   startup, authentication, record/history access and representative N1 file
+   downloads. A SQLite restore cannot recreate missing N1 objects; use the N1
+   recovery/backup process if storage objects are missing.
+7. Reopen normal access only after validation. Retain the failed state, rollback
+   snapshot and logs, and report the failed upgrade before attempting it again.
+
+These are operator recovery steps, not a general restoration wizard. The
+[managed updater](updates.md) enforces a write barrier, verified local snapshot
+and paired application/database rollback during failed activation. Use this
+manual procedure if its recovery cannot complete; leave maintenance enabled.
+
+### Taking the final rollback snapshot
+
+The **Create backup** UI can supply a preliminary verified backup before the
+maintenance window. If writes continued afterwards, that is not the final
+rollback point promised by a no-loss failed-update policy.
+
+For the final point, stop MX and every database writer first. Copy the exact
+database and any associated WAL/SHM files into an access-restricted recovery
+directory while they are all quiescent. Retain that complete cold copy; do not
+discard a WAL just because the main `.db` file exists. Using compatible SQLite
+recovery tooling against a separate copy of that set, create a standalone
+snapshot with the SQLite Backup API or `VACUUM INTO`, then verify the snapshot's
+integrity. This can be done on an operator recovery machine and does not add a
+normal MX server runtime dependency.
+
+Do not proceed with the upgrade if the final snapshot cannot be validated.
+MX does not yet provide a CLI offline-backup command or automate these steps.
 
 Do not replace the existing database with an empty one, regenerate deployment
 secrets casually, or alter existing N1 keys as part of an MX binary upgrade.

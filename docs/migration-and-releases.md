@@ -2,6 +2,35 @@
 
 [Documentation index](README.md) · [Project overview](../README.md)
 
+## Current line: MX 1.0.0-rc.1
+
+On **2026-10-15**, MX starts a new official release-candidate line at
+**1.0.0-rc.1**. The earlier 2.x/3.x/4.x numbering is retained as development
+history, including previously published artifacts and tags. No historical tag
+or changelog entry is rewritten or removed. This is a release-policy reset,
+not a database reset or a claim of stable-release qualification.
+
+The intended progression is `1.0.0-rc.1`, further numbered candidates as needed,
+then `1.0.0` after acceptance. A published candidate is immutable: fixes require
+a new candidate version. Subsequent stable releases use semantic versioning.
+
+**Important:** `1.0.0-rc.1` sorts below `4.1.1` and `4.1.2`. Transition an existing
+4.x installation explicitly with a matching candidate binary/frontend package;
+do not expect the "higher version only" updater to select it. This one-time
+transition stays operator-driven; do not disable downgrade protection generally.
+After migration, the [signed updater](updates.md) accepts compatible newer 1.x
+releases only. Historical 4.x development builds are not update targets.
+
+Application version numbers are independent of SQLite migration state, record
+revisions, N1 object keys/storage format and `/mx/v1`. Do not renumber, reset or
+delete any of those to match 1.0. N1 remains independently versioned and compatible
+with v4.0.0 / storage format 4.
+
+Read the [candidate scope, transition procedure and acceptance gates](releases/1.0.0-rc.1.md).
+The sections below describe the historical builds at their original versions;
+their "current" wording and test limitations apply to those builds, not a new
+qualification claim for this candidate.
+
 ## ARIS to MX Migration
 
 MX is the canonical product name.
@@ -66,7 +95,7 @@ successful build or a version bump.
 
 ### Upgrade and validation
 
-Rust and frontend package versions are both **4.1.1**. Deploy the matching binary
+For that historical build, Rust and frontend package versions were both **4.1.1**. Deploy the matching binary
 and rebuilt `frontend/dist` together, then restart MX so the new routes and
 automatic SQLite schema migrations are active. Back up SQLite first; do not
 replace the existing database, environment, or deployment configuration.

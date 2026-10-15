@@ -32,6 +32,7 @@ try{
     const errors=[];page.on('pageerror',error=>errors.push(error.message));
     await page.addInitScript(tokens=>{sessionStorage.setItem('mx_access_token',tokens.access_token);sessionStorage.setItem('mx_refresh_token',tokens.refresh_token);},admin);
     await page.goto(`https://127.0.0.1:${mx.port}/#module/${module.uid}`);
+    await page.getByRole('combobox',{name:'Record navigation',exact:true}).selectOption({label:'Pages'});
     const table=page.locator('.records-table'),bar=page.getByRole('scrollbar',{name:'Scroll record columns',exact:true,includeHidden:true});
     await until(()=>table.locator('tbody tr.clickable-row').count().then(count=>count===50),'real 50-record page loaded');
     await until(()=>bar.isVisible(),'wide table scrollbar reachable at top');

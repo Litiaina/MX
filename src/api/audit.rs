@@ -571,6 +571,14 @@ pub(crate) fn ensure_audit_schema(
 fn classify_action(method: &Method, path: &str) -> Option<AuditClassification> {
     let segments = path.trim_matches('/').split('/').collect::<Vec<_>>();
 
+    if path.starts_with("/mx/v1/admin/updates/") && matches!(*method, Method::POST | Method::PUT) {
+        return Some(AuditClassification {
+            action: if path.ends_with("/policy") { "update.policy.change" } else { "update.request" },
+            target_type: Some("release"),
+            target_uid: segments.get(4).map(|value| value.to_string()),
+        });
+    }
+
     if segments.get(0..3) == Some(&["mx", "v1", "drive"][..])
         && ![Method::GET, Method::HEAD].contains(method)
         && !matches!(segments.get(3), Some(&"guest") | Some(&"media"))

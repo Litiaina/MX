@@ -1,0 +1,11 @@
+[Unit]
+Description=Litiaina MX update discovery and interrupted-job recovery
+
+[Timer]
+OnBootSec=30s
+OnUnitInactiveSec=60s
+AccuracySec=5s
+Unit=mx-update-worker.service
+
+[Install]
+WantedBy=timers.target

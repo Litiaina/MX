@@ -1,0 +1,2 @@
+# Preserve meaningful whitespace inside generated/minified JavaScript strings.
+frontend/dist/** linguist-generated=true -whitespace

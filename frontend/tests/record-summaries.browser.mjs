@@ -60,6 +60,7 @@ try{
   await page.getByRole('spinbutton',{name:'Summary decimals for Amount',exact:true}).fill('2');
   await page.getByRole('button',{name:'Save summary for Amount',exact:true}).click();await page.getByRole('status').filter({hasText:'Amount summary saved.'}).waitFor();
   await page.getByRole('navigation',{name:'Main navigation'}).getByRole('button',{name:'Cash flow',exact:true}).click();
+  await page.getByRole('combobox',{name:'Record navigation',exact:true}).selectOption({label:'Pages'});
   const footer=page.locator('tfoot'),value=footer.getByLabel('Amount summary',{exact:true});
   const data=await call(`${root}?limit=256`,owner),formatted=data.summaries.amount.value.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
   await until(()=>value.innerText().then(text=>text===formatted),'all matching sum footer');

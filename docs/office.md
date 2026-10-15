@@ -91,7 +91,8 @@ setting does not increase its compiled memory limit. MX reads at most a 2 MiB ZI
 directory plus its small trailing header to identify complex documents, without
 decompressing/scanning the whole file or removing cells/styles. The editor rejects
 inputs over 128 MiB before buffering, and archives reporting over 256 MiB expanded
-content before starting the engine. These are editor safety budgets, not Drive
+content before opening it in the engine. Engine startup can overlap downloading;
+the document is not opened until inspection succeeds. These are editor safety budgets, not Drive
 upload/file-size limits. Download the original for a document outside these budgets.
 
 Optional server PDF previews have separate limits: one conversion at a time,
@@ -128,14 +129,20 @@ There are two independent cases:
   and wait for **Editor
   available offline**. Enable **Keep offline copy on this device** for each
   document, then bookmark `/office/index.html` for the offline document list.
-  Unsaved snapshots are retained in IndexedDB after a short typing pause and
-  periodically while editing. Reconnect, sign in if necessary, and explicitly
-  choose **Save to MX**. Reconnection never silently uploads or overwrites files.
+  Recovery snapshots are retained in IndexedDB after an idle pause. Automatic
+  saving to MX is enabled by default; reconnecting can resume a pending save with
+  the same operation ID. Disable **Automatically save to MX when idle** in
+  Document options for manual server saves. Both modes check the original
+  revision: reconnecting never silently overwrites another editor's version.
 
 The editor-only service worker caches public application/engine assets, **not**
-API responses, credentials or documents. Document retention is a separate,
-explicit opt-in. Local copies are readable by anyone using the same browser
-profile; do not enable this on shared/untrusted workstations. Offline copies
+API responses, credentials or documents. Long-term offline retention is a separate,
+explicit opt-in. Automatic recovery copies are created for edited documents even
+when that option is off. They expire after seven days and are cleaned at the next
+recovery scan; a confirmed MX save removes its automatic copy when there are no
+newer edits. Separate editor tabs have separate recovery keys. Local copies are
+readable by anyone using the same browser profile: use dedicated profiles on
+shared workstations and remove local copies before handing over the profile. Offline copies
 are not backups or cloud saves. Browser storage limits, eviction/private mode,
 device failure or clearing site data can remove them. Download a separate copy
 when needed. Changes not yet checkpointed can be lost in a process/power crash.
@@ -169,13 +176,14 @@ then reopen the document to use the updated interface.
 #### Saving and concurrency
 
 Use **Save to MX**, Ctrl/Cmd+S, or the native File → Save/Save toolbar action.
-The compact bar shows **Unsaved → Saving… → Saved**, with success only after MX
+The compact bar distinguishes **Unsaved**, **Preparing**, **Saving locally**,
+**Uploading**, **Confirming**, **Saved locally** and **Saved to MX**, with server success only after MX
 acknowledges the commit. Hover its status or open **Document options** for
 **Saved to MX · revision … · time** and detailed progress; the full status is
 also announced to assistive technology. Unsaved/newer edits and failures stay marked
 unsaved; a local draft or native temporary file is not proof of an MX save.
 Saving an unchanged document explains that there are no unsaved changes rather
-than creating another version. **Sign in to save** is a recovery action shown
+than exporting the entire file again or creating another version. **Sign in to save** is a recovery action shown
 only when authentication is missing/expired, not an extra Office account.
 Recovery keeps the open edits and requires the original MX account.
 Save also accepts the spreadsheet cell currently being typed, without requiring
@@ -195,16 +203,40 @@ version. Editing stays entirely local, with no edit locks, edit-presence heartbe
 or server Office sessions. A read-only connection check shows an offline icon
 without tracking edits. MX's existing resumable multipart upload publishes saves:
 
-1. Export the document in its original format in the browser.
-2. Upload it as a **new uniquely keyed N1 object**, preserving the original
+1. Accept pending cell input and export the document in its original format in
+   the browser. Reuse an already prepared snapshot if the engine generation is
+   unchanged. The local checkpoint does not trigger a second full export.
+2. Complete an IndexedDB recovery transaction containing the exact payload,
+   original revision and upload operation ID before starting the upload. Request
+   strict transaction durability where supported; this is not a physical
+   power-loss or browser-storage guarantee.
+3. Upload it as a **new uniquely keyed N1 object**, preserving the original
    extension. Never replace an earlier Office version's content.
-3. Atomically recheck access, owner quota and the original MX revision, insert a
+4. Atomically recheck access, owner quota and the original MX revision, insert a
    normal MX file version and switch the current-version pointer.
 
 An uncertain save or separate-file save retains its exact upload operation/payload
-for idempotent retry. With local retention enabled, this intent also survives
-closing/reopening the tab. Save and Download queue behind an in-flight local
+for idempotent retry in automatic recovery, without requiring offline retention.
+Reopen the editor and choose **Open local copy**. The pending save checks its
+original operation, including whether MX already committed it before the response
+was lost. A tab cannot keep uploading after it closes or the client powers off.
+Recovered payloads use fresh memory-backed browser files before upload while
+preserving filenames, timestamps and operation IDs; normal saves do not take
+this recovery-only materialization path.
+Save and Download queue behind an in-flight local
 checkpoint; the user does not need to click a second time.
+If local recovery storage fails, show an actionable error and stop before upload.
+The user can download a copy or explicitly choose **Save directly to MX** without
+device recovery. Never label that path locally protected. Saving remains whole-
+document work: large exports can still take time. Idle autosave starts after about
+8 seconds, adapting up to 60 seconds after costly exports to avoid repeated heavy
+work while typing. This is not per-keystroke journaling: changes since the last
+completed checkpoint can be lost on a crash.
+
+Document download and engine startup overlap. Offline asset preparation begins
+after opening, not in competition with initial loading. Public engine resources
+can reuse the browser HTTP cache. These changes do not promise faster native
+parsing/layout for every complex workbook or remove the compiled engine limits.
 Concurrent whole-document edits do **not** automatically merge paragraphs/cells:
 a stale save asks the user to save a separate file, deliberately add a version
 after the latest version, or discard/load the latest. Each explicit replacement

@@ -2,6 +2,54 @@
 
 [Documentation index](README.md) · [Project overview](../README.md)
 
+## Continuous records view
+
+Records default to **Continuous scroll**. In **View**, choose **Pages** to use
+the existing numbered-page workflow. The choice and batch preference are saved
+per MX account and module in this browser.
+
+- Scroll down or up to load the next or previous cursor window. The compact
+  up/down buttons beside **View** also provide keyboard-accessible **Load earlier**
+  / **Load more** actions. Loading feedback shares the results line; there is no
+  permanent bottom control bar. A failed edge request shows **Retry** without
+  clearing the current records.
+- The table fills the remaining screen height. Long-text cells wrap their full
+  contents (including line breaks), expanding the row instead of cutting it off
+  after three lines. Off-screen rows remain virtualized.
+- **Batch** sets the baseline request size (25/50/100/256). Requests can adapt to
+  viewport height, up to the API's 256-record cap. The cache holds at most five
+  configured batches; only visible rows, a small buffer and focused/edited rows
+  are rendered. Distant data is evicted and can be fetched again in reverse.
+- A focused/edited row is never evicted silently. If it prevents moving the
+  bounded cache, finish editing or move focus, then retry.
+- Navigation remembers the visible record UID, its viewport offset, horizontal
+  scroll, filters and sort in session storage. Returning from an editor or another
+  module restores the anchor. If deleted, its saved ordering cursor positions
+  the view near the surviving records. Changing the query starts a new view.
+- Incoming collaboration changes show **Refresh this view**, rather than
+  reordering the list while someone is reading. Deletions remove the row promptly
+  and keep the existing stale-response barriers. Totals flag pending updates.
+- The cache indicator is not a claim that all matching rows have downloaded.
+  Row numbers describe positions in the current browsing session, not immutable
+  record IDs. Search/filter/sort happen on the server. Summaries cover the entire
+  filtered result, not just rendered or cached records.
+
+Cursor navigation uses no growing SQL OFFSET. Custom field sorting still depends
+on query complexity and indexing; continuous scrolling is not a promise of
+constant-time filtering or sorting. Numbered pagination remains available.
+The browsing window is not an immutable snapshot of the whole module: concurrent
+edits to sort/filter values can change which records belong in later requests.
+Use the update notice to refresh deliberately while retaining the visible anchor.
+
+The module records API accepts `window=start|after|before|anchor`. Edge requests
+send a returned row cursor; anchor requests send `anchor_uid` and can include its
+saved cursor to recover near a deleted row. Cursors are bound to the module,
+query, attachment access and resolved sort field/type, not an authorization grant.
+Existing page/limit requests are unchanged. For edge requests, `metadata=false`
+skips the full-result count and summaries; when
+`window.metadata_included` is false, retain the last metadata snapshot rather
+than interpreting the placeholder `total: 0` / empty summaries as fresh totals.
+
 ## File Attachment Is a Normal Field Type
 
 MX does **not** require one permanent built-in attachment area.

@@ -23,7 +23,10 @@ self.addEventListener('install', event => event.waitUntil((async () => {
   // Sequential caching bounds decompression/memory pressure on weak devices.
   try {
     for (const path of manifest.assets) {
-      const response = await fetch(path, { cache: 'reload' });
+      // Revalidate the HTTP cache populated by startup rather than forcing a
+      // second download. Do not force-cache unversioned vendor URLs: a future
+      // engine upgrade must not install stale executable bytes.
+      const response = await fetch(path, { cache: 'no-cache' });
       if (!response.ok || response.type === 'opaque') throw new Error(`Office asset unavailable: ${path}`);
       await cache.put(path, response);
     }
@@ -66,4 +69,4 @@ self.addEventListener('fetch', event => {
   })());
 });
 
-// MX build generation: mx-office-assets-cce7d2863f85990d
+// MX build generation: mx-office-assets-361990d44b65fdaf

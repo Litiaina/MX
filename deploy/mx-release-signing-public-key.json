@@ -1,0 +1,8 @@
+{
+  "algorithm": "Ed25519",
+  "key_id": "fdf69f67562fb715",
+  "public_key_hex": "fdf69f67562fb7150ab853213b1a7217db50c057c9edad9452360e7b938c5376",
+  "trusted_keys": {
+    "fdf69f67562fb715": "fdf69f67562fb7150ab853213b1a7217db50c057c9edad9452360e7b938c5376"
+  }
+}

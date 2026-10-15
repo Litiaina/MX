@@ -109,7 +109,7 @@
   .cell-edit-button:hover, .cell-edit-button:focus-visible { border-color: var(--line); background: var(--surface-raised); }
   .cell-edit-button:hover > svg, .cell-edit-button:focus-visible > svg { opacity: 1; }
   .long-text-cell .cell-edit-button { align-items: start; }
-  .long-text-cell .cell-edit-button > span { display: -webkit-box; overflow: hidden; white-space: normal; line-height: 1.4; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
+  .long-text-cell .cell-edit-button > span { display: block; overflow: visible; white-space: pre-wrap; overflow-wrap: anywhere; text-overflow: clip; line-height: 1.4; }
   .records-table td.editing-cell { padding: .2rem; background: var(--surface-raised) !important; box-shadow: inset 0 0 0 1px var(--line-strong); }
   .cell-editor { width: 100%; min-width: 7rem; min-height: 2.15rem; padding: .32rem .45rem; border-color: var(--primary); border-radius: .32rem; background: var(--surface); color: var(--text); font-size: inherit; }
   .long-text-cell-editor { min-width: 20rem; min-height: 6rem; resize: vertical; line-height: 1.45; white-space: pre-wrap; }

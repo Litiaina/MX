@@ -23,6 +23,7 @@
   import {fieldState,optionLabel,availableOptions,prepareForm} from '../util/formRules';
   import TableScrollbar from './TableScrollbar.svelte';
   import { floatingMenu } from '../util/floating';
+  import { windowPieces, mergeWindow, windowAnchor, type RecordViewPosition } from '../util/recordWindow';
 
   let { session, accessLevel, moduleUid = '', modulePermission = null, openRecordUid = '', openRequestRevision = 0, focusLinkedAttachments = false, revision = 0, liveMessage = null, recordSingular = 'Record', recordPlural = 'Records' }: { session: Session; accessLevel: number; moduleUid?: string; modulePermission?: ModulePermission | null; openRecordUid?: string; openRequestRevision?: number; focusLinkedAttachments?: boolean; revision?: number; liveMessage?: LiveMessage | null; recordSingular?: string; recordPlural?: string } = $props();
   let schema = $state<SchemaResponse | null>(null);
@@ -33,6 +34,24 @@
   let rows = $state<MxRecord[]>([]);
   let summaries = $state<Record<string, ColumnSummary>>({});
   let page = $state(1); let pageInput = $state(1); let pages = $state(0); let total = $state(0); let pageSize = $state(50);
+  let continuous = $state(true);
+  let windowBefore = $state(false); let windowAfter = $state(false);
+  let edgeLoading = $state(false); let edgeError = $state(''); let edgeDirection = $state<'before'|'after'>('after');
+  let updatesAvailable = $state(false); let baseIndex = $state(0);
+  let viewportTop = $state(0); let viewportHeight = $state(600); let rowHeights = $state<Record<string,number>>({});
+  let mobileRows = $state(false); let focusedRow = $state('');
+  let cursors = new Map<string,string>();
+  let requestController: AbortController | undefined;
+  let edgeController: AbortController | undefined;
+  let restorePosition: RecordViewPosition | undefined;
+  let lastAnchor:RecordViewPosition|undefined;let restoringAnchor:RecordViewPosition|undefined;let restoreEpoch=0;
+  let anchorScrollTop=0;let anchorScrollLeft=0;
+  let layoutAnchor=false;
+  let scrollFrame = 0; let positionTimer: ReturnType<typeof setTimeout> | undefined;
+  let measureFrame=0;const pendingMeasurements=new Map<string,number>();
+  let appliedQuery = {search:'',sortBy:'',sortDir:'asc',match:'contains' as 'contains'|'prefix'|'exact',filters:{} as Record<string,string>,attachments:'' as 'with'|'without'|''};
+  const positionKey = $derived(`mx_record_position_v1:${session.uid}:${moduleUid || 'default'}`);
+  const preferenceKey = $derived(`mx_record_view_v1:${session.uid}:${moduleUid || 'default'}`);
   let search = $state(''); let sortBy = $state(''); let sortDir = $state('asc');
   let matchMode = $state<'contains' | 'prefix' | 'exact'>('contains');
   let attachmentMode = $state<'with' | 'without' | ''>('');
@@ -45,11 +64,12 @@
   let tableViewport = $state<HTMLDivElement>();
   const menuRow = $derived(rows.find((row) => row.uid === rowMenuUid));
   let editor = $state<MxRecord | null | undefined>(undefined);
+  let editorAnchor:RecordViewPosition|undefined;
   let editorChanges=$state<Record<string,JsonValue>|null>(null);
   let editorWritable = $state(false);
   let cellEdit = $state<{ rowUid: string; fieldKey: string; value: string; baseRevision: number; fills:Record<string,JsonValue>; computed:Record<string,JsonValue>; previewLoading:boolean; previewError:string } | null>(null);
   let cellRequest:AbortController|undefined;
-  onDestroy(()=>{ cellRequest?.abort(); cancelAnimationFrame(importFocusFrame); });
+  onDestroy(()=>{ rememberPosition(); requestController?.abort(); edgeController?.abort(); cellRequest?.abort(); cancelAnimationFrame(importFocusFrame); cancelAnimationFrame(scrollFrame);cancelAnimationFrame(measureFrame); clearTimeout(positionTimer); });
   let cellSaving = $state(false);
   let cellConflict = $state<{ conflicts: FieldConflict[]; recordRevision: number } | null>(null);
   let focusAttachments = $state(false);
@@ -74,9 +94,23 @@
   const visibleFields = $derived(eligibleFields.filter((field) => selectedKeys.includes(field.key)));
   const summaryFields = $derived(visibleFields.filter(field => !!field.config.table_summary && field.config.table_summary !== 'none'));
   const searchableFields = $derived(schema?.fields.filter((field) => field.active && field.searchable && field.field_type !== 'attachments').sort((a, b) => a.position - b.position) || []);
+  const pinnedRows = $derived([cellEdit?.rowUid || '', focusedRow, rowMenuUid].filter(Boolean));
+  const fieldWidth=(type:string)=>type==='long_text'?360:type==='attachments'?150:240;
+  const continuousWidth=$derived(visibleFields.reduce((sum,field)=>sum+fieldWidth(field.field_type),190));
+  const renderPieces = $derived(continuous ? windowPieces(rows.map(row=>row.uid),rowHeights,viewportTop,viewportHeight,mobileRows?240:50,pinnedRows)
+    : rows.map((row,index)=>({kind:'row' as const,index,key:row.uid})));
 
   const columnStorageKey = $derived(`mx_record_columns_v3_${moduleUid || 'default'}`);
   onMount(() => {
+    try {
+      const preferences=JSON.parse(localStorage.getItem(preferenceKey)||'null');
+      if(preferences){continuous=preferences.continuous!==false;pageSize=[25,50,100,256].includes(preferences.batch)?preferences.batch:50;}
+      const saved=JSON.parse(sessionStorage.getItem(positionKey)||'null') as RecordViewPosition|null;
+      if(saved && typeof saved.uid==='string' && Number.isFinite(saved.offset)){
+        restorePosition=saved; search=saved.search;sortBy=saved.sortBy;sortDir=saved.sortDir;matchMode=saved.match;
+        filters=saved.filters;attachmentMode=saved.attachments;page=saved.page||1;
+      }
+    }catch{/* Storage can be disabled. Browsing remains available. */}
     try { const saved = JSON.parse(localStorage.getItem(columnStorageKey) || localStorage.getItem('mx_record_columns_v3') || 'null'); if (saved && Array.isArray(saved.shown) && Array.isArray(saved.hidden)) columnOverrides = { shown: saved.shown.filter((key: unknown): key is string => typeof key === 'string'), hidden: saved.hidden.filter((key: unknown): key is string => typeof key === 'string') }; else { const old = JSON.parse(localStorage.getItem('mx_record_columns_v2') || 'null'); if (Array.isArray(old)) legacyColumns = old.filter((key): key is string => typeof key === 'string'); } } catch { /* Use schema defaults. */ }
     const closeRowMenu = (event: PointerEvent) => { const target = event.target instanceof Element ? event.target : null; if (!target?.closest('[data-record-actions]')) rowMenuUid = ''; if (!target?.closest('[data-module-import-actions]')) importMenuOpen = false; };
     const closeImportMenuOnFocus = (event: FocusEvent) => { if (importMenuOpen && !(event.target instanceof Element && event.target.closest('[data-module-import-actions]'))) importMenuOpen = false; };
@@ -84,8 +118,9 @@
     document.addEventListener('pointerdown', closeRowMenu);
     document.addEventListener('keydown', closeRowMenuWithKeyboard);
     document.addEventListener('focusin', closeImportMenuOnFocus);
+    window.addEventListener('pagehide',rememberPosition);
     void refresh(true);
-    return () => { window.clearTimeout(searchTimer); document.removeEventListener('pointerdown', closeRowMenu); document.removeEventListener('keydown', closeRowMenuWithKeyboard); document.removeEventListener('focusin', closeImportMenuOnFocus); };
+    return () => { window.clearTimeout(searchTimer);window.removeEventListener('pagehide',rememberPosition); document.removeEventListener('pointerdown', closeRowMenu); document.removeEventListener('keydown', closeRowMenuWithKeyboard); document.removeEventListener('focusin', closeImportMenuOnFocus); };
   });
   $effect(() => {
     const message = liveMessage; const selected = moduleUid || 'mx-default-records';
@@ -108,7 +143,7 @@
       else { deletedRecordUids.delete(uid); deletionGenerations.delete(uid); }
     });
   });
-  $effect(() => { if (revision !== lastRevision && schema) { lastRevision = revision; void refresh(liveMessage?.type.startsWith('schema.') === true); } });
+  $effect(() => { if (revision !== lastRevision && schema) { lastRevision = revision; if(continuous)updatesAvailable=true;else void refresh(liveMessage?.type.startsWith('schema.') === true); } });
   $effect(() => { if (schema && openRecordUid && (openRecordUid !== openedDeepLink || openRequestRevision !== openedRequestRevision)) void openLinkedRecord(openRecordUid); });
 
   function closeRowMenuAndFocus() { rowMenuUid = ''; rowMenuAnchor?.focus({ preventScroll: true }); }
@@ -177,13 +212,119 @@
   function openImporter(mode: 'new' | 'history') { importMenuOpen = false; importer = mode; }
 
   async function openLinkedRecord(uid: string) {
+    editorAnchor=currentAnchor();
     rowMenuUid = ''; openedDeepLink = uid; openedRequestRevision = openRequestRevision; error = '';
     try { const record = await getRecord(uid, moduleUid || undefined); if (deletedRecordUids.has(uid) || openedDeepLink !== uid) return; editor = record; editorWritable = false; focusAttachments = focusLinkedAttachments; }
     catch (reason) { error = reason instanceof Error ? reason.message : `The linked ${recordSingular.toLowerCase()} could not be opened.`; }
   }
 
+  function queryOptions() { return { page, limit:pageSize, q:search.trim(), match:matchMode,
+    filters:Object.fromEntries(Object.entries(filters).filter(([,value])=>value.trim())), attachments:attachmentMode,sort_by:sortBy||undefined,sort_dir:sortDir }; }
+  function currentAnchor(): RecordViewPosition | undefined {
+    if(restoringAnchor)return restoringAnchor;
+    if(!tableViewport?.isConnected || !rows.length)return lastAnchor;
+    const bounds=tableViewport.getBoundingClientRect();
+    if(!bounds.height)return lastAnchor;
+    // Layout corrections may be fractional even when a browser rounds scrollTop
+    // to whole pixels. Keep the intended offset through all measurement passes,
+    // rather than accumulating that rounding (or recapturing shifted content).
+    // Any actual wheel/drag or horizontal movement releases it immediately.
+    if(layoutAnchor&&lastAnchor&&Math.abs(tableViewport.scrollTop-anchorScrollTop)<.5&&Math.abs(tableViewport.scrollLeft-anchorScrollLeft)<.5&&rows.some(row=>row.uid===lastAnchor!.uid))return lastAnchor;
+    layoutAnchor=false;
+    const header=tableViewport.querySelector('thead')?.getBoundingClientRect().height||0;
+    const element=Array.from(tableViewport.querySelectorAll<HTMLElement>('[data-record-uid]')).find(node=>{const rect=node.getBoundingClientRect();return rect.bottom>bounds.top+header+1&&rect.top<bounds.bottom;});
+    const fallback=windowAnchor(rows.map(row=>row.uid),rowHeights,tableViewport.scrollTop,mobileRows?240:50);
+    const uid=element?.dataset.recordUid||fallback?.uid;
+    if(!uid)return lastAnchor;
+    anchorScrollTop=tableViewport.scrollTop;anchorScrollLeft=tableViewport.scrollLeft;
+    return lastAnchor={uid,cursor:cursors.get(uid),offset:element?element.getBoundingClientRect().top-bounds.top:header+fallback!.offset,horizontal:tableViewport.scrollLeft,
+      index:baseIndex+Math.max(0,rows.findIndex(row=>row.uid===uid)),...appliedQuery,page};
+  }
+  function measurementAnchor() {
+    // New overscan rows can expand above the visible record before their
+    // ResizeObserver fires. Preserve its pre-layout position, unless the user
+    // has actually moved the scrollbars since that position was captured.
+    if(restoringAnchor)return restoringAnchor;
+    if(lastAnchor&&tableViewport&&Math.abs(tableViewport.scrollTop-anchorScrollTop)<1&&Math.abs(tableViewport.scrollLeft-anchorScrollLeft)<1)return lastAnchor;
+    return currentAnchor();
+  }
+  function rememberPosition() { const anchor=currentAnchor();if(anchor)try{sessionStorage.setItem(positionKey,JSON.stringify(anchor));}catch{/* Best effort view state; never record data. */} }
+  async function restoreAnchor(anchor?: RecordViewPosition) {
+    if(!tableViewport || !anchor)return;
+    restoringAnchor=anchor;const epoch=++restoreEpoch;
+    // Render the anchor first, even when it lies outside the previous virtual range.
+    let offset=0;const index=rows.findIndex(row=>row.uid===anchor.uid);
+    if(index>=0){for(let i=0;i<index;i++)offset+=rowHeights[rows[i].uid]||(mobileRows?240:50);viewportTop=offset;}
+    await tick();
+    if(epoch!==restoreEpoch||!tableViewport)return;
+    const node=Array.from(tableViewport.querySelectorAll<HTMLElement>('[data-record-uid]')).find(node=>node.dataset.recordUid===anchor.uid);
+    tableViewport.scrollLeft=anchor.horizontal;
+    if(node)tableViewport.scrollTop+=node.getBoundingClientRect().top-tableViewport.getBoundingClientRect().top-anchor.offset;
+    viewportTop=tableViewport.scrollTop;
+    // Do not leave a stale restoration active for another animation frame:
+    // the next wheel/drag must be free to choose its own destination.
+    restoringAnchor=undefined;lastAnchor=anchor;
+    anchorScrollTop=tableViewport.scrollTop;anchorScrollLeft=tableViewport.scrollLeft;
+    layoutAnchor=true;
+  }
+  function measureRow(node: HTMLElement, uid: string) {
+    if(!continuous)return{destroy(){}};
+    const observer=new ResizeObserver(()=>{
+      const height=node.getBoundingClientRect().height+(mobileRows?8.8:0);
+      if(height>0 && Math.abs((rowHeights[uid]||0)-height)>1){pendingMeasurements.set(uid,height);
+        // Mutating the virtual DOM inside ResizeObserver causes observer loops
+        // in WebKit. Batch all row measurements in the next animation frame.
+        if(!measureFrame)measureFrame=requestAnimationFrame(()=>{measureFrame=0;if(!pendingMeasurements.size)return;const anchor=measurementAnchor();rowHeights={...rowHeights,...Object.fromEntries(pendingMeasurements)};pendingMeasurements.clear();void restoreAnchor(anchor);});
+      }
+    });observer.observe(node);return{destroy(){observer.disconnect();pendingMeasurements.delete(uid);}};
+  }
+  function observeViewport(node: HTMLDivElement) {
+    let frame=0;const observer=new ResizeObserver(()=>{cancelAnimationFrame(frame);frame=requestAnimationFrame(()=>{const anchor=measurementAnchor();viewportHeight=node.clientHeight;mobileRows=innerWidth<=820;void restoreAnchor(anchor);});});observer.observe(node);
+    return {destroy(){observer.disconnect();cancelAnimationFrame(frame);}};
+  }
+  function scrolled() {
+    // Capture the user's new destination before a queued measurement can use an
+    // old anchor. Fast scrollbar drags may currently point into a virtual gap.
+    currentAnchor();
+    if(scrollFrame)return;
+    scrollFrame=requestAnimationFrame(()=>{scrollFrame=0;if(!tableViewport)return;viewportTop=tableViewport.scrollTop;viewportHeight=tableViewport.clientHeight;
+      clearTimeout(positionTimer);positionTimer=setTimeout(rememberPosition,200);
+      if(!continuous||loading||edgeLoading||edgeError)return;
+      const threshold=Math.max(150,viewportHeight*.6);
+      if(tableViewport.scrollTop+viewportHeight>=tableViewport.scrollHeight-threshold && windowAfter)void loadEdge('after');
+      else if(tableViewport.scrollTop<threshold&&windowBefore)void loadEdge('before');
+    });
+  }
+  async function loadEdge(direction: 'before'|'after') {
+    if(edgeLoading||loading||!continuous||!rows.length)return;
+    edgeDirection=direction;edgeError='';edgeLoading=true;
+    const request=refreshSequence;edgeController?.abort();const controller=edgeController=new AbortController();
+    const boundary=direction==='before'?rows[0]:rows.at(-1)!;
+    try {
+      const result=await listRecords({...queryOptions(),window:direction,cursor:cursors.get(boundary.uid),metadata:false,
+        limit:Math.min(256,Math.max(pageSize,Math.ceil(viewportHeight/(mobileRows?240:50))*2))},moduleUid||undefined,controller.signal);
+      if(request!==refreshSequence||controller.signal.aborted||!result.window)return;
+      const anchor=currentAnchor();
+      const incoming=result.data.filter(row=>!deletedRecordUids.has(row.uid));
+      const merged=mergeWindow(rows,incoming,direction==='before',Math.min(1280,pageSize*5),pinnedRows);
+      if(!merged){edgeError='Finish editing or move focus away from the earlier record to load more.';return;}
+      result.data.forEach((row,index)=>cursors.set(row.uid,result.window!.cursors[index]));
+      rows=merged.rows;
+      if(direction==='after'){windowAfter=result.window.has_after;if(merged.removed)windowBefore=true;baseIndex+=merged.removed;}
+      else{windowBefore=result.window.has_before;if(merged.removed)windowAfter=true;baseIndex=Math.max(0,baseIndex-merged.added);}
+      const retained=new Set(rows.map(row=>row.uid));cursors=new Map([...cursors].filter(([uid])=>retained.has(uid)));
+      rowHeights=Object.fromEntries(Object.entries(rowHeights).filter(([uid])=>retained.has(uid)));
+      await restoreAnchor(anchor);rememberPosition();
+    }catch(reason){if(!controller.signal.aborted&&request===refreshSequence){edgeError=reason instanceof Error?reason.message:'More records could not be loaded.';if(reason instanceof ApiError&&[401,403].includes(reason.status)){rows=[];cursors.clear();rowHeights={};}}}
+    finally{if(edgeController===controller){edgeLoading=false;scrolled();}}
+  }
+  function viewChanged(){rememberPosition();try{localStorage.setItem(preferenceKey,JSON.stringify({continuous,batch:pageSize}));}catch{}page=1;void refresh(true);}
+  function rowNumber(index:number){return (continuous?baseIndex:(page-1)*pageSize)+index+1;}
   async function refresh(withSchema = false) {
     const request = ++refreshSequence;
+    requestController?.abort();edgeController?.abort();edgeLoading=false;edgeError='';
+    const controller=requestController=new AbortController();
+    const anchor=restorePosition || currentAnchor();restorePosition=undefined;
     loading = true; error = ''; summaries = {};
     try {
       if (withSchema || !schema) {
@@ -202,24 +343,33 @@
         }
         selectedKeys = [...defaults.filter((key) => !columnOverrides.hidden.includes(key)), ...columnOverrides.shown.filter((key) => !defaults.includes(key))];
       }
-      const activeFilters = Object.fromEntries(Object.entries(filters).filter(([, value]) => value.trim()));
-      const result = await listRecords({ page, limit: pageSize, q: search.trim(), match: matchMode, filters: activeFilters, attachments: attachmentMode, sort_by: sortBy || undefined, sort_dir: sortDir }, moduleUid || undefined);
+      const sameQuery=anchor && JSON.stringify([anchor.search,anchor.sortBy,anchor.sortDir,anchor.match,anchor.filters,anchor.attachments])===JSON.stringify([search,sortBy,sortDir,matchMode,$state.snapshot(filters),attachmentMode]);
+      const result = await listRecords({...queryOptions(),...(continuous?{window:sameQuery?'anchor' as const:'start' as const,anchor_uid:sameQuery?anchor.uid:undefined,cursor:sameQuery?anchor.cursor:undefined}: {})},moduleUid || undefined,controller.signal);
       if (request !== refreshSequence) return;
       rows = result.data.filter((row) => !deletedRecordUids.has(row.uid)); page = result.page; pageInput = result.page; pages = result.total_pages; total = Math.max(0, result.total - (result.data.length - rows.length));
       summaries = result.summaries || {};
-    } catch (reason) { if (request === refreshSequence) error = reason instanceof Error ? reason.message : 'Records could not be loaded.'; }
-    finally { if (request === refreshSequence) loading = false; }
+      appliedQuery={search,sortBy,sortDir,match:matchMode,filters:$state.snapshot(filters),attachments:attachmentMode};
+      if(result.window){cursors=new Map(result.data.map((row,index)=>[row.uid,result.window!.cursors[index]]));windowBefore=result.window.has_before;windowAfter=result.window.has_after;baseIndex=sameQuery?anchor.index:0;}
+      rowHeights={};updatesAvailable=false;
+      if(sameQuery)await restoreAnchor(anchor);else if(tableViewport){layoutAnchor=false;tableViewport.scrollTop=0;viewportTop=0;}
+    } catch (reason) { if (request === refreshSequence && !controller.signal.aborted){error = reason instanceof Error ? reason.message : 'Records could not be loaded.';if(reason instanceof ApiError&&[401,403].includes(reason.status)){rows=[];cursors.clear();rowHeights={};}} }
+    finally { if (request === refreshSequence){loading=false;scrolled();} }
   }
 
   function forgetDeletedRecord(uid: string) {
+    const anchor=currentAnchor();
+    if(anchor?.uid===uid){const index=rows.findIndex(row=>row.uid===uid);anchor.uid=rows[index+1]?.uid||rows[index-1]?.uid||uid;}
     ++refreshSequence; loading=false; summaries={};
+    requestController?.abort();edgeController?.abort();edgeLoading=false;updatesAvailable=true;
     deletedRecordUids.add(uid);
     deletionGenerations.set(uid, ++deletionGeneration);
     if (rows.some((row) => row.uid === uid)) total = Math.max(0, total - 1);
     rows = rows.filter((row) => row.uid !== uid);
+    cursors.delete(uid);const {[uid]:removedHeight,...remainingHeights}=rowHeights;rowHeights=remainingHeights;
     if (cellEdit?.rowUid === uid) { cellEdit = null; cellConflict = null; }
     if (rowMenuUid === uid) rowMenuUid = '';
     if (editor?.uid === uid) closeEditor();
+    void restoreAnchor(anchor);
   }
 
   async function reconcileDeletedRecords() {
@@ -358,8 +508,8 @@
   function resetColumns() { columnOverrides = { shown: [], hidden: [] }; selectedKeys = eligibleFields.filter((field) => field.table_visible).map((field) => field.key); saveColumnOverrides(); }
   async function changePageSize() { page = 1; await refresh(); }
   async function clearFilters() { filters = {}; search = ''; attachmentMode = ''; sortBy = ''; sortDir = 'asc'; page = 1; await refresh(); }
-  function openRecord(row: MxRecord, attachments = false, edit = false) { if (deletedRecordUids.has(row.uid)) return; editorChanges=null;rowMenuUid = ''; if (cellEdit) cancelCellEdit(); focusAttachments = attachments; editorWritable = edit && canUpdate; editor = row; }
-  function closeEditor() { editorChanges=null;focusAttachments = false; editorWritable = false; editor = undefined; if (openRecordUid) location.hash = `module/${encodeURIComponent(moduleUid || 'mx-default-records')}`; }
+  function openRecord(row: MxRecord, attachments = false, edit = false) { if (deletedRecordUids.has(row.uid)) return;editorAnchor=currentAnchor();rememberPosition(); editorChanges=null;rowMenuUid = ''; if (cellEdit) cancelCellEdit(); focusAttachments = attachments; editorWritable = edit && canUpdate; editor = row; }
+  function closeEditor() { const anchor=editorAnchor;editorChanges=null;focusAttachments = false; editorWritable = false; editor = undefined; if (openRecordUid) location.hash = `module/${encodeURIComponent(moduleUid || 'mx-default-records')}`;void tick().then(()=>restoreAnchor(anchor)); }
   async function removeRecord(row: MxRecord, event: MouseEvent) {
     event.stopPropagation();
     closeRowMenuAndFocus();
@@ -375,7 +525,7 @@
   }
 </script>
 
-<section class="workspace-page records-page">
+<section class="workspace-page records-page" class:continuous-page={continuous}>
   <div class="toolbar records-toolbar">
     {#if canCreate}<button class="button primary records-new-button" onclick={() => { editorChanges=null;focusAttachments = false; editorWritable = true; editor = null; }}>+ New {recordSingular.toLowerCase()}</button>{/if}
     <form class="search-form" onsubmit={searchSubmit}><label class="records-search-input"><Search size={16} aria-hidden="true" /><input bind:value={search} oninput={scheduleSearch} type="search" placeholder={canAttachments ? 'Search configured fields and attachment filenames…' : 'Search configured fields…'} aria-label={`Search ${recordPlural.toLowerCase()}`} /></label><select bind:value={matchMode} onchange={() => { page = 1; void refresh(); }} aria-label="Search matching"><option value="contains">Contains</option><option value="prefix">Starts with</option><option value="exact">Exact</option></select><button class="button" type="submit">Search</button></form>
@@ -385,20 +535,26 @@
   </div>
     <details class="advanced-search"><summary>Advanced filters and sorting</summary><form class="filter-grid" onsubmit={searchSubmit}>{#each searchableFields as field}<label>{field.label}{#if field.field_type === 'select'}<select value={filters[field.key] || ''} onchange={(event) => filters[field.key] = event.currentTarget.value}><option value="">Any value</option>{#each (field.config.options as (string | number | boolean)[] || []) as option}<option value={String(option)}>{String(option)}</option>{/each}</select>{:else if field.field_type === 'boolean'}<select value={filters[field.key] || ''} onchange={(event) => filters[field.key] = event.currentTarget.value}><option value="">Either</option><option value="true">Yes</option><option value="false">No</option></select>{:else}<input type={field.field_type === 'date' ? 'date' : ['integer', 'decimal', 'formula'].includes(field.field_type) ? 'number' : 'text'} value={filters[field.key] || ''} oninput={(event) => filters[field.key] = event.currentTarget.value} placeholder={field.field_type === 'date' ? undefined : 'Field contains…'} />{/if}</label>{/each}{#if canAttachments}<label>Attachments<select bind:value={attachmentMode}><option value="">With or without files</option><option value="with">With attachments</option><option value="without">Without attachments</option></select></label>{/if}<label>Sort field<select bind:value={sortBy}><option value="">Default order</option>{#each eligibleFields.filter((field) => field.sortable) as field}<option value={field.key}>{field.label}</option>{/each}</select></label><label>Sort direction<select bind:value={sortDir}><option value="asc">Ascending</option><option value="desc">Descending</option></select></label><div class="button-row"><button class="button primary">Apply filters</button><button class="button" type="button" onclick={clearFilters}>Clear all</button></div></form></details>
   {#if error}<div class="notice error">{error}</div>{/if}
+  {#if continuous && updatesAvailable}<div class="record-updates" role="status"><span>Records changed. Your browsing position is kept.</span><button class="button small" disabled={loading||!!cellEdit} onclick={()=>void refresh(true)}>Refresh this view</button></div>{/if}
   {#if cellConflict}{#each cellConflict.conflicts as conflict}<div class="notice record-cell-conflict"><div><strong>{conflict.label} changed elsewhere</strong><small>Stored: {String(conflict.current_value ?? 'Empty')} · Yours: {String(conflict.your_value ?? 'Empty')}</small></div><div class="inline-actions"><button class="button small" type="button" onclick={()=>void resolveCellConflict(conflict,false)}>Use stored</button><button class="button primary small" type="button" onclick={() => void resolveCellConflict(conflict,true)}>Keep mine</button></div></div>{/each}{/if}
-  <div class="records-result-summary" aria-live="polite" aria-label={`${total.toLocaleString()} ${total === 1 ? recordSingular.toLowerCase() : recordPlural.toLowerCase()}`}><span><strong>{total.toLocaleString()}</strong> {total === 1 ? 'result' : 'results'}</span><small>{rows.length ? `Showing ${((page - 1) * pageSize + 1).toLocaleString()}–${Math.min(page * pageSize, total).toLocaleString()}` : 'No rows in this view'}</small></div>
-  <div class="table-wrap records-table" id={`records-table-${moduleUid || 'default'}`} bind:this={tableViewport}>
-    <table>
-      <thead><tr><th class="row-index-column">#</th>{#each visibleFields as field}<th><button class="table-sort" class:sortable={field.sortable} onclick={() => field.sortable && sort(field.key)}>{field.label}{#if sortBy === field.key}{#if sortDir === 'asc'}<ChevronUp size={14} />{:else}<ChevronDown size={14} />{/if}{/if}</button></th>{/each}<th class="record-actions-column">Actions</th></tr></thead>
+  <div class="records-view-controls"><div class="records-result-summary" aria-live="polite" aria-label={`${total.toLocaleString()} ${total === 1 ? recordSingular.toLowerCase() : recordPlural.toLowerCase()}`}><span><strong>{total.toLocaleString()}</strong> {total === 1 ? 'result' : 'results'}</span><small>{continuous?`${rows.length.toLocaleString()} cached${edgeLoading?` · Loading ${edgeDirection==='before'?'earlier':'more'}…`:!windowAfter&&!loading?' · End of results':''}`:rows.length ? `Showing ${((page - 1) * pageSize + 1).toLocaleString()}–${Math.min(page * pageSize, total).toLocaleString()}` : 'No rows in this view'}</small></div>{#if continuous}<div class="record-window-controls" role="group" aria-label="Load record windows"><button class="button" aria-label="Load earlier" title="Load earlier records" disabled={loading||edgeLoading||!windowBefore} onclick={()=>void loadEdge('before')}><ChevronUp size={16} aria-hidden="true" /></button><button class="button" aria-label="Load more" title="Load more records" disabled={loading||edgeLoading||!windowAfter} onclick={()=>void loadEdge('after')}><ChevronDown size={16} aria-hidden="true" /></button></div>{/if}<label>View<select aria-label="Record navigation" bind:value={continuous} onchange={viewChanged}><option value={true}>Continuous scroll</option><option value={false}>Pages</option></select></label>{#if continuous}<label>Batch<select aria-label="Record batch size" bind:value={pageSize} onchange={viewChanged}><option value={25}>25</option><option value={50}>50</option><option value={100}>100</option><option value={256}>256</option></select></label>{/if}</div>
+  <div class="table-wrap records-table" class:continuous-records={continuous} id={`records-table-${moduleUid || 'default'}`} bind:this={tableViewport} use:observeViewport onscroll={scrolled} onfocusin={event=>focusedRow=(event.target as Element)?.closest<HTMLElement>('[data-record-uid]')?.dataset.recordUid||''} onfocusout={event=>focusedRow=(event.relatedTarget as Element)?.closest?.<HTMLElement>('[data-record-uid]')?.dataset.recordUid||''}>
+    <table aria-label={recordPlural} aria-rowcount={continuous?-1:undefined} style:table-layout={continuous&&!mobileRows?'fixed':undefined} style:width={continuous?(mobileRows?'100%':`${continuousWidth}px`):undefined}>
+      {#if continuous&&!mobileRows}<colgroup><col style:width="56px"/>{#each visibleFields as field}<col style:width={`${fieldWidth(field.field_type)}px`}/>{/each}<col style:width="134px"/></colgroup>{/if}
+      <thead><tr aria-rowindex={continuous?1:undefined}><th class="row-index-column">#</th>{#each visibleFields as field}<th><button class="table-sort" class:sortable={field.sortable} onclick={() => field.sortable && sort(field.key)}>{field.label}{#if sortBy === field.key}{#if sortDir === 'asc'}<ChevronUp size={14} />{:else}<ChevronDown size={14} />{/if}{/if}</button></th>{/each}<th class="record-actions-column">Actions</th></tr></thead>
       <tbody>
         {#if loading && !rows.length}
           <tr class="records-state-row"><td class="table-message" colspan={visibleFields.length + 2}>Loading {recordPlural.toLowerCase()}…</td></tr>
         {:else if !rows.length}
           <tr class="records-state-row"><td class="table-message" colspan={visibleFields.length + 2}>No {recordPlural.toLowerCase()} match this view.</td></tr>
         {:else}
-          {#each rows as row, rowIndex (row.uid)}
-            <tr onclick={(event) => { if (event.target instanceof Element && event.target.closest('.relationship-input')) return; openRecord(row); }} class="clickable-row">
-              <td class="row-index-column" data-label="Row"><span title={`${recordSingular} ${row.uid}`}>{(page - 1) * pageSize + rowIndex + 1}</span></td>
+          {#each renderPieces as piece (piece.key)}
+            {#if piece.kind==='gap'}<tr class="record-window-gap" aria-hidden="true"><td colspan={visibleFields.length+2} style:height={`${piece.height}px`}></td></tr>
+            {:else}
+            {@const rowIndex=piece.index}
+            {@const row=rows[rowIndex]}
+            <tr data-record-uid={row.uid} aria-rowindex={continuous?baseIndex+rowIndex+2:undefined} use:measureRow={row.uid} onclick={(event) => { if (event.target instanceof Element && event.target.closest('.relationship-input')) return; openRecord(row); }} class="clickable-row">
+              <td class="row-index-column" data-label="Row"><span title={`${recordSingular} ${row.uid}${continuous?' · position in this browsing session':''}`}>{rowNumber(rowIndex)}</span></td>
               {#each visibleFields as field}
                 {@const editingCell = cellEdit?.rowUid === row.uid && cellEdit.fieldKey === field.key}
                 <td class:inline-editable-cell={canEditCell(field,row)} class:editing-cell={editingCell} class={field.field_type === 'long_text' ? 'long-text-cell' : ''} data-label={field.label} data-field-type={field.field_type} title={editingCell || canEditCell(field,row) || field.field_type === 'long_text' ? undefined : display(row, field.key)}>
@@ -422,7 +578,7 @@
                       <input class="cell-editor" data-active-cell-editor bind:value={cellEdit.value} disabled={cellSaving} type={field.field_type === 'date' ? 'date' : ['integer', 'decimal'].includes(field.field_type) ? 'number' : 'text'} step={field.field_type === 'decimal' ? 'any' : field.field_type === 'integer' ? 1 : undefined} onclick={(event) => event.stopPropagation()} onkeydown={(event) => cellEditorKeydown(event, row, field)} onblur={() => void commitCellEdit(row, field)} />
                     {/if}
                   {:else if canEditCell(field,row)}
-                    <button class="cell-edit-button" type="button" disabled={cellSaving} title={`Edit ${field.label}`} aria-label={`Edit ${field.label} for row ${(page - 1) * pageSize + rowIndex + 1}`} onclick={(event) => beginCellEdit(event, row, field)}><span>{display(row, field.key)}</span><Pencil size={12} /></button>
+                    <button class="cell-edit-button" type="button" disabled={cellSaving} title={`Edit ${field.label}`} aria-label={`Edit ${field.label} for row ${rowNumber(rowIndex)}`} onclick={(event) => beginCellEdit(event, row, field)}><span>{display(row, field.key)}</span><Pencil size={12} /></button>
                   {:else}
                     {display(row, field.key)}
                   {/if}
@@ -430,19 +586,24 @@
               {/each}
               <td class="record-actions-column">
                 <div class="record-row-actions" data-record-actions={row.uid}>
-                  <button class="button record-primary-action" type="button" title={canUpdate ? `Edit ${recordSingular.toLowerCase()}` : `View ${recordSingular.toLowerCase()}`} aria-label={`${canUpdate ? 'Edit' : 'View'} ${recordSingular} ${(page - 1) * pageSize + rowIndex + 1}`} onclick={(event) => { event.stopPropagation(); rowMenuUid = ''; openRecord(row, false, canUpdate); }}>{#if canUpdate}<Pencil size={14} /><span>Edit</span>{:else}<Eye size={14} /><span>View</span>{/if}</button>
-                  {#if canDelete}<button class="record-actions-trigger" type="button" aria-label={`More actions for ${recordSingular} ${(page - 1) * pageSize + rowIndex + 1}`} aria-haspopup="menu" aria-expanded={rowMenuUid === row.uid} onclick={(event) => toggleRowMenu(event, row.uid)}><Ellipsis size={17} /></button>{/if}
+                  <button class="button record-primary-action" type="button" title={canUpdate ? `Edit ${recordSingular.toLowerCase()}` : `View ${recordSingular.toLowerCase()}`} aria-label={`${canUpdate ? 'Edit' : 'View'} ${recordSingular} ${rowNumber(rowIndex)}`} onclick={(event) => { event.stopPropagation(); rowMenuUid = ''; openRecord(row, false, canUpdate); }}>{#if canUpdate}<Pencil size={14} /><span>Edit</span>{:else}<Eye size={14} /><span>View</span>{/if}</button>
+                  {#if canDelete}<button class="record-actions-trigger" type="button" aria-label={`More actions for ${recordSingular} ${rowNumber(rowIndex)}`} aria-haspopup="menu" aria-expanded={rowMenuUid === row.uid} onclick={(event) => toggleRowMenu(event, row.uid)}><Ellipsis size={17} /></button>{/if}
                 </div>
               </td>
             </tr>
+            {/if}
           {/each}
         {/if}
       </tbody>
       {#if summaryFields.length}<tfoot aria-label="Filtered column summaries"><tr><th scope="row" class="summary-caption">Totals</th>{#each visibleFields as field}<td data-label={field.label}>{#if field.config.table_summary && field.config.table_summary !== 'none'}<span class="column-summary"><small>{summaryNames[field.config.table_summary as keyof typeof summaryNames]}</small><strong aria-label={`${field.label} summary`}>{loading ? 'Calculating…' : summaryValue(summaries[field.key])}</strong></span>{/if}</td>{/each}<td></td></tr></tfoot>{/if}
     </table>
   </div>
-  {#if summaryFields.length}<p class="summary-scope" role="status">Summaries cover all {total.toLocaleString()} matching records across every page, not only the rows shown. Search and filters apply.</p>{/if}
+  {#if continuous&&edgeError}<div class="record-window-error" role="alert"><span>{edgeError}</span><button class="button small" onclick={()=>void loadEdge(edgeDirection)}>Retry</button></div>{/if}
+  {#if summaryFields.length}<p class="summary-scope" role="status">Summaries cover all {total.toLocaleString()} matching records, not only the rows shown. Search and filters apply.{updatesAvailable?' Refresh to update totals.':''}</p>{/if}
+  {#if continuous&&summaryFields.length}<details class="record-mobile-totals"><summary>Totals for matching records</summary><dl>{#each summaryFields as field}<div><dt>{field.label} · {summaryNames[field.config.table_summary as keyof typeof summaryNames]}</dt><dd>{loading?'Calculating…':summaryValue(summaries[field.key])}</dd></div>{/each}</dl></details>{/if}
+  {#if !continuous}
   <div class="pagination records-pagination"><span>{rows.length ? `${((page - 1) * pageSize + 1).toLocaleString()}–${Math.min(page * pageSize, total).toLocaleString()} of ${total.toLocaleString()}` : 'No records'}</span><label>Rows<select bind:value={pageSize} onchange={changePageSize}><option value={25}>25</option><option value={50}>50</option><option value={100}>100</option><option value={256}>256</option></select></label><button class="button" disabled={page <= 1 || loading} onclick={() => movePage(1)}>First</button><button class="button" disabled={page <= 1 || loading} onclick={() => movePage(page - 1)}>Previous</button><form onsubmit={goToPage}><label>Page<input type="number" min="1" max={Math.max(1, pages)} bind:value={pageInput} /></label><button class="button" aria-label="Go to page">Go</button></form><span>of {pages}</span><button class="button" disabled={page >= pages || loading} onclick={() => movePage(page + 1)}>Next</button><button class="button" disabled={page >= pages || loading} onclick={() => movePage(pages)}>Last</button></div>
+  {/if}
 </section>
 
 <TableScrollbar target={tableViewport} enabled={editor === undefined} />
@@ -465,6 +626,19 @@
 {#if importer && schema}{#key moduleUid}<ImportRecords {schema} {moduleUid} history={importer === 'history'} onClose={() => { importer = null; importMenuAnchor?.focus({ preventScroll: true }); }} onChanged={() => refresh(true)} />{/key}{/if}
 
 <style>
+  .records-page.continuous-page{display:flex;flex-direction:column;height:calc(100dvh - var(--topbar-height));min-height:24rem;padding-bottom:max(.5rem,env(safe-area-inset-bottom));}
+  .continuous-page>:not(.continuous-records){flex-shrink:0;}
+  .records-view-controls,.record-window-error,.record-updates{display:flex;align-items:center;gap:.75rem;flex-wrap:wrap;}
+  .records-view-controls{margin:.35rem 0 .5rem;}.records-view-controls .records-result-summary{flex:1;margin:0;}.records-view-controls>label{display:flex;align-items:center;gap:.4rem;font-size:.75rem;}
+  .record-window-controls{display:flex;gap:.2rem;}.record-window-controls .button{width:2rem;min-height:2rem;padding:0;justify-content:center;}
+  .record-updates{padding:.5rem .7rem;border:1px solid var(--line);border-radius:.45rem;background:var(--surface-2);font-size:.8rem;}.record-updates>span{flex:1;}
+  .records-table.continuous-records{flex:1 1 0;min-height:9rem;overflow:auto;overflow-anchor:none;scroll-behavior:auto;}
+  .continuous-records th{position:sticky;top:0;z-index:4;}
+  .record-window-gap,.record-window-gap>td{padding:0!important;border:0!important;min-height:0!important;line-height:0!important;background:transparent!important;}
+  .record-window-error{margin-top:.4rem;padding:.4rem .6rem;border:1px solid var(--danger);border-radius:.4rem;background:var(--danger-surface);font-size:.75rem;}.record-window-error>span{flex:1;min-width:0;overflow-wrap:anywhere;}
+  .record-mobile-totals{display:none;}
+  @media(min-width:821px){.continuous-records tfoot th,.continuous-records tfoot td{position:sticky;bottom:0;z-index:6;}}
+  @media(max-width:820px){.records-table.continuous-records{overflow:auto;}.continuous-records tbody{gap:0;}.continuous-records tr.clickable-row{margin-bottom:.55rem;}.record-window-gap{display:block;}.record-window-gap>td{display:block;width:100%;}.records-view-controls{gap:.5rem;}.records-view-controls .records-result-summary{flex-basis:100%;}.continuous-records tfoot{display:none;}.record-mobile-totals{display:block;padding:.5rem;border:1px solid var(--line);border-radius:.45rem;font-size:.8rem;}.record-mobile-totals dl>div{display:flex;justify-content:space-between;gap:.5rem;padding:.3rem;}.record-mobile-totals dd{font-weight:600;}}
   .records-refresh-button { order: 4; }
   .module-import-trigger { order: 5; flex: 0 0 auto; width: 2.2rem; padding-inline: 0; justify-content: center; }
   .module-import-menu { position: fixed; visibility: hidden; min-width: 13rem; z-index: 120; overflow: auto; padding: .35rem; background: var(--surface); border: 1px solid var(--line); border-radius: .55rem; box-shadow: var(--shadow-popover); color: var(--text); font-size: calc(.8rem * var(--font-scale)); }

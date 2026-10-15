@@ -25,7 +25,9 @@ implementation details and advanced configuration.
 
 ## Deployment administrators
 
+- [Current candidate: MX 1.0.0-rc.1](releases/1.0.0-rc.1.md)
 - [Deployment and upgrade procedure](deployment.md)
+- [Signed updates, maintenance windows and rollback](updates.md)
 - [Configuration reference](configuration.md)
 - [Accounts, permissions, audit and backups](administration-and-security.md)
 - [N1 storage layouts and frozen namespaces](n1-storage.md)

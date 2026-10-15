@@ -92,7 +92,12 @@ Record deletion is recoverable. Administrators can restore soft-deleted records 
 
 ### Updates
 
-Release discovery and installation remain deliberately disabled until the signed-artifact, update-channel, rollback, and maintenance-window contract is defined. The public repository alone is not treated as sufficient authority to replace a running production binary.
+Administrators can check signed releases, stage downloads or offline packages,
+choose manual installation or a configurable automatic maintenance window, and
+inspect progress/failures/rollback history. The deployment operator must first
+provision trusted public keys, managed release slots and the independent systemd
+worker. A public repository alone is not replacement authority. See
+[MX updates](updates.md) for setup, scheduling and recovery.
 
 ---
 
@@ -187,6 +192,27 @@ Passwords, JWTs, authentication secrets, request bodies, uploaded file bytes, an
 ## Database Backups
 
 MX can create a consistent live SQLite snapshot and store the verified result in N1.
+
+In **Administration → Backups**, choose **Create backup**. The button immediately
+shows an activity spinner and a progress panel reports elapsed time. The indicator
+is deliberately indeterminate: the current API does not expose bytes, phases or
+a reliable percentage. For a backup already running when this view opens,
+**Observed for** measures how long this view has watched it, not its total age.
+
+While a backup is active, MX checks its status automatically. Completion and
+errors appear beside the backup controls, and success requires a confirmed
+response or a newly recorded verified backup. **Refresh status** checks manually.
+If the response is lost, MX checks history without replaying the create request;
+an unconfirmed operation is not reported as successful. Long backup requests
+have a 30-minute client deadline rather than the ordinary form's 30 seconds.
+After that deadline, status is still checked before another backup is offered.
+If MX reports no job running but no new completed backup, review history before
+retrying. These indicators do not make a backup immune to server shutdown or
+guarantee that closing its initiating browser request cannot interrupt it.
+
+**Verify** shows **Verifying…** while it checks the selected stored snapshot.
+There are no idle status polls. N1 files and Drive attachments are not included
+inside the SQLite snapshot; back up N1 storage separately as part of recovery.
 
 ```text
 SQLite

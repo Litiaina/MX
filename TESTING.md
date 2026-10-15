@@ -1,5 +1,243 @@
 # MX validation
 
+## 1.0.0-rc.1 release assembly — 2026-10-16
+
+- Rebuild the optimized native executable and production frontend for the
+  candidate; refresh the tracked frontend bundle to match. Fresh unit runs:
+  **174 Rust tests passed, two opt-in ignored; 322 frontend tests passed**.
+  Svelte checks report zero errors/warnings. Release metadata and bundled
+  Office asset checksums pass. Existing Vite size/timing advisories remain.
+- Repeat the complete updater integration against these release builds:
+  real automatic activation, verified backup, failed-candidate rollback, eight
+  competing installs, worker termination/recovery and all four browser UIs pass.
+  Evidence: `/mnt/ST1000LM049/tests/mx-updates-WcwlLz/update-results.json`.
+  These use disposable SQLite and the N1 HTTP contract fixture, not live data.
+- Verify the actual distributable's Ed25519 signature with the published public
+  key, all 28 signed file sizes/SHA-256 values, exact archive membership, native
+  version, matching frontend identity and bundled Office license/notices files.
+  Check that deployment credentials, database files, TLS/private signing keys
+  are absent. This verifies inclusion/integrity, not a legal/security audit of
+  the upstream Office engine. Evidence:
+  `/mnt/ST1000LM049/releases/1.0.0-rc.1/package-verification.json`.
+- Build logs/artifacts remain under `/mnt/ST1000LM049/releases/1.0.0-rc.1`.
+  The Linux x86-64 GNU binary's glibc/OS-library requirements are documented in
+  the [release notes](docs/releases/1.0.0-rc.1.md); other platforms are not
+  qualified by this release. Existing MX/N1 deployments are not changed.
+
+## Signed updates and maintenance windows — 2026-10-15
+
+- Optimized native build succeeds. Rust: **174 passed, zero failed, two opt-in
+  tests ignored**. Frontend: **322 passed across 52 files**. The final production
+  frontend has zero Svelte errors/warnings; existing Vite chunk-size/plugin
+  timing advisories remain. Build/test logs use
+  `/mnt/ST1000LM049/build/mx-updater-*`.
+- `npm run test:updates` passes with a real optimized `1.0.0-rc.1` bootstrap and
+  independent worker, disposable SQLite, test-only signing keys and actual
+  systemd user-service restarts. The candidate is a separately compiled
+  `1.0.0-rc.2` development-profile native executable, not a simulated version
+  response. A deliberately broken signed candidate mutates the disposable
+  database to exercise post-migration rollback.
+- Coverage: administrator-only authority, invalid signatures, release outages,
+  interrupted transfers, restaging, automatic-window deferral and installation,
+  signed offline upload, verified final snapshot, matched binary/frontend
+  activation, eight competing install requests with one winner, paired rollback,
+  worker `SIGKILL` and independent recovery. A committed journal never rewinds
+  subsequent acknowledged writes; a failed candidate is not retried automatically.
+  Record contents, normal history and Drive references/bytes are checked after
+  activation and recovery. Drive storage uses the **N1 HTTP contract fixture**,
+  not a live N1 deployment.
+- Chromium, Brave, Firefox and Linux WebKit pass policy editing/validation,
+  draft preservation across workspace refresh (also used by live reconnection), lost job
+  acknowledgements without POST replay, history and responsive light/dark
+  layouts at 1280/1024/390/320 px. Representative screenshots inspected.
+  Evidence: `/mnt/ST1000LM049/tests/mx-updates-dQ1MkK/update-results.json`.
+  Linux WebKit is not real Safari/iOS qualification.
+- Native CLI diagnostics pass without creating deployment files: `--version`,
+  `-V`, `--help`, `-h`, unknown options and malformed worker arguments/config.
+  Key generation enforces mode `0600` and refuses to overwrite an existing key.
+  Evidence: `/mnt/ST1000LM049/tests/mx-update-cli-jMv70G/cli-results.json`.
+- The final optimized binary/frontend also pass the Chromium backup regression:
+  real snapshot upload/verification, eight competing create attempts, navigation,
+  localized feedback, uncertain acknowledgement reconciliation and responsive UI.
+  Evidence: `/mnt/ST1000LM049/tests/mx-eight-user-Lb5tra/backup-results.json`.
+- Disposable runtime unit registrations are removed after the test. Existing
+  external MX/N1 services remain stopped and unchanged. All build/test artifacts
+  stay on the external drive. No production keys, real accounts, live N1 data or
+  physical audio devices are used. This does **not** certify physical power-loss
+  recovery, system-service Polkit policy or a complete production security audit.
+  No release is published or existing deployment automatically enrolled.
+
+Repeat the opt-in updater integration test with Node 24+, Cargo, systemd user
+services and the native/frontend builds already prepared on the external drive:
+
+```bash
+cd frontend
+env TMPDIR=/mnt/ST1000LM049/build/tmp \
+  CARGO_TARGET_DIR=/mnt/ST1000LM049/build/target \
+  MX_TEST_ARTIFACTS=/mnt/ST1000LM049/tests \
+  MX_TEST_BINARY=/mnt/ST1000LM049/build/target/release/litiaina-mx \
+  MX_TEST_STATIC_SITE_PATH=/mnt/ST1000LM049/build/mx-updater-dist \
+  npm run test:updates
+```
+
+The same binary/artifact environment supports `npm run test:updates:cli`.
+The integration suite builds its fixture RC into the supplied Cargo cache;
+rebuild the repository before distributing an executable from that cache.
+See [deployment setup, trust and recovery](docs/updates.md) before enabling
+updates on a real installation.
+
+## 1.0.0-rc.1 release identification — 2026-10-15
+
+- Rust/frontend manifests, root lockfile entries and README channel agree on
+  `1.0.0-rc.1`. The frontend production build runs `check:release` automatically;
+  eight regression tests reject inconsistent versions or a candidate described
+  as a final release. README logo/branding and historical releases are retained.
+- Fresh frontend unit run: **311 passed across 51 files**. Rust:
+  **161 passed, zero failed, two opt-in tests ignored**. The production frontend
+  builds with zero Svelte errors/warnings; existing Vite chunk-size/plugin timing
+  advisories remain. Logs and artifacts are under
+  `/mnt/ST1000LM049/build/mx-1.0.0-rc.1-*`.
+- The optimized native build succeeds. Running its `--version` and `-V` from
+  separate empty working directories prints exactly `litiaina-mx 1.0.0-rc.1`,
+  exits zero with no stderr and creates no files. Evidence:
+  `/mnt/ST1000LM049/tests/mx-1.0.0-rc.1-cli-qNTnmP/version-results.json`.
+- The same candidate binary and rebuilt frontend pass the Chromium backup suite
+  against disposable SQLite and the N1 HTTP contract fixture: normal startup,
+  snapshot verification, eight rejected concurrent create attempts, navigation,
+  local feedback, lost acknowledgements and narrow layouts. Evidence:
+  `/mnt/ST1000LM049/tests/mx-eight-user-akCefL/backup-results.json`.
+  This run does not qualify live N1 or physical audio/video devices.
+- This is local candidate preparation, not public publication or a completed
+  production qualification. No existing deployment, SQLite database, N1 data or
+  configuration is reset by the version change. Follow the
+  [candidate notes and remaining acceptance gates](docs/releases/1.0.0-rc.1.md).
+
+## Backup activity feedback — 2026-10-15
+
+- `npm run test:backups:browser` uses disposable MX/SQLite and the N1 HTTP contract
+  fixture, not live N1 data. A real snapshot upload is held while checking
+  immediate button activity, indeterminate progress, elapsed time, automatic
+  status recovery and feedback after tab/module navigation. Each browser run
+  rejects eight concurrent create attempts while the first backup is active.
+  Stored bytes have the SQLite header and pass the real verification endpoint.
+- Chromium, Brave, Firefox and Linux WebKit pass. Tests also cover localized
+  failures, visible verification activity, lost commit acknowledgements without
+  create replay, uncommitted request reconciliation, stopped idle polling and
+  responsive light/dark layouts at 1280/1024/390/320 px. Screenshots inspected.
+  Evidence: `/mnt/ST1000LM049/tests/mx-eight-user-rA56HC/backup-results.json`.
+  Linux WebKit is not a real Safari/iOS qualification.
+- Final unit suite: 303 passed across 50 files. Request-contract tests ensure a
+  long, non-replayed backup POST and bounded, cancellable status reads. Production
+  build: zero Svelte errors/warnings; the existing Vite chunk advisory remains.
+- Frontend-only installation on the external test deployment; no database or
+  backend/N1 binary changes. Both external test services were already stopped
+  and were left stopped, so no live deployed smoke is claimed for this update.
+  The previous frontend and immutable assets are retained for rollback.
+
+## Compact records controls and full long text — 2026-10-15
+
+- Remove the permanent continuous-view footer; its keyboard-accessible up/down
+  actions share the results toolbar. The table fills the remaining viewport,
+  including when no totals are configured. Errors still show a visible retry.
+- Remove the editable long-text three-line clamp. Tests use tall, multiline
+  paragraphs and verify full wrapping, expanded rows and no hidden text overflow.
+- Stress rapid scroll-position changes, native wheel input, variable-height
+  measurements, reverse loading, cache eviction and exact record/offset
+  restoration. A Firefox restoration drift was reproduced during the stricter
+  run; retain the intended offset through layout/rounding corrections and release
+  it on actual user scrolling. Two consecutive Firefox runs pass, alongside
+  Chromium, Brave and Linux WebKit. Evidence:
+  `/mnt/ST1000LM049/tests/mx-eight-user-fSpl7u/record-window-results.json`.
+  This is not a real Safari/iOS qualification.
+- The existing numbered-page horizontal scrollbar regression passes in Chromium,
+  Firefox and WebKit (`mx-eight-user-FDsfgt/record-scroll-results.json`). Final
+  frontend unit tests: 301 passed across 49 files. Production build: zero Svelte
+  errors/warnings; existing Vite chunk-size advisory remains.
+- Frontend-only atomic exchange on the external test deployment; previous bundle
+  and immutable assets retained. No backend/N1 restart, database migration or
+  business-data edits are needed for this correction.
+  The deployed records view, page-mode fallback and narrow-screen Drive smoke
+  pass in Chromium, Brave, Firefox and WebKit:
+  `/mnt/ST1000LM049/tests/deployed-records-compact-results.json`.
+
+## Bounded records and durable Office saves — 2026-10-15
+
+- `npm run test:records:window` creates 620 disposable records and checks
+  bidirectional query-bound cursors, insertion/deletion boundaries, full-result
+  totals, bounded cache/DOM, record/offset and horizontal restoration across
+  dialogs/navigation, failed-edge retry, responsive light/dark layouts and the
+  paginated fallback. Chromium, Brave, Firefox and Linux WebKit pass. WebKit's
+  resize-observer loop was reproduced and fixed by batching measurements outside
+  observer delivery. Evidence: `mx-eight-user-ZJaOU8/record-window-results.json`
+  under `/mnt/ST1000LM049/tests`.
+  The final action-label bundle also passes the Chromium window suite, including
+  labels matching visible row positions after eviction
+  (`mx-eight-user-41KeGR/record-window-results.json`). Its frontend-only exchange
+  does not restart either service.
+- Rust: 161 passed, two opt-in tests ignored. New keyset tests cover nulls, tied
+  text/numeric/boolean sorting in both directions, deleted-anchor recovery and
+  rejection of cursors crossing modules, filters or sort settings. Frontend unit
+  tests additionally cover sparse rendering, bounded eviction, pinned editors,
+  snapshot reuse and recovery-file identity. Build output stays on the external
+  drive; no N1 source/configuration changes are part of this feature.
+  Final frontend unit run: 300 passed across 49 files; Svelte checks report zero
+  errors/warnings and the production build retains only the existing chunk-size
+  advisory. Numbered-page horizontal scrolling and summaries regressions pass
+  in Chromium, including eight concurrent summary readers during writer commits
+  (`mx-eight-user-HIlxWA`, `mx-eight-user-tNURaX`).
+- `npm run test:office:durable` uses the real bundled document engine with
+  disposable MX/SQLite and the N1 HTTP contract fixture. It checks one export per
+  changed save, no export for unchanged content, automatic recovery without
+  offline retention, tab closure during upload, lost commit acknowledgements,
+  offline checkpoints, exact restored contents and visible storage failures
+  before upload. Recovery payloads retain operation IDs, timestamps and base
+  revisions. The Firefox runs reproduced a hang uploading restored IDB-backed
+  bodies; recovery now materializes a memory-backed snapshot using the bytes
+  already read to open it. Normal saves take no extra recovery copy/export.
+  The final Chromium/Brave suite passes in `mx-eight-user-5HfTX3`; Firefox passes
+  in `mx-eight-user-OwomHq` (each has `office-durable-results.json`). All five
+  committed versions contain the expected actual edits; lost acknowledgements
+  do not manufacture an additional version.
+  The final error-feedback/cadence bundle repeats the Chromium pass in
+  `mx-eight-user-A73b9n`; its production build has zero Svelte errors/warnings.
+- Focused Chromium XLSX tests verify actual stored cell input from native Save,
+  Ctrl+S and File → Save without requiring Enter; preserve formulas and edits
+  typed during an earlier save; unchanged saves create no version. Eight
+  simultaneous prepared Office commits still yield one winner/seven conflicts.
+  Evidence: `mx-eight-user-Sc3Fvl/office-results.json`.
+- Loading tests pass in Chromium/Firefox: real held document/resource transfers,
+  five honest stages, final focus/geometry and warm reopening
+  (`mx-eight-user-K7Eo26/office-loading-results.json`). Cancellation/retry and
+  unchanged-original fallback pass in Chromium/Firefox/WebKit
+  (`mx-eight-user-RQp3Ax/office-recovery-results.json`). Linux WebKit lacks the
+  required worker graphics; that is a download fallback, **not** validated Office
+  editing or a real Safari/iOS qualification.
+
+These are browser-tab interruption and injected network/storage fault tests,
+not physical power-cut certification or a live N1 hardware-durability test.
+Changes after the last completed checkpoint can still be lost. Large native
+workbook parsing/export remains engine-dependent; startup overlap and skipped
+redundant exports are not a claim that every document now opens instantly.
+
+Run the two focused suites against a disposable server, with
+`MX_TEST_ARTIFACTS=/mnt/ST1000LM049/tests`, an externally built `MX_TEST_BINARY`
+and `MX_TEST_STATIC_SITE_PATH` pointing at the candidate production bundle.
+They refuse a live N1 test URL. Browser processes are disconnected from desktop
+audio services; no physical microphone/speaker tests are performed here.
+
+The release backend and final frontend are deployed to the external test at
+`https://localhost:21001`. Read-only records/Drive smoke checks pass in Chromium,
+Brave, Firefox and WebKit; the served Office shell, isolation headers, worker
+generation and snapshot-reuse adapter are verified
+(`deployed-cursor-office-results.json`). Binary/frontend rollback copies and an
+online SQLite backup are retained on the external drive. N1 binary/PID and both
+configurations are unchanged. Every original record/value/history, Drive and
+schema row matches the pre-deployment backup. Concurrent user module/field
+creation and imports increased counts during verification and were retained,
+not mistaken for a migration or rolled back
+(`cursor-office-deployment-after.json`). Existing Office tabs must be reopened
+to use the new editor; preserve old unsaved edits first.
+
 ## Office launch prompt layout — 2026-10-15
 
 `npm run test:office:prompt` reproduces the old left-aligned action row (about

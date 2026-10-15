@@ -26,7 +26,7 @@ export const loadAccountModuleAccess = (uid: string) =>
 export const saveAccountModuleAccess = (uid: string, revision: number, grants: AccountModuleGrant[]) =>
   apiJson<{ response: string; revision: number }>(`/mx/v1/admin/accounts/${encodeURIComponent(uid)}/modules`, jsonRequest('PUT', { revision, grants }));
 
-export function listRecords(query: { page?: number; limit?: number; q?: string; match?: 'contains' | 'prefix' | 'exact'; filters?: Record<string, string>; attachments?: 'with' | 'without' | ''; sort_by?: string; sort_dir?: string } = {}, moduleUid?: string) {
+export function listRecords(query: { page?: number; limit?: number; q?: string; match?: 'contains' | 'prefix' | 'exact'; filters?: Record<string, string>; attachments?: 'with' | 'without' | ''; sort_by?: string; sort_dir?: string; window?: 'start'|'before'|'after'|'anchor'; cursor?: string; anchor_uid?: string; metadata?: boolean } = {}, moduleUid?: string, signal?: AbortSignal) {
   const params = new URLSearchParams();
   if (query.page) params.set('page', String(query.page));
   if (query.limit) params.set('limit', String(query.limit));
@@ -36,8 +36,12 @@ export function listRecords(query: { page?: number; limit?: number; q?: string; 
   if (query.attachments) params.set('attachments', query.attachments);
   if (query.sort_by) params.set('sort_by', query.sort_by);
   if (query.sort_dir) params.set('sort_dir', query.sort_dir);
+  if (query.window) params.set('window', query.window);
+  if (query.cursor) params.set('cursor', query.cursor);
+  if (query.anchor_uid) params.set('anchor_uid', query.anchor_uid);
+  if (query.metadata !== undefined) params.set('metadata', String(query.metadata));
   const base = moduleUid ? `/mx/v1/modules/${encodeURIComponent(moduleUid)}/records` : '/mx/v1/records';
-  return apiJson<RecordPage>(`${base}?${params}`);
+  return apiJson<RecordPage>(`${base}?${params}`, {signal});
 }
 export const getRecord = (uid: string, moduleUid?: string) => apiJson<MxRecord>(moduleUid ? `/mx/v1/modules/${encodeURIComponent(moduleUid)}/records/${encodeURIComponent(uid)}` : `/mx/v1/records/${encodeURIComponent(uid)}`);
 export const createRecord = (values: Record<string, JsonValue>, moduleUid?: string, operation_uid = operationUid()) => apiJson<MxRecord>(moduleUid ? `/mx/v1/modules/${encodeURIComponent(moduleUid)}/records` : '/mx/v1/records', { ...jsonRequest('POST', { values, operation_uid }), retrySafe: true, maxAttempts: 2, timeoutMs: 30_000 });
@@ -236,8 +240,10 @@ export const loadStorageLayout = (moduleUid?: string) => apiJson<StorageLayout>(
 export const saveStorageLayout = async (folder_field_uids: string[], file_prefix_field_uid: string | null, moduleUid?: string) =>
   (await apiJson<{ response: string; layout: StorageLayout }>(moduleUid ? `/mx/v1/admin/modules/${encodeURIComponent(moduleUid)}/storage-layout` : '/mx/v1/admin/storage-layout', jsonRequest('PUT', { folder_field_uids, file_prefix_field_uid }))).layout;
 
-export const listBackups = () => apiJson<{ backups: BackupEntry[]; backup_running: boolean }>('/mx/v1/admin/backups');
-export const createBackup = () => apiJson('/mx/v1/admin/backups', { method: 'POST' });
+export const listBackups = (signal?: AbortSignal) => apiJson<{ backups: BackupEntry[]; backup_running: boolean }>('/mx/v1/admin/backups', {signal, timeoutMs: 10_000, maxAttempts: 1});
+// Creating a backup is not replay-safe. Allow a large snapshot to finish instead
+// of applying the ordinary 30-second form timeout; status is observed separately.
+export const createBackup = () => apiJson<{response: string; backup: BackupEntry}>('/mx/v1/admin/backups', { method: 'POST', timeoutMs: 30 * 60_000, maxAttempts: 1 });
 export const verifyBackup = (uid: string) => apiJson(`/mx/v1/admin/backups/${encodeURIComponent(uid)}/verify`, { method: 'POST' });
 export const downloadBackup = (uid: string) => download(`/mx/v1/admin/backups/${encodeURIComponent(uid)}/download`, 'mx-backup.db');
 

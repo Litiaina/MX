@@ -156,6 +156,7 @@ export interface RecordPage {
   total: number;
   total_pages: number;
   summaries?: Record<string, ColumnSummary>;
+  window?: { cursors: string[]; has_before: boolean; has_after: boolean; metadata_included: boolean };
 }
 
 export interface DeploymentConfig {

@@ -30,6 +30,7 @@ mod config;
 mod db;
 mod macros;
 mod middleware;
+mod updates;
 mod util;
 
 pub const ENV_FILE: &str = "mx.env";
@@ -43,6 +44,45 @@ pub struct Ports {
 
 #[tokio::main]
 async fn main() {
+    // Release identification must not initialize TLS, create configuration,
+    // open the database or contact N1.
+    if std::env::args_os()
+        .skip(1)
+        .any(|arg| arg == "--version" || arg == "-V")
+    {
+        println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
+        return;
+    }
+
+    let arguments = std::env::args_os()
+        .skip(1)
+        .map(|argument| argument.into_string())
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap_or_else(|_| {
+            eprintln!(
+                "MX command-line arguments must be UTF-8. Use --help for supported commands."
+            );
+            std::process::exit(2);
+        });
+    if arguments.len() == 1 && matches!(arguments[0].as_str(), "--help" | "-h") {
+        println!(
+            "Litiaina MX {}\n\nUsage:\n  litiaina-mx                 Start the configured server\n  litiaina-mx --version | -V  Print the built-in version\n  litiaina-mx --help | -h     Show this help\n  litiaina-mx --update-worker --config FILE\n  litiaina-mx --update-keygen PRIVATE_KEY_FILE\n  litiaina-mx --update-package RELEASE_DIRECTORY PRIVATE_KEY_FILE OUTPUT.mxupdate CHANNEL\n\nUpdate setup and safety: docs/updates.md",
+            env!("CARGO_PKG_VERSION")
+        );
+        return;
+    }
+    if let Some(result) = updates::cli(arguments.clone()).await {
+        if let Err(error) = result {
+            eprintln!("MX updater: {error}");
+            std::process::exit(1);
+        }
+        return;
+    }
+    if !arguments.is_empty() {
+        eprintln!("Unknown MX command. Use --help; the server was not started.");
+        std::process::exit(2);
+    }
+
     rustls::crypto::ring::default_provider()
         .install_default()
         .unwrap_or_else(|_| {
@@ -129,6 +169,10 @@ async fn main() {
 }
 
 async fn server() {
+    if let Err(error) = updates::validate_startup() {
+        eprintln!("MX updater configuration: {error}");
+        std::process::exit(1);
+    }
     let host = &CONFIG.server.host;
 
     let ip = host.parse::<IpAddr>().unwrap_or_else(|error| {
@@ -140,9 +184,15 @@ async fn server() {
     });
 
     initialize_sql_db().await;
-    tokio::spawn(crate::api::drive::run_cleanup());
-
-    tokio::spawn(crate::api::preferences::warm_notification_sound_cache());
+    // Do not let background storage cleanup run against a candidate database
+    // until the independent updater has accepted activation.
+    tokio::spawn(async {
+        while updates::in_maintenance() {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+        tokio::spawn(crate::api::preferences::warm_notification_sound_cache());
+        crate::api::drive::run_cleanup().await;
+    });
 
     tracing::info!(
         "SQLite database initialized from '{}'.",
@@ -181,10 +231,15 @@ async fn server() {
 
     let application = Router::new()
         .merge(api_route())
+        .route(
+            "/mx/v1/system/update-health",
+            axum::routing::get(updates::api::health),
+        )
         .fallback_service(serve_static_files().not_found_service(handler_404.into_service()))
         .layer(axum::middleware::from_fn(
             crate::api::hosting::handler::office_isolation,
-        ));
+        ))
+        .layer(axum::middleware::from_fn(updates::api::maintenance_gate));
 
     let api_task = tokio::spawn(serve(
         ip,

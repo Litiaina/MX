@@ -1,0 +1,12 @@
+[Unit]
+Description=Litiaina MX independent signed-update worker
+After=network.target
+# Deliberately NOT PartOf=mx.service: this process must survive stopping MX.
+
+[Service]
+Type=oneshot
+WorkingDirectory=/srv/mx
+ExecStart=/srv/mx-updater/litiaina-mx --update-worker --config /srv/mx/mx-updates.json
+TimeoutStartSec=infinity
+UMask=0077
+NoNewPrivileges=true

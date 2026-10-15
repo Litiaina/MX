@@ -36,6 +36,9 @@ use crate::{
 const DEFAULT_PAGE_LIMIT: usize = 256;
 const MAX_PAGE_LIMIT: usize = 256;
 
+#[path = "record_windows.rs"]
+mod windows;
+
 #[derive(Debug, Deserialize, Clone, Default)]
 pub struct DynamicListQuery {
     pub page: Option<usize>,
@@ -51,6 +54,11 @@ pub struct DynamicListQuery {
     pub attachments: Option<String>,
     pub sort_by: Option<String>,
     pub sort_dir: Option<String>,
+    // Opt-in keyset navigation; numbered pages remain backwards compatible.
+    pub window: Option<String>,
+    pub cursor: Option<String>,
+    pub anchor_uid: Option<String>,
+    pub metadata: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Clone, Default)]
@@ -116,6 +124,8 @@ pub struct DynamicPage {
     pub total: usize,
     pub total_pages: usize,
     pub summaries: BTreeMap<String, super::column_summaries::ColumnSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub window: Option<windows::WindowMetadata>,
 }
 
 #[derive(Debug, Clone)]
@@ -2229,6 +2239,10 @@ fn list_records_db(
         let fields =
             super::schema::load_module_fields_initialized_db(connection, &module_uid, false)?;
 
+        if query.window.is_some() {
+            return windows::list(connection, &module_uid, &query, &fields, include_attachments);
+        }
+
         let page = query.page.unwrap_or(1).max(1);
         let limit = query
             .limit
@@ -2311,6 +2325,7 @@ fn list_records_db(
             total,
             total_pages,
             summaries,
+            window: None,
         })
     })
 }

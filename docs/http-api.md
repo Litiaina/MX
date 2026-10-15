@@ -4,6 +4,41 @@
 
 ## HTTP API
 
+### Signed server updates
+
+All `/admin/updates` endpoints require administrator access. Trust keys, release
+origin and systemd authority are deployment configuration, not API-settable keys.
+
+```http
+GET  /mx/v1/admin/updates
+POST /mx/v1/admin/updates/check
+POST /mx/v1/admin/updates/stage
+POST /mx/v1/admin/updates/install
+PUT  /mx/v1/admin/updates/policy
+POST /mx/v1/admin/updates/package?operation_uid={uuid}
+GET  /mx/v1/system/update-health
+```
+
+Actions take `{"operation_uid":"UUID","version":null}` (`check`) or the exact
+selected version (`stage`/`install`). A successful submission returns `202`; the
+independent worker owns execution, so clients poll status rather than keeping an
+install HTTP request open or replaying a lost acknowledgement. Concurrent jobs
+return `409`. Operation IDs are action/version-bound and deduplicated.
+
+Package upload is streamed `application/octet-stream`, not JSON or multipart.
+Its safety budget is separate from Drive upload policy. The response acknowledges
+receipt/queueing, not successful signature verification or installation.
+
+Policy takes `{"mode":"manual","start_hour":2,"end_hour":3,"utc_offset_minutes":480}`.
+Mode is `manual` or `automatic`; starts/ends are distinct hours 0–23 and the offset
+is fixed minutes from UTC, from -720 to 840. Overnight windows are supported.
+
+Public readiness contains version/availability, aggregate active request/call
+counts, maintenance state and the planned restart time—never user/file data,
+tokens, trust keys, database paths or job history. During activation, normal APIs
+return `503` with `Retry-After: 5`; administrator update status and readiness are
+still allowed. See [update lifecycle and operator setup](updates.md).
+
 ### Module spreadsheet imports
 
 All endpoints require authentication, current module read/create permission and

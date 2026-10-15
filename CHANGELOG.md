@@ -5,6 +5,71 @@ deployment maintainer's local date.
 
 ## [Unreleased]
 
+Changes after the first 1.0 candidate will be recorded here.
+
+## [1.0.0-rc.1] - 2026-10-16
+
+### Release candidate and version reset
+
+- Start the official 1.0 candidate line at **1.0.0-rc.1**. Align the Rust and
+  frontend manifests and lockfiles; preserve all earlier release tags and
+  changelog entries as development history. This is not the final stable 1.0.0.
+- Document the one-time transition from 4.x development builds. The lower
+  semantic version is intentional; it does not reset database migrations,
+  records, N1 objects, configuration or the `/mx/v1` API namespace.
+- Add a build-time release-metadata consistency check and a side-effect-free
+  `litiaina-mx --version` / `-V` command. No dependency versions are changed.
+- Include the previously unreleased features and fixes below. Initial adoption
+  remains a manual upgrade; the new opt-in updater requires explicit deployment
+  setup. See [candidate notes](docs/releases/1.0.0-rc.1.md) for scope,
+  acceptance gates and the distinction between historical and current evidence.
+
+### Signed update management
+
+- Add trusted-key release discovery, streamed/verifiable packages, signed offline
+  upload and matching binary/frontend release slots. Keep deployment secrets,
+  SQLite and N1 outside packages; reject unsafe paths, wrong platforms/channels,
+  historical development releases and downgrades.
+- Add an independent systemd worker with operator-driven or automatic daily
+  maintenance-window installation, pre-restart warnings and active-call deferral.
+  Preserve a verified final local SQLite snapshot, gate new requests through
+  activation and restore both the previous application and database on failure.
+  Persist commit/rollback decisions across worker interruption; never rewind
+  acknowledged writes after a successful activation.
+- Replace the Updates placeholder with job progress, local errors, reconnecting
+  status, release notes, policy controls and inspectable history. Add release
+  key/package CLI tools and deployment/service templates; automatic updates remain
+  disabled until explicitly provisioned and selected by the operator.
+
+### Backup activity feedback — 2026-10-15
+
+- Show immediate backup-button activity, an honest indeterminate indicator and
+  elapsed time. Keep completion, verification and failure feedback beside the
+  backup controls, with automatic active-status checks and manual refresh.
+- Reconcile lost acknowledgements against verified history without replaying
+  backup creation. Allow long backup requests instead of the normal 30-second
+  form timeout; stop polling when idle and clean up timers/reads on navigation.
+
+### Bounded record browsing and Office recovery — 2026-10-15
+
+- Add bidirectional, query-bound cursor windows and a bounded, virtualized records
+  view with configurable batches, record/offset scroll restoration, stable columns,
+  incremental loading/retry and a numbered-page fallback. Keep edits independent
+  of rendered rows and surface live updates without unexpected list reordering.
+- Remove the continuous-view bottom control bar and use compact controls in the
+  existing results toolbar. Let the table use the remaining screen height, show
+  full wrapped long text, and avoid stale/off-screen anchors after fast scrolling.
+- Overlap Office engine startup with exact-version document download and defer
+  offline asset preparation. Reuse unchanged native snapshots, avoid duplicate
+  save/checkpoint exports and remove redundant full-file buffer copies.
+- Add automatic per-editor recovery copies and idle server saves; persist exact
+  retry intent before uploading, recover interrupted operations without duplicate
+  versions, and distinguish preparation, local protection, upload and confirmed
+  server storage. Surface storage failures before unprotected uploads.
+- Keep MX + SQLite + N1 deployment; no mandatory server Office service, new
+  server editing sessions or live document co-editing is introduced. Recovery
+  checkpoints are not a zero-loss power-failure guarantee.
+
 ### Office launch prompt alignment — 2026-10-15
 
 - Center the Office prompt's icon, text and actions as one responsive group.

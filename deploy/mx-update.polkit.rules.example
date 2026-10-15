@@ -1,0 +1,10 @@
+// OPTIONAL system-service mode only. User services do not need this rule.
+// Replace "mx" and "mx.service" with the dedicated account and exact unit.
+// Do not grant arbitrary systemctl, shell, sudo, unit-file editing or N1 access.
+polkit.addRule(function(action, subject) {
+    if (action.id === "org.freedesktop.systemd1.manage-units" &&
+        subject.user === "mx" && action.lookup("unit") === "mx.service" &&
+        ["start", "stop", "reset-failed"].indexOf(action.lookup("verb")) !== -1) {
+        return polkit.Result.YES;
+    }
+});

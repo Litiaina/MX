@@ -2,6 +2,10 @@
 /target/
 **/target/
 
+# Publisher-only signing material and generated update packages
+*.pk8
+*.mxupdate
+
 # Frontend dependencies (the verified production bundle is shipped with MX)
 /frontend/node_modules/
 

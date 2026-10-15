@@ -1,0 +1,9 @@
+[Unit]
+Description=Litiaina MX queued update jobs
+
+[Path]
+PathExists=/srv/mx-updates/request.json
+Unit=mx-update-worker.service
+
+[Install]
+WantedBy=default.target
