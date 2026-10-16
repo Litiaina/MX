@@ -25,7 +25,7 @@ implementation details and advanced configuration.
 
 ## Deployment administrators
 
-- [Current candidate: MX 1.0.0-rc.1](releases/1.0.0-rc.1.md)
+- [Current candidate: MX 1.0.0-rc.2](releases/1.0.0-rc.2.md)
 - [Deployment and upgrade procedure](deployment.md)
 - [Signed updates, maintenance windows and rollback](updates.md)
 - [Configuration reference](configuration.md)

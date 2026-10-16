@@ -225,7 +225,8 @@ mod tests {
         connection
             .execute_batch(
                 "CREATE TABLE IF NOT EXISTS users(uid TEXT PRIMARY KEY, access_level INTEGER NOT NULL);\n\
-                 INSERT INTO users(uid,access_level) VALUES('viewer',3);",
+                 INSERT INTO users(uid,access_level) VALUES('viewer',3);
+                 INSERT INTO mx_modules(uid,slug,name,singular_name,created_at,updated_at) VALUES('mx-default-records','records','Records','Record',0,0);",
             )
             .unwrap();
         connection

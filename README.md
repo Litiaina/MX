@@ -11,11 +11,12 @@
 
 </div>
 
-Self-hosted, modular digital workplace platform. **Current candidate: 1.0.0-rc.1.**
+Self-hosted, modular digital workplace platform. **Current candidate: 1.0.0-rc.2.**
 
-This is the first candidate for the new 1.0 release line, not the final stable
-release. The earlier 4.x labels remain development history. Read the
-[candidate notes and version-reset instructions](docs/releases/1.0.0-rc.1.md)
+This is a candidate for the new 1.0 release line, not the final stable release.
+The earlier 4.x labels remain development history. Read the
+[current candidate notes](docs/releases/1.0.0-rc.2.md) and, for a 4.x deployment,
+the [one-time version-reset instructions](docs/releases/1.0.0-rc.1.md#upgrading-a-4x-development-installation)
 before upgrading an existing installation.
 
 MX combines configurable records, relationships, dashboards, collaboration,

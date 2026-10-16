@@ -1,5 +1,55 @@
 # MX validation
 
+## 1.0.0-rc.2 navigation, records and blank setup — 2026-10-16
+
+- Optimized native build and matching production frontend succeed. **176 Rust
+  tests pass, two opt-in tests remain ignored; 327 frontend tests pass across
+  53 files**. Svelte reports zero errors/warnings. Existing Vite chunk-size and
+  plugin-timing advisories remain.
+- Chromium, Firefox and Linux WebKit pass 24 sidebar cases covering collapsed
+  and expanded rails, 85/100/160% interface scales, both themes, many long-name
+  modules and mobile drawers. Logo files/README logo markup are unchanged.
+  Evidence: `mx-eight-user-ZPiCSp/sidebar-results.json`.
+- The same engines pass Drive row/column and sharing layout plus Deployment
+  section-gap regressions at 1440/1024/390/320 px in both themes. Representative
+  screenshots inspected. Evidence: `mx-eight-user-PA6jn0/ui-cascade-results.json`.
+- Blank-installation onboarding, restart without invented modules, creating and
+  deleting the only test module, Pages by default, retained column widths and
+  horizontal position, bounded DOM and delayed/rapid view changes pass in all
+  three engines. Deliberately delaying the first page confirms an early switch
+  uses readable datatype widths rather than freezing the placeholder layout.
+  Switching does not refetch the schema. Evidence:
+  `mx-eight-user-nglepb/record-navigation-results.json`.
+- Chromium, Brave, Firefox and Linux WebKit pass the 620-record continuous-window
+  regression: bounded cache/DOM, bidirectional cursors, deletion/insertion
+  boundaries, tall full-text rows, fast drags and wheel input, exact UID/offset
+  restoration across dialogs/navigation, failed-read retry and page fallback.
+  A spacer-to-measured-row drift was reproduced and corrected before packaging.
+  Evidence: `mx-eight-user-V9CnoQ/record-window-results.json`.
+- The numbered-page horizontal-control regression passes in all three engines:
+  pointer/keyboard movement, nested clipping, native-bottom handoff, resizing,
+  column visibility, dialogs, mobile and pagination. Evidence:
+  `mx-eight-user-Fgfcwm/record-scroll-results.json`.
+- Native CLI diagnostics pass (`mx-update-cli-vngBBd/cli-results.json`). The
+  actual distributable passes Ed25519 verification with the unchanged publisher
+  key, all 28 signed file sizes/hashes, exact archive membership, matching native
+  and frontend identity, bundled Office notices and exclusion of deployment
+  secrets. Evidence: `releases/1.0.0-rc.2/package-verification.json`.
+- The final optimized RC.2 executable/frontend pass the preserved RC.1 → RC.2
+  updater regression: automatic-window deferral/activation, verified snapshot,
+  interrupted transfer, signed offline upload, eight competing installs, failed
+  migration/readiness rollback and independent worker termination/recovery.
+  Actual record values/history and fixture-backed Drive bytes survive. All four
+  update UIs pass (Chromium, Brave, Firefox, Linux WebKit). Evidence:
+  `mx-updates-NjBL6q/update-results.json`. The deliberately compressed fault
+  fixture disables systemd's start-burst limiter; deployment templates do not.
+- Evidence paths above are under `/mnt/ST1000LM049/tests`, except the package
+  report under `/mnt/ST1000LM049`. Builds/tests/packages stay on that drive.
+  These use disposable MX/SQLite and an N1 HTTP contract fixture, never existing
+  business data. No desktop audio devices, live N1, MCH restart or replacement
+  of the running encoding test are involved. Linux WebKit is not real Safari
+  or iOS qualification; existing RC.1 acceptance limits still apply.
+
 ## 1.0.0-rc.1 release assembly — 2026-10-16
 
 - Rebuild the optimized native executable and production frontend for the
@@ -75,14 +125,19 @@ cd frontend
 env TMPDIR=/mnt/ST1000LM049/build/tmp \
   CARGO_TARGET_DIR=/mnt/ST1000LM049/build/target \
   MX_TEST_ARTIFACTS=/mnt/ST1000LM049/tests \
-  MX_TEST_BINARY=/mnt/ST1000LM049/build/target/release/litiaina-mx \
-  MX_TEST_STATIC_SITE_PATH=/mnt/ST1000LM049/build/mx-updater-dist \
+  MX_TEST_BINARY=/mnt/ST1000LM049/releases/1.0.0-rc.1/staging/mx-1.0.0-rc.1-x86_64-unknown-linux-gnu/litiaina-mx \
+  MX_TEST_STATIC_SITE_PATH=/mnt/ST1000LM049/releases/1.0.0-rc.1/staging/mx-1.0.0-rc.1-x86_64-unknown-linux-gnu/frontend/dist \
+  MX_TEST_CANDIDATE_BINARY=/mnt/ST1000LM049/build/target/release/litiaina-mx \
+  MX_TEST_CANDIDATE_STATIC_SITE_PATH=/mnt/ST1000LM049/releases/1.0.0-rc.2/frontend-dist \
   npm run test:updates
 ```
 
-The same binary/artifact environment supports `npm run test:updates:cli`.
-The integration suite builds its fixture RC into the supplied Cargo cache;
+This explicit RC.1 → RC.2 fixture uses the preserved RC.1 bootstrap and the
+actual optimized RC.2 candidate. Adjust the paths on another machine; do not
+use RC.2 as its RC.1 bootstrap. If the candidate variables are omitted, the
+suite compiles a development-profile RC.2 fixture into the supplied Cargo cache;
 rebuild the repository before distributing an executable from that cache.
+For `npm run test:updates:cli`, point `MX_TEST_BINARY` at the current RC.2 build.
 See [deployment setup, trust and recovery](docs/updates.md) before enabling
 updates on a real installation.
 

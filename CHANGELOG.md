@@ -7,6 +7,37 @@ deployment maintainer's local date.
 
 Changes after the first 1.0 candidate will be recorded here.
 
+## [1.0.0-rc.2] - 2026-10-16
+
+### Fixed
+
+- Default new record views to Pages, keeping saved choices and making Continuous
+  scroll optional. Reuse paged column widths when switching, use type-appropriate
+  widths otherwise, retain horizontal position and keep its horizontal control
+  visible without a permanent extra footer. Avoid schema reloads, mounting the
+  entire continuous cache as a page, and stale work during view changes.
+- Do not retain placeholder column widths when switching before the first
+  record page has loaded; use readable datatype widths instead.
+- Settle virtual spacer/row measurements before recording a restored scroll
+  anchor, preventing tall overscan rows from shifting it after navigation.
+- Fit the collapsed navigation rail to its actual width at reduced/enlarged UI
+  scales. Center the existing branding image, search, navigation icons and footer;
+  stop cropping expanded-width rows or reserving hidden group/quick-action space.
+- Keep expanded/mobile navigation rows and search within the drawer. Hidden
+  search controls no longer remain keyboard-focusable; opening search retains
+  input focus. Preserve navigation scrolling and visible keyboard focus.
+- Add a production-build cross-browser sidebar regression covering interface
+  scales, themes, long module names, many modules and narrow drawers.
+
+### Release
+
+- Start fresh deployments without a generic starter module, business fields or
+  records. Add first-module onboarding; retain existing/default/legacy modules
+  and their data on upgrades.
+- Advance the matching native/frontend candidate to `1.0.0-rc.2`. Retain the
+  existing publisher public key and signed-update format for RC.1 installations.
+  No database schema, N1 storage, credentials or branding asset changes.
+
 ## [1.0.0-rc.1] - 2026-10-16
 
 ### Release candidate and version reset

@@ -2,7 +2,7 @@
   import { tick } from 'svelte';
   import { tableScrollPosition, clampTableScroll, type ScrollBounds } from '../util/tableScroll';
 
-  let { target, enabled = true }: { target?: HTMLDivElement; enabled?: boolean } = $props();
+  let { target, enabled = true, alwaysVisible = false }: { target?: HTMLDivElement; enabled?: boolean; alwaysVisible?: boolean } = $props();
   let bar: HTMLDivElement;
   let position = $state<ReturnType<typeof tableScrollPosition>>(null);
   let offset = $state(0); let maximum = $state(0);
@@ -13,6 +13,7 @@
 
   $effect(() => {
     const table = target;
+    const persistent = alwaysVisible;
     if (!table || !enabled) { position=null; return; }
     let frame = 0;
     let active = true;
@@ -27,7 +28,7 @@
         if(/auto|scroll|hidden|clip/.test(style.overflowX)){bounds.left=Math.max(bounds.left,rect.left+parent.clientLeft);bounds.right=Math.min(bounds.right,rect.left+parent.clientLeft+parent.clientWidth);}
         if(/auto|scroll|hidden|clip/.test(style.overflowY)){bounds.top=Math.max(bounds.top,rect.top+parent.clientTop);bounds.bottom=Math.min(bounds.bottom,rect.top+parent.clientTop+parent.clientHeight);}
       }
-      const next=tableScrollPosition(table.getBoundingClientRect(),bounds,table.scrollWidth,table.clientWidth);
+      const next=tableScrollPosition(table.getBoundingClientRect(),bounds,table.scrollWidth,table.clientWidth,persistent);
       maximum=Math.max(0,table.scrollWidth-table.clientWidth);offset=clampTableScroll(table.scrollLeft,table.scrollWidth,table.clientWidth);
       // Avoid component updates for every vertical scroll when geometry is
       // unchanged. There is no polling and no record/API activity here.

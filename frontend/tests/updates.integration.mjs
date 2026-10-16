@@ -48,6 +48,7 @@ async function verifyBusiness(){for(const record of createdRecords){const curren
 
 try{
  console.log(`Updater artifacts: ${directory}`);
+ assert.equal((await exec(process.env.MX_TEST_BINARY,['--version'])).stdout.trim(),'litiaina-mx 1.0.0-rc.1','This RC.1 → RC.2 regression needs the preserved RC.1 bootstrap; supply RC.2 separately in MX_TEST_CANDIDATE_BINARY.');
  await Promise.all([mkdir(deployment),mkdir(join(root,'slots/bootstrap/frontend/dist'),{recursive:true}),mkdir(join(directory,'worker'))]);
  binary=join(directory,'worker/litiaina-mx');await safeCopy(process.env.MX_TEST_BINARY,binary);await exec('/usr/bin/strip',['--strip-debug',binary]);await safeCopy(binary,join(root,'slots/bootstrap/litiaina-mx'));
  await cp(process.env.MX_TEST_STATIC_SITE_PATH,join(root,'slots/bootstrap/frontend/dist'),{recursive:true,force:true});await copyFile(join(repository,'LICENSE'),join(root,'slots/bootstrap/LICENSE'));
@@ -68,7 +69,10 @@ try{
  config={format:1,root,deployment_dir:deployment,service:`${unit}.service`,scope:'user',repository:'Litiaina/aris',channel:'rc',trusted_keys:keys,feed_url:`${feed.origin}/releases`,allow_loopback_http:true,notice_seconds:0,health_timeout_seconds:8,drain_timeout_seconds:30,check_interval_seconds:21600};await writeFile(configPath,JSON.stringify(config,null,2));
  const definitions={
   [`${unit}.service`]:`[Unit]\nDescription=Disposable MX update test ${id}\n[Service]\nType=simple\nWorkingDirectory=${deployment}\nEnvironment=MX_UPDATE_CONFIG=${configPath}\nEnvironment=TMPDIR=${process.env.TMPDIR}\nEnvironment=RUST_LOG=warn\nExecStart=${join(root,'current/litiaina-mx')}\nTimeoutStopSec=30\n`,
-  [`${workerUnit}.service`]:`[Unit]\nDescription=Disposable independent MX updater ${id}\n[Service]\nType=oneshot\nWorkingDirectory=${deployment}\nEnvironment=TMPDIR=${process.env.TMPDIR}\nExecStart=${binary} --update-worker --config ${configPath}\nTimeoutStartSec=300\n`,
+  // Compress many intentional fault jobs into seconds without the host's
+  // default five-start burst limit masking the application assertions. This
+  // fixture-only setting does not change the deployment unit templates.
+  [`${workerUnit}.service`]:`[Unit]\nDescription=Disposable independent MX updater ${id}\nStartLimitIntervalSec=0\n[Service]\nType=oneshot\nWorkingDirectory=${deployment}\nEnvironment=TMPDIR=${process.env.TMPDIR}\nExecStart=${binary} --update-worker --config ${configPath}\nTimeoutStartSec=300\n`,
   [pathUnit]:`[Unit]\nDescription=Disposable MX updater path ${id}\n[Path]\nPathExists=${join(root,'request.json')}\nUnit=${workerUnit}.service\n`,
  };
  for(const [name,contents] of Object.entries(definitions)){const path=join(directory,name);await writeFile(path,contents);await ctl('link','--runtime',path);registered.push(name);}
@@ -84,15 +88,26 @@ try{
  await call('/mx/v1/admin/updates','GET',undefined,viewer.access_token,[403]);await call('/mx/v1/admin/updates/check','POST',{operation_uid:randomUUID(),version:null},viewer.access_token,[403]);await call('/mx/v1/admin/updates/policy','PUT',{mode:'automatic',start_hour:2,end_hour:3,utc_offset_minutes:480},viewer.access_token,[403]);
  assert.equal((await call('/mx/v1/admin/updates')).body.managed,true);passed('administrator-only update authority; bootstrap uses managed slots and eight real records');
 
- // Compile an actual second MX version from a disposable source copy. The
- // working repository and its version are never changed for this fixture.
+ // Qualify the actual release binary/frontend when supplied. Otherwise compile
+ // a real second version from disposable source, without changing the repository.
+ let candidateBinary=process.env.MX_TEST_CANDIDATE_BINARY;
+ if(candidateBinary){
+   assert.ok(candidateBinary.startsWith('/mnt/ST1000LM049/'));
+   assert.ok(process.env.MX_TEST_CANDIDATE_STATIC_SITE_PATH?.startsWith('/mnt/ST1000LM049/'));
+   assert.equal((await exec(candidateBinary,['--version'])).stdout.trim(),'litiaina-mx 1.0.0-rc.2');
+ }else{
  const candidate=join(directory,'candidate-source');await mkdir(candidate);await cp(join(repository,'src'),join(candidate,'src'),{recursive:true});
  const toml=(await readFile(join(repository,'Cargo.toml'),'utf8')).replace(/(^version\s*=\s*")[^"]+/m,(_all,prefix)=>`${prefix}1.0.0-rc.2`);
  const lock=(await readFile(join(repository,'Cargo.lock'),'utf8')).replace(/(name = "litiaina-mx"\nversion = ")[^"]+/,(_all,prefix)=>`${prefix}1.0.0-rc.2`);await writeFile(join(candidate,'Cargo.toml'),toml);await writeFile(join(candidate,'Cargo.lock'),lock);
  const buildLog=await import('node:fs/promises').then(fs=>fs.open(join(directory,'candidate-build.log'),'w'));
  const candidateTarget=process.env.CARGO_TARGET_DIR||'/mnt/ST1000LM049/build/target';
  await new Promise((resolve,reject)=>{const child=spawn('/home/altear/.cargo/bin/cargo',['build','--offline','--locked','--manifest-path',join(candidate,'Cargo.toml')],{env:{...process.env,CARGO_TARGET_DIR:candidateTarget,CARGO_BUILD_JOBS:'3'},stdio:['ignore',buildLog.fd,buildLog.fd]});child.on('error',reject);child.on('exit',code=>code===0?resolve():reject(Error(`Candidate compilation failed: ${code}; see ${directory}/candidate-build.log`)));});await buildLog.close();
- const release=join(directory,'release-rc2');await mkdir(release);await safeCopy(join(candidateTarget,'debug/litiaina-mx'),join(release,'litiaina-mx'));await exec('/usr/bin/strip',['--strip-debug',join(release,'litiaina-mx')]);await cp(join(root,'slots/bootstrap/frontend'),join(release,'frontend'),{recursive:true});await copyFile(join(repository,'LICENSE'),join(release,'LICENSE'));
+ candidateBinary=join(candidateTarget,'debug/litiaina-mx');
+ }
+ const release=join(directory,'release-rc2');await mkdir(release);await safeCopy(candidateBinary,join(release,'litiaina-mx'));await exec('/usr/bin/strip',['--strip-debug',join(release,'litiaina-mx')]);
+ if(process.env.MX_TEST_CANDIDATE_STATIC_SITE_PATH){await mkdir(join(release,'frontend'));await cp(process.env.MX_TEST_CANDIDATE_STATIC_SITE_PATH,join(release,'frontend/dist'),{recursive:true});}
+ else{await cp(join(root,'slots/bootstrap/frontend'),join(release,'frontend'),{recursive:true});}
+ await copyFile(join(repository,'LICENSE'),join(release,'LICENSE'));
  const good=await bundle(release,'1.0.0-rc.2');releases=[offer('1.0.0-rc.2',good)];
  failFeed=true;await done(await queued('check'), 'failed');failFeed=false;assert.equal((await call('/mx/v1/system/update-health', 'GET',undefined,null)).body.version,'1.0.0-rc.1');
  const metadataResource=resources.get('/1.0.0-rc.2.json');const originalMetadata=metadataResource.bytes;metadataResource.bytes=Buffer.from(JSON.stringify({...good.metadata,signature:Buffer.alloc(64).toString('base64')}));await done(await queued('check'),'failed');metadataResource.bytes=originalMetadata;

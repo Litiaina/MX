@@ -14,9 +14,10 @@ does not require deleting an existing installation or knowing SQL.
 | Field | One piece of information collected in each record | Name, Classification |
 | Record | One saved entry containing those fields | One employee |
 
-A fresh deployment has a Records module without mandatory business fields.
-Administrators create the fields the organization needs. The module name, field
-labels and examples in this guide are not special MX settings.
+A fresh deployment starts with no modules, business fields or records.
+Administrators create the modules and fields the organization needs. The module
+names, field labels and examples in this guide are not built-in MX settings.
+Upgrades preserve existing modules, including any earlier generic Records module.
 
 ## 2. Create an Employees module
 

@@ -23,4 +23,9 @@ describe('reachable record-table scrolling', () => {
     expect(clampTableScroll(-10, 2600, 1150)).toBe(0);
     expect(clampTableScroll(120, 900, 1000)).toBe(0);
   });
+  it('keeps continuous columns reachable at the viewport bottom without another footer', () => {
+    const table = {...tall, bottom: 790};
+    expect(tableScrollPosition(table, viewport, 2600, 1150, true)?.top).toBe(776);
+    expect(tableScrollPosition(table, viewport, 1150, 1150, true)).toBeNull();
+  });
 });

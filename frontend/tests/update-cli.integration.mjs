@@ -6,8 +6,9 @@ const binary=process.env.MX_TEST_BINARY;
 assert.ok(binary?.startsWith('/mnt/ST1000LM049/'));
 assert.ok(process.env.MX_TEST_ARTIFACTS?.startsWith('/mnt/ST1000LM049/tests'));
 const directory=mkdtempSync(join(process.env.MX_TEST_ARTIFACTS,'mx-update-cli-')),results=[];
+const expectedVersion=JSON.parse(readFileSync(new URL('../package.json',import.meta.url),'utf8')).version;
 for(const [args,code,includes] of [
- [['--version'],0,'litiaina-mx 1.0.0-rc.1'],[['-V'],0,'litiaina-mx 1.0.0-rc.1'],
+ [['--version'],0,`litiaina-mx ${expectedVersion}`],[['-V'],0,`litiaina-mx ${expectedVersion}`],
  [['--help'],0,'--update-worker'],[['-h'],0,'--update-keygen'],
  [['--misspelled-command'],2,'server was not started'],
  [['--update-worker'],1,'Usage:'],[['--update-worker','--config','missing.json'],1,'Cannot read'],

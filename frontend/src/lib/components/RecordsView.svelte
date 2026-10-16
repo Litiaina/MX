@@ -24,6 +24,7 @@
   import TableScrollbar from './TableScrollbar.svelte';
   import { floatingMenu } from '../util/floating';
   import { windowPieces, mergeWindow, windowAnchor, type RecordViewPosition } from '../util/recordWindow';
+  import { recordColumnWidths, snapshotRecordColumns, validColumnSnapshot, type RecordColumnSnapshot } from '../util/recordColumns';
 
   let { session, accessLevel, moduleUid = '', modulePermission = null, openRecordUid = '', openRequestRevision = 0, focusLinkedAttachments = false, revision = 0, liveMessage = null, recordSingular = 'Record', recordPlural = 'Records' }: { session: Session; accessLevel: number; moduleUid?: string; modulePermission?: ModulePermission | null; openRecordUid?: string; openRequestRevision?: number; focusLinkedAttachments?: boolean; revision?: number; liveMessage?: LiveMessage | null; recordSingular?: string; recordPlural?: string } = $props();
   let schema = $state<SchemaResponse | null>(null);
@@ -34,7 +35,9 @@
   let rows = $state<MxRecord[]>([]);
   let summaries = $state<Record<string, ColumnSummary>>({});
   let page = $state(1); let pageInput = $state(1); let pages = $state(0); let total = $state(0); let pageSize = $state(50);
-  let continuous = $state(true);
+  let continuous = $state(false);
+  let viewportWidth = $state(0);
+  let measuredColumns = $state<RecordColumnSnapshot | null>(null);
   let windowBefore = $state(false); let windowAfter = $state(false);
   let edgeLoading = $state(false); let edgeError = $state(''); let edgeDirection = $state<'before'|'after'>('after');
   let updatesAvailable = $state(false); let baseIndex = $state(0);
@@ -95,8 +98,9 @@
   const summaryFields = $derived(visibleFields.filter(field => !!field.config.table_summary && field.config.table_summary !== 'none'));
   const searchableFields = $derived(schema?.fields.filter((field) => field.active && field.searchable && field.field_type !== 'attachments').sort((a, b) => a.position - b.position) || []);
   const pinnedRows = $derived([cellEdit?.rowUid || '', focusedRow, rowMenuUid].filter(Boolean));
-  const fieldWidth=(type:string)=>type==='long_text'?360:type==='attachments'?150:240;
-  const continuousWidth=$derived(visibleFields.reduce((sum,field)=>sum+fieldWidth(field.field_type),190));
+  const columnWidths=$derived(recordColumnWidths(visibleFields,viewportWidth,measuredColumns));
+  const fixedColumns=$derived(!mobileRows&&(continuous||validColumnSnapshot(measuredColumns,visibleFields,viewportWidth)));
+  const tableWidth=$derived(columnWidths.reduce((sum,width)=>sum+width,0));
   const renderPieces = $derived(continuous ? windowPieces(rows.map(row=>row.uid),rowHeights,viewportTop,viewportHeight,mobileRows?240:50,pinnedRows)
     : rows.map((row,index)=>({kind:'row' as const,index,key:row.uid})));
 
@@ -104,7 +108,7 @@
   onMount(() => {
     try {
       const preferences=JSON.parse(localStorage.getItem(preferenceKey)||'null');
-      if(preferences){continuous=preferences.continuous!==false;pageSize=[25,50,100,256].includes(preferences.batch)?preferences.batch:50;}
+      if(preferences){continuous=preferences.continuous===true;pageSize=[25,50,100,256].includes(preferences.batch)?preferences.batch:50;measuredColumns=preferences.columns||null;}
       const saved=JSON.parse(sessionStorage.getItem(positionKey)||'null') as RecordViewPosition|null;
       if(saved && typeof saved.uid==='string' && Number.isFinite(saved.offset)){
         restorePosition=saved; search=saved.search;sortBy=saved.sortBy;sortDir=saved.sortDir;matchMode=saved.match;
@@ -232,13 +236,14 @@
     if(layoutAnchor&&lastAnchor&&Math.abs(tableViewport.scrollTop-anchorScrollTop)<.5&&Math.abs(tableViewport.scrollLeft-anchorScrollLeft)<.5&&rows.some(row=>row.uid===lastAnchor!.uid))return lastAnchor;
     layoutAnchor=false;
     const header=tableViewport.querySelector('thead')?.getBoundingClientRect().height||0;
-    const element=Array.from(tableViewport.querySelectorAll<HTMLElement>('[data-record-uid]')).find(node=>{const rect=node.getBoundingClientRect();return rect.bottom>bounds.top+header+1&&rect.top<bounds.bottom;});
+    const visibleTop=continuous?bounds.top+header:Math.max(bounds.top+header,document.querySelector('.workspace-topbar')?.getBoundingClientRect().bottom||0);
+    const element=Array.from(tableViewport.querySelectorAll<HTMLElement>('[data-record-uid]')).find(node=>{const rect=node.getBoundingClientRect();return rect.bottom>visibleTop+1&&rect.top<Math.min(bounds.bottom,innerHeight);});
     const fallback=windowAnchor(rows.map(row=>row.uid),rowHeights,tableViewport.scrollTop,mobileRows?240:50);
     const uid=element?.dataset.recordUid||fallback?.uid;
     if(!uid)return lastAnchor;
     anchorScrollTop=tableViewport.scrollTop;anchorScrollLeft=tableViewport.scrollLeft;
     return lastAnchor={uid,cursor:cursors.get(uid),offset:element?element.getBoundingClientRect().top-bounds.top:header+fallback!.offset,horizontal:tableViewport.scrollLeft,
-      index:baseIndex+Math.max(0,rows.findIndex(row=>row.uid===uid)),...appliedQuery,page};
+      index:(continuous?baseIndex:(page-1)*pageSize)+Math.max(0,rows.findIndex(row=>row.uid===uid)),...appliedQuery,page};
   }
   function measurementAnchor() {
     // New overscan rows can expand above the visible record before their
@@ -261,6 +266,14 @@
     tableViewport.scrollLeft=anchor.horizontal;
     if(node)tableViewport.scrollTop+=node.getBoundingClientRect().top-tableViewport.getBoundingClientRect().top-anchor.offset;
     viewportTop=tableViewport.scrollTop;
+    // Updating viewportTop can replace an estimated spacer with real rows.
+    // Let that keyed range commit before recording a successfully restored
+    // position; otherwise a tall overscan row shifts the saved anchor again.
+    await tick();
+    if(epoch!==restoreEpoch||!tableViewport)return;
+    const settledNode=Array.from(tableViewport.querySelectorAll<HTMLElement>('[data-record-uid]')).find(node=>node.dataset.recordUid===anchor.uid);
+    if(settledNode)tableViewport.scrollTop+=settledNode.getBoundingClientRect().top-tableViewport.getBoundingClientRect().top-anchor.offset;
+    viewportTop=tableViewport.scrollTop;
     // Do not leave a stale restoration active for another animation frame:
     // the next wheel/drag must be free to choose its own destination.
     restoringAnchor=undefined;lastAnchor=anchor;
@@ -268,7 +281,8 @@
     layoutAnchor=true;
   }
   function measureRow(node: HTMLElement, uid: string) {
-    if(!continuous)return{destroy(){}};
+    $effect(()=>{
+    if(!continuous)return;
     const observer=new ResizeObserver(()=>{
       const height=node.getBoundingClientRect().height+(mobileRows?8.8:0);
       if(height>0 && Math.abs((rowHeights[uid]||0)-height)>1){pendingMeasurements.set(uid,height);
@@ -276,16 +290,18 @@
         // in WebKit. Batch all row measurements in the next animation frame.
         if(!measureFrame)measureFrame=requestAnimationFrame(()=>{measureFrame=0;if(!pendingMeasurements.size)return;const anchor=measurementAnchor();rowHeights={...rowHeights,...Object.fromEntries(pendingMeasurements)};pendingMeasurements.clear();void restoreAnchor(anchor);});
       }
-    });observer.observe(node);return{destroy(){observer.disconnect();pendingMeasurements.delete(uid);}};
+    });observer.observe(node);return()=>{observer.disconnect();pendingMeasurements.delete(uid);};
+    });
   }
   function observeViewport(node: HTMLDivElement) {
-    let frame=0;const observer=new ResizeObserver(()=>{cancelAnimationFrame(frame);frame=requestAnimationFrame(()=>{const anchor=measurementAnchor();viewportHeight=node.clientHeight;mobileRows=innerWidth<=820;void restoreAnchor(anchor);});});observer.observe(node);
+    let frame=0;const observer=new ResizeObserver(()=>{cancelAnimationFrame(frame);frame=requestAnimationFrame(()=>{const anchor=measurementAnchor();viewportHeight=node.clientHeight;viewportWidth=node.getBoundingClientRect().width-node.clientLeft*2;mobileRows=innerWidth<=820;if(continuous)void restoreAnchor(anchor);});});observer.observe(node);
     return {destroy(){observer.disconnect();cancelAnimationFrame(frame);}};
   }
   function scrolled() {
     // Capture the user's new destination before a queued measurement can use an
     // old anchor. Fast scrollbar drags may currently point into a virtual gap.
-    currentAnchor();
+    if(lastAnchor&&tableViewport&&Math.abs(tableViewport.scrollTop-anchorScrollTop)<.5){lastAnchor.horizontal=tableViewport.scrollLeft;anchorScrollLeft=tableViewport.scrollLeft;}
+    else currentAnchor();
     if(scrollFrame)return;
     scrollFrame=requestAnimationFrame(()=>{scrollFrame=0;if(!tableViewport)return;viewportTop=tableViewport.scrollTop;viewportHeight=tableViewport.clientHeight;
       clearTimeout(positionTimer);positionTimer=setTimeout(rememberPosition,200);
@@ -318,17 +334,38 @@
     }catch(reason){if(!controller.signal.aborted&&request===refreshSequence){edgeError=reason instanceof Error?reason.message:'More records could not be loaded.';if(reason instanceof ApiError&&[401,403].includes(reason.status)){rows=[];cursors.clear();rowHeights={};}}}
     finally{if(edgeController===controller){edgeLoading=false;scrolled();}}
   }
-  function viewChanged(){rememberPosition();try{localStorage.setItem(preferenceKey,JSON.stringify({continuous,batch:pageSize}));}catch{}page=1;void refresh(true);}
+  function viewChanged(next=continuous){
+    const anchor=currentAnchor();rememberPosition();
+    // A loading placeholder has no representative content widths. A quick
+    // first switch should use datatype widths, not freeze that empty layout.
+    if(!loading&&rows.length&&!mobileRows&&tableViewport){
+      const widths=Array.from(tableViewport.querySelectorAll<HTMLElement>('thead th')).map(node=>node.getBoundingClientRect().width);
+      if(widths.length===visibleFields.length+2)measuredColumns=snapshotRecordColumns(visibleFields,tableViewport.getBoundingClientRect().width-tableViewport.clientLeft*2,widths);
+    }
+    const previous=continuous;
+    if(previous&&!next&&rows.length>pageSize){
+      const start=Math.max(0,Math.floor((anchor?.index||0)/pageSize)*pageSize-baseIndex);
+      rows=rows.slice(start,start+pageSize);
+    }
+    continuous=next;cancelAnimationFrame(measureFrame);measureFrame=0;pendingMeasurements.clear();++restoreEpoch;restoringAnchor=undefined;
+    if(previous!==next){
+      page=anchor?Math.floor(anchor.index/pageSize)+1:1;
+      restorePosition=anchor?{...anchor,offset:Math.min(Math.max(40,anchor.offset),viewportHeight/3)}:undefined;
+      if(next)window.scrollTo({top:0,behavior:'instant'});
+    }
+    try{localStorage.setItem(preferenceKey,JSON.stringify({continuous,batch:pageSize,columns:measuredColumns}));}catch{}
+    void refresh();
+  }
   function rowNumber(index:number){return (continuous?baseIndex:(page-1)*pageSize)+index+1;}
   async function refresh(withSchema = false) {
     const request = ++refreshSequence;
     requestController?.abort();edgeController?.abort();edgeLoading=false;edgeError='';
     const controller=requestController=new AbortController();
     const anchor=restorePosition || currentAnchor();restorePosition=undefined;
-    loading = true; error = ''; summaries = {};
+    loading = true; error = '';
     try {
       if (withSchema || !schema) {
-        const nextSchema = moduleUid ? await loadModuleSchema(moduleUid) : await loadSchema();
+        const nextSchema = moduleUid ? await loadModuleSchema(moduleUid,controller.signal) : await loadSchema(false,controller.signal);
         if (request !== refreshSequence) return;
         schema = nextSchema;
         if (sortBy && !nextSchema.fields.some(field => field.key === sortBy && field.active && field.sortable)
@@ -537,10 +574,21 @@
   {#if error}<div class="notice error">{error}</div>{/if}
   {#if continuous && updatesAvailable}<div class="record-updates" role="status"><span>Records changed. Your browsing position is kept.</span><button class="button small" disabled={loading||!!cellEdit} onclick={()=>void refresh(true)}>Refresh this view</button></div>{/if}
   {#if cellConflict}{#each cellConflict.conflicts as conflict}<div class="notice record-cell-conflict"><div><strong>{conflict.label} changed elsewhere</strong><small>Stored: {String(conflict.current_value ?? 'Empty')} · Yours: {String(conflict.your_value ?? 'Empty')}</small></div><div class="inline-actions"><button class="button small" type="button" onclick={()=>void resolveCellConflict(conflict,false)}>Use stored</button><button class="button primary small" type="button" onclick={() => void resolveCellConflict(conflict,true)}>Keep mine</button></div></div>{/each}{/if}
-  <div class="records-view-controls"><div class="records-result-summary" aria-live="polite" aria-label={`${total.toLocaleString()} ${total === 1 ? recordSingular.toLowerCase() : recordPlural.toLowerCase()}`}><span><strong>{total.toLocaleString()}</strong> {total === 1 ? 'result' : 'results'}</span><small>{continuous?`${rows.length.toLocaleString()} cached${edgeLoading?` · Loading ${edgeDirection==='before'?'earlier':'more'}…`:!windowAfter&&!loading?' · End of results':''}`:rows.length ? `Showing ${((page - 1) * pageSize + 1).toLocaleString()}–${Math.min(page * pageSize, total).toLocaleString()}` : 'No rows in this view'}</small></div>{#if continuous}<div class="record-window-controls" role="group" aria-label="Load record windows"><button class="button" aria-label="Load earlier" title="Load earlier records" disabled={loading||edgeLoading||!windowBefore} onclick={()=>void loadEdge('before')}><ChevronUp size={16} aria-hidden="true" /></button><button class="button" aria-label="Load more" title="Load more records" disabled={loading||edgeLoading||!windowAfter} onclick={()=>void loadEdge('after')}><ChevronDown size={16} aria-hidden="true" /></button></div>{/if}<label>View<select aria-label="Record navigation" bind:value={continuous} onchange={viewChanged}><option value={true}>Continuous scroll</option><option value={false}>Pages</option></select></label>{#if continuous}<label>Batch<select aria-label="Record batch size" bind:value={pageSize} onchange={viewChanged}><option value={25}>25</option><option value={50}>50</option><option value={100}>100</option><option value={256}>256</option></select></label>{/if}</div>
-  <div class="table-wrap records-table" class:continuous-records={continuous} id={`records-table-${moduleUid || 'default'}`} bind:this={tableViewport} use:observeViewport onscroll={scrolled} onfocusin={event=>focusedRow=(event.target as Element)?.closest<HTMLElement>('[data-record-uid]')?.dataset.recordUid||''} onfocusout={event=>focusedRow=(event.relatedTarget as Element)?.closest?.<HTMLElement>('[data-record-uid]')?.dataset.recordUid||''}>
-    <table aria-label={recordPlural} aria-rowcount={continuous?-1:undefined} style:table-layout={continuous&&!mobileRows?'fixed':undefined} style:width={continuous?(mobileRows?'100%':`${continuousWidth}px`):undefined}>
-      {#if continuous&&!mobileRows}<colgroup><col style:width="56px"/>{#each visibleFields as field}<col style:width={`${fieldWidth(field.field_type)}px`}/>{/each}<col style:width="134px"/></colgroup>{/if}
+  <div class="records-view-controls">
+    <div class="records-result-summary" aria-live="polite" aria-label={`${total.toLocaleString()} ${total === 1 ? recordSingular.toLowerCase() : recordPlural.toLowerCase()}`}>
+      <span><strong>{total.toLocaleString()}</strong> {total === 1 ? 'result' : 'results'}</span>
+      <small>{loading?'Loading…':continuous?`${rows.length.toLocaleString()} cached${edgeLoading?` · Loading ${edgeDirection==='before'?'earlier':'more'}…`:!windowAfter?' · End of results':''}`:rows.length ? `Showing ${((page - 1) * pageSize + 1).toLocaleString()}–${Math.min(page * pageSize, total).toLocaleString()}` : 'No rows in this view'}</small>
+    </div>
+    {#if continuous}<div class="record-window-controls" role="group" aria-label="Load record windows">
+      <button class="button" aria-label="Load earlier" title="Load earlier records" disabled={loading||edgeLoading||!windowBefore} onclick={()=>void loadEdge('before')}><ChevronUp size={16} aria-hidden="true" /></button>
+      <button class="button" aria-label="Load more" title="Load more records" disabled={loading||edgeLoading||!windowAfter} onclick={()=>void loadEdge('after')}><ChevronDown size={16} aria-hidden="true" /></button>
+    </div>{/if}
+    <label>View<select aria-label="Record navigation" value={String(continuous)} disabled={!!cellEdit||cellSaving} onchange={event=>viewChanged(event.currentTarget.value==='true')}><option value="false">Pages</option><option value="true">Continuous scroll</option></select></label>
+    {#if continuous}<label>Batch<select aria-label="Record batch size" bind:value={pageSize} disabled={!!cellEdit||cellSaving} onchange={()=>viewChanged()}><option value={25}>25</option><option value={50}>50</option><option value={100}>100</option><option value={256}>256</option></select></label>{/if}
+  </div>
+  <div class="table-wrap records-table" class:continuous-records={continuous} aria-busy={loading} id={`records-table-${moduleUid || 'default'}`} bind:this={tableViewport} use:observeViewport onscroll={scrolled} onfocusin={event=>focusedRow=(event.target as Element)?.closest<HTMLElement>('[data-record-uid]')?.dataset.recordUid||''} onfocusout={event=>focusedRow=(event.relatedTarget as Element)?.closest?.<HTMLElement>('[data-record-uid]')?.dataset.recordUid||''}>
+    <table aria-label={recordPlural} aria-rowcount={continuous?-1:undefined} style:table-layout={fixedColumns?'fixed':undefined} style:width={fixedColumns?`${tableWidth}px`:undefined}>
+      {#if fixedColumns}<colgroup>{#each columnWidths as width}<col style:width={`${width}px`}/>{/each}</colgroup>{/if}
       <thead><tr aria-rowindex={continuous?1:undefined}><th class="row-index-column">#</th>{#each visibleFields as field}<th><button class="table-sort" class:sortable={field.sortable} onclick={() => field.sortable && sort(field.key)}>{field.label}{#if sortBy === field.key}{#if sortDir === 'asc'}<ChevronUp size={14} />{:else}<ChevronDown size={14} />{/if}{/if}</button></th>{/each}<th class="record-actions-column">Actions</th></tr></thead>
       <tbody>
         {#if loading && !rows.length}
@@ -606,7 +654,7 @@
   {/if}
 </section>
 
-<TableScrollbar target={tableViewport} enabled={editor === undefined} />
+<TableScrollbar target={tableViewport} enabled={editor === undefined} alwaysVisible={continuous} />
 
 {#if canDelete && menuRow && rowMenuAnchor}
   <div class="record-row-menu" data-record-actions={menuRow.uid} role="menu" aria-label={`${recordSingular} actions`} tabindex="-1" onkeydown={menuKeydown} use:floatingMenu={{ anchor: rowMenuAnchor, close: () => rowMenuUid = '' }}>
@@ -626,7 +674,8 @@
 {#if importer && schema}{#key moduleUid}<ImportRecords {schema} {moduleUid} history={importer === 'history'} onClose={() => { importer = null; importMenuAnchor?.focus({ preventScroll: true }); }} onChanged={() => refresh(true)} />{/key}{/if}
 
 <style>
-  .records-page.continuous-page{display:flex;flex-direction:column;height:calc(100dvh - var(--topbar-height));min-height:24rem;padding-bottom:max(.5rem,env(safe-area-inset-bottom));}
+  .records-page.continuous-page{display:flex;flex-direction:column;width:100%;max-width:none;min-width:0;height:calc(100dvh - var(--topbar-height));min-height:24rem;padding-bottom:max(.5rem,env(safe-area-inset-bottom));}
+  .records-page.continuous-page>*{min-width:0;}
   .continuous-page>:not(.continuous-records){flex-shrink:0;}
   .records-view-controls,.record-window-error,.record-updates{display:flex;align-items:center;gap:.75rem;flex-wrap:wrap;}
   .records-view-controls{margin:.35rem 0 .5rem;}.records-view-controls .records-result-summary{flex:1;margin:0;}.records-view-controls>label{display:flex;align-items:center;gap:.4rem;font-size:.75rem;}

@@ -12,9 +12,9 @@ import type {
 export const loadDeployment = () => apiJson<DeploymentResponse>('/mx/v1/deployment/config', {}, false);
 export const saveDeployment = (config: DeploymentConfig) => apiJson<{ response: string; revision: number; config: DeploymentConfig }>('/mx/v1/admin/deployment-config', jsonRequest('PUT', { config }));
 export const uploadDeploymentLogo = (file: File, onProgress?: (loaded: number, total: number) => void) => { const body = new FormData(); body.append('logo', file); return apiUpload<{ response: string; logo_url: string; config: DeploymentConfig }>('/mx/v1/admin/deployment-logo', body, onProgress); };
-export const loadSchema = (admin = false) => apiJson<SchemaResponse>(admin ? '/mx/v1/admin/schema' : '/mx/v1/schema');
+export const loadSchema = (admin = false, signal?: AbortSignal) => apiJson<SchemaResponse>(admin ? '/mx/v1/admin/schema' : '/mx/v1/schema', {signal});
 export const loadModules = () => apiJson<{ modules: ModuleDefinition[] }>('/mx/v1/modules');
-export const loadModuleSchema = (moduleUid: string) => apiJson<SchemaResponse>(`/mx/v1/modules/${encodeURIComponent(moduleUid)}/schema`);
+export const loadModuleSchema = (moduleUid: string, signal?: AbortSignal) => apiJson<SchemaResponse>(`/mx/v1/modules/${encodeURIComponent(moduleUid)}/schema`, {signal});
 export const createModule = (data: { name: string; singular_name?: string; description?: string; icon?: string; color?: string; config?: Record<string, JsonValue> }) =>
   apiJson<{ module: ModuleDefinition }>('/mx/v1/admin/modules', jsonRequest('POST', data));
 export const updateModule = (uid: string, changes: Partial<ModuleDefinition>) =>

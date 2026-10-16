@@ -25,8 +25,23 @@ Validate production-built layout and file-manager behavior with disposable data:
 ```bash
 npm --prefix frontend run build
 npm --prefix frontend run test:ui:cascade
+npm --prefix frontend run test:ui:sidebar
 npm --prefix frontend run test:drive:file-manager
 ```
+
+The sidebar suite checks production-built collapsed/expanded geometry at 85%,
+100% and 160% interface scales, light/dark themes, many modules and mobile
+drawers. It checks logo/icon alignment, unclipped rows, search focus and footer
+visibility. Use an explicit external `MX_TEST_ARTIFACTS` directory and matching
+`MX_TEST_BINARY` / `MX_TEST_STATIC_SITE_PATH` when running on this workstation.
+It uses disposable data and disconnected browser audio.
+
+`npm --prefix frontend run test:records:navigation` checks blank-installation
+onboarding, deleting the last test module, Pages as the default, stable columns
+and horizontal position, schema reuse and cancellation during rapid view changes.
+Pair it with `test:records:window` for bounded caching, variable-height anchors,
+reverse loading and interrupted reads, and `test:records:scroll` for the reachable
+horizontal control. Set the same explicit external artifact/build environment.
 
 The cascade suite asserts Drive row grids and aligned columns, sharing-dialog
 dimensions, Deployment section gaps and control alignment in light/dark themes

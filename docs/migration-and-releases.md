@@ -2,7 +2,15 @@
 
 [Documentation index](README.md) · [Project overview](../README.md)
 
-## Current line: MX 1.0.0-rc.1
+## Current line: MX 1.0.0-rc.2
+
+RC.2 corrects sidebar alignment/clipping at different interface scales, defaults
+record browsing to Pages with an optional bounded continuous view, and starts
+new installations without a starter module. Existing modules/data remain. It uses
+the same signed-update trust key and managed activation/backup/rollback protocol
+as RC.1; no new schema or N1 format migration is introduced. See the
+[RC.2 upgrade instructions](releases/1.0.0-rc.2.md). Both remain candidates, not
+stable releases.
 
 On **2026-10-15**, MX starts a new official release-candidate line at
 **1.0.0-rc.1**. The earlier 2.x/3.x/4.x numbering is retained as development

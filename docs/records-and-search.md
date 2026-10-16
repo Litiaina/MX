@@ -4,9 +4,18 @@
 
 ## Continuous records view
 
-Records default to **Continuous scroll**. In **View**, choose **Pages** to use
-the existing numbered-page workflow. The choice and batch preference are saved
-per MX account and module in this browser.
+Record browsing defaults to **Pages**. In **View**, choose **Continuous scroll**
+when you prefer a bounded scrolling window. Existing saved view choices are
+preserved per MX account and module in this browser. A fresh deployment has no
+starter module or records; these choices apply after an administrator creates
+your modules and fields.
+
+Switching views keeps the current horizontal position and stays near the current
+record. A measured paged column layout is reused in continuous mode at the same
+viewport width, so switching does not squeeze long text or widen date/number
+columns unexpectedly. View changes reuse the loaded schema, cancel obsolete
+requests and avoid rendering the entire cached window as a page. Continuous
+mode keeps a slim horizontal control visible whenever its columns overflow.
 
 - Scroll down or up to load the next or previous cursor window. The compact
   up/down buttons beside **View** also provide keyboard-accessible **Load earlier**

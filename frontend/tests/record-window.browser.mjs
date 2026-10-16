@@ -43,8 +43,14 @@ try {
   const page=await browser.newPage({ignoreHTTPSErrors:true,viewport:{width:1024,height:900}});inspected=page;const errors=[],loaded=[];
   page.on('pageerror',error=>errors.push(error.message));page.on('response',async response=>{if(response.url().includes(`${base}?`)&&response.ok()){try{loaded.push(await response.json());}catch{}}});
   await page.addInitScript(tokens=>{sessionStorage.setItem('mx_access_token',tokens.access_token);sessionStorage.setItem('mx_refresh_token',tokens.refresh_token);},user);
+  const slowInitialPage=async route=>{if(!new URL(route.request().url()).searchParams.has('window'))await new Promise(resolve=>setTimeout(resolve,500));await route.continue().catch(()=>{});};
+  await page.route(`**${base}?*`,slowInitialPage);
   await page.goto(`https://127.0.0.1:${mx.port}/#module/${module.uid}`);
+  await page.getByRole('combobox',{name:'Record navigation',exact:true}).selectOption({label:'Continuous scroll'});
   const table=page.locator('.continuous-records');await table.waitFor();await until(()=>table.locator('[data-record-uid]').count().then(count=>count>5),'initial virtual window');
+  const initialColumnWidths=await table.locator('thead th').evaluateAll(nodes=>nodes.map(node=>node.getBoundingClientRect().width));
+  assert.ok(initialColumnWidths[3]>=352,'long text keeps a readable width even when switching before the first page loads');
+  await page.unroute(`**${base}?*`,slowInitialPage);
   const initial=await table.locator('[data-record-uid]').count();assert.ok(initial<50,`Only visible rows + buffer should render (${initial})`);
   assert.equal(await page.locator('.record-window-status').count(),0,'no permanent bottom navigation bar');
   assert.ok(await page.getByRole('group',{name:'Load record windows'}).evaluate(node=>!!node.closest('.records-view-controls')),'manual navigation shares the existing toolbar');
@@ -111,7 +117,9 @@ try {
   }
   await page.setViewportSize({width:1280,height:900});await page.getByRole('combobox',{name:'Record navigation',exact:true}).selectOption({label:'Pages'});
   await until(()=>page.locator('.records-table [data-record-uid]').count().then(count=>count===50),'paginated fallback');
-  await page.getByRole('button',{name:'Next',exact:true}).click();await until(()=>page.locator('.records-pagination input').inputValue().then(value=>value==='2'),'next page');
+  await until(()=>page.locator('.records-table').getAttribute('aria-busy').then(value=>value==='false'),'paged response has committed before reading its page number');
+  const currentPage=Number(await page.locator('.records-pagination input').inputValue());
+  await page.getByRole('button',{name:'Next',exact:true}).click();await until(()=>page.locator('.records-pagination input').inputValue().then(value=>Number(value)===currentPage+1),'next page preserves the current browsing page');
   assert.deepEqual(errors,[]);results.push({browser:name,virtual_dom:true,bounded_cache:true,anchor_restoration:true,bidirectional:true,network_retry:true,pagination:true,compact_controls:true,full_long_text:true,fast_drag:true});
   console.log(`${name}: bounded records, anchors, reverse navigation, retry and responsive layouts passed`);await browser.close();
  }

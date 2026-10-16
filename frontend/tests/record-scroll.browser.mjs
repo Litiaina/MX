@@ -53,7 +53,7 @@ try{
     await until(()=>table.evaluate(node=>node.scrollLeft>100),'thumb drag moves record columns');
     for(const [theme,width] of [['light',1440],['dark',1024]]){
       await page.evaluate(value=>document.documentElement.dataset.theme=value,theme);await page.setViewportSize({width,height:900});
-      await until(async()=>{const box=await bar.boundingBox(),recordBox=await table.boundingBox();return box&&Math.abs(box.x-recordBox.x-1)<2&&Math.abs(box.width-tableViewportWidth(recordBox))<2;},'scrollbar tracks table width after resize');
+      await until(async()=>{const box=await bar.boundingBox(),recordBox=await table.boundingBox(),clientWidth=await table.evaluate(node=>node.clientWidth);return box&&Math.abs(box.x-recordBox.x-1)<2&&Math.abs(box.width-clientWidth)<2;},'scrollbar tracks the usable table width, excluding its reserved vertical gutter');
       assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
       await page.screenshot({path:join(mx.directory,`${name}-record-scroll-${theme}-${width}.png`)});
     }
@@ -97,5 +97,3 @@ try{
   await writeFile(join(mx.directory,'record-scroll-results.json'),JSON.stringify({passed:true,results,n1:'HTTP contract fixture; not live N1'},null,2));
 }catch(error){if(inspectedPage&&!inspectedPage.isClosed())await inspectedPage.screenshot({path:join(mx.directory,'record-scroll-failure.png')}).catch(()=>{});throw error;}
 finally{for(const browser of browsers)await browser.close();await mx.close();}
-
-function tableViewportWidth(rect){return rect.width-2;}

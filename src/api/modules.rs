@@ -264,9 +264,33 @@ pub(crate) fn ensure_module_schema(connection: &rusqlite::Connection) -> rusqlit
             [],
         )?;
     }
+    // The default workspace exists only to retain an existing/legacy schema.
+    // A fresh deployment must not invent an operator's first business module.
+    let legacy_rows = |table: &str| -> rusqlite::Result<bool> {
+        if !table_exists(connection, table)? {
+            return Ok(false);
+        }
+        let predicate = if table_has_column(connection, table, "module_uid")? {
+            " WHERE module_uid IS NULL OR TRIM(module_uid) = '' OR module_uid = 'mx-default-records'"
+        } else {
+            ""
+        };
+        connection.query_row(
+            &format!("SELECT EXISTS(SELECT 1 FROM {table}{predicate})"),
+            [],
+            |row| row.get(0),
+        )
+    };
+    let retain_default = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM mx_modules WHERE uid = ?1)",
+        params![DEFAULT_MODULE_UID],
+        |row| row.get::<_, bool>(0),
+    )? || legacy_rows("mx_records")?
+        || legacy_rows("mx_fields")?;
     let now = chrono::Utc::now().timestamp_millis();
-    connection.execute(
-        r#"
+    if retain_default {
+        connection.execute(
+            r#"
         INSERT OR IGNORE INTO mx_modules(
             uid, slug, name, singular_name, description, icon, color,
             position, active, config_json, created_at, updated_at
@@ -274,18 +298,19 @@ pub(crate) fn ensure_module_schema(connection: &rusqlite::Connection) -> rusqlit
             'The original MX record workspace, migrated as the default module.',
             'file-text', '#1d4ed8', 0, 1, '{}', ?2, ?2)
         "#,
-        params![DEFAULT_MODULE_UID, now],
-    )?;
-    for (level, read, create, update, delete, configure) in [
-        (0, 1, 1, 1, 1, 1),
-        (1, 1, 1, 1, 1, 0),
-        (2, 1, 1, 1, 0, 0),
-        (3, 1, 0, 0, 0, 0),
-    ] {
-        connection.execute(
+            params![DEFAULT_MODULE_UID, now],
+        )?;
+        for (level, read, create, update, delete, configure) in [
+            (0, 1, 1, 1, 1, 1),
+            (1, 1, 1, 1, 1, 0),
+            (2, 1, 1, 1, 0, 0),
+            (3, 1, 0, 0, 0, 0),
+        ] {
+            connection.execute(
             "INSERT OR IGNORE INTO mx_module_permissions(module_uid, access_level, can_read, can_create, can_update, can_delete, can_configure, can_report, can_attachments) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?3, ?3)",
             params![DEFAULT_MODULE_UID, level, read, create, update, delete, configure],
         )?;
+        }
     }
 
     let account_grants_migrated = connection.query_row(
@@ -1290,6 +1315,8 @@ mod tests {
         connection
             .pragma_update(None, "foreign_keys", "ON")
             .unwrap();
+        ensure_mx_record_schema(&connection).unwrap();
+        connection.execute_batch("INSERT INTO mx_records(uid,control_year,control_no,date,office,requestor,subject,routed_to_div,remarks) VALUES('legacy-record',2026,1,'2026-01-01','','','','','');").unwrap();
         ensure_dynamic_schema(&connection).unwrap();
 
         let record_has_module: bool = connection
@@ -1315,6 +1342,78 @@ mod tests {
     }
 
     #[test]
+    fn fresh_installation_has_no_starter_module_and_repeated_initialization_stays_blank() {
+        let connection = rusqlite::Connection::open_in_memory().unwrap();
+        connection
+            .pragma_update(None, "foreign_keys", "ON")
+            .unwrap();
+        for _ in 0..3 {
+            ensure_dynamic_schema(&connection).unwrap();
+            crate::api::mx::storage::ensure_storage_layout_schema(&connection).unwrap();
+            assert_eq!(
+                connection
+                    .query_row("SELECT COUNT(*) FROM mx_modules", [], |row| row
+                        .get::<_, i64>(0))
+                    .unwrap(),
+                0
+            );
+            assert_eq!(
+                connection
+                    .query_row("SELECT COUNT(*) FROM mx_fields", [], |row| row
+                        .get::<_, i64>(0))
+                    .unwrap(),
+                0
+            );
+            assert_eq!(
+                connection
+                    .query_row("SELECT COUNT(*) FROM mx_records", [], |row| row
+                        .get::<_, i64>(0))
+                    .unwrap(),
+                0
+            );
+        }
+        connection.execute("INSERT INTO mx_modules(uid,slug,name,singular_name,created_at,updated_at) VALUES('custom','custom','Custom','Entry',0,0)", []).unwrap();
+        ensure_dynamic_schema(&connection).unwrap();
+        assert_eq!(
+            connection
+                .query_row("SELECT COUNT(*) FROM mx_modules", [], |row| row
+                    .get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+        assert!(
+            load_module_db(&connection, DEFAULT_MODULE_UID)
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn an_existing_empty_default_module_is_preserved_on_upgrade() {
+        let connection = rusqlite::Connection::open_in_memory().unwrap();
+        ensure_dynamic_schema(&connection).unwrap();
+        connection.execute("INSERT INTO mx_modules(uid,slug,name,singular_name,created_at,updated_at) VALUES(?1,'records','My existing records','Entry',0,0)", params![DEFAULT_MODULE_UID]).unwrap();
+        ensure_dynamic_schema(&connection).unwrap();
+        assert_eq!(
+            load_module_db(&connection, DEFAULT_MODULE_UID)
+                .unwrap()
+                .unwrap()
+                .name,
+            "My existing records"
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT COUNT(*) FROM mx_module_permissions WHERE module_uid=?1",
+                    params![DEFAULT_MODULE_UID],
+                    |row| row.get::<_, i64>(0)
+                )
+                .unwrap(),
+            4
+        );
+    }
+
+    #[test]
     fn account_module_access_is_default_deny_and_cannot_exceed_the_role() {
         let connection = rusqlite::Connection::open_in_memory().unwrap();
         connection
@@ -1322,6 +1421,8 @@ mod tests {
                 "CREATE TABLE users(uid TEXT PRIMARY KEY NOT NULL, access_level INTEGER NOT NULL);",
             )
             .unwrap();
+        ensure_module_schema(&connection).unwrap();
+        connection.execute("INSERT INTO mx_modules(uid,slug,name,singular_name,created_at,updated_at) VALUES(?1,'records','Records','Record',0,0)", params![DEFAULT_MODULE_UID]).unwrap();
         ensure_module_schema(&connection).unwrap();
         connection
             .execute(

@@ -70,7 +70,7 @@
   const moduleWorkspaceDirty = $derived(moduleDirty || storageDirty || fieldsDirty);
 
   onMount(() => void initialise());
-  async function initialise() { try { modules = (await loadModules()).modules; selectedModuleUid = modules.find((module) => module.uid === selectedModuleUid)?.uid || modules[0]?.uid || 'mx-default-records'; syncModuleEditor(); await refresh(); } catch (reason) { fail(reason); loading = false; } }
+  async function initialise() { try { modules = (await loadModules()).modules; selectedModuleUid = modules.find((module) => module.uid === selectedModuleUid)?.uid || modules[0]?.uid || ''; syncModuleEditor(); if(selectedModuleUid)await refresh();else{schema=null;loading=false;} } catch (reason) { fail(reason); loading = false; } }
   function syncModuleEditor() { const module = modules.find((item) => item.uid === selectedModuleUid); if (!module) return; moduleName = module.name; moduleSingular = module.singular_name; moduleDescription = module.description; moduleIcon = normaliseModuleIcon(module.icon); moduleColor = module.color; modulePosition = module.position; moduleActive = module.active; moduleNavigationGroup = typeof module.config.navigation_group === 'string' ? module.config.navigation_group : ''; modulePermissions = cloneJson(module.permissions); }
   async function switchModule(nextUid: string, control?: HTMLSelectElement) {
     if (!nextUid || nextUid === selectedModuleUid) return;
@@ -88,7 +88,7 @@
     notice = '';
     await refresh();
   }
-  async function refresh() { loading = true; error = ''; try { schema = selectedModuleUid === 'mx-default-records' ? await loadSchema(true) : await loadModuleSchema(selectedModuleUid); savedFieldSchema=JSON.stringify(schema.fields); savedFieldTypes=Object.fromEntries(schema.fields.map(field=>[field.uid,field.field_type])); const layout = await loadStorageLayout(selectedModuleUid); folders = layout.folder_fields.map((field) => field.uid); prefix = layout.file_prefix_field?.uid || ''; savedFolders = [...folders]; savedPrefix = prefix; preview = layout.preview; storageRoot = layout.root; frozen = layout.frozen_records; storageRevision = layout.revision; storageConfigured = layout.configured; } catch (reason) { fail(reason); } finally { loading = false; } }
+  async function refresh() { if(!selectedModuleUid){schema=null;loading=false;return;} loading = true; error = ''; try { schema = selectedModuleUid === 'mx-default-records' ? await loadSchema(true) : await loadModuleSchema(selectedModuleUid); savedFieldSchema=JSON.stringify(schema.fields); savedFieldTypes=Object.fromEntries(schema.fields.map(field=>[field.uid,field.field_type])); const layout = await loadStorageLayout(selectedModuleUid); folders = layout.folder_fields.map((field) => field.uid); prefix = layout.file_prefix_field?.uid || ''; savedFolders = [...folders]; savedPrefix = prefix; preview = layout.preview; storageRoot = layout.root; frozen = layout.frozen_records; storageRevision = layout.revision; storageConfigured = layout.configured; } catch (reason) { fail(reason); } finally { loading = false; } }
   function fail(reason: unknown, title = 'Could not save these settings', target = '') {
     error = reason instanceof Error ? reason.message : 'The operation failed.'; notice = '';
     // Archive/rules dialogs own their errors. Never put a second modal over them.
@@ -140,7 +140,7 @@
       const removed = deletingModule;
       const result = await deleteModule(removed.uid, { confirmation: deleteConfirmation, admin_password: deletePassword, ...deletionSecondFactor() });
       modules = modules.filter((module) => module.uid !== removed.uid);
-      selectedModuleUid = modules.find((module) => module.uid === 'mx-default-records')?.uid || modules[0]?.uid || 'mx-default-records';
+      selectedModuleUid = modules.find((module) => module.uid === 'mx-default-records')?.uid || modules[0]?.uid || '';
       deletingModule = null; syncModuleEditor();
       notice = `${result.module_name} deleted. ${result.records_deleted} record${result.records_deleted === 1 ? '' : 's'} removed${result.attachments_moved_to_n1_trash ? `; ${result.attachments_moved_to_n1_trash} attachment${result.attachments_moved_to_n1_trash === 1 ? '' : 's'} moved to N1 trash` : ''}.`;
       error = ''; await refresh();
@@ -205,6 +205,7 @@
   </section>
 {/if}
 
+{#if selectedModule}
 <section class="panel module-builder">
   <div class="panel-heading module-builder-heading">
     <div>
@@ -259,6 +260,14 @@
   </section>
   <section class="panel admin-wide storage-layout-panel"><div class="panel-heading"><div><p class="eyebrow">Module · {selectedModule?.name || 'Module'}</p><h2>{selectedModule?.name || 'Module'} N1 storage layout</h2><p class="muted">This folder structure applies only to {selectedModule?.name || 'the selected module'}. Change modules with the scope control above.</p></div><span class:unsaved={storageDirty} class="module-edit-state">{storageDirty ? 'Unsaved storage changes' : `Storage revision ${storageRevision}`}</span></div><div class="storage-module-context"><div class="storage-module-identity"><i style={`--module-color:${selectedModule?.color || '#1d4ed8'}`}></i><span><strong>{selectedModule?.name || 'Module'} storage</strong><small>{storageConfigured ? 'Custom layout saved' : 'Using the module default'} · {frozen} frozen record folder{frozen === 1 ? '' : 's'}</small></span></div><div class="storage-root"><span>Independent N1 root</span><code>{storageRoot}/</code></div></div><div class="storage-builder"><div><label>Add a folder level<select bind:value={storageCandidate}><option value="">Choose a {selectedModule?.singular_name.toLowerCase() || 'record'} field…</option>{#each storageFields.filter((field) => !folders.includes(field.uid)) as field}<option value={field.uid}>{field.label}</option>{/each}</select></label><button class="button" type="button" onclick={addFolder} disabled={!storageCandidate}>Add level</button></div><ol class="storage-order">{#if !folders.length}<li class="storage-empty">Files for {selectedModule?.name || 'this module'} will be stored directly inside each record folder.</li>{/if}{#each folders as uid, index}<li><span class="storage-index">{index + 1}</span><div><strong>{fieldLabel(uid)}</strong><small>Folder level {index + 1}</small></div><div class="inline-actions"><button class="button small" type="button" aria-label="Move up" title="Move up" onclick={() => moveFolder(index, -1)} disabled={index === 0}><ArrowUp size={15} /></button><button class="button small" type="button" aria-label="Move down" title="Move down" onclick={() => moveFolder(index, 1)} disabled={index === folders.length - 1}><ArrowDown size={15} /></button><button class="button small danger" type="button" onclick={() => removeFolder(index)}>Remove</button></div></li>{/each}</ol></div><div class="storage-options"><label>File-name prefix<select bind:value={prefix}><option value="">Keep the uploaded file name</option>{#each storageFields as field}<option value={field.uid}>Prefix with {field.label}</option>{/each}</select></label><div class="storage-preview"><span>New {selectedModule?.singular_name.toLowerCase() || 'record'} path preview</span><code>{stagedStoragePreview()}</code>{#if preview}<small>Currently saved for {selectedModule?.name || 'this module'}: {preview}</small>{/if}</div></div><div class="button-row"><button class="button primary" onclick={saveLayout} disabled={loading || !storageDirty}>Save {selectedModule?.name || 'module'} storage layout</button></div></section>
 </div>
+
+{:else if !loading}
+<section class="panel empty-state">
+  <h2>Create your first module</h2>
+  <p>No starter modules or business fields are supplied. Create a module for your workflow, then add its fields.</p>
+  <button class="button primary" type="button" onclick={() => void openModuleCreate()}><Plus size={15} />New module</button>
+</section>
+{/if}
 
 {#if archiveTarget}{#key archiveTarget.uid}<FieldArchiveDialog fieldUid={archiveTarget.uid} fieldLabel={archiveTarget.label} onClose={()=>archiveTarget=null} onArchived={fieldArchived} onOpen={blocker=>void openArchiveDependency(blocker)}/>{/key}{/if}
 {#if rulesTarget&&schema}{#key rulesTarget.uid}<FieldRulesDialog field={rulesTarget} fields={schema.fields} moduleName={selectedModule?.name||'Module'} onClose={()=>rulesTarget=null} onSaved={rulesSaved}/>{/key}{/if}

@@ -583,7 +583,15 @@
     <UpdateNotice isAdmin={session.access_level===0} onOpenUpdates={()=>{localStorage.setItem('mx_admin_tab','updates');window.dispatchEvent(new Event('mx:open-updates'));go('admin');}} />
     {#if view === 'dashboard'}<DashboardView isAdmin={session.access_level === 0} revision={dashboardRevision} dashboardLabel={deployment.terminology.dashboard_label} recordSingular={deployment.terminology.record_singular} recordPlural={deployment.terminology.record_plural} />
     {:else if view === 'records' && selectedModule}{#key selectedModuleUid}<RecordsView {session} accessLevel={session.access_level} moduleUid={selectedModule.uid} modulePermission={selectedModulePermission} openRecordUid={linkedRecordUid} openRequestRevision={linkedRecordRequestRevision} focusLinkedAttachments={linkedRecordFocusAttachments} revision={recordRevision} liveMessage={lastRecordEvent} recordSingular={selectedModule.singular_name} recordPlural={selectedModule.name} />{/key}
-    {:else if view === 'records'}<section class="panel module-access-empty"><h2>No module access</h2><p>Your account has not been granted access to any active record module. Ask an MX administrator to assign the modules needed for your work.</p><button class="button" type="button" onclick={() => go('collaboration')}>Open collaboration</button></section>
+    {:else if view === 'records'}<section class="panel module-access-empty">
+      {#if session.access_level === 0}
+        <h2>Create your first module</h2><p>This workspace starts empty. Define your own modules and fields before entering records.</p>
+        <button class="button primary" type="button" onclick={() => { localStorage.setItem('mx_admin_tab','schema');go('admin'); }}>Open Modules &amp; fields</button>
+      {:else}
+        <h2>No module access</h2><p>Your account has not been granted access to any active record module. Ask an MX administrator to assign the modules needed for your work.</p>
+        <button class="button" type="button" onclick={() => go('collaboration')}>Open collaboration</button>
+      {/if}
+    </section>
     {:else if view === 'collaboration'}<CollaborationView {session} openChannelUid={linkedChannelUid} revision={collaborationRevision} connected={live} liveEvent={lastCollaborationEvent} {callEvents} activeCalls={ongoingCalls} activeCallChannelUid={activeCall?.channelUid || ''} onStartCall={startCollaborationCall} onChannelChanged={setActiveCollaborationChannel} />
     {:else if view === 'drive'}<DriveView accountUid={session.uid} revision={dashboardRevision} uploads={driveUploads} itemUid={linkedDriveItemUid} onDismissLinkedItem={dismissLinkedDriveItem} />
     {:else if view === 'admin' && session.access_level === 0}<AdminView {session} revision={adminRevision} administrationLabel={deployment.terminology.administration_label} dashboardLabel={deployment.terminology.dashboard_label} />

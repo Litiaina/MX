@@ -165,7 +165,8 @@ pub(crate) fn ensure_storage_layout_schema(
             revision,
             file_prefix_field_uid
         FROM mx_storage_layout_meta
-        WHERE id = 1;
+        WHERE id = 1
+          AND EXISTS(SELECT 1 FROM mx_modules WHERE uid = 'mx-default-records');
 
         INSERT OR IGNORE INTO mx_module_storage_layout_folders (
             module_uid,
@@ -176,7 +177,8 @@ pub(crate) fn ensure_storage_layout_schema(
             'mx-default-records',
             position,
             field_uid
-        FROM mx_storage_layout_folders;
+        FROM mx_storage_layout_folders
+        WHERE EXISTS(SELECT 1 FROM mx_modules WHERE uid = 'mx-default-records');
         "#,
     )
 }
@@ -1008,6 +1010,7 @@ mod tests {
             .pragma_update(None, "foreign_keys", "ON")
             .unwrap();
         ensure_storage_layout_schema(&connection).unwrap();
+        connection.execute("INSERT INTO mx_modules(uid,slug,name,singular_name,created_at,updated_at) VALUES(?1,'records','Records','Record',0,0)", params![DEFAULT_MODULE_UID]).unwrap();
         insert_module(&connection, "module-cases", "legal-cases");
 
         let default_layout = load_layout_db(&connection, DEFAULT_MODULE_UID).unwrap();

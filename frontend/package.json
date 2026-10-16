@@ -1,7 +1,7 @@
 {
   "name": "litiaina-mx-frontend",
   "private": true,
-  "version": "1.0.0-rc.1",
+  "version": "1.0.0-rc.2",
   "type": "module",
   "engines": {
     "node": ">=24.0.0"
@@ -30,11 +30,13 @@
     "test:fields:datatype": "node tests/field-type-change.browser.mjs",
     "test:forms:rules": "node tests/form-rules.browser.mjs",
     "test:ui:cascade": "node tests/ui-cascade.browser.mjs",
+    "test:ui:sidebar": "node tests/sidebar-layout.browser.mjs",
     "test:backups:browser": "node tests/backups.browser.mjs",
     "test:updates": "node --no-warnings tests/updates.integration.mjs",
     "test:updates:cli": "node tests/update-cli.integration.mjs",
     "test:records:scroll": "node tests/record-scroll.browser.mjs",
     "test:records:window": "node tests/record-window.browser.mjs",
+    "test:records:navigation": "node tests/record-navigation.browser.mjs",
     "test:records:summaries": "node tests/record-summaries.browser.mjs",
     "test:records:import": "node tests/import-records.browser.mjs",
     "test:records:import-menu": "node tests/module-import-menu.browser.mjs",
