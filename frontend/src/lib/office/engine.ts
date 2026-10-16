@@ -117,9 +117,9 @@ export class OfficeEngine {
     window.dispatchEvent(new Event('resize'));
     return this.cachedSnapshot={blob:preparedBlob,generation:0};
   }
-  async snapshot(extension: string): Promise<OfficeSnapshot> {
+  async snapshot(extension: string, acceptInput = true): Promise<OfficeSnapshot> {
     const format = officeFormats[extension];
-    const message = await this.request('export', { extension, filter: format.filter, reuseGeneration:this.cachedSnapshot?.generation });
+    const message = await this.request('export', { extension, filter: format.filter, reuseGeneration:this.cachedSnapshot?.generation, acceptInput });
     if(message.reused && this.cachedSnapshot && this.cachedSnapshot.generation===Number(message.generation))return this.cachedSnapshot;
     const bytes = window.FS.readFile(`/tmp/mx-office/export${extension}`);
     // FS.readFile and Blob already copy their inputs; no extra full-file copy.

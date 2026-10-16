@@ -7,6 +7,18 @@ deployment maintainer's local date.
 
 Changes after the first 1.0 candidate will be recorded here.
 
+## [1.0.0-rc.3] - 2026-10-16
+
+### Fixed
+
+- Make Office background preparation respect scrolling, pointer drags, held
+  keys, text composition and renewed interaction after queued local work. Space
+  repeated whole-document exports according to their measured cost.
+- Keep automatic saves from accepting unfinished spreadsheet cells or resetting
+  the native input selection. Explicit Save still includes unfinished input;
+  retain a manual save requested during an automatic upload. Keep background
+  feedback compact while distinguishing local recovery from confirmed MX saves.
+
 ## [1.0.0-rc.2] - 2026-10-16
 
 ### Fixed

@@ -1,5 +1,84 @@
 # MX validation
 
+## 1.0.0-rc.3 Office background preparation — 2026-10-16
+
+- Frontend unit tests: **333 passed across 54 files**. Production build and
+  bundled Office asset verification pass; Svelte reports zero errors/warnings.
+  Existing Vite chunk-size/plugin-timing advisories remain. The Office behavior
+  changes are frontend/worker-adapter changes; the native version is rebuilt
+  to keep the signed candidate identity consistent. Fresh Rust tests:
+  **176 passed, two opt-in tests ignored**. Logs/builds are under
+  `/mnt/ST1000LM049/releases/1.0.0-rc.3`.
+- The preserved optimized RC.2 executable and actual optimized RC.3 candidate
+  pass `test:updates`: automatic maintenance-window activation, verified final
+  snapshot, interrupted transfer/restaging, signed offline upload, eight
+  competing installs, failed-readiness rollback and worker-termination recovery.
+  Record values/history and fixture-backed Drive bytes survive. Update UIs
+  pass Chromium, Brave, Firefox and Linux WebKit. Evidence:
+  `/mnt/ST1000LM049/tests/mx-updates-0eqK2K/update-results.json`.
+- Native CLI diagnostics pass without deployment side effects:
+  `/mnt/ST1000LM049/tests/mx-update-cli-77mFSR/cli-results.json`. The actual
+  distributable passes the unchanged Ed25519 publisher key, all 28 signed
+  runtime sizes/hashes, matching native/frontend identity, bundled Office
+  notices and deployment-secret exclusion. The initial-install staging tree
+  matches those same signed runtime bytes and includes operator guides and
+  templates. Reports:
+  `/mnt/ST1000LM049/releases/1.0.0-rc.3/package-verification.json` and
+  `initial-install-verification.json` in the same directory.
+- Chromium, Brave and Firefox pass `test:office:idle` with the real bundled
+  XLSX engine. Tests verify unfinished cell text survives an idle pause,
+  scrolling/held-pointer/composition events defer preparation, genuine idle
+  saves actual workbook contents, and an explicit save during a held automatic
+  upload includes the newer unfinished cell. Native selection, browser focus
+  and formulas remain intact. Evidence:
+  `/mnt/ST1000LM049/tests/mx-eight-user-maXm7D/office-idle-results.json`.
+  The final bundle repeats the Chromium pass after bounding the cost-based
+  cooldown to one minute; its timing boundaries also have unit coverage:
+  `/mnt/ST1000LM049/tests/mx-eight-user-WclBxU/office-idle-results.json`.
+  All three engines repeat the complete pass with the final optimized RC.3
+  executable/production bundle:
+  `/mnt/ST1000LM049/tests/mx-eight-user-b6GsN8/office-idle-results.json`.
+- Chromium and Firefox repeat `test:office:durable`: one export per changed
+  snapshot, no export for unchanged contents, tab closure during upload,
+  uncertain acknowledgement reconciliation, offline automatic recovery and
+  visible local-storage failure before upload. All five acknowledged revisions
+  contain the expected edits. Evidence:
+  `/mnt/ST1000LM049/tests/mx-eight-user-sBvbBG/office-durable-results.json`.
+  Both engines repeat the pass with the final optimized RC.3 executable and
+  production bundle in
+  `/mnt/ST1000LM049/tests/mx-eight-user-jTGTkL/office-durable-results.json`.
+- Tests wait for the native target-cell selection before typing; they do not
+  qualify rapid native navigation/input latency. Composition deferral uses
+  synthetic browser events, not an OS input-method qualification. Native export
+  remains synchronous and cannot be safely preempted once started. No claim of
+  pause-free large-workbook exports, Safari support or physical power-cut
+  durability follows from these results.
+- Builds and disposable MX/SQLite/N1-contract fixtures stay on the external
+  drive. Browser audio is disconnected. No live N1, business data, MCH deployment
+  or running encoding-test service is changed. Published RC.2 assets remain
+  unchanged; these fixes use the separately versioned RC.3 signed release.
+
+Repeat the RC.2 → RC.3 updater qualification with explicit preserved/candidate
+versions. The default fixture remains RC.1 → RC.2 for historical repeatability:
+
+```bash
+cd frontend
+env TMPDIR=/mnt/ST1000LM049/build/tmp \
+  CARGO_TARGET_DIR=/mnt/ST1000LM049/build/target \
+  MX_TEST_ARTIFACTS=/mnt/ST1000LM049/tests \
+  MX_TEST_BOOTSTRAP_VERSION=1.0.0-rc.2 \
+  MX_TEST_BINARY=/mnt/ST1000LM049/releases/1.0.0-rc.2/staging/mx-1.0.0-rc.2-x86_64-unknown-linux-gnu/litiaina-mx \
+  MX_TEST_STATIC_SITE_PATH=/mnt/ST1000LM049/releases/1.0.0-rc.2/staging/mx-1.0.0-rc.2-x86_64-unknown-linux-gnu/frontend/dist \
+  MX_TEST_CANDIDATE_VERSION=1.0.0-rc.3 \
+  MX_TEST_CANDIDATE_BINARY=/mnt/ST1000LM049/releases/1.0.0-rc.3/staging/update-input/litiaina-mx \
+  MX_TEST_CANDIDATE_STATIC_SITE_PATH=/mnt/ST1000LM049/releases/1.0.0-rc.3/frontend-dist \
+  npm run test:updates
+```
+
+The harness checks native version output, rejects equal/older candidate
+versions and creates only disposable managed services/data. Its deliberately
+broken subsequent candidate is test-only, not a distributable release.
+
 ## 1.0.0-rc.2 navigation, records and blank setup — 2026-10-16
 
 - Optimized native build and matching production frontend succeed. **176 Rust
@@ -137,7 +216,7 @@ actual optimized RC.2 candidate. Adjust the paths on another machine; do not
 use RC.2 as its RC.1 bootstrap. If the candidate variables are omitted, the
 suite compiles a development-profile RC.2 fixture into the supplied Cargo cache;
 rebuild the repository before distributing an executable from that cache.
-For `npm run test:updates:cli`, point `MX_TEST_BINARY` at the current RC.2 build.
+For `npm run test:updates:cli`, point `MX_TEST_BINARY` at the candidate being tested.
 See [deployment setup, trust and recovery](docs/updates.md) before enabling
 updates on a real installation.
 

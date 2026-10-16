@@ -5,13 +5,13 @@
 This guide is for the deployment administrator. Module operators should start
 with [Getting started](getting-started.md).
 
-Current candidate: **1.0.0-rc.2**. The 1.0 line intentionally resets the earlier 4.x
+Current candidate: **1.0.0-rc.3**. The 1.0 line intentionally resets the earlier 4.x
 development numbering; it is not the final stable 1.0.0. Existing installations
 must follow the [one-time transition instructions](releases/1.0.0-rc.1.md#upgrading-a-4x-development-installation),
 without deleting their database or N1 objects.
 
-Managed RC.1 installations can upgrade through **Administration → Updates**;
-see the [RC.2 notes](releases/1.0.0-rc.2.md). Do not reset the database or replace
+Managed RC.1/RC.2 installations can upgrade through **Administration → Updates**;
+see the [RC.3 notes](releases/1.0.0-rc.3.md). Do not reset the database or replace
 deployment credentials during this upgrade.
 
 ## Deployment package and dependencies

@@ -20,6 +20,11 @@ assert.ok(process.env.MX_TEST_BINARY?.startsWith('/mnt/ST1000LM049/'));
 assert.ok(process.env.MX_TEST_STATIC_SITE_PATH?.startsWith('/mnt/ST1000LM049/'));
 assert.ok(!process.env.MX_TEST_N1_URL,'Never use live N1 for an updater fault test');
 const exec=promisify(execFile),repository=fileURLToPath(new URL('../../',import.meta.url));
+const bootstrapVersion=process.env.MX_TEST_BOOTSTRAP_VERSION||'1.0.0-rc.1';
+const candidateVersion=process.env.MX_TEST_CANDIDATE_VERSION||'1.0.0-rc.2';
+for(const version of [bootstrapVersion,candidateVersion])assert.match(version,/^1\.0\.0-rc\.[1-9]\d*$/,'Explicit numbered RC fixture versions are required');
+assert.ok(Number(candidateVersion.split('.').at(-1))>Number(bootstrapVersion.split('.').at(-1)),'The candidate must be newer than the preserved bootstrap');
+const brokenVersion=candidateVersion.replace(/\d+$/,value=>String(Number(value)+1));
 const directory=await mkdtemp(join(process.env.MX_TEST_ARTIFACTS,'mx-updates-'));
 const deployment=join(directory,'deployment'),root=join(directory,'updates'),configPath=join(directory,'mx-updates.json');
 const id=randomUUID().slice(0,8),unit=`mx-update-test-${id}`,workerUnit=`${unit}-worker`,pathUnit=`${unit}-worker.path`;
@@ -48,7 +53,7 @@ async function verifyBusiness(){for(const record of createdRecords){const curren
 
 try{
  console.log(`Updater artifacts: ${directory}`);
- assert.equal((await exec(process.env.MX_TEST_BINARY,['--version'])).stdout.trim(),'litiaina-mx 1.0.0-rc.1','This RC.1 → RC.2 regression needs the preserved RC.1 bootstrap; supply RC.2 separately in MX_TEST_CANDIDATE_BINARY.');
+ assert.equal((await exec(process.env.MX_TEST_BINARY,['--version'])).stdout.trim(),`litiaina-mx ${bootstrapVersion}`,'Supply the preserved bootstrap matching MX_TEST_BOOTSTRAP_VERSION, and the newer candidate separately in MX_TEST_CANDIDATE_BINARY.');
  await Promise.all([mkdir(deployment),mkdir(join(root,'slots/bootstrap/frontend/dist'),{recursive:true}),mkdir(join(directory,'worker'))]);
  binary=join(directory,'worker/litiaina-mx');await safeCopy(process.env.MX_TEST_BINARY,binary);await exec('/usr/bin/strip',['--strip-debug',binary]);await safeCopy(binary,join(root,'slots/bootstrap/litiaina-mx'));
  await cp(process.env.MX_TEST_STATIC_SITE_PATH,join(root,'slots/bootstrap/frontend/dist'),{recursive:true,force:true});await copyFile(join(repository,'LICENSE'),join(root,'slots/bootstrap/LICENSE'));
@@ -94,32 +99,32 @@ try{
  if(candidateBinary){
    assert.ok(candidateBinary.startsWith('/mnt/ST1000LM049/'));
    assert.ok(process.env.MX_TEST_CANDIDATE_STATIC_SITE_PATH?.startsWith('/mnt/ST1000LM049/'));
-   assert.equal((await exec(candidateBinary,['--version'])).stdout.trim(),'litiaina-mx 1.0.0-rc.2');
+   assert.equal((await exec(candidateBinary,['--version'])).stdout.trim(),`litiaina-mx ${candidateVersion}`);
  }else{
  const candidate=join(directory,'candidate-source');await mkdir(candidate);await cp(join(repository,'src'),join(candidate,'src'),{recursive:true});
- const toml=(await readFile(join(repository,'Cargo.toml'),'utf8')).replace(/(^version\s*=\s*")[^"]+/m,(_all,prefix)=>`${prefix}1.0.0-rc.2`);
- const lock=(await readFile(join(repository,'Cargo.lock'),'utf8')).replace(/(name = "litiaina-mx"\nversion = ")[^"]+/,(_all,prefix)=>`${prefix}1.0.0-rc.2`);await writeFile(join(candidate,'Cargo.toml'),toml);await writeFile(join(candidate,'Cargo.lock'),lock);
+ const toml=(await readFile(join(repository,'Cargo.toml'),'utf8')).replace(/(^version\s*=\s*")[^"]+/m,(_all,prefix)=>`${prefix}${candidateVersion}`);
+ const lock=(await readFile(join(repository,'Cargo.lock'),'utf8')).replace(/(name = "litiaina-mx"\nversion = ")[^"]+/,(_all,prefix)=>`${prefix}${candidateVersion}`);await writeFile(join(candidate,'Cargo.toml'),toml);await writeFile(join(candidate,'Cargo.lock'),lock);
  const buildLog=await import('node:fs/promises').then(fs=>fs.open(join(directory,'candidate-build.log'),'w'));
  const candidateTarget=process.env.CARGO_TARGET_DIR||'/mnt/ST1000LM049/build/target';
  await new Promise((resolve,reject)=>{const child=spawn('/home/altear/.cargo/bin/cargo',['build','--offline','--locked','--manifest-path',join(candidate,'Cargo.toml')],{env:{...process.env,CARGO_TARGET_DIR:candidateTarget,CARGO_BUILD_JOBS:'3'},stdio:['ignore',buildLog.fd,buildLog.fd]});child.on('error',reject);child.on('exit',code=>code===0?resolve():reject(Error(`Candidate compilation failed: ${code}; see ${directory}/candidate-build.log`)));});await buildLog.close();
  candidateBinary=join(candidateTarget,'debug/litiaina-mx');
  }
- const release=join(directory,'release-rc2');await mkdir(release);await safeCopy(candidateBinary,join(release,'litiaina-mx'));await exec('/usr/bin/strip',['--strip-debug',join(release,'litiaina-mx')]);
+ const release=join(directory,`release-${candidateVersion}`);await mkdir(release);await safeCopy(candidateBinary,join(release,'litiaina-mx'));await exec('/usr/bin/strip',['--strip-debug',join(release,'litiaina-mx')]);
  if(process.env.MX_TEST_CANDIDATE_STATIC_SITE_PATH){await mkdir(join(release,'frontend'));await cp(process.env.MX_TEST_CANDIDATE_STATIC_SITE_PATH,join(release,'frontend/dist'),{recursive:true});}
  else{await cp(join(root,'slots/bootstrap/frontend'),join(release,'frontend'),{recursive:true});}
  await copyFile(join(repository,'LICENSE'),join(release,'LICENSE'));
- const good=await bundle(release,'1.0.0-rc.2');releases=[offer('1.0.0-rc.2',good)];
- failFeed=true;await done(await queued('check'), 'failed');failFeed=false;assert.equal((await call('/mx/v1/system/update-health', 'GET',undefined,null)).body.version,'1.0.0-rc.1');
- const metadataResource=resources.get('/1.0.0-rc.2.json');const originalMetadata=metadataResource.bytes;metadataResource.bytes=Buffer.from(JSON.stringify({...good.metadata,signature:Buffer.alloc(64).toString('base64')}));await done(await queued('check'),'failed');metadataResource.bytes=originalMetadata;
- await done(await queued('check'));assert.equal((await state()).available.version,'1.0.0-rc.2');passed('release outage and invalid signatures leave the running binary/database unchanged');
- interruptDownload=true;await done(await queued('stage','1.0.0-rc.2'),'failed');interruptDownload=false;assert.equal(await readlink(join(root,'current')),'slots/bootstrap');
- await done(await queued('stage','1.0.0-rc.2'));await idle();assert.equal((await state()).staged.version,'1.0.0-rc.2');assert.equal(await savedRecords(),8);passed('interrupted package download is recoverable; restaging verifies every signed file without restarting MX');
+ const good=await bundle(release,candidateVersion);releases=[offer(candidateVersion,good)];
+ failFeed=true;await done(await queued('check'), 'failed');failFeed=false;assert.equal((await call('/mx/v1/system/update-health', 'GET',undefined,null)).body.version,bootstrapVersion);
+ const metadataResource=resources.get(`/${candidateVersion}.json`);const originalMetadata=metadataResource.bytes;metadataResource.bytes=Buffer.from(JSON.stringify({...good.metadata,signature:Buffer.alloc(64).toString('base64')}));await done(await queued('check'),'failed');metadataResource.bytes=originalMetadata;
+ await done(await queued('check'));assert.equal((await state()).available.version,candidateVersion);passed('release outage and invalid signatures leave the running binary/database unchanged');
+ interruptDownload=true;await done(await queued('stage',candidateVersion),'failed');interruptDownload=false;assert.equal(await readlink(join(root,'current')),'slots/bootstrap');
+ await done(await queued('stage',candidateVersion));await idle();assert.equal((await state()).staged.version,candidateVersion);assert.equal(await savedRecords(),8);passed('interrupted package download is recoverable; restaging verifies every signed file without restarting MX');
 
  const localHour=(new Date().getUTCHours()+8)%24;const outside={mode:'automatic',start_hour:(localHour+3)%24,end_hour:(localHour+4)%24,utc_offset_minutes:480};
  await call('/mx/v1/admin/updates/policy','PUT',outside);await ctl('start',`${workerUnit}.service`);await idle();assert.equal((await api.get('/mx/v1/system/update-health')).status(),200);assert.equal(await readlink(join(root,'current')),'slots/bootstrap');passed('automatic installation remains deferred outside a configurable maintenance window');
  const inside={...outside,start_hour:(localHour+23)%24,end_hour:(localHour+2)%24};await call('/mx/v1/admin/updates/policy','PUT',inside);const beforePid=await ctl('show','--value','--property=MainPID',`${unit}.service`);
  await ctl('start',`${workerUnit}.service`);
- let sawMaintenance=false;await until(async()=>{try{const response=await api.get('/mx/v1/modules',{headers:{Authorization:`Bearer ${user.access_token}`},timeout:1000});if(response.status()===503)sawMaintenance=true;const health=await call('/mx/v1/system/update-health','GET',undefined,null);return health.body.version==='1.0.0-rc.2'&&!health.body.maintenance;}catch{return false;}},'healthy automatic activation');await idle();
+ let sawMaintenance=false;await until(async()=>{try{const response=await api.get('/mx/v1/modules',{headers:{Authorization:`Bearer ${user.access_token}`},timeout:1000});if(response.status()===503)sawMaintenance=true;const health=await call('/mx/v1/system/update-health','GET',undefined,null);return health.body.version===candidateVersion&&!health.body.maintenance;}catch{return false;}},'healthy automatic activation');await idle();
  assert.equal((await state()).operation.phase,'completed');assert.notEqual(await ctl('show','--value','--property=MainPID',`${unit}.service`),beforePid);assert.equal(await savedRecords(),8);assert.ok(sawMaintenance,'business routes reject requests during activation');
  const goodJournal=await json(join(root,'activation.json'));assert.equal(goodJournal.phase,'committed');const snapshot=join(root,'backups',goodJournal.snapshot);const backupDb=new DatabaseSync(snapshot,{readOnly:true});assert.equal(backupDb.prepare('PRAGMA integrity_check').get().integrity_check,'ok');backupDb.close();await verifyBusiness();passed('automatic real-version activation restarts a separate systemd service, gates writes, verifies the final backup and preserves record contents/history and N1-backed Drive bytes');
  await addRecord(moduleUid,fieldUid,'Acknowledged after the successful update');assert.equal(await savedRecords(),9);await ctl('start',`${workerUnit}.service`);assert.equal(await savedRecords(),9);passed('a completed activation journal never rewinds later acknowledged user writes');
@@ -127,22 +132,22 @@ try{
 
  // The signed bad fixture changes SQLite at startup, then deliberately runs
  // the wrong actual MX version. It must fail readiness and restore the backup.
- const badSource=join(directory,'release-rc3');await mkdir(badSource);await cp(join(release,'frontend'),join(badSource,'frontend'),{recursive:true});await copyFile(join(repository,'LICENSE'),join(badSource,'LICENSE'));
+ const badSource=join(directory,`release-${brokenVersion}`);await mkdir(badSource);await cp(join(release,'frontend'),join(badSource,'frontend'),{recursive:true});await copyFile(join(repository,'LICENSE'),join(badSource,'LICENSE'));
  const migration=`import{DatabaseSync}from'node:sqlite';const db=new DatabaseSync('test.db');db.exec('CREATE TABLE IF NOT EXISTS candidate_migration_probe(value TEXT); INSERT INTO candidate_migration_probe VALUES (1)');db.close();`;
- const wrapper=`#!/bin/sh\nif [ "$1" = "--version" ] || [ "$1" = "-V" ]; then printf 'litiaina-mx 1.0.0-rc.3\\n'; exit 0; fi\n'${process.execPath}' --no-warnings --input-type=module -e '${migration.replaceAll("'","'\\''")}'\nexec '${join(release,'litiaina-mx')}'\n`;
- await writeFile(join(badSource,'litiaina-mx'),wrapper,{mode:0o755});const bad=await bundle(badSource,'1.0.0-rc.3');
- const uploadUid=randomUUID();const upload=await api.post(`/mx/v1/admin/updates/package?operation_uid=${uploadUid}`,{headers:{Authorization:`Bearer ${user.access_token}`,'Content-Type':'application/octet-stream'},data:await readFile(bad.path),timeout:120000});assert.equal(upload.status(),202,await upload.text());await done(uploadUid);await idle();assert.equal((await state()).staged.version,'1.0.0-rc.3');passed('signed offline upload stages independently of an external release feed');
- const concurrent=await Promise.all(Array.from({length:8},async()=>{const uid=randomUUID();const result=await call('/mx/v1/admin/updates/install','POST',{operation_uid:uid,version:'1.0.0-rc.3'},undefined,[202,409,503]);return {uid,status:result.status};}));assert.equal(concurrent.filter(r=>r.status===202).length,1);const winner=concurrent.find(r=>r.status===202);await done(winner.uid,'rolled_back');await idle();
- assert.equal((await call('/mx/v1/system/update-health','GET',undefined,null)).body.version,'1.0.0-rc.2');assert.equal(await savedRecords(),9);let db=new DatabaseSync(join(deployment,'test.db'),{readOnly:true});assert.equal(db.prepare("SELECT COUNT(*) AS count FROM sqlite_master WHERE name='candidate_migration_probe'").get().count,0);db.close();await verifyBusiness();passed('eight simultaneous install requests have one winner; failed post-migration readiness restores both prior binary/frontend and the latest pre-update SQLite snapshot');
+ const wrapper=`#!/bin/sh\nif [ "$1" = "--version" ] || [ "$1" = "-V" ]; then printf 'litiaina-mx ${brokenVersion}\\n'; exit 0; fi\n'${process.execPath}' --no-warnings --input-type=module -e '${migration.replaceAll("'","'\\''")}'\nexec '${join(release,'litiaina-mx')}'\n`;
+ await writeFile(join(badSource,'litiaina-mx'),wrapper,{mode:0o755});const bad=await bundle(badSource,brokenVersion);
+ const uploadUid=randomUUID();const upload=await api.post(`/mx/v1/admin/updates/package?operation_uid=${uploadUid}`,{headers:{Authorization:`Bearer ${user.access_token}`,'Content-Type':'application/octet-stream'},data:await readFile(bad.path),timeout:120000});assert.equal(upload.status(),202,await upload.text());await done(uploadUid);await idle();assert.equal((await state()).staged.version,brokenVersion);passed('signed offline upload stages independently of an external release feed');
+ const concurrent=await Promise.all(Array.from({length:8},async()=>{const uid=randomUUID();const result=await call('/mx/v1/admin/updates/install','POST',{operation_uid:uid,version:brokenVersion},undefined,[202,409,503]);return {uid,status:result.status};}));assert.equal(concurrent.filter(r=>r.status===202).length,1);const winner=concurrent.find(r=>r.status===202);await done(winner.uid,'rolled_back');await idle();
+ assert.equal((await call('/mx/v1/system/update-health','GET',undefined,null)).body.version,candidateVersion);assert.equal(await savedRecords(),9);let db=new DatabaseSync(join(deployment,'test.db'),{readOnly:true});assert.equal(db.prepare("SELECT COUNT(*) AS count FROM sqlite_master WHERE name='candidate_migration_probe'").get().count,0);db.close();await verifyBusiness();passed('eight simultaneous install requests have one winner; failed post-migration readiness restores both prior binary/frontend and the latest pre-update SQLite snapshot');
  await addRecord(moduleUid,fieldUid,'Preserved through interrupted rollback');
- await ctl('stop',pathUnit);const crashUid=await queued('install','1.0.0-rc.3');await ctl('start','--no-block',`${workerUnit}.service`);
+ await ctl('stop',pathUnit);const crashUid=await queued('install',brokenVersion);await ctl('start','--no-block',`${workerUnit}.service`);
  await until(async()=>{const journal=await json(join(root,'activation.json'));if(journal.uid!==crashUid||journal.phase!=='validating')return false;const probe=new DatabaseSync(join(deployment,'test.db'),{readOnly:true});try{return probe.prepare("SELECT COUNT(*) AS count FROM sqlite_master WHERE name='candidate_migration_probe'").get().count===1;}finally{probe.close();}},'candidate migration before worker crash');
  await ctl('kill','--signal=SIGKILL',`${workerUnit}.service`);await until(async()=>['failed','inactive'].includes(await ctl('show','--value','--property=ActiveState',`${workerUnit}.service`)),'worker exit after SIGKILL');
  await until(async()=>{const response=await api.get('/mx/v1/system/update-health',{timeout:1000});return response.ok()&&(await response.json()).maintenance;},'gated candidate listener after worker interruption');
  await call(`/mx/v1/modules/${moduleUid}/records`,'POST',{values:{[fieldUid]:'MUST NOT COMMIT'},operation_uid:randomUUID()},undefined,[503]);
  await ctl('reset-failed',`${workerUnit}.service`);await ctl('start',`${workerUnit}.service`);await done(crashUid,'rolled_back');await idle();assert.equal(await savedRecords(),10);db=new DatabaseSync(join(deployment,'test.db'),{readOnly:true});assert.equal(db.prepare("SELECT COUNT(*) AS count FROM sqlite_master WHERE name='candidate_migration_probe'").get().count,0);db.close();await verifyBusiness();await ctl('start',pathUnit);passed('SIGKILL during activation retains maintenance; an independent worker recovers exact record contents/history and N1-backed Drive references before reopening writes');
 
- releases=[offer('1.0.0-rc.3',bad)];await call('/mx/v1/admin/updates/policy','PUT',inside);await done(await queued('check'));await idle();assert.equal((await state()).operation.action,'check');assert.equal((await state()).operation.phase,'completed');assert.equal((await call('/mx/v1/system/update-health','GET',undefined,null)).body.version,'1.0.0-rc.2');await call('/mx/v1/admin/updates/policy','PUT',{...inside,mode:'manual'});passed('a failed candidate is not retried automatically; manual policy remains selectable');
+ releases=[offer(brokenVersion,bad)];await call('/mx/v1/admin/updates/policy','PUT',inside);await done(await queued('check'));await idle();assert.equal((await state()).operation.action,'check');assert.equal((await state()).operation.phase,'completed');assert.equal((await call('/mx/v1/system/update-health','GET',undefined,null)).body.version,candidateVersion);await call('/mx/v1/admin/updates/policy','PUT',{...inside,mode:'manual'});passed('a failed candidate is not retried automatically; manual policy remains selectable');
 
  for(const name of (process.env.MX_TEST_BROWSERS||'chromium,brave,firefox,webkit').split(',')){
    const type=name==='brave'?chromium:({chromium,firefox,webkit})[name];const executablePath=name==='brave'?'/usr/bin/brave-browser':name==='chromium'?'/home/altear/.cache/ms-playwright/chromium-1228/chrome-linux64/chrome':name==='firefox'?'/home/altear/.cache/ms-playwright/firefox-1543/firefox/firefox':'/home/altear/.cache/mx-network-audit-2026-10-08.fnCQvP/webkit-launch.sh';
@@ -156,7 +161,7 @@ try{
    for(const [theme,width] of [['light',1280],['dark',1024],['dark',390],['light',320]]){await page.setViewportSize({width,height:900});await page.evaluate(theme=>document.documentElement.dataset.theme=theme,theme);await page.waitForTimeout(100);assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'no page overflow');await page.screenshot({path:join(directory,`${name}-updates-${theme}-${width}.png`),fullPage:true});}
    assert.deepEqual(errors,[]);passed(`${name}: operator policy, local validation, release/rollback history and responsive light/dark UI`);await browser.close();
  }
- assert.deepEqual(n1.failures,[]);await writeFile(join(directory,'update-results.json'),JSON.stringify({passed:true,directory,results},null,2));
+ assert.deepEqual(n1.failures,[]);await writeFile(join(directory,'update-results.json'),JSON.stringify({passed:true,directory,bootstrap_version:bootstrapVersion,candidate_version:candidateVersion,results},null,2));
 }catch(error){let shot=0;for(const browser of browsers)for(const context of browser.contexts())for(const page of context.pages())if(!page.isClosed())await page.screenshot({path:join(directory,`updates-failed-${shot++}.png`),fullPage:true}).catch(()=>{});await writeFile(join(directory,'update-results.json'),JSON.stringify({passed:false,directory,results,error:error.stack},null,2));throw error;}
 finally{
  for(const browser of browsers)await browser.close().catch(()=>{});await api?.dispose();

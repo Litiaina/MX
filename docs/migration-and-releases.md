@@ -2,14 +2,24 @@
 
 [Documentation index](README.md) · [Project overview](../README.md)
 
-## Current line: MX 1.0.0-rc.2
+## Current line: MX 1.0.0-rc.3
+
+RC.3 defers Office background preparation during active input, scrolling and
+dragging, preserves unfinished spreadsheet cells until explicit Save or input
+acceptance, and remembers an explicit save requested during an automatic upload.
+It uses the existing publisher key and activation/backup/rollback protocol; no
+new database schema or N1 format migration is introduced. See the
+[RC.3 upgrade instructions and remaining limits](releases/1.0.0-rc.3.md).
+Published RC.1/RC.2 remain unchanged. RC.3 is also a candidate, not stable 1.0.0.
+
+### Earlier candidates
 
 RC.2 corrects sidebar alignment/clipping at different interface scales, defaults
 record browsing to Pages with an optional bounded continuous view, and starts
 new installations without a starter module. Existing modules/data remain. It uses
 the same signed-update trust key and managed activation/backup/rollback protocol
 as RC.1; no new schema or N1 format migration is introduced. See the
-[RC.2 upgrade instructions](releases/1.0.0-rc.2.md). Both remain candidates, not
+[RC.2 upgrade instructions](releases/1.0.0-rc.2.md). These remain candidates, not
 stable releases.
 
 On **2026-10-15**, MX starts a new official release-candidate line at

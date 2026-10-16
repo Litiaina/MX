@@ -50,6 +50,30 @@ copy/cut/paste, uploads and navigation against disposable MX/SQLite and an N1
 fixture. Both disconnect browser processes from workstation audio. Browser
 executable paths in the scripts may need adjustment on another machine.
 
+### Office preparation and recovery
+
+Run `npm --prefix frontend run test:office:idle` against the production-built
+frontend and a matching native executable. Use the same explicit external
+artifact/build environment above. The suite exercises the real bundled Office
+engine in Chromium, Brave and Firefox: unfinished cell input, scrolling, held
+pointer gestures, composition-event deferral, idle autosave and an explicit save
+requested while an automatic upload is pending. It verifies the actual saved
+workbook contents, selection and browser focus, not just a successful response.
+Pair it with `test:office:durable` for interrupted uploads, recovery, uncertain
+acknowledgements and device-storage failures. Both use disposable SQLite and an
+N1 HTTP contract fixture; they refuse a live N1 test URL and disconnect audio.
+Synthetic composition events do not qualify real OS input methods. These tests
+do not certify Safari, physical power cuts or pause-free whole-document exports.
+
+### Release-update qualification
+
+`test:updates` defaults to the preserved RC.1 → RC.2 fixture. For a newer release,
+set `MX_TEST_BOOTSTRAP_VERSION` and `MX_TEST_CANDIDATE_VERSION` explicitly along
+with the corresponding native/frontend paths; the harness verifies native
+version output before activation. Do not point fault tests at an existing
+deployment. See [the candidate test recipe](../TESTING.md) for the RC.2 → RC.3
+example and acceptance limits.
+
 Format and check:
 
 ```bash

@@ -228,10 +228,26 @@ checkpoint; the user does not need to click a second time.
 If local recovery storage fails, show an actionable error and stop before upload.
 The user can download a copy or explicitly choose **Save directly to MX** without
 device recovery. Never label that path locally protected. Saving remains whole-
-document work: large exports can still take time. Idle autosave starts after about
-8 seconds, adapting up to 60 seconds after costly exports to avoid repeated heavy
-work while typing. This is not per-keystroke journaling: changes since the last
-completed checkpoint can be lost on a crash.
+document work: large exports can still take time. Background preparation waits
+for at least 15 seconds without typing, scrolling, pointer dragging, held keys
+or text composition. Opening Document options also postpones it. Preparations
+are spaced at least 30 seconds apart, with a cost-based cooldown up to one
+minute after expensive exports. Activity is rechecked after waiting for local
+work; a queued automatic operation does not override renewed interaction.
+
+Automatic preparation never accepts an unfinished Calc cell or reselects its
+range. Finish the cell with Enter/Tab (or select another cell), or use Ctrl/Cmd+S
+to explicitly include its current input. Automatic feedback stays compact as
+**Autosaving…**; detailed preparation/upload/confirmation remains in the status
+tooltip and Document options. It is not called saved to MX until the server
+acknowledges the new version. Explicit Save during an automatic upload is
+remembered and runs afterward to include newer edits.
+
+This is not per-keystroke journaling: unfinished cell input and changes since
+the last completed checkpoint can be lost on a crash. Once native export has
+begun, it cannot be safely preempted; a large document can still briefly delay
+input even though preparation starts only during an idle pause. No save-speed
+or zero-loss power-cut guarantee is implied.
 
 Document download and engine startup overlap. Offline asset preparation begins
 after opening, not in competition with initial loading. Public engine resources

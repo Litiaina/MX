@@ -1,7 +1,7 @@
 {
   "name": "litiaina-mx-frontend",
   "private": true,
-  "version": "1.0.0-rc.2",
+  "version": "1.0.0-rc.3",
   "type": "module",
   "engines": {
     "node": ">=24.0.0"
@@ -45,6 +45,7 @@
     "test:office:loading": "node tests/office-loading.browser.mjs",
     "test:office:recovery": "node tests/office-recovery.browser.mjs",
     "test:office:durable": "node tests/office-durable.browser.mjs",
+    "test:office:idle": "node tests/office-idle.browser.mjs",
     "test:office:prompt": "node tests/office-prompt-layout.browser.mjs",
     "test:office:previews": "node tests/office-previews.integration.mjs",
     "preview": "vite preview"

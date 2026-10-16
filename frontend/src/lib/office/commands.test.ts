@@ -93,6 +93,12 @@ describe('Office native file command boundary', () => {
     expect(operations).toEqual(['activate-frame','restore-selection','activate-frame']);
     expect(messages.at(-1)).toMatchObject({cmd:'focused',id:77});
   });
+  it('never accepts Calc input or reselects cells for background preparation', async () => {
+    const {open, request, messages, operations}=await worker();open();operations.length=0;
+    request({cmd:'export',id:3,extension:'.xlsx',filter:'Calc MS Excel 2007 XML',acceptInput:false});
+    expect(operations).toEqual(['export']);
+    expect(messages.at(-1)).toMatchObject({cmd:'exported',generation:0});
+  });
   it('initializes the native Calc input selection before announcing the document as opened', async () => {
     const {open,messages,operations}=await worker();open();
     expect(operations).toEqual(['activate-frame','restore-selection']);

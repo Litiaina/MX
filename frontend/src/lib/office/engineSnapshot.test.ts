@@ -22,4 +22,11 @@ describe('Office snapshot preparation',()=>{
     vi.spyOn(engine as unknown as {request:(cmd:string,extra:Record<string,unknown>)=>Promise<Record<string,unknown>>},'request').mockRejectedValueOnce(new Error('export failed'));
     await expect(engine.snapshot('.docx')).rejects.toThrow('export failed');expect(readFile).not.toHaveBeenCalled();
   });
+  it('marks automatic exports as non-accepting while explicit Save remains accepting',async()=>{
+    vi.stubGlobal('window',{FS:{readFile:()=>new Uint8Array([1]),unlink:vi.fn()}});
+    const engine=new OfficeEngine(()=>{},()=>{},()=>{},()=>{});
+    const request=vi.spyOn(engine as unknown as {request:(cmd:string,extra:Record<string,unknown>)=>Promise<Record<string,unknown>>},'request').mockResolvedValue({generation:1});
+    await engine.snapshot('.xlsx',false);expect(request.mock.calls[0][1].acceptInput).toBe(false);
+    await engine.snapshot('.xlsx');expect(request.mock.calls[1][1].acceptInput).toBe(true);
+  });
 });

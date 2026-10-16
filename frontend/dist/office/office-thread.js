@@ -90,7 +90,9 @@ Module.zetajs.then((zeta) => {
         // original URL. Only an acknowledged MX commit counts as a server save.
         // Save must include the cell currently being typed, even if the user
         // never pressed Enter before Ctrl+S or File > Save.
-        if (['.xls','.xlsx','.ods'].includes(data.extension)) {
+        // A background checkpoint must not finish a cell or reset its input
+        // handler/selection. Only an explicit Save/Download accepts that input.
+        if (data.acceptInput !== false && ['.xls','.xlsx','.ods'].includes(data.extension)) {
           const controller = model.getCurrentController();
           const selection = controller.getSelection();
           css.frame.DispatchHelper.create(context).executeDispatch(controller.getFrame(), '.uno:AcceptFormula', '', 0, [property('SynchronMode', true)]);

@@ -24,6 +24,7 @@
   import OfficeLoading from './OfficeLoading.svelte';
   import { openingDetail, type OfficeLoadingProgress } from '../office/loading';
   import { officeResources, checkOfficeInputSize } from '../office/resources';
+  import { officeIdleDelay } from '../office/idle';
 
   let canvas: HTMLCanvasElement;
   let viewport: HTMLDivElement; let viewportWidth = $state(innerWidth);
@@ -46,7 +47,10 @@
   let automaticSave = $state(true); let recoveryError = $state(''); let storedGeneration = $state(-1);
   let saveStage = $state<'idle'|'preparing'|'local'|'uploading'|'confirming'>('idle');
   let savePercent = $state(0); let saveSeconds = $state(0);
-  let lastExportMs = 0; let lastActivity = Date.now(); let saveStartedAt = 0;
+  let lastExportMs = 0; let lastActivity = Date.now(); let preparedAt = -Infinity; let saveStartedAt = 0;
+  let backgroundSaving = $state(false); let manualSaveQueued = false;
+  const heldPointers = new Set<number>(); const heldKeys = new Set<string>(); let composing = false;
+  let inputBaseGeneration = 0; let inputCommitSequence = -1;
   let engineBoot:Promise<void>|undefined;
   const editorUid=crypto.randomUUID();
   let activeDraftKey=''; let restoredDraftKey='';
@@ -74,20 +78,22 @@
   const dirty = $derived(uncommittedInput || generation !== acknowledged || !!pendingFile || !!pendingCopy);
   const presentation = $derived(officePresentation(extension));
   const readOnly = $derived(presentation || item?.permission === 'viewer' || item?.permission === 'guest');
+  const spreadsheet = $derived(['.xls','.xlsx','.ods'].includes(extension));
   const feedback = $derived(saveConfirmation || status);
-  const compactStatus = $derived(readOnly ? 'Read-only' : saving ? `${saveStage==='preparing'?'Preparing':saveStage==='local'?'Saving locally':saveStage==='confirming'?'Confirming':`Uploading ${savePercent}%`}${saveSeconds>=3?` · ${saveSeconds}s`:''}` : working ? 'Working…' : error ? 'Needs attention' : dirty ? storedGeneration===generation&&!uncommittedInput?'Saved locally':'Unsaved' : saveConfirmation ? 'Saved to MX' : ready ? 'Up to date' : 'Loading…');
+  const compactStatus = $derived(readOnly ? 'Read-only' : saving ? backgroundSaving ? 'Autosaving…' : `${saveStage==='preparing'?'Preparing':saveStage==='local'?'Saving locally':saveStage==='confirming'?'Confirming':`Uploading ${savePercent}%`}${saveSeconds>=3?` · ${saveSeconds}s`:''}` : working ? 'Working…' : error ? 'Needs attention' : dirty ? storedGeneration===generation&&!uncommittedInput?'Saved locally':'Unsaved' : saveConfirmation ? 'Saved to MX' : ready ? 'Up to date' : 'Loading…');
   const requestedUid = new URLSearchParams(location.hash.slice(1)).get('file');
   type OpenContext = { item: DriveItem; version_uid: string };
 
   onMount(() => {
     document.documentElement.dataset.theme = sessionStorage.getItem('mx_office_theme') || 'light';
     needsSignIn = !hasAuthTokens();
-    engine = new OfficeEngine((value) => { generation = Math.max(generation,value); saveConfirmation=''; if(!working)status='Changes not yet saved to MX';lastActivity=Date.now();scheduleDraft(); }, (message) => { error = message; ready = false; loadingFailed=true; status='Office stopped · your last prepared copy is still downloadable'; }, (copy) => { if(copy)offerCopy();else void save(); }, message=>{notice=message;void focusDocument();}, cell=>selectedCell=cell, progress=>{if(!disposed&&!ready&&!loadingFailed&&['engine','runtime'].includes(loading.phase))loading=progress;});
+    engine = new OfficeEngine((value) => { generation = Math.max(generation,value); if(inputCommitSequence===inputSequence&&value>inputBaseGeneration)uncommittedInput=false; saveConfirmation=''; if(!working)status='Changes not yet saved to MX';activity(); }, (message) => { error = message; ready = false; loadingFailed=true; status='Office stopped · your last prepared copy is still downloadable'; }, (copy) => { if(copy)offerCopy();else void save(); }, message=>{notice=message;void focusDocument();}, cell=>{selectedCell=cell;if(ready)activity();}, progress=>{if(!disposed&&!ready&&!loadingFailed&&['engine','runtime'].includes(loading.phase))loading=progress;});
     void initialize();
     const network = () => { void checkConnection(); };
     const expired = () => { requireSignIn(); error = 'Sign in again to save. Your open document and local draft are retained.'; };
     const unload = (event: BeforeUnloadEvent) => { if (dirty || working) { event.preventDefault(); event.returnValue = ''; } };
     const key = (event: KeyboardEvent) => {
+      if(ready){heldKeys.add(event.code||event.key);activity();}
       if (event.key === 'Escape' && optionsOpen) { optionsOpen=false; optionsButton?.focus(); return; }
       if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === 'o') {
         // Keep Qt's key-down/key-up stream intact. Its Open dispatch is guarded
@@ -97,11 +103,26 @@
         return;
       }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') { event.preventDefault(); if(event.shiftKey)offerCopy();else void save(); return; }
-      if (ready && !readOnly && event.target === canvas && ((!event.ctrlKey && !event.metaKey && !event.altKey && (event.key.length === 1 || ['Backspace','Delete'].includes(event.key))) || ((event.ctrlKey || event.metaKey) && ['v','x','z','y'].includes(event.key.toLowerCase())))) {
-        uncommittedInput = true; inputSequence++; saveConfirmation = ''; if(!working)status='Changes not yet saved to MX';
-        lastActivity=Date.now();scheduleDraft();
+      if(ready&&event.target===canvas&&!event.isComposing){
+        if(uncommittedInput&&['Enter','Tab'].includes(event.key))inputCommitSequence=inputSequence;
+        if(event.key==='Escape'){uncommittedInput=false;inputCommitSequence=-1;}
+      }
+      if (ready && !readOnly && !event.isComposing && event.target === canvas && ((!event.ctrlKey && !event.metaKey && !event.altKey && (event.key.length === 1 || ['Backspace','Delete'].includes(event.key))) || ((event.ctrlKey || event.metaKey) && ['v','x','z','y'].includes(event.key.toLowerCase())))) {
+        const pendingInput=uncommittedInput;
+        uncommittedInput = true; inputSequence++; inputBaseGeneration=generation;
+        inputCommitSequence=(event.ctrlKey||event.metaKey)&&(['z','y'].includes(event.key.toLowerCase())||(!pendingInput&&event.key.toLowerCase()==='v'))?inputSequence:-1;
+        saveConfirmation = ''; if(!working)status='Changes not yet saved to MX';
+        activity();
       }
     };
+    const keyUp=(event:KeyboardEvent)=>{heldKeys.delete(event.code||event.key);if(ready)activity();};
+    const pointerDown=(event:PointerEvent)=>{if(ready){heldPointers.add(event.pointerId);activity();if(event.target===canvas&&uncommittedInput)inputCommitSequence=inputSequence;}};
+    const pointerUp=(event:PointerEvent)=>{heldPointers.delete(event.pointerId);if(ready)activity();};
+    const pointerMove=(event:PointerEvent)=>{if(ready&&(event.buttons||heldPointers.has(event.pointerId)))activity();};
+    const interaction=()=>{if(ready)activity();};
+    const compositionStart=(event:CompositionEvent)=>{if(!ready||readOnly)return;composing=true;if(event.target instanceof Node&&viewport?.contains(event.target)){uncommittedInput=true;inputSequence++;inputBaseGeneration=generation;inputCommitSequence=-1;saveConfirmation='';}activity();};
+    const compositionEnd=()=>{composing=false;if(ready)activity();};
+    const blur=()=>{heldPointers.clear();heldKeys.clear();composing=false;if(ready)activity();};
     const interval = setInterval(() => {if(saving)saveSeconds=Math.floor((Date.now()-saveStartedAt)/1000);if(ready&&dirty&&!working&&!automaticTimer&&!error)scheduleDraft();},1000);
     const outsideOptions = (event: PointerEvent) => { if(optionsOpen && event.target instanceof Node && !optionsPanel?.contains(event.target) && !optionsButton?.contains(event.target))optionsOpen=false; };
     const connectionInterval = setInterval(()=>void checkConnection(),15_000);
@@ -109,7 +130,8 @@
     window.addEventListener('online', network); window.addEventListener('offline', network);
     window.addEventListener(AUTH_EXPIRED_EVENT, expired); window.addEventListener('beforeunload', unload); window.addEventListener('keydown', key, true);
     window.addEventListener('pointerdown', outsideOptions);
-    return () => { disposed = true; openingController?.abort(); clearInterval(interval); clearInterval(connectionInterval); clearTimeout(draftTimer);clearTimeout(automaticTimer);clearTimeout(offlineTimer); engine.dispose(); window.removeEventListener('online', network); window.removeEventListener('offline', network); window.removeEventListener(AUTH_EXPIRED_EVENT, expired); window.removeEventListener('beforeunload', unload); window.removeEventListener('keydown', key, true); window.removeEventListener('pointerdown', outsideOptions); };
+    window.addEventListener('keyup',keyUp,true);window.addEventListener('pointerdown',pointerDown,true);window.addEventListener('pointerup',pointerUp,true);window.addEventListener('pointercancel',pointerUp,true);window.addEventListener('pointermove',pointerMove,{capture:true,passive:true});window.addEventListener('wheel',interaction,{capture:true,passive:true});window.addEventListener('touchmove',interaction,{capture:true,passive:true});window.addEventListener('compositionstart',compositionStart,true);window.addEventListener('compositionend',compositionEnd,true);window.addEventListener('blur',blur);
+    return () => { disposed = true; openingController?.abort(); clearInterval(interval); clearInterval(connectionInterval); clearTimeout(draftTimer);clearTimeout(automaticTimer);clearTimeout(offlineTimer); engine.dispose(); window.removeEventListener('online', network); window.removeEventListener('offline', network); window.removeEventListener(AUTH_EXPIRED_EVENT, expired); window.removeEventListener('beforeunload', unload); window.removeEventListener('keydown', key, true); window.removeEventListener('pointerdown', outsideOptions);window.removeEventListener('keyup',keyUp,true);window.removeEventListener('pointerdown',pointerDown,true);window.removeEventListener('pointerup',pointerUp,true);window.removeEventListener('pointercancel',pointerUp,true);window.removeEventListener('pointermove',pointerMove,true);window.removeEventListener('wheel',interaction,true);window.removeEventListener('touchmove',interaction,true);window.removeEventListener('compositionstart',compositionStart,true);window.removeEventListener('compositionend',compositionEnd,true);window.removeEventListener('blur',blur); };
   });
 
   async function toggleOptions() {
@@ -191,12 +213,15 @@
     engineBoot=engine.start(canvas).then(()=>{engineStarted=true;});
     return engineBoot;
   }
-  async function captureSnapshot() {
+  function activity(){lastActivity=Date.now();if(dirty)scheduleDraft();}
+  function backgroundDelay(){return officeIdleDelay(Date.now(),lastActivity,preparedAt,lastExportMs,heldPointers.size>0||heldKeys.size>0||composing||optionsOpen||(spreadsheet&&uncommittedInput));}
+  async function captureSnapshot(acceptInput = true) {
     const inputAtSnapshot = inputSequence;
     const started=performance.now();
-    const exported = await engine.snapshot(extension);
+    preparedAt=Date.now();
+    const exported = await engine.snapshot(extension,acceptInput);
     if(exported.blob!==snapshot?.blob)lastExportMs=performance.now()-started;
-    if (inputSequence === inputAtSnapshot) uncommittedInput = false;
+    if ((acceptInput||!spreadsheet) && inputSequence === inputAtSnapshot) uncommittedInput = false;
     return exported;
   }
   async function openCurrent(uid: string) {
@@ -292,15 +317,16 @@
     } catch (reason) { engine.dispose();ready=false;openingFocus=false;error = message(reason); loadingFailed=true; status='Office could not open · your local copy is still downloadable'; }
     finally { working = false; }
   }
-  function scheduleOfflinePreparation(){clearTimeout(offlineTimer);offlineTimer=setTimeout(()=>{if(!disposed&&!working)void prepareOffline();else if(!disposed)scheduleOfflinePreparation();},5000);}
+  function scheduleOfflinePreparation(){clearTimeout(offlineTimer);offlineTimer=setTimeout(()=>{if(!disposed&&!working&&backgroundDelay()===0)void prepareOffline();else if(!disposed)scheduleOfflinePreparation();},5000);}
   function scheduleDraft() {
     clearTimeout(automaticTimer);
+    automaticTimer=undefined;
     if(disposed||readOnly)return;
-    const delay=Math.max(8000,Math.min(60000,lastExportMs*3));
+    const delay=backgroundDelay();
     automaticTimer=setTimeout(()=>{automaticTimer=undefined;if(!ready||!dirty||working||disposed)return;
-      if(Date.now()-lastActivity<delay){scheduleDraft();return;}
-      if(automaticSave&&!offline&&!conflict&&!needsSignIn&&!copying)void save();
-      else void checkpoint().catch(reason=>{recoveryError=message(reason);error='Recovery storage failed. Latest edits may exist only in this tab. Download a copy before closing.';status='Recovery not confirmed · latest edits may exist only in this tab';});
+      if(backgroundDelay()>0){scheduleDraft();return;}
+      if(automaticSave&&!offline&&!conflict&&!needsSignIn&&!copying)void save(false,false,true);
+      else void checkpoint(false,false,true).catch(reason=>{recoveryError=message(reason);error='Recovery storage failed. Latest edits may exist only in this tab. Download a copy before closing.';status='Recovery not confirmed · latest edits may exist only in this tab';});
     },delay);
   }
   function cancelOpening() {
@@ -323,12 +349,16 @@
     // steal Calc's input focus while the first characters are being delivered.
     canvas.focus(); await focusDocument(true);
     if(!nativeFocused && !openingCancelled && !disposed)throw new Error('The document opened, but the editor could not establish input focus. No changes were saved. Retry opening or download the loaded copy.');
+    // Opening a large file is not user idle time. Give the newly ready editor
+    // its own interaction window, including when restoring an unsaved draft.
+    activity();
   }
-  async function checkpoint(force = false, preparedOnly = false) {
+  async function checkpoint(force = false, preparedOnly = false, background = false) {
     return localWork.run(async () => {
       if (!item || !ready || disposed || (readOnly&&!persist)) return;
+      if(background&&backgroundDelay()>0){status='Changes not yet saved to MX · background preparation is waiting while you work';return;}
       try {
-      if (!readOnly && !preparedOnly && (!snapshot || snapshot.generation !== generation || uncommittedInput || force)) snapshot = await captureSnapshot();
+      if (!readOnly && !preparedOnly && (!snapshot || snapshot.generation !== generation || uncommittedInput || force)) snapshot = await captureSnapshot(!background);
       if (!snapshot) return;
       activeDraftKey ||= draftKey(accountUid,item.uid,editorUid);
       const fingerprint=JSON.stringify([activeDraftKey,snapshot.generation,acknowledged,item.revision,pendingOperation,pendingGeneration,copyOperation,copyGeneration,persist]);
@@ -355,19 +385,25 @@
     }
     else { try { await localWork.idle();if(dirty)await checkpoint(false,true);else if(activeDraftKey){await removeDraft(activeDraftKey);storedAt=0;storedGeneration=-1;} } catch (reason) { recoveryError = message(reason); } }
   }
-  async function save(useLatest = false, allowVolatile = false) {
-    if (!item || !ready || working || readOnly) return;
+  async function save(useLatest = false, allowVolatile = false, background = false) {
+    if (!item || !ready || readOnly) return;
+    if(working){if(!background&&saving&&backgroundSaving)manualSaveQueued=true;return;}
+    if(background&&backgroundDelay()>0){scheduleDraft();return;}
     if (pendingCopy) { copying = true; notice = 'Finish or cancel the pending separate-file save first.'; return; }
     clearTimeout(automaticTimer);automaticTimer=undefined;
-    working = true; saving = true;directSave=false;saveStage='preparing';savePercent=0;saveSeconds=0;saveStartedAt=Date.now();saveConfirmation = ''; status = 'Preparing the document on your device…';
+    working = true; saving = true;backgroundSaving=background;directSave=false;saveStage='preparing';savePercent=0;saveSeconds=0;saveStartedAt=Date.now();saveConfirmation = ''; status = 'Preparing the document on your device…';
     let uploadStarted=false;let payloadRecovered=false;
     try {
       await localWork.idle();
+      if(background&&backgroundDelay()>0){status='Changes not yet saved to MX · background preparation is waiting while you work';return;}
       let preparedSnapshot: OfficeSnapshot | null = null;
       // A Calc cell can still be in its input editor and not marked modified.
-      // Snapshot first: the engine accepts that input before checking generation.
+      // Explicit Save accepts it before checking generation. Background saves
+      // wait for accepted cell input and never change its selection/input mode.
       if (!pendingFile) {
-        snapshot = preparedSnapshot = await localWork.run(() => captureSnapshot());
+        const prepared=await localWork.run(() => background&&backgroundDelay()>0?Promise.resolve(null):captureSnapshot(!background));
+        if(!prepared){status='Changes not yet saved to MX · background preparation is waiting while you work';return;}
+        snapshot = preparedSnapshot = prepared;
         // A newer native modification can arrive while a snapshot is exporting.
         // Never move the live generation backwards to that older snapshot.
         generation = Math.max(generation, snapshot.generation);
@@ -410,7 +446,7 @@
       if (reason instanceof ApiError && reason.status === 401) requireSignIn();
       if (reason instanceof ConnectionError) offline = true;
       status = `${uploadStarted?'Save not confirmed; retry checks the same operation':'Save not started'} · ${payloadRecovered?'recovery copy saved on this device':'latest edits may exist only in this open tab'}`;
-    } finally { working = false; saving = false;saveStage='idle';if(dirty&&!error)scheduleDraft(); }
+    } finally { working = false; saving = false;backgroundSaving=false;saveStage='idle';if(manualSaveQueued&&!disposed){manualSaveQueued=false;void save();}else if(dirty&&!error)scheduleDraft(); }
   }
   async function downloadCopy() {
     if (!item || working || (!ready && !snapshot)) return;
@@ -495,6 +531,7 @@
     {#if !readOnly}<button class="option-action" disabled={!ready || working} onclick={()=>{optionsOpen=false;offerCopy();}}><Save size={17}/>Save as a copy</button>{/if}
     <section class="offline-settings" aria-label="Offline settings">
       <label><input type="checkbox" bind:checked={automaticSave} onchange={()=>{if(automaticSave)scheduleDraft();}}/>Automatically save to MX when idle</label>
+      <small>Background preparation waits for a pause in typing, scrolling and dragging. Finish a spreadsheet cell with Enter/Tab, or use Ctrl/Cmd+S to save unfinished input. Large exports can still briefly occupy the editor.</small>
       <small>Recovery is automatic and separate from offline retention. Copies expire after 7 days and are cleaned on the next recovery scan; a confirmed save removes its automatic copy. Other people using this browser profile may access them. Changes since the last checkpoint may be lost if the device stops.</small>
       <label><input type="checkbox" checked={persist} disabled={!ready || working} onchange={async event=>{const input=event.currentTarget;await toggleOffline(input.checked);input.checked=persist;}}/>Keep offline copy on this device</label>
       <small>{offlineReady?'Editor available offline':offlineUnsupported?'Offline editor unsupported in this browser':offlineError?'Offline reopening unavailable':'Offline preparation starts after the document opens'}{storedAt?` · Recovery checkpoint ${new Date(storedAt).toLocaleTimeString()}`:''}</small>
