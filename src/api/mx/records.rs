@@ -820,6 +820,9 @@ fn write_dynamic_values(
 pub(crate) fn ensure_record_collaboration_schema(
     connection: &rusqlite::Connection,
 ) -> rusqlite::Result<()> {
+    if crate::db::schema::initialized(connection) {
+        return Ok(());
+    }
     connection.execute_batch(
         r#"
         CREATE TABLE IF NOT EXISTS mx_record_field_revisions (
@@ -1672,7 +1675,17 @@ pub(super) fn create_record_commit(
 
         write_dynamic_values(&transaction, &uid, &fields, &values)?;
         initialize_field_revisions(&transaction, &uid, &fields, &values, &actor_uid)?;
-        capture_record_version(&transaction, &uid, &module_uid, "created", &actor_uid)?;
+        let version_uid =
+            capture_record_version(&transaction, &uid, &module_uid, "created", &actor_uid)?;
+        if import.is_some() {
+            crate::api::audit::record_import_creation(
+                &transaction,
+                &version_uid,
+                &uid,
+                &module_uid,
+                &actor_uid,
+            )?;
+        }
         operations::complete(&transaction, &actor_uid, &scope, operation.as_ref(), &uid)?;
         if let Some(import) = &import {
             super::imports::complete(&transaction, import, &uid)?;
@@ -2240,7 +2253,13 @@ fn list_records_db(
             super::schema::load_module_fields_initialized_db(connection, &module_uid, false)?;
 
         if query.window.is_some() {
-            return windows::list(connection, &module_uid, &query, &fields, include_attachments);
+            return windows::list(
+                connection,
+                &module_uid,
+                &query,
+                &fields,
+                include_attachments,
+            );
         }
 
         let page = query.page.unwrap_or(1).max(1);

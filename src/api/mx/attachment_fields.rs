@@ -75,6 +75,9 @@ fn column_exists(
 pub(crate) fn ensure_attachment_fields_schema(
     connection: &rusqlite::Connection,
 ) -> rusqlite::Result<()> {
+    if crate::db::schema::initialized(connection) {
+        return Ok(());
+    }
     // File attachments are ordinary dynamic MX fields whose field_type is
     // "attachments". The attachment metadata columns remain on
     // mx_attachments so N1 objects can be associated with the exact field.

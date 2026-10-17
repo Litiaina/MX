@@ -7,6 +7,23 @@ deployment maintainer's local date.
 
 Changes after the first 1.0 candidate will be recorded here.
 
+## [1.0.0-rc.4] - 2026-10-17
+
+### Fixed
+
+- Initialize application schemas and compatibility backfills before serving
+  requests. Do not repeat schema writes or full-record revision repairs during
+  normal reads, imports, notifications, calls, Drive cleanup and record edits.
+  Scope readiness to the initialized database so isolated databases still migrate.
+- Index legacy audit-history reconciliation and match indexed time ranges instead
+  of repeatedly scanning the full audit log. Commit imported-record audit entries
+  atomically with their records and versions, avoiding later reconstruction work.
+- Add a regression with 50,000 records, an independent held write transaction
+  and 16 concurrent read-only connections. Existing data, N1 objects, credentials,
+  branding and signed-update trust are preserved.
+- Qualify an optimized 100,000-record baseline plus a 25,000-row HTTP import
+  alongside eight accounts, retained versions/audits and repeated restarts.
+
 ## [1.0.0-rc.3] - 2026-10-16
 
 ### Fixed

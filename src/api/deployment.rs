@@ -158,7 +158,10 @@ fn deployment_table_has_column(
         .any(|name| name == column_name))
 }
 
-fn ensure_deployment_schema(connection: &Connection) -> rusqlite::Result<()> {
+pub(crate) fn ensure_deployment_schema(connection: &Connection) -> rusqlite::Result<()> {
+    if crate::db::schema::initialized(connection) {
+        return Ok(());
+    }
     let default_json =
         serde_json::to_string(&DeploymentConfig::default()).unwrap_or_else(|_| "{}".to_string());
 

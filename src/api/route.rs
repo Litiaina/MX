@@ -122,9 +122,18 @@ fn bootstrap_routes() -> Router {
 fn admin_routes() -> Router {
     Router::new()
         .route("/mx/v1/admin/updates", get(crate::updates::api::status))
-        .route("/mx/v1/admin/updates/policy", put(crate::updates::api::save_policy))
-        .route("/mx/v1/admin/updates/{action}", post(crate::updates::api::action))
-        .route("/mx/v1/admin/updates/package", post(crate::updates::api::upload).layer(DefaultBodyLimit::disable()))
+        .route(
+            "/mx/v1/admin/updates/policy",
+            put(crate::updates::api::save_policy),
+        )
+        .route(
+            "/mx/v1/admin/updates/{action}",
+            post(crate::updates::api::action),
+        )
+        .route(
+            "/mx/v1/admin/updates/package",
+            post(crate::updates::api::upload).layer(DefaultBodyLimit::disable()),
+        )
         .route("/mx/v1/admin/audit", get(get_audit_log))
         .route("/mx/v1/admin/trash", get(list_trash))
         .route("/mx/v1/admin/trash/{uid}", get(get_trashed_record))
@@ -149,7 +158,10 @@ fn admin_routes() -> Router {
             put(update_module_schema_order),
         )
         .route("/mx/v1/admin/schema/fields/{uid}", put(update_schema_field))
-        .route("/mx/v1/admin/schema/fields/{uid}/archive-check", get(crate::api::mx::field_archive::get_archive_check))
+        .route(
+            "/mx/v1/admin/schema/fields/{uid}/archive-check",
+            get(crate::api::mx::field_archive::get_archive_check),
+        )
         .route(
             "/mx/v1/admin/schema/system/{key}",
             put(update_system_schema_field),

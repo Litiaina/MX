@@ -40,6 +40,9 @@ const TOTP_ENROLLMENT_TTL_SECONDS: i64 = 10 * 60;
 pub(crate) fn ensure_profile_photo_schema(
     connection: &rusqlite::Connection,
 ) -> rusqlite::Result<()> {
+    if crate::db::schema::initialized(connection) {
+        return Ok(());
+    }
     connection.execute_batch(
         r#"
         CREATE TABLE IF NOT EXISTS mx_user_profile_photos (

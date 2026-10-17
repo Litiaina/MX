@@ -258,18 +258,33 @@ fn mx_access_denied() -> Response {
 
 pub(crate) fn map_mx_error(error: MxOperationError) -> Response {
     match error {
-        MxOperationError::N1Stream { status, retry_after } => {
+        MxOperationError::N1Stream {
+            status,
+            retry_after,
+        } => {
             let message = match status {
-                StatusCode::TOO_MANY_REQUESTS => "Storage is temporarily limiting requests. Retry playback shortly; your file is unchanged.",
-                StatusCode::SERVICE_UNAVAILABLE => "Storage is temporarily unavailable. Retry playback shortly.",
-                StatusCode::GATEWAY_TIMEOUT => "Storage took too long to respond. Retry playback or check the server connection.",
-                StatusCode::NOT_FOUND => "The file bytes are unavailable in storage. Contact your administrator.",
+                StatusCode::TOO_MANY_REQUESTS => {
+                    "Storage is temporarily limiting requests. Retry playback shortly; your file is unchanged."
+                }
+                StatusCode::SERVICE_UNAVAILABLE => {
+                    "Storage is temporarily unavailable. Retry playback shortly."
+                }
+                StatusCode::GATEWAY_TIMEOUT => {
+                    "Storage took too long to respond. Retry playback or check the server connection."
+                }
+                StatusCode::NOT_FOUND => {
+                    "The file bytes are unavailable in storage. Contact your administrator."
+                }
                 _ => "Storage could not stream this file. Try again.",
             };
             let mut response = api_json(status, json!({"response":message}));
-            response.headers_mut().insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
+            response
+                .headers_mut()
+                .insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
             if let Some(value) = retry_after {
-                response.headers_mut().insert(axum::http::header::RETRY_AFTER, value);
+                response
+                    .headers_mut()
+                    .insert(axum::http::header::RETRY_AFTER, value);
             }
             response
         }
@@ -724,6 +739,9 @@ pub(crate) fn inline_attachment_response(
 pub(crate) fn ensure_mx_record_schema(
     connection: &rusqlite::Connection,
 ) -> Result<(), rusqlite::Error> {
+    if crate::db::schema::initialized(connection) {
+        return Ok(());
+    }
     crate::api::mx::migration::migrate_legacy_schema(connection)?;
     connection.execute_batch(
         r#"
@@ -2705,8 +2723,8 @@ pub async fn preview_mx_attachment(
     };
 
     if office_preview_supported(&attachment.file_name) {
-        if let Err(error)=check_office_preview_size(attachment.size) {
-            return api_json(StatusCode::UNPROCESSABLE_ENTITY,json!({"response":error}));
+        if let Err(error) = check_office_preview_size(attachment.size) {
+            return api_json(StatusCode::UNPROCESSABLE_ENTITY, json!({"response":error}));
         }
         let original_bytes = match n1_download(&attachment.object_key, &attachment.file_name).await
         {
@@ -2717,7 +2735,8 @@ pub async fn preview_mx_attachment(
         };
         let attachment_for_preview = attachment.clone();
 
-        let preview_result = generate_office_pdf_preview(attachment_for_preview, original_bytes).await;
+        let preview_result =
+            generate_office_pdf_preview(attachment_for_preview, original_bytes).await;
 
         let pdf_bytes = match preview_result {
             Ok(bytes) => bytes,
@@ -2732,7 +2751,6 @@ pub async fn preview_mx_attachment(
                     }),
                 );
             }
-
         };
 
         let preview_name = attachment

@@ -11,11 +11,11 @@
 
 </div>
 
-Self-hosted, modular digital workplace platform. **Current candidate: 1.0.0-rc.3.**
+Self-hosted, modular digital workplace platform. **Current candidate: 1.0.0-rc.4.**
 
 This is a candidate for the new 1.0 release line, not the final stable release.
 The earlier 4.x labels remain development history. Read the
-[current candidate notes](docs/releases/1.0.0-rc.3.md) and, for a 4.x deployment,
+[current candidate notes](docs/releases/1.0.0-rc.4.md) and, for a 4.x deployment,
 the [one-time version-reset instructions](docs/releases/1.0.0-rc.1.md#upgrading-a-4x-development-installation)
 before upgrading an existing installation.
 

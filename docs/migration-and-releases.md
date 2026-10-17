@@ -2,7 +2,15 @@
 
 [Documentation index](README.md) · [Project overview](../README.md)
 
-## Current line: MX 1.0.0-rc.3
+## Current line: MX 1.0.0-rc.4
+
+RC.4 is a database-contention hotfix. Schema initialization and compatibility
+backfills run before serving requests, not during ordinary read/write handlers.
+Existing imported records and histories remain; do not reset or re-import them.
+The signing key and managed update/backup/rollback protocol are unchanged. See
+[RC.4 instructions and limits](releases/1.0.0-rc.4.md).
+
+### Earlier candidates
 
 RC.3 defers Office background preparation during active input, scrolling and
 dragging, preserves unfinished spreadsheet cells until explicit Save or input
@@ -11,8 +19,6 @@ It uses the existing publisher key and activation/backup/rollback protocol; no
 new database schema or N1 format migration is introduced. See the
 [RC.3 upgrade instructions and remaining limits](releases/1.0.0-rc.3.md).
 Published RC.1/RC.2 remain unchanged. RC.3 is also a candidate, not stable 1.0.0.
-
-### Earlier candidates
 
 RC.2 corrects sidebar alignment/clipping at different interface scales, defaults
 record browsing to Pages with an optional bounded continuous view, and starts

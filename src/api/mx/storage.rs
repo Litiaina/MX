@@ -87,6 +87,9 @@ fn access_denied() -> Response {
 pub(crate) fn ensure_storage_layout_schema(
     connection: &rusqlite::Connection,
 ) -> rusqlite::Result<()> {
+    if crate::db::schema::initialized(connection) {
+        return Ok(());
+    }
     ensure_dynamic_schema(connection)?;
     ensure_module_schema(connection)?;
 
@@ -269,17 +272,19 @@ fn load_layout_db(
     module_uid: &str,
 ) -> rusqlite::Result<StorageLayoutResponse> {
     ensure_storage_layout_schema(connection)?;
-    ensure_module_layout(connection, module_uid)?;
 
-    let (revision, prefix_uid): (i64, Option<String>) = connection.query_row(
-        r#"
+    let (revision, prefix_uid): (i64, Option<String>) = connection
+        .query_row(
+            r#"
         SELECT revision, file_prefix_field_uid
         FROM mx_module_storage_layout_meta
         WHERE module_uid = ?1
         "#,
-        params![module_uid],
-        |row| Ok((row.get(0)?, row.get(1)?)),
-    )?;
+            params![module_uid],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?
+        .unwrap_or((0, None));
     let (module_name, module_slug) = connection.query_row(
         "SELECT name, slug FROM mx_modules WHERE uid = ?1",
         params![module_uid],

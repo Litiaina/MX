@@ -118,9 +118,21 @@ fn registry() -> &'static Mutex<CallRegistry> {
 
 pub(crate) fn active_participant_count() -> usize {
     let now = Instant::now();
-    registry().lock().map(|registry| registry.rooms.values().map(|room|
-        room.participants.values().filter(|entry| now.duration_since(entry.last_seen) <= CALL_PARTICIPANT_TTL).count()
-    ).sum()).unwrap_or(usize::MAX)
+    registry()
+        .lock()
+        .map(|registry| {
+            registry
+                .rooms
+                .values()
+                .map(|room| {
+                    room.participants
+                        .values()
+                        .filter(|entry| now.duration_since(entry.last_seen) <= CALL_PARTICIPANT_TTL)
+                        .count()
+                })
+                .sum()
+        })
+        .unwrap_or(usize::MAX)
 }
 
 fn now_millis() -> i64 {

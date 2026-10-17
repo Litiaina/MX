@@ -125,6 +125,9 @@ fn has_column(
 pub(crate) fn ensure_record_lifecycle_schema(
     connection: &rusqlite::Connection,
 ) -> rusqlite::Result<()> {
+    if crate::db::schema::initialized(connection) {
+        return Ok(());
+    }
     ensure_dynamic_schema(connection)?;
     if !has_column(connection, "mx_records", "deleted_at")? {
         connection.execute("ALTER TABLE mx_records ADD COLUMN deleted_at INTEGER", [])?;

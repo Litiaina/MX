@@ -60,6 +60,9 @@ pub struct NotificationQuery {
 pub(crate) fn ensure_notification_schema(
     connection: &rusqlite::Connection,
 ) -> rusqlite::Result<()> {
+    if crate::db::schema::initialized(connection) {
+        return Ok(());
+    }
     connection.execute_batch(
         r#"
         CREATE TABLE IF NOT EXISTS mx_notifications (

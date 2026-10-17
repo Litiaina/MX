@@ -127,7 +127,10 @@ fn report_message(error: &SqliteDatabaseError) -> Option<String> {
     }
 }
 
-fn ensure_reporting_schema(connection: &Connection) -> rusqlite::Result<()> {
+pub(crate) fn ensure_reporting_schema(connection: &Connection) -> rusqlite::Result<()> {
+    if crate::db::schema::initialized(connection) {
+        return Ok(());
+    }
     ensure_dynamic_schema(connection)?;
     ensure_record_lifecycle_schema(connection)?;
     ensure_attachment_fields_schema(connection)?;

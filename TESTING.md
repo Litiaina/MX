@@ -1,5 +1,82 @@
 # MX validation
 
+## 1.0.0-rc.4 database-contention hotfix — 2026-10-17
+
+- Fresh native suite: **177 passed, zero failed, two opt-in tests ignored**.
+  Optimized native build succeeds. Frontend: **333 tests across 54 files**;
+  production build, release consistency and bundled Office verification pass,
+  with zero Svelte errors/warnings. Frontend behavior/styles are unchanged.
+  Signed-manifest comparison confirms 26 runtime files are byte-identical to
+  RC.3; only the native binary and paired release-identity JSON change.
+- The preserved optimized RC.3 reproduces the fault after schema warm-up: with
+  an independent `BEGIN IMMEDIATE` writer, normal modules, notifications, calls
+  and storage-layout reads return 500 after roughly 10 seconds; record/schema
+  access also fails. Evidence:
+  `/mnt/ST1000LM049/tests/rc4/mx-eight-user-DSdLkl/baseline-contention.json`.
+- A new native regression holds a real WAL writer against **50,000 records**
+  while **16 read-only connections** call every initializer and query data.
+  It also checks that initialization readiness does not leak to another DB.
+- The optimized HTTP regression uses **100,000 existing records/versions**,
+  imports **25,000 additional records** through normal upload/configure/process
+  endpoints and keeps **eight authenticated accounts** reading concurrently.
+  It verifies seven affected endpoints behind an independent held writer,
+  retained record/version counts, atomically committed import audit entries,
+  post-import reads, reconstruction of older missing audit entries and two
+  restarts without duplicate history. No database-lock errors are accepted.
+  Evidence:
+  `/mnt/ST1000LM049/tests/rc4/mx-eight-user-uQ3PJo/database-contention-results.json`.
+  Final result: **125,000 records, 25,000/25,000 imported, zero failed rows,
+  10,653 requests, 9,253 background polls and zero database-lock errors**.
+  Seven held-writer reads finish in **74 ms**. The external-HDD import takes
+  **1,214,708 ms** (about 20 minutes); combined request p95 is **920 ms**, max
+  **5,743 ms**, including import/authentication calls. This qualifies contention
+  handling, not high-throughput import performance or guaranteed latency.
+  Synthetic seed rows advance the hidden control sequence, just as normal
+  creation does; an initial fixture without that step correctly rejected
+  duplicate control numbers and is not counted as a passing import test.
+  A subsequent extended run expired its 15-minute access tokens; the final
+  harness uses normal refresh-token renewal and eight clients polling once per
+  second. Token-expiry/fixture failures are not counted as passing runs.
+- An independent restart test reuses the stopped disposable database from the
+  expired-token run: **121,640 records and versions** remain, **100,000 missing
+  audit events** are reconstructed, and `quick_check` returns `ok`. Startup
+  takes **8,386 ms**, then **5,944 ms** on the second restart without duplicate
+  events. Evidence:
+  `/mnt/ST1000LM049/tests/rc4/mx-eight-user-g2ydfY/startup-scale-results.json`.
+- The actual optimized **RC.3 → RC.4** updater passes independent systemd
+  activation, verified final snapshot, interrupted-download recovery, offline
+  signed upload, eight competing installs, failed-readiness rollback and
+  killed-worker recovery. Record contents/history and fixture-backed Drive
+  bytes survive. The update UI is repeated in Chromium; other browser/Office
+  results below are historical, not rerun RC.4 qualifications. Evidence:
+  `/mnt/ST1000LM049/tests/rc4/mx-updates-WxTvsJ/update-results.json`.
+- The signed package is verified against the unchanged publisher key, all
+  28 runtime hashes/sizes, paired native/frontend identity and Office notices.
+  The initial-install tree uses the same runtime bytes and includes operator
+  documentation/templates without credentials or databases. Reports are under
+  `/mnt/ST1000LM049/releases/1.0.0-rc.4`.
+- Native CLI version/help/error handling creates no deployment files, and key
+  generation retains mode 0600 and refuses to overwrite an existing key:
+  `/mnt/ST1000LM049/tests/rc4/mx-update-cli-P2T3RB/cli-results.json`.
+- Tests/builds stay on the external drive with disposable SQLite and N1 HTTP
+  contract fixtures; browser audio is disconnected. No live N1, DGS/MCH records,
+  deployment credentials or production services are changed by these tests.
+  SQLite still serializes genuine writes. This test is not unlimited-scale,
+  physical-power-loss, security or final stable-release certification.
+
+Repeat the HTTP regression with an optimized candidate and matching frontend:
+
+```bash
+env TMPDIR=/mnt/ST1000LM049/tests/rc4/tmp \
+  MX_TEST_ARTIFACTS=/mnt/ST1000LM049/tests/rc4 \
+  MX_TEST_BINARY=/mnt/ST1000LM049/releases/1.0.0-rc.4/staging/update-input/litiaina-mx \
+  MX_TEST_STATIC_SITE_PATH=/mnt/ST1000LM049/releases/1.0.0-rc.4/frontend-dist \
+  node --no-warnings frontend/tests/database-contention.integration.mjs
+```
+
+Use Node 24+ with the existing frontend test dependencies. The test rejects
+live-N1 configuration and requires the external test-artifact directory.
+
 ## 1.0.0-rc.3 Office background preparation — 2026-10-16
 
 - Frontend unit tests: **333 passed across 54 files**. Production build and

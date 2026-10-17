@@ -6,7 +6,12 @@ use uuid::Uuid;
 pub(super) const LEASE_MS: i64 = 60 * 60 * 1000;
 // Separate crash-processing lease from resumable retention/quota reservation.
 pub(super) fn retention_ms() -> i64 {
-    crate::config::load_config::CONFIG.drive.upload_retention_hours as i64 * 60 * 60 * 1000
+    crate::config::load_config::CONFIG
+        .drive
+        .upload_retention_hours as i64
+        * 60
+        * 60
+        * 1000
 }
 #[derive(Clone, Deserialize)]
 pub(super) struct Upload {
@@ -282,13 +287,17 @@ pub(super) fn commit(c: &Connection, r: &Reservation) -> rusqlite::Result<store:
 }
 
 fn release_inner(c: &Connection, r: &Reservation, discard: bool) -> rusqlite::Result<()> {
-        let tx=rusqlite::Transaction::new_unchecked(c,TransactionBehavior::Immediate)?;
-        if discard {
-            // Superseded/denied destination: queue bytes only if THIS attempt still owns the reservation.
-            let changed=tx.execute("DELETE FROM mx_drive_uploads WHERE actor_uid=?1 AND operation_uid=?2 AND attempt_uid=?3 AND completed=0",params![r.actor,r.operation,r.attempt])?;
-            if changed>0 {tx.execute("INSERT OR IGNORE INTO mx_drive_gc(object_key,next_attempt_at,created_at) VALUES(?1,?2,?2)",params![r.key(),store::now()])?;}
-        }else {tx.execute("UPDATE mx_drive_uploads SET attempted_at=?4 WHERE actor_uid=?1 AND operation_uid=?2 AND attempt_uid=?3 AND completed=0",params![r.actor,r.operation,r.attempt,-store::now()])?;}
-        tx.commit()
+    let tx = rusqlite::Transaction::new_unchecked(c, TransactionBehavior::Immediate)?;
+    if discard {
+        // Superseded/denied destination: queue bytes only if THIS attempt still owns the reservation.
+        let changed=tx.execute("DELETE FROM mx_drive_uploads WHERE actor_uid=?1 AND operation_uid=?2 AND attempt_uid=?3 AND completed=0",params![r.actor,r.operation,r.attempt])?;
+        if changed > 0 {
+            tx.execute("INSERT OR IGNORE INTO mx_drive_gc(object_key,next_attempt_at,created_at) VALUES(?1,?2,?2)",params![r.key(),store::now()])?;
+        }
+    } else {
+        tx.execute("UPDATE mx_drive_uploads SET attempted_at=?4 WHERE actor_uid=?1 AND operation_uid=?2 AND attempt_uid=?3 AND completed=0",params![r.actor,r.operation,r.attempt,-store::now()])?;
+    }
+    tx.commit()
 }
 pub(super) async fn release(r: Reservation, discard: bool) -> Result<(), super::Error> {
     database(move |c| release_inner(c, &r, discard)).await?;
@@ -319,28 +328,96 @@ mod tests {
     #[test]
     fn cancellation_failure_preserves_the_reservation_and_returns_an_error() {
         let c = db();
-        let r = reserve_inner(&c, "a", &upload(), "pending.mp4", "video/mp4", 60, "", 100, true).unwrap();
+        let r = reserve_inner(
+            &c,
+            "a",
+            &upload(),
+            "pending.mp4",
+            "video/mp4",
+            60,
+            "",
+            100,
+            true,
+        )
+        .unwrap();
         c.execute_batch("CREATE TRIGGER deny_cancel BEFORE DELETE ON mx_drive_uploads BEGIN SELECT RAISE(FAIL,'injected cancellation failure'); END;").unwrap();
         assert!(release_inner(&c, &r, true).is_err());
-        assert_eq!(c.query_row("SELECT COUNT(*) FROM mx_drive_uploads", [], |row| row.get::<_, i64>(0)).unwrap(), 1);
-        assert_eq!(c.query_row("SELECT COUNT(*) FROM mx_drive_gc", [], |row| row.get::<_, i64>(0)).unwrap(), 0);
+        assert_eq!(
+            c.query_row("SELECT COUNT(*) FROM mx_drive_uploads", [], |row| row
+                .get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            c.query_row("SELECT COUNT(*) FROM mx_drive_gc", [], |row| row
+                .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
         c.execute_batch("DROP TRIGGER deny_cancel;").unwrap();
         release_inner(&c, &r, true).unwrap();
-        assert_eq!(c.query_row("SELECT COUNT(*) FROM mx_drive_uploads", [], |row| row.get::<_, i64>(0)).unwrap(), 0);
-        assert_eq!(c.query_row("SELECT COUNT(*) FROM mx_drive_gc", [], |row| row.get::<_, i64>(0)).unwrap(), 1);
+        assert_eq!(
+            c.query_row("SELECT COUNT(*) FROM mx_drive_uploads", [], |row| row
+                .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            c.query_row("SELECT COUNT(*) FROM mx_drive_gc", [], |row| row
+                .get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
     }
     #[test]
     fn failed_uploads_recover_within_retention_and_still_reserve_quota() {
         let c = db();
-        let mut first = upload(); first.last_modified = Some(123);
-        let original = reserve_inner(&c,"a",&first,"pending.mp4","video/mp4",60,"",100,true).unwrap();
+        let mut first = upload();
+        first.last_modified = Some(123);
+        let original = reserve_inner(
+            &c,
+            "a",
+            &first,
+            "pending.mp4",
+            "video/mp4",
+            60,
+            "",
+            100,
+            true,
+        )
+        .unwrap();
         let yesterday = store::now() - retention_ms() / 2;
-        c.execute("UPDATE mx_drive_uploads SET attempted_at=?1",[-yesterday]).unwrap();
+        c.execute("UPDATE mx_drive_uploads SET attempted_at=?1", [-yesterday])
+            .unwrap();
         first.operation_uid = Uuid::new_v4().to_string();
-        let recovered = reserve_inner(&c,"a",&first,"pending.mp4","video/mp4",60,"",100,true).unwrap();
-        assert_eq!(recovered.operation,original.operation);
-        let another = reserve_inner(&c,"a",&upload(),"other.mp4","video/mp4",60,"",100,true);
-        assert!(another.is_err(), "retained reservations still count against quota");
+        let recovered = reserve_inner(
+            &c,
+            "a",
+            &first,
+            "pending.mp4",
+            "video/mp4",
+            60,
+            "",
+            100,
+            true,
+        )
+        .unwrap();
+        assert_eq!(recovered.operation, original.operation);
+        let another = reserve_inner(
+            &c,
+            "a",
+            &upload(),
+            "other.mp4",
+            "video/mp4",
+            60,
+            "",
+            100,
+            true,
+        );
+        assert!(
+            another.is_err(),
+            "retained reservations still count against quota"
+        );
     }
 
     #[test]

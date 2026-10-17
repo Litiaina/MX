@@ -76,7 +76,12 @@ fn backup_error(status: StatusCode, message: impl Into<String>) -> Response {
         .into_response()
 }
 
-fn ensure_backup_schema(connection: &rusqlite::Connection) -> Result<(), rusqlite::Error> {
+pub(crate) fn ensure_backup_schema(
+    connection: &rusqlite::Connection,
+) -> Result<(), rusqlite::Error> {
+    if crate::db::schema::initialized(connection) {
+        return Ok(());
+    }
     crate::api::mx::migration::migrate_legacy_schema(connection)?;
     connection.execute_batch(
         r#"

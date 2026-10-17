@@ -27,11 +27,16 @@ async fn transfer_permit() -> Result<tokio::sync::SemaphorePermit<'static>, Erro
 pub(super) const MAX_PART_BYTES: usize = 50 * 1024 * 1024;
 async fn read_part(body: axum::body::Body, limit: usize) -> Result<axum::body::Bytes, Error> {
     axum::body::to_bytes(body, limit).await.map_err(|failure| {
-        if std::error::Error::source(&failure).is_some_and(|source| source.is::<http_body_util::LengthLimitError>()) {
+        if std::error::Error::source(&failure)
+            .is_some_and(|source| source.is::<http_body_util::LengthLimitError>())
+        {
             error(413, "Upload part exceeds the negotiated limit.")
         } else {
             // A broken stream is retryable, not a quota/oversize denial.
-            error(408, "The upload part connection was interrupted. Retry the identical part.")
+            error(
+                408,
+                "The upload part connection was interrupted. Retry the identical part.",
+            )
         }
     })
 }
@@ -49,7 +54,11 @@ fn multipart_policy(size: u64) -> (u64, usize) {
     }
 }
 fn maximum_workers(size: u64) -> usize {
-    if size > 1024 * 1024 * 1024 { 8 } else { multipart_policy(size).1 }
+    if size > 1024 * 1024 * 1024 {
+        8
+    } else {
+        multipart_policy(size).1
+    }
 }
 #[derive(Deserialize)]
 pub(super) struct Init {
@@ -323,23 +332,45 @@ mod tests {
     #[tokio::test]
     async fn interrupted_bodies_retry_but_oversized_parts_do_not() {
         let broken = axum::body::Body::from_stream(futures::stream::once(async {
-            Err::<axum::body::Bytes, _>(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "interrupted"))
+            Err::<axum::body::Bytes, _>(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "interrupted",
+            ))
         }));
         assert_eq!(read_part(broken, 4).await.unwrap_err().0.as_u16(), 408);
-        assert_eq!(read_part(axum::body::Body::from("oversized"), 4).await.unwrap_err().0.as_u16(), 413);
-        assert_eq!(read_part(axum::body::Body::from("ok"), 4).await.unwrap(), "ok");
+        assert_eq!(
+            read_part(axum::body::Body::from("oversized"), 4)
+                .await
+                .unwrap_err()
+                .0
+                .as_u16(),
+            413
+        );
+        assert_eq!(
+            read_part(axum::body::Body::from("ok"), 4).await.unwrap(),
+            "ok"
+        );
     }
     #[tokio::test]
     async fn contention_waits_without_raising_the_eight_transfer_limit() {
         let mut held = Vec::new();
-        for _ in 0..8 { held.push(TRANSFERS.acquire().await.unwrap()); }
+        for _ in 0..8 {
+            held.push(TRANSFERS.acquire().await.unwrap());
+        }
         let waiting = tokio::spawn(transfer_permit());
         tokio::task::yield_now().await;
-        assert!(!waiting.is_finished()); assert_eq!(TRANSFERS.available_permits(), 0);
-        held.pop();
-        let admitted = tokio::time::timeout(std::time::Duration::from_secs(1), waiting).await.unwrap().unwrap().unwrap();
+        assert!(!waiting.is_finished());
         assert_eq!(TRANSFERS.available_permits(), 0);
-        drop(admitted); drop(held); assert_eq!(TRANSFERS.available_permits(), 8);
+        held.pop();
+        let admitted = tokio::time::timeout(std::time::Duration::from_secs(1), waiting)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert_eq!(TRANSFERS.available_permits(), 0);
+        drop(admitted);
+        drop(held);
+        assert_eq!(TRANSFERS.available_permits(), 8);
     }
     #[test]
     fn console_part_sizes_and_workers_at_every_boundary() {
@@ -359,7 +390,10 @@ mod tests {
         ] {
             assert_eq!(multipart_policy(size), (part, workers));
             assert!(part <= MAX_PART_BYTES as u64);
-            assert_eq!(maximum_workers(size), if size > 1024 * MIB { 8 } else { workers });
+            assert_eq!(
+                maximum_workers(size),
+                if size > 1024 * MIB { 8 } else { workers }
+            );
         }
     }
 }

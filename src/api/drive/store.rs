@@ -58,6 +58,9 @@ pub(super) fn name(value: &str) -> rusqlite::Result<String> {
 }
 
 pub(crate) fn ensure(connection: &Connection) -> rusqlite::Result<()> {
+    if crate::db::schema::initialized(connection) {
+        return Ok(());
+    }
     crate::api::collaboration::ensure_space_directory_schema(connection)?;
     connection.execute_batch(r#"
     CREATE TABLE IF NOT EXISTS mx_drive_quotas (
@@ -417,7 +420,18 @@ fn list(
     query: &str,
     offset: usize,
 ) -> rusqlite::Result<Value> {
-    super::listing::list(connection,actor,&super::listing::Listing{view:view.into(),parent_uid:folder.map(str::to_owned),q:query.into(),offset,limit:100,..Default::default()})
+    super::listing::list(
+        connection,
+        actor,
+        &super::listing::Listing {
+            view: view.into(),
+            parent_uid: folder.map(str::to_owned),
+            q: query.into(),
+            offset,
+            limit: 100,
+            ..Default::default()
+        },
+    )
 }
 
 pub(super) fn mutate(
@@ -510,12 +524,16 @@ pub(super) fn shared(connection: &Connection, actor: &str, uid: &str) -> rusqlit
     let users=users.query_map([uid],|row|Ok(json!({"user_uid":row.get::<_,String>(0)?,"name":row.get::<_,String>(1)?,"email":row.get::<_,String>(2)?,"role":row.get::<_,String>(3)?})))?.collect::<rusqlite::Result<Vec<_>>>()?;
     let mut links=connection.prepare("SELECT uid,expires_at,created_at FROM mx_drive_links WHERE item_uid=?1 AND revoked_at IS NULL ORDER BY created_at DESC")?;
     let links=links.query_map([uid],|row|Ok(json!({"uid":row.get::<_,String>(0)?,"expires_at":row.get::<_,Option<i64>>(1)?,"created_at":row.get::<_,i64>(2)?})))?.collect::<rusqlite::Result<Vec<_>>>()?;
-    let spaces=super::sharing::details(connection,uid)?;
-    let mut inherited=Vec::new();
-    for ancestor in ancestors(connection,uid)?.into_iter().skip(1) {
+    let spaces = super::sharing::details(connection, uid)?;
+    let mut inherited = Vec::new();
+    for ancestor in ancestors(connection, uid)?.into_iter().skip(1) {
         let mut s=connection.prepare("SELECT u.name,u.email,g.role FROM mx_drive_grants g JOIN users u ON u.uid=g.user_uid WHERE g.item_uid=?1 ORDER BY u.name")?;
         for entry in s.query_map([&ancestor.uid],|r|Ok(json!({"name":r.get::<_,String>(0)?,"detail":r.get::<_,String>(1)?,"role":r.get::<_,String>(2)?,"kind":"account","from":ancestor.name})))? { inherited.push(entry?); }
-        for space in super::sharing::details(connection,&ancestor.uid)? { if space["archived"]!=true {inherited.push(json!({"name":space["name"],"detail":"Collaboration space","role":space["role"],"kind":"space","from":ancestor.name}));} }
+        for space in super::sharing::details(connection, &ancestor.uid)? {
+            if space["archived"] != true {
+                inherited.push(json!({"name":space["name"],"detail":"Collaboration space","role":space["role"],"kind":"space","from":ancestor.name}));
+            }
+        }
     }
     Ok(json!({"users":users,"spaces":spaces,"inherited":inherited,"links":links}))
 }

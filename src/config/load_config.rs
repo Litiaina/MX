@@ -62,7 +62,10 @@ pub struct DriveConfig {
 fn upload_retention_hours(value: Option<&str>) -> Option<usize> {
     match value {
         None => Some(72),
-        Some(value) => value.parse::<usize>().ok().filter(|hours| (1..=168).contains(hours)),
+        Some(value) => value
+            .parse::<usize>()
+            .ok()
+            .filter(|hours| (1..=168).contains(hours)),
     }
 }
 
@@ -629,8 +632,16 @@ pub static CONFIG: LazyLock<Config> = LazyLock::new(|| {
         drive: DriveConfig {
             quota_mb: drive_number("quota_mb", 10_240),
             public_links: drive_public_links,
-            upload_retention_hours: upload_retention_hours(drive_section.and_then(|section| section.get("upload_retention_hours")))
-                .unwrap_or_else(|| crate::fatal_error!("'[drive] upload_retention_hours' must be between 1 and 168", "static", "CONFIG")),
+            upload_retention_hours: upload_retention_hours(
+                drive_section.and_then(|section| section.get("upload_retention_hours")),
+            )
+            .unwrap_or_else(|| {
+                crate::fatal_error!(
+                    "'[drive] upload_retention_hours' must be between 1 and 168",
+                    "static",
+                    "CONFIG"
+                )
+            }),
         },
     }
 });

@@ -362,6 +362,9 @@ pub(crate) fn ids(value: &Value) -> Vec<String> {
 }
 
 pub(crate) fn ensure(c: &Connection) -> rusqlite::Result<()> {
+    if crate::db::schema::initialized(c) {
+        return Ok(());
+    }
     c.execute_batch(r#"
       CREATE TABLE IF NOT EXISTS mx_record_links (
         record_uid TEXT NOT NULL REFERENCES mx_records(uid) ON DELETE CASCADE,

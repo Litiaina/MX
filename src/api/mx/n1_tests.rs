@@ -153,36 +153,69 @@ fn client() -> Client {
 
 #[tokio::test]
 async fn stream_service_errors_preserve_status_and_retry_after_without_retrying() {
-    for status in [StatusCode::TOO_MANY_REQUESTS, StatusCode::SERVICE_UNAVAILABLE, StatusCode::GATEWAY_TIMEOUT, StatusCode::NOT_FOUND] {
-        let mut step = Step::new("GET", "/noa/v1/objects/stream/movie.mp4", status, "upstream implementation details must not leak");
+    for status in [
+        StatusCode::TOO_MANY_REQUESTS,
+        StatusCode::SERVICE_UNAVAILABLE,
+        StatusCode::GATEWAY_TIMEOUT,
+        StatusCode::NOT_FOUND,
+    ] {
+        let mut step = Step::new(
+            "GET",
+            "/noa/v1/objects/stream/movie.mp4",
+            status,
+            "upstream implementation details must not leak",
+        );
         step.headers.push(("retry-after", "25".into()));
         let mock = Mock::start(vec![step]).await;
         let client = client();
         let storage = N1Storage::new(&client, &mock.base, "test-fragment-token", 16);
-        let failure = storage.stream("movie.mp4", Some("bytes=120-180")).await.unwrap_err();
+        let failure = storage
+            .stream("movie.mp4", Some("bytes=120-180"))
+            .await
+            .unwrap_err();
         let response = super::super::handler::map_mx_error(failure);
         assert_eq!(response.status(), status);
         assert_eq!(response.headers()["retry-after"], "25");
         assert_eq!(response.headers()["cache-control"], "no-store");
-        let body = String::from_utf8(to_bytes(response.into_body(), 4096).await.unwrap().to_vec()).unwrap();
+        let body = String::from_utf8(to_bytes(response.into_body(), 4096).await.unwrap().to_vec())
+            .unwrap();
         assert!(!body.contains("implementation details"));
         let requests = mock.requests();
-        assert_eq!(requests.requests.len(), 1, "MX must not add throttling or implicit upstream retries");
+        assert_eq!(
+            requests.requests.len(),
+            1,
+            "MX must not add throttling or implicit upstream retries"
+        );
         assert_eq!(requests.requests[0].headers["range"], "bytes=120-180");
     }
 }
 
 #[tokio::test]
 async fn stream_ranges_are_forwarded_without_buffering_or_rewriting_bytes() {
-    for status in [StatusCode::PARTIAL_CONTENT, StatusCode::RANGE_NOT_SATISFIABLE] {
-        let mut step = Step::new("GET", "/noa/v1/objects/stream/movie.mp4", status, vec![0, 255, 13, 10]);
-        step.headers.push(("content-range", "bytes 120-123/12466907074".into()));
+    for status in [
+        StatusCode::PARTIAL_CONTENT,
+        StatusCode::RANGE_NOT_SATISFIABLE,
+    ] {
+        let mut step = Step::new(
+            "GET",
+            "/noa/v1/objects/stream/movie.mp4",
+            status,
+            vec![0, 255, 13, 10],
+        );
+        step.headers
+            .push(("content-range", "bytes 120-123/12466907074".into()));
         let mock = Mock::start(vec![step]).await;
         let client = client();
         let storage = N1Storage::new(&client, &mock.base, "test-fragment-token", 16);
-        let response = storage.stream("movie.mp4", Some("bytes=120-123")).await.unwrap();
+        let response = storage
+            .stream("movie.mp4", Some("bytes=120-123"))
+            .await
+            .unwrap();
         assert_eq!(response.status(), status);
-        assert_eq!(response.headers()["content-range"], "bytes 120-123/12466907074");
+        assert_eq!(
+            response.headers()["content-range"],
+            "bytes 120-123/12466907074"
+        );
         assert_eq!(response.bytes().await.unwrap().as_ref(), &[0, 255, 13, 10]);
         assert_eq!(mock.requests().requests.len(), 1);
     }

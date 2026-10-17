@@ -31,8 +31,9 @@ use crate::{
         live::publish_user_event,
         modules::module_can_for_user,
         mx::handler::{
-            check_office_preview_size, generate_office_pdf_preview, inline_attachment_response, n1_access_token, n1_download,
-            n1_soft_delete, n1_stream, n1_upload, office_preview_supported,
+            check_office_preview_size, generate_office_pdf_preview, inline_attachment_response,
+            n1_access_token, n1_download, n1_soft_delete, n1_stream, n1_upload,
+            office_preview_supported,
         },
         mx::model::FileAttachment,
         notifications::{NewNotification, ensure_notification_schema, notify_user},
@@ -286,6 +287,9 @@ pub struct ChannelFileQuery {
 pub(crate) fn ensure_collaboration_schema(
     connection: &rusqlite::Connection,
 ) -> rusqlite::Result<()> {
+    if crate::db::schema::initialized(connection) {
+        return Ok(());
+    }
     ensure_record_lifecycle_schema(connection)?;
     ensure_profile_photo_schema(connection)?;
     ensure_space_directory_schema(connection)?;
@@ -420,7 +424,12 @@ pub(crate) fn ensure_collaboration_schema(
 }
 
 /// Drive's space grants depend only on this directory, not message/record tables.
-pub(crate) fn ensure_space_directory_schema(connection: &rusqlite::Connection) -> rusqlite::Result<()> {
+pub(crate) fn ensure_space_directory_schema(
+    connection: &rusqlite::Connection,
+) -> rusqlite::Result<()> {
+    if crate::db::schema::initialized(connection) {
+        return Ok(());
+    }
     connection.execute_batch(r#"
       CREATE TABLE IF NOT EXISTS mx_channels (
         uid TEXT PRIMARY KEY NOT NULL,kind TEXT NOT NULL CHECK(kind IN ('channel','group','direct')),
@@ -2606,8 +2615,8 @@ pub async fn preview_message_file(claims: Claims, Path(file_uid): Path<String>) 
         }
     };
     if office_preview_supported(&file_name) {
-        if let Err(error)=check_office_preview_size(file_size.max(0) as u64) {
-            return api_json(StatusCode::UNPROCESSABLE_ENTITY,json!({"response":error}));
+        if let Err(error) = check_office_preview_size(file_size.max(0) as u64) {
+            return api_json(StatusCode::UNPROCESSABLE_ENTITY, json!({"response":error}));
         }
     }
     let bytes = match n1_download(&object_key, &file_name).await {
@@ -2637,10 +2646,7 @@ pub async fn preview_message_file(claims: Claims, Path(file_uid): Path<String>) 
             Ok(bytes) => bytes,
             Err(error) => {
                 crate::report_error!(&error, "preview", "preview_message_file()");
-                return api_json(
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    json!({"response":error}),
-                );
+                return api_json(StatusCode::SERVICE_UNAVAILABLE, json!({"response":error}));
             }
         };
         let preview_name = file_name

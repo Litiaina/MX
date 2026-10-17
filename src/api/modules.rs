@@ -190,6 +190,9 @@ fn table_exists(connection: &rusqlite::Connection, table: &str) -> rusqlite::Res
 }
 
 pub(crate) fn ensure_module_schema(connection: &rusqlite::Connection) -> rusqlite::Result<()> {
+    if crate::db::schema::initialized(connection) {
+        return Ok(());
+    }
     ensure_mx_record_schema(connection)?;
     connection.execute_batch(
         r#"

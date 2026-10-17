@@ -23,6 +23,9 @@ impl ClientOperation {
 }
 
 pub fn ensure_schema(connection: &Connection) -> rusqlite::Result<()> {
+    if crate::db::schema::initialized(connection) {
+        return Ok(());
+    }
     connection.execute_batch(
         "CREATE TABLE IF NOT EXISTS mx_client_operations (
         actor_uid TEXT NOT NULL, scope TEXT NOT NULL, operation_uid TEXT NOT NULL,

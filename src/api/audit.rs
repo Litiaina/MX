@@ -430,6 +430,9 @@ async fn record_audit_event(write: AuditWrite) -> Result<(), String> {
 pub(crate) fn ensure_audit_schema(
     connection: &rusqlite::Connection,
 ) -> Result<(), rusqlite::Error> {
+    if crate::db::schema::initialized(connection) {
+        return Ok(());
+    }
     // Audit reconstruction queries record-version history. Make the audit
     // schema independently safe on a new installation, even before anyone
     // has opened or edited a record.
@@ -481,6 +484,9 @@ pub(crate) fn ensure_audit_schema(
             target_uid,
             created_at DESC
         );
+
+        CREATE INDEX IF NOT EXISTS idx_mx_audit_lifecycle_match
+        ON mx_audit_log(actor_uid, action, target_uid, created_at);
 
         CREATE TRIGGER IF NOT EXISTS
             mx_audit_log_no_update
@@ -547,6 +553,10 @@ pub(crate) fn ensure_audit_schema(
         JOIN users user ON user.uid = version.actor_uid
         WHERE version.event IN ('created','updated','deleted','restored','version_restored')
           AND NOT EXISTS (
+              SELECT 1 FROM mx_audit_log known
+              WHERE known.event_uid = 'record-version:' || version.uid
+          )
+          AND NOT EXISTS (
               SELECT 1
               FROM mx_audit_log audit
               WHERE audit.actor_uid = version.actor_uid
@@ -555,16 +565,41 @@ pub(crate) fn ensure_audit_schema(
                     WHEN 'deleted' THEN 'record.delete'
                     ELSE 'record.update'
                 END
-                AND ABS(audit.created_at - version.created_at) <= 60000
-                AND (
-                    (version.event = 'created' AND audit.target_uid IS NULL)
-                    OR audit.target_uid = version.record_uid
-                )
+                AND audit.target_uid = version.record_uid
+                AND audit.created_at BETWEEN version.created_at - 60000 AND version.created_at + 60000
           )
+          AND (version.event <> 'created' OR NOT EXISTS (
+              SELECT 1 FROM mx_audit_log audit
+              WHERE audit.actor_uid = version.actor_uid
+                AND audit.action = 'record.create'
+                AND audit.target_uid IS NULL
+                AND audit.created_at BETWEEN version.created_at - 60000 AND version.created_at + 60000
+          ))
         "#,
         [],
     )?;
 
+    Ok(())
+}
+
+/// Imports do not pass through the individual-record HTTP audit middleware.
+/// Append their audit entry atomically with the record/version instead of
+/// requiring a future read request to reconstruct the entire history.
+pub(crate) fn record_import_creation(
+    connection: &rusqlite::Connection,
+    version_uid: &str,
+    record_uid: &str,
+    module_uid: &str,
+    actor_uid: &str,
+) -> rusqlite::Result<()> {
+    connection.execute(
+        "INSERT OR IGNORE INTO mx_audit_log(event_uid,actor_uid,actor_name,actor_email,access_level,
+            action,method,path,target_type,target_uid,status_code,success,user_agent,created_at)
+         SELECT 'record-version:'||?1,uid,name,email,access_level,'record.create','POST',
+            '/mx/v1/modules/'||?3||'/records','record',?2,201,1,'MX spreadsheet import',
+            CAST(strftime('%s','now') AS INTEGER)*1000 FROM users WHERE uid=?4",
+        params![version_uid, record_uid, module_uid, actor_uid],
+    )?;
     Ok(())
 }
 
@@ -573,7 +608,11 @@ fn classify_action(method: &Method, path: &str) -> Option<AuditClassification> {
 
     if path.starts_with("/mx/v1/admin/updates/") && matches!(*method, Method::POST | Method::PUT) {
         return Some(AuditClassification {
-            action: if path.ends_with("/policy") { "update.policy.change" } else { "update.request" },
+            action: if path.ends_with("/policy") {
+                "update.policy.change"
+            } else {
+                "update.request"
+            },
             target_type: Some("release"),
             target_uid: segments.get(4).map(|value| value.to_string()),
         });

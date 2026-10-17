@@ -106,6 +106,9 @@ fn notification_sound_cache() -> &'static RwLock<HashMap<String, CachedNotificat
 }
 
 pub(crate) fn ensure_preferences_schema(connection: &rusqlite::Connection) -> rusqlite::Result<()> {
+    if crate::db::schema::initialized(connection) {
+        return Ok(());
+    }
     connection.execute_batch(
         r#"
         CREATE TABLE IF NOT EXISTS mx_user_preferences (

@@ -42,7 +42,10 @@ fn invalid(s: impl Into<String>) -> rusqlite::Error {
 fn decode<T: serde::de::DeserializeOwned>(s: &str) -> rusqlite::Result<T> {
     serde_json::from_str(s).map_err(|_| invalid("Stored import data is unreadable."))
 }
-fn ensure(c: &Connection) -> rusqlite::Result<()> {
+pub(crate) fn ensure(c: &Connection) -> rusqlite::Result<()> {
+    if crate::db::schema::initialized(c) {
+        return Ok(());
+    }
     c.execute_batch("CREATE TABLE IF NOT EXISTS mx_import_jobs (
         uid TEXT PRIMARY KEY,
         module_uid TEXT NOT NULL REFERENCES mx_modules(uid) ON DELETE CASCADE,
