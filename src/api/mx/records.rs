@@ -1529,21 +1529,11 @@ pub(super) fn import_validate(
     let prepared = super::form_rules::prepare(fields, &values, &BTreeMap::new(), false)?;
     let effective = super::form_rules::effective_fields(fields, &prepared);
     validate_payload(&effective, &prepared)?;
-    import_required_files(&effective)?;
+    // Spreadsheet migration imports record values only. Attachment inputs are
+    // deliberately outside its mapping/validation scope, including required
+    // attachment fields in the interactive form. No file is fabricated and the
+    // module's normal form requirements are not changed.
     Ok(prepared)
-}
-
-fn import_required_files(fields: &[FieldDefinition]) -> Result<(), String> {
-    if let Some(field) = fields
-        .iter()
-        .find(|f| f.field_type == "attachments" && f.required)
-    {
-        return Err(format!(
-            "{} requires a file. Spreadsheet import cannot supply it. Enter this row manually through the ordinary record form with its required attachment.",
-            field.label
-        ));
-    }
-    Ok(())
 }
 
 pub(super) fn create_record_commit(
@@ -1593,10 +1583,6 @@ pub(super) fn create_record_commit(
         let effective_fields = super::form_rules::effective_fields(&fields, &request_values);
         let mut values = validate_payload(&effective_fields, &request_values)
             .map_err(rusqlite::Error::InvalidParameterName)?;
-        if import.is_some() {
-            import_required_files(&effective_fields)
-                .map_err(rusqlite::Error::InvalidParameterName)?;
-        }
         let uid = Uuid::new_v4().to_string();
 
         fill_auto_numbers(&transaction, &fields, &mut values)?;

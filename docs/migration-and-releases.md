@@ -10,13 +10,15 @@ Existing imported records and histories remain; do not reset or re-import them.
 The signing key and managed update/backup/rollback protocol are unchanged. See
 [RC.4 instructions and limits](releases/1.0.0-rc.4.md).
 
-On 2026-10-18, the maintainer requested an RC.4 replacement before departmental
-adoption to document N1 `1.0.0-RC.1` compatibility. The MX executable, frontend,
-signed update package, metadata and publisher key remain byte-identical; only
-documentation, compatibility evidence, provenance and the initial-install
-archive are refreshed. The previous commit and original artifacts are retained
-for traceability. Existing RC.4 installations need no runtime reinstall.
-The updater's newer-version requirement is unchanged.
+On 2026-10-18, an initial documentation-only RC.4 refresh qualified N1
+`1.0.0-RC.1` without changing runtime bytes. A subsequent, explicitly authorized
+**importer hotfix replacement** changes the binary/frontend and signed package
+while retaining version `1.0.0-rc.4` and publisher trust. No RC.5 is published.
+Original and intermediate artifacts remain archived for traceability.
+Equal-version protection stays enabled: an earlier RC.4 requires a verified
+operator replacement with backup, not an ordinary same-version UI update.
+The local test replacement is explicitly authorized; older RC versions can use
+the normal signed updater. See the current [RC.4 notes](releases/1.0.0-rc.4.md).
 
 ### Earlier candidates
 

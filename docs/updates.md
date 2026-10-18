@@ -273,6 +273,13 @@ Do not relabel or overwrite a published candidate. Use a new RC number. The
 historical 4.x development line is not eligible for 1.x autonomous updates;
 transition it manually using the [release-line migration guidance](migration-and-releases.md).
 
+**Explicit RC.4 exception (2026-10-18):** the maintainer requested replacement
+of RC.4's package to include the importer hotfix, keeping earlier artifacts
+archived and the same publisher key. Equal-version protection is not relaxed:
+already-installed RC.4 needs a verified operator replacement with a backup,
+as authorized for the local test. Earlier candidates can use the normal updater.
+See the [current RC.4 notes](releases/1.0.0-rc.4.md) to distinguish the packages.
+
 ## Testing and recovery
 
 `npm run test:updates` is an explicit opt-in integration test. It builds a real

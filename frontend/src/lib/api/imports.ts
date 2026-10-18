@@ -5,7 +5,8 @@ export interface ImportSource { row: number; cells: Record<string, ImportCell> }
 export interface ImportSheet { index: number; name: string; row_count: number; columns: number; sample: ImportSource[]; error?: string | null }
 export interface ImportColumn { column: number; key: string; fill_down: boolean; date_format: string }
 export interface ImportMapping { index: number; header_row: number; first_data_row: number; columns: ImportColumn[] }
-export interface ImportJob { uid: string; filename: string; state: string; sheets: ImportSheet[]; config: { sheets?: ImportMapping[] }; created_at: number; total: number; processed: number; imported: number; failed: number; pending: number }
+export interface ImportValidation { ready: number; invalid: number; issues: { field: string; message: string; rows: number }[] }
+export interface ImportJob { uid: string; filename: string; state: string; sheets: ImportSheet[]; config: { sheets?: ImportMapping[] }; created_at: number; total: number; processed: number; imported: number; failed: number; pending: number; validation?: ImportValidation }
 export interface ImportRow extends ImportSource { sheet: number; values: Record<string, JsonValue>; preview_values?: Record<string, JsonValue>; errors: { field: string; column?: number; message: string; value?: string }[]; record_uid: string | null }
 export interface ImportRows { rows: ImportRow[]; total: number; page: number; limit: number }
 const path = (module: string, uid = '') => `/mx/v1/modules/${encodeURIComponent(module || 'mx-default-records')}/imports${uid ? `/${encodeURIComponent(uid)}` : ''}`;

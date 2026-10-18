@@ -5,18 +5,38 @@ deployment maintainer's local date.
 
 ## [Unreleased]
 
-Changes after the first 1.0 candidate will be recorded here.
+No unreleased changes.
 
 ## [1.0.0-rc.4] - 2026-10-17
 
-### Compatibility refresh - 2026-10-18
+### Importer hotfix replacement - 2026-10-18
+
+- Replace RC.4's native/frontend signed package at the maintainer's explicit
+  request; retain previous artifacts and publisher trust. Do not create RC.5 or
+  weaken equal-version installation protection. Already-installed RC.4 requires
+  a verified operator replacement; the local test is replaced after backup.
+
+- Import spreadsheet record values without requiring attachment uploads. Keep
+  the module's attachment settings and normal entry-form requirements unchanged;
+  imported records honestly start without files. Preserve non-attachment
+  validation, permissions, unique values, normal versions and atomic commits.
+- Show grouped validation problems and affected-row counts before importing,
+  allow inspection of invalid preview rows, and disable Start when no rows are
+  valid. Revalidate/remap an existing all-failed job only if it has saved no
+  records; never remap a job with successful records or silently repeat imports.
+- Restore ignored spreadsheet columns when reopening saved mappings, without
+  mutating form state during rendering. Keep completion feedback consistent with
+  the running state instead of briefly presenting a finished job with Pause.
+
+### Earlier compatibility refresh - 2026-10-18
 
 - Align current compatibility guidance with N1 `1.0.0-RC.1`, NOA v1 and unchanged
   storage encoding 4. Product numbering does not rename routes or migrate data.
 - Refresh RC.4's documentation, initial-install archive and compatibility
   provenance at the maintainer's request before departmental adoption. Preserve
   the original runtime bytes, signed update package/metadata and publisher key;
-  installed RC.4 instances need no reinstall. Keep equal-version update rejection.
+  that earlier refresh required no runtime reinstall. The later importer hotfix
+  above supersedes its runtime assets. Keep equal-version update rejection.
 - Add an isolated real-engine compatibility runner for Drive and Office suites;
   never reuse production/test-deployment fragments, credentials or storage roots.
 

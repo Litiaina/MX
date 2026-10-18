@@ -35,6 +35,8 @@ try {
   assert.equal((await upload(module.uid, 'cases.csv', bytes, owner, uid)).uid, j.uid, 'Upload lost-ack replay');
   await call(`${base}/${j.uid}`, 'GET', undefined, [404], users[0]);
   j = await call(`${base}/${j.uid}/configure`, 'PUT', { sheets: [config()] }); assert.equal(j.total, 7);
+  assert.equal(j.validation.ready,4);assert.equal(j.validation.invalid,3,'Preview counts invalid rows before processing; commit-time uniqueness is still checked later');
+  assert.equal((await call(`${base}/${j.uid}/rows?state=issues`)).total,3,'Issues are inspectable before import, not mislabeled as an empty failed log');
   const preview = await call(`${base}/${j.uid}/rows?state=pending`); assert.equal(preview.rows[0].values.name, '001'); assert.equal(preview.rows[1].values.start, '2026-01-05'); assert.equal(preview.rows[1].values.status,'Closed');assert.ok(preview.rows[2].errors[0].message.includes('Invalid date'));
   j = await call(`${base}/${j.uid}/process`, 'POST'); assert.equal(j.imported, 3); assert.equal(j.failed, 4); assert.equal(j.processed, 7); assert.equal(j.pending, 0);
   assert.equal((await call(`${base}/${j.uid}/process`, 'POST')).imported, 3, 'Batch replay must not create duplicates');
@@ -85,8 +87,31 @@ try {
   let withFile=await upload(module.uid,'requires-file.csv',Buffer.from(`Name,Start date,Amount,Status,Employee,Close note\nRequires-file,1.5.26,1,closed,${alice.uid},Ready note\n`));
   withFile=await call(`${base}/${withFile.uid}/configure`,'PUT',{sheets:[relatedConfig]});
   await call(`/mx/v1/admin/schema/fields/${requiredFile.uid}`,'PUT',{required:true,config:{form_rules:{visible_when:when}}});
-  withFile=await call(`${base}/${withFile.uid}/process`,'POST');assert.equal(withFile.imported,0);assert.equal(withFile.failed,1);assert.ok((await call(`${base}/${withFile.uid}/rows?state=failed`)).rows[0].errors[0].message.includes('Closing file requires a file'));
-  evidence.api.push('Case-insensitive choices use canonical stored values for conditions; a newly required attachment at commit skips the row with manual-entry guidance instead of creating an incomplete record');
+  withFile=await call(`${base}/${withFile.uid}/process`,'POST');assert.equal(withFile.imported,1);assert.equal(withFile.failed,0);
+  const noFiles=(await call(`${base}/${withFile.uid}/rows?state=imported`)).rows[0];assert.equal((await call(`/mx/v1/modules/${module.uid}/records/${noFiles.record_uid}`)).attached_files.length,0);
+  evidence.api.push('Case-insensitive choices use canonical values for conditions; attachment requirements added after preview do not block record-value imports or fabricate files');
+  const blockedModule=(await call('/mx/v1/admin/modules','POST',{name:'Required attachment recovery',singular_name:'Legacy record'},[201])).module;
+  await call(`/mx/v1/admin/modules/${blockedModule.uid}/fields`,'POST',{key:'name',label:'Name',field_type:'text'},[201]);
+  await call(`/mx/v1/admin/modules/${blockedModule.uid}/fields`,'POST',{key:'quantity',label:'Quantity',field_type:'integer',required:true},[201]);
+  const blockedFile=await call(`/mx/v1/admin/modules/${blockedModule.uid}/fields`,'POST',{key:'evidence',label:'FILE ATTACHMENTS',field_type:'attachments',required:true},[201]);
+  const blockedBase=`/mx/v1/modules/${blockedModule.uid}/imports`;
+  const blockedMapping={index:0,header_row:1,first_data_row:2,columns:[{column:1,key:'name',fill_down:false,date_format:''},{column:2,key:'quantity',fill_down:false,date_format:''}]};
+  let blocked=await upload(blockedModule.uid,'legacy.csv',Buffer.from('Name,Quantity\n'+Array.from({length:45},(_,n)=>`Legacy ${n},${n}`).join('\n')));
+  blocked=await call(`${blockedBase}/${blocked.uid}/configure`,'PUT',{sheets:[blockedMapping]});
+  assert.equal(blocked.validation.ready,45);assert.equal(blocked.validation.invalid,0);
+  // Reproduce stored failures from the older importer in this disposable DB.
+  // Never retry/import into the operator's actual database automatically.
+  const oldError=JSON.stringify([{field:'Record validation',message:'FILE ATTACHMENTS requires a file. Spreadsheet import cannot supply it.'}]);
+  sql(`UPDATE mx_import_rows SET state='failed',errors_json='${oldError}' WHERE job_uid='${blocked.uid}' AND state='pending';UPDATE mx_import_jobs SET state='completed' WHERE uid='${blocked.uid}';`);
+  blocked=await call(`${blockedBase}/${blocked.uid}`);assert.equal(blocked.validation.ready,0);assert.equal(blocked.validation.invalid,45);assert.equal(blocked.validation.issues[0].rows,45);
+  assert.equal((await call(`${blockedBase}/${blocked.uid}/rows?state=issues&page=2`)).rows.length,20);
+  assert.equal(blocked.failed,45);assert.equal(blocked.imported,0);
+  blocked=await call(`${blockedBase}/${blocked.uid}/configure`,'PUT',{sheets:[blockedMapping]});assert.equal(blocked.validation.ready,45);assert.equal(blocked.validation.invalid,0);assert.equal(blocked.failed,0);assert.equal((await call(`/mx/v1/modules/${blockedModule.uid}/records?limit=1`)).total,0,'Revalidation creates no records');
+  while(blocked.pending)blocked=await call(`${blockedBase}/${blocked.uid}/process`,'POST');assert.equal(blocked.imported,45);assert.equal(blocked.failed,0);
+  await call(`${blockedBase}/${blocked.uid}/process`,'POST');assert.equal((await call(`/mx/v1/modules/${blockedModule.uid}/records?limit=1`)).total,45);
+  await call(`${blockedBase}/${blocked.uid}/configure`,'PUT',{sheets:[blockedMapping]},[400]);
+  assert.equal((await call(`/mx/v1/modules/${blockedModule.uid}/schema`)).fields.find(f=>f.uid===blockedFile.uid).required,true,'Required attachment configuration is unchanged');
+  evidence.api.push('Required attachments stay required in the schema but are excluded from import; historical all-failed job has grouped counts/paged issues, revalidates without a new upload and commits exactly once; saved jobs cannot be remapped');
   if (process.env.MX_IMPORT_SAMPLE) {
     assert.ok(resolve(process.env.MX_IMPORT_SAMPLE).startsWith('/home/altear/Temp Environment/'));
     const sample = await upload(module.uid, 'COMMUNICATION JANUARY-JULY 2026.xlsx', await readFile(process.env.MX_IMPORT_SAMPLE));
@@ -108,7 +133,7 @@ try {
   for (const engine of (process.env.MX_TEST_BROWSERS || 'chromium,firefox,webkit').split(',')) {
     const executablePath = engine === 'chromium' ? '/home/altear/.cache/ms-playwright/chromium-1228/chrome-linux64/chrome' : engine === 'firefox' ? '/home/altear/.cache/ms-playwright/firefox-1543/firefox/firefox' : '/home/altear/.cache/mx-network-audit-2026-10-08.fnCQvP/webkit-launch.sh';
     const browser = await ({ chromium, firefox, webkit })[engine].launch({ headless: true, executablePath, env: disconnectedBrowserAudio(mx.directory), ...(engine === 'chromium' ? { args: ['--no-sandbox', '--mute-audio'] } : {}) }); browsers.push(browser);
-    const page = await browser.newPage({ ignoreHTTPSErrors: true, viewport: { width: 1440, height: 950 } }); activePage = page; const errors = []; page.on('pageerror', e => errors.push(e.message));
+    const page = await browser.newPage({ ignoreHTTPSErrors: true, viewport: { width: 1440, height: 950 } }); activePage = page; const errors = []; page.on('pageerror', e => { errors.push(e.message); console.error(`${engine}: ${e.message}`); });
     await page.addInitScript(tokens => { sessionStorage.setItem('mx_access_token', tokens.access_token); sessionStorage.setItem('mx_refresh_token', tokens.refresh_token); }, owner);
     const origin = `https://127.0.0.1:${mx.port}`;
     await page.goto(`${origin}/#module/${module.uid}`); await page.getByRole('button', { name: 'Module actions', exact: true }).click(); await page.getByRole('menuitem', { name: 'Import records', exact: true }).click();
@@ -121,6 +146,28 @@ try {
     await dialog.getByRole('button', { name: 'Start import', exact: true }).click(); await dialog.getByRole('heading', { name: 'Completed with issues', exact: true }).waitFor();assert.ok(lostAck);await page.unroute('**/imports/*/process'); await dialog.getByRole('button', { name: 'Correct and retry', exact: true }).click();
     const editor = page.locator('.record-dialog'); await editor.getByRole('spinbutton', { name: /^Amount/ }).fill('12'); await editor.getByRole('button', { name: /^Save import row/ }).click(); await editor.waitFor({ state: 'hidden' }); await dialog.getByRole('heading', { name: 'Import complete', exact: true }).waitFor();
     await dialog.getByRole('button', { name: 'Close import', exact: true }).click(); await page.getByRole('button', { name: 'Module actions', exact: true }).click(); await page.getByRole('menuitem', { name: 'Import history', exact: true }).click(); await dialog.getByText(`${engine}.csv`, { exact: true }).click(); await dialog.getByRole('heading', { name: 'Import complete', exact: true }).waitFor();
+    await dialog.getByRole('button',{name:'Close import',exact:true}).click();
+    await page.goto(`${origin}/#module/${blockedModule.uid}`);await page.getByRole('button',{name:'Module actions',exact:true}).click();await page.getByRole('menuitem',{name:'Import records',exact:true}).click();
+    await dialog.locator('input[type=file]').setInputFiles({name:`blocked-${engine}.csv`,mimeType:'text/csv',buffer:Buffer.from('Name,Quantity,Correct quantity\nBlocked one,invalid,1\nBlocked two,invalid,2\n')});
+    await dialog.getByRole('button',{name:'Read spreadsheet',exact:true}).click();await dialog.getByRole('note',{name:'Attachments are not imported'}).waitFor();
+    await dialog.getByRole('button',{name:'Validate and preview',exact:true}).click();
+    const alert=dialog.getByRole('alert',{name:'Import validation problems'});await alert.getByText('No rows can be imported yet',{exact:true}).waitFor();
+    assert.ok((await alert.innerText()).includes('Quantity must be an integer'));
+    assert.ok(!(await alert.innerText()).includes('FILE ATTACHMENTS requires'));
+    assert.equal(await dialog.getByRole('button',{name:'Start import',exact:true}).isDisabled(),true);
+    assert.equal(await dialog.locator('.import-result-row').count(),2,'Problem rows appear directly in preview');
+    for(const theme of ['light','dark'])for(const width of [1440,390]){await page.setViewportSize({width,height:950});await page.evaluate(t=>document.documentElement.dataset.theme=t,theme);assert.ok(await dialog.locator('.import-body').evaluate(n=>n.scrollWidth<=n.clientWidth+1));await page.screenshot({path:join(mx.directory,`${engine}-import-blocked-${theme}-${width}.png`)});}
+    await page.setViewportSize({width:1440,height:950});
+    const stale=(await call(blockedBase)).jobs.find(j=>j.filename===`blocked-${engine}.csv`);assert.ok(stale);
+    sql(`UPDATE mx_import_rows SET state='failed',errors_json='${oldError}' WHERE job_uid='${stale.uid}' AND state='pending';UPDATE mx_import_jobs SET state='completed' WHERE uid='${stale.uid}';`);
+    await dialog.getByRole('button',{name:'Close import',exact:true}).click();await page.getByRole('button',{name:'Module actions',exact:true}).click();await page.getByRole('menuitem',{name:'Import history',exact:true}).click();await dialog.getByText(`blocked-${engine}.csv`,{exact:true}).click();await alert.getByText('No records were saved',{exact:true}).waitFor();
+    await page.waitForFunction(()=>document.querySelectorAll('.import-result-row').length===2);await dialog.getByRole('button',{name:'Review mapping and revalidate',exact:true}).click();await dialog.getByRole('heading',{name:'1. Select sheets · 2. Match columns',exact:true}).waitFor();await dialog.getByRole('combobox',{name:'Map column B',exact:true}).selectOption('');await dialog.getByRole('combobox',{name:'Map column C',exact:true}).selectOption('quantity');
+    await dialog.getByRole('button',{name:'Validate and preview',exact:true}).click();await dialog.getByRole('button',{name:'Start import',exact:true}).waitFor();await page.waitForFunction(()=>!document.querySelector('.import-warning[role=alert]'));
+    assert.equal(await dialog.getByRole('button',{name:'Start import',exact:true}).isEnabled(),true);await dialog.getByRole('button',{name:'Start import',exact:true}).click();await dialog.getByRole('heading',{name:'Import complete',exact:true}).waitFor();
+    assert.equal(await dialog.getByRole('button',{name:'Pause import',exact:true}).count(),0,'Completed imports must not remain in the running state');
+    await dialog.getByRole('button',{name:'Close import',exact:true}).click();await page.getByRole('button',{name:'+ New legacy record',exact:true}).click();
+    const normal=page.locator('.record-dialog');await normal.getByRole('textbox',{name:/^Name/}).fill('Normal form still needs files');await normal.getByRole('spinbutton',{name:/^Quantity/}).fill('1');await normal.getByRole('button',{name:/^Save Legacy record$/i}).click();
+    await normal.getByText('FILE ATTACHMENTS requires at least one file.',{exact:true}).waitFor();await normal.getByRole('button',{name:'Clear form',exact:true}).click();await normal.getByRole('button',{name:'Cancel',exact:true}).click();
     assert.deepEqual(errors, []); evidence.browsers.push(engine); console.log(`${engine}: mapping, real progress, correction, history, light/dark and mobile passed`); await browser.close();
   }
   await writeFile(join(mx.directory, 'import-results.json'), JSON.stringify({ passed: true, ...evidence }, null, 2));

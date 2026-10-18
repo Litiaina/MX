@@ -8,7 +8,7 @@
   import { getRecord } from '../api/workspace';
   import { requestConfirmation } from '../confirmation';
   import { configureImport, correctImport, importHistory, importJob, importRows, processImport, removeImportLog, uploadImport, type ImportJob, type ImportMapping, type ImportRow, type ImportRows } from '../api/imports';
-  import { guessMapping, importWritable, columnName, csvCell } from '../util/importMapping';
+  import { guessMapping, restoreImportMapping, importWritable, importAttachmentFields, columnName, csvCell } from '../util/importMapping';
   import RecordEditor from './RecordEditor.svelte';
   let { moduleUid, schema, history = false, onClose, onChanged }: { moduleUid: string; schema: SchemaResponse; history?: boolean; onClose: () => void; onChanged: () => Promise<void> } = $props();
   let stage = $state<'file' | 'mapping' | 'review' | 'results' | 'history'>(untrack(() => history) ? 'history' : 'file');
@@ -19,6 +19,8 @@
   let result = $state<ImportRows>({ rows: [], total: 0, page: 1, limit: 20 }), rowState = $state('pending'), rowPage = $state(1), correction = $state<ImportRow | null>(null);
   let gone = false, retryTimer: ReturnType<typeof setTimeout> | undefined, dialog: HTMLDivElement;
   const fields = $derived(schema.fields.filter(importWritable));
+  const attachmentFields = $derived(importAttachmentFields(schema.fields));
+  const noValidRows = $derived(!!job?.pending && job.validation?.ready === 0);
   const sheet = $derived(job?.sheets[sheetIndex]);
   const mapping = $derived(mappings.find(m => m.index === sheetIndex));
   const header = $derived(sheet?.sample.find(row => row.row === mapping?.header_row));
@@ -39,24 +41,30 @@
   }
   function chooseFile(event: Event) { file = (event.currentTarget as HTMLInputElement).files?.[0] || null; delimiter = file?.name.toLowerCase().endsWith('.tsv') ? 'tab' : 'comma'; uploadUid = operationUid(); }
   function headerChanged() { if (!sheet || !mapping) return; const old = mapping; const guessed = guessMapping({ ...sheet, sample: sheet.sample.filter(r => r.row === old.header_row) }, fields); mappings = mappings.map(m => m.index === sheetIndex ? { ...guessed, header_row: old.header_row, first_data_row: Math.max(old.header_row + 1, old.first_data_row) } : m); }
-  function columnConfig(column: number) { let found = mapping?.columns.find(c => c.column === column); if (!found && mapping) { found = { column, key: '', fill_down: false, date_format: 'iso' }; mapping.columns.push(found); } return found!; }
+  function columnConfig(column: number) { return mapping!.columns.find(c => c.column === column)!; }
   async function preview() {
     if (!job) return; busy = true; error = ''; status = 'Validating mapped rows against module fields and form rules…';
-    try { job = await configureImport(moduleUid, job.uid, mappings.filter(m => selected.includes(m.index)).map(m => ({ ...m, columns: m.columns.filter(c => c.key) }))); stage = 'review'; rowState = 'pending'; rowPage = 1; await loadRows(); } catch (e) { error = message(e); } finally { busy = false; status = ''; }
+    try { job = await configureImport(moduleUid, job.uid, mappings.filter(m => selected.includes(m.index)).map(m => ({ ...m, columns: m.columns.filter(c => c.key) }))); stage = 'review'; rowState = job.validation?.invalid ? 'issues' : 'pending'; rowPage = 1; await loadRows(); } catch (e) { error = message(e); } finally { busy = false; status = ''; }
   }
   let loadSequence = 0;
   async function loadRows() { if (!job) return; const sequence = ++loadSequence; const data = await importRows(moduleUid, job.uid, rowState, rowPage); if (!gone && sequence === loadSequence) result = data; }
   async function changeRows(state: string) { rowState = state; rowPage = 1; error = ''; try { await loadRows(); } catch (e) { error = message(e); } }
   async function openJob(data: ImportJob) {
-    error = ''; job = data; const saved = data.config.sheets; mappings = data.sheets.map(s => saved?.find(m => m.index === s.index) || guessMapping(s, fields)); const first = data.sheets.find(s => !s.error && s.row_count > 0); selected = saved ? saved.map(m => m.index) : first ? [first.index] : []; sheetIndex = selected[0] || 0;
-    stage = data.state === 'draft' ? 'mapping' : data.processed ? 'results' : 'review'; rowState = data.failed ? 'failed' : data.processed ? 'imported' : 'pending'; rowPage = 1;
-    if (stage !== 'mapping') try { await loadRows(); } catch (e) { error = message(e); }
+    busy = true; error = '';
+    try {
+      data = await importJob(moduleUid, data.uid); if (gone) return;
+      job = data; const saved = data.config.sheets; mappings = data.sheets.map(s => { const existing = saved?.find(m => m.index === s.index); return existing ? restoreImportMapping(s, existing) : guessMapping(s, fields); }); const first = data.sheets.find(s => !s.error && s.row_count > 0); selected = saved ? saved.map(m => m.index) : first ? [first.index] : []; sheetIndex = selected[0] || 0;
+      stage = data.state === 'draft' ? 'mapping' : data.processed ? 'results' : 'review'; rowState = data.failed ? 'failed' : data.validation?.invalid ? 'issues' : data.processed ? 'imported' : 'pending'; rowPage = 1;
+      if (stage !== 'mapping') await loadRows();
+    } catch (e) { error = message(e); } finally { busy = false; }
   }
+  function reviewMapping() { if (busy || running || !job || job.imported) return; keepRunning = false; clearTimeout(retryTimer); error = ''; status = ''; stage = 'mapping'; }
   async function start() {
-    if (!job || running) return; keepRunning = true; clearTimeout(retryTimer); running = true; stage = 'results'; error = ''; status = 'Saving validated rows…';
+    if (!job || running || busy || noValidRows) return; keepRunning = true; clearTimeout(retryTimer); running = true; stage = 'results'; error = ''; status = 'Saving validated rows…';
     try {
       while (keepRunning && !gone && job.pending) { const updated = await processImport(moduleUid, job.uid); if (gone) return; job = updated; }
       if (gone) return;
+      keepRunning = false; job = await importJob(moduleUid, job.uid);
       status = job.pending ? 'Paused. Saved rows are safe; resume here or from Import history.' : job.failed ? 'Completed with issues. Inspect and correct the skipped rows below.' : 'Import complete. Every selected data row was saved.';
       rowState = job.failed ? 'failed' : 'imported'; rowPage = 1; await loadRows(); await onChanged();
     } catch (e) {
@@ -94,6 +102,12 @@
         <div class="actions"><button class="button" disabled={busy} onclick={template}>Download template</button><button class="button" disabled={busy} onclick={loadHistory}>Import history</button><button class="button primary" disabled={busy || !file} onclick={readFile}>Read spreadsheet</button></div>
       {:else if stage === 'mapping' && job && sheet && mapping}
         <h3>1. Select sheets · 2. Match columns</h3><p class="help">All selected sheets go into this module. Each sheet has its own mapping. Nothing is saved as a record until you start the import.</p>
+        {#if attachmentFields.length}
+          <section class="import-info" role="note" aria-label="Attachments are not imported">
+            <strong>Import record values now; add files later</strong>
+            <p>Attachment fields ({attachmentFields.map(field => field.label).join(', ')}) are not part of spreadsheet import and will not block it, even if required in the normal entry form. Imported records start without attachments; no module settings are changed.</p>
+          </section>
+        {/if}
         <div class="sheets">{#each job.sheets as item}<label class="sheet-choice"><input type="checkbox" disabled={!!item.error || !item.row_count} checked={selected.includes(item.index)} onchange={event => selected = event.currentTarget.checked ? [...selected, item.index] : selected.filter(i => i !== item.index)} /><button class:active={sheetIndex === item.index} onclick={() => sheetIndex = item.index}>{item.name}<small>{item.error ? 'Sheet needs attention' : `${item.row_count.toLocaleString()} populated rows`}</small></button></label>{/each}</div>
         {#if sheet.error}<div class="notice error" role="alert"><strong>{sheet.name}</strong>: {sheet.error} This sheet is excluded. Other sheets can still be imported.</div>{/if}
         <div class="row-options"><label>Header row<input type="number" min="1" bind:value={mapping.header_row} onchange={headerChanged} /></label><label>First data row<input type="number" min={mapping.header_row + 1} bind:value={mapping.first_data_row} /></label></div>
@@ -103,12 +117,20 @@
         <details><summary>Source preview (first populated rows)</summary><div class="source-preview">{#each sheet.sample as row}<p><strong>Row {row.row}</strong> {Object.entries(row.cells).map(([col,cell]) => `${columnName(Number(col))}: ${cell.text}`).join(' · ')}</p>{/each}</div></details>
         <div class="actions"><button class="button" disabled={busy} onclick={() => { stage = 'file'; job = null; uploadUid = operationUid(); }}>Choose another file</button><button class="button primary" disabled={busy || !selected.length} onclick={preview}>Validate and preview</button></div>
       {:else if (stage === 'review' || stage === 'results') && job}
-        <h3>{stage === 'review' ? '3. Review before importing' : job.pending ? 'Import progress' : job.failed ? 'Completed with issues' : 'Import complete'}</h3>
+        <h3>{stage === 'review' ? '3. Review before importing' : running || keepRunning || job.pending ? 'Import progress' : job.failed ? 'Completed with issues' : 'Import complete'}</h3>
+        {#if !running && job.validation?.invalid}
+          <section class="import-warning" role="alert" aria-label="Import validation problems">
+            <strong>{stage === 'review' && noValidRows ? 'No rows can be imported yet' : !job.imported && !job.pending ? 'No records were saved' : 'Some rows need correction'}</strong>
+            <p>{job.validation.ready.toLocaleString()} ready to import · {job.validation.invalid.toLocaleString()} need attention. {stage === 'review' ? 'These are validation problems, not a storage or connection failure.' : 'These are the saved validation results from this import attempt.'}</p>
+            <ul>{#each job.validation.issues as issue}<li><strong>{issue.rows.toLocaleString()} {issue.rows === 1 ? 'row' : 'rows'}:</strong> {issue.message}</li>{/each}</ul>
+            <p>{job.imported ? 'Saved records are unchanged; correct the skipped rows individually below.' : 'No need to upload again: review the mapping and validate this same job using the current import rules. Revalidation replaces old errors without creating records.'}</p>
+          </section>
+        {/if}
         <p class="help">{stage === 'review' ? `${job.total.toLocaleString()} mapped data rows. Rows with invalid values will be skipped and kept in the results log. Unique values and current permissions are checked again when saving.` : status || 'Saved progress is kept by MX. Resume pending rows or inspect skipped rows below.'}</p>
-        <progress max={job.total || 1} value={job.processed} aria-label="Import progress"></progress>
-        <div class="counts" aria-live="polite"><strong>{percent}% · {job.processed.toLocaleString()} / {job.total.toLocaleString()} processed</strong><span>{job.imported.toLocaleString()} saved</span><span>{job.failed.toLocaleString()} need attention</span><span>{job.pending.toLocaleString()} pending</span></div>
-        <div class="actions">{#if running || keepRunning}<button class="button" onclick={pause}>Pause import</button>{:else if job.pending}<button class="button primary" onclick={start}>{job.processed ? 'Resume import' : 'Start import'}</button>{/if}{#if stage === 'review' && !job.processed}<button class="button" disabled={running} onclick={() => stage = 'mapping'}>Back to mapping</button>{/if}<button class="button" disabled={busy || running} onclick={loadHistory}>Import history</button>{#if job.failed}<button class="button" disabled={busy || running} onclick={exportFailed}>Download failed-row log</button>{/if}</div>
-        <div class="result-tabs" aria-label="Import result filters">{#each ['failed','pending','imported'] as state}<button class="button" class:primary={rowState === state} disabled={running} onclick={() => changeRows(state)}>{state === 'failed' ? 'Needs attention' : state === 'pending' ? 'Pending / preview' : 'Saved records'}</button>{/each}</div>
+        {#if stage !== 'review'}<progress max={job.total || 1} value={job.processed} aria-label="Import progress"></progress>{/if}
+        <div class="counts" aria-live="polite">{#if stage === 'review' && job.validation}<strong>{job.total.toLocaleString()} rows checked · no records saved yet</strong><span>{job.validation.ready.toLocaleString()} ready to import</span><span>{job.validation.invalid.toLocaleString()} need attention</span>{:else}<strong>{percent}% · {job.processed.toLocaleString()} / {job.total.toLocaleString()} processed</strong><span>{job.imported.toLocaleString()} saved</span><span>{job.failed.toLocaleString()} need attention</span><span>{job.pending.toLocaleString()} pending</span>{/if}</div>
+        <div class="actions">{#if running || keepRunning}<button class="button" onclick={pause}>Pause import</button>{:else if job.pending}<button class="button primary" disabled={busy || noValidRows} onclick={start}>{job.processed ? 'Resume import' : 'Start import'}</button>{/if}{#if !job.imported}<button class="button" disabled={busy || running} onclick={reviewMapping}>{stage === 'review' ? 'Back to mapping' : 'Review mapping and revalidate'}</button>{/if}<button class="button" disabled={busy || running} onclick={loadHistory}>Import history</button>{#if job.failed}<button class="button" disabled={busy || running} onclick={exportFailed}>Download failed-row log</button>{/if}</div>
+        <div class="result-tabs" aria-label="Import result filters">{#each stage === 'review' ? ['issues','pending'] : ['failed','pending','imported'] as state}<button class="button" class:primary={rowState === state} disabled={busy || running} onclick={() => changeRows(state)}>{state === 'failed' || state === 'issues' ? 'Needs attention' : state === 'pending' ? 'Pending / preview' : 'Saved records'}</button>{/each}</div>
         <section class="import-results" aria-label="Import row results">
           <div class="import-result-grid import-results-head" aria-hidden="true"><span>Source</span><span>Mapped values / issue</span><span>Action</span></div>
           <ul class="import-result-list">
@@ -130,7 +152,7 @@
                 <div class="import-row-action">
                   {#if rowState === 'failed'}<button class="button" disabled={busy || running} onclick={() => correction = row}>Correct and retry</button>
                   {:else if row.record_uid}<a class="button" href={`#module/${encodeURIComponent(moduleUid || 'mx-default-records')}?record=${encodeURIComponent(row.record_uid)}`} onclick={close}>Open record</a>
-                  {:else}<small>Not saved yet</small>{/if}
+                  {:else}<small>{rowState === 'issues' ? 'Fix the mapping or field configuration, then validate again.' : 'Not saved yet'}</small>{/if}
                 </div>
               </li>
             {:else}<li class="import-results-empty">No rows in this view.</li>{/each}
@@ -158,6 +180,7 @@
   .sheets { display: flex; flex-wrap: wrap; gap: 8px; } .sheet-choice { display: flex; align-items: center; gap: 6px; padding: 4px 8px; border: 1px solid var(--line); border-radius: 8px; } .sheet-choice button { text-align: left; padding: 6px; border: 0; background: transparent; color: var(--text); cursor: pointer; font-size: 12px; } .sheet-choice button.active { color: var(--primary); text-decoration: underline; text-underline-offset: 4px; } .row-options { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); max-width: 376px; gap: 16px; }
   .import-table { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; } table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 13px; } th,td { padding: 12px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; } th { color: var(--muted); font-size: 12px; background: var(--surface-2); } td:first-child { width: 28%; } .check { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 12px; } progress { display: block; width: 100%; height: 12px; accent-color: var(--primary); } ul { margin: 0 0 8px; padding-left: 16px; } li + li { margin-top: 8px; } dl { display: grid; grid-template-columns: 35px 1fr; gap: 6px; margin: 12px 0; } .mapped-values { grid-template-columns: minmax(90px,1fr) minmax(0,2fr); } dt { color: var(--muted); } dd { margin: 0; white-space: pre-wrap; } .source-preview { max-height: 220px; overflow: auto; font-size: 12px; overflow-wrap: anywhere; } details summary { cursor: pointer; font-size: 12px; }
   .history-list { display: grid; gap: 8px; } .history-list > button { display: block; width: 100%; padding: 14px; text-align: left; background: var(--surface-2); color: var(--text); border: 1px solid var(--line); border-radius: 8px; cursor: pointer; overflow-wrap: anywhere; } .notice { white-space: pre-wrap; }
+  .import-warning,.import-info{padding:14px 16px;border:1px solid var(--line);border-radius:8px;background:var(--surface-2);font-size:13px;line-height:1.6;overflow-wrap:anywhere}.import-warning{border-left:3px solid #c58a24}.import-warning p,.import-info p{margin:8px 0 0}.import-warning ul{margin:8px 0 0}
   .import-results{border:1px solid var(--line);border-radius:8px;overflow:hidden;font-size:13px;line-height:1.6;min-width:0}
   .import-result-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,2.2fr) 9rem;gap:16px;align-items:start;padding:12px}
   .import-result-grid>div{min-width:0;white-space:normal;overflow-wrap:anywhere}

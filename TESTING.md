@@ -1,5 +1,63 @@
 # MX validation
 
+## RC.4 importer replacement — 2026-10-18
+
+- Remove the importer-only required-attachment rejection at both preview and
+  commit. Attachment configuration and the normal entry form are unchanged;
+  spreadsheet migration writes field values, not fabricated files. Required
+  non-attachment fields, types, relationships, permissions, uniqueness and atomic
+  record/version/import markers remain enforced.
+- Native debug suite: **178 passed, zero failed, two opt-in tests ignored**.
+  Frontend: **335 passed across 54 files**; production frontend build, version
+  consistency and Office-asset verification pass, with zero Svelte diagnostics.
+  Vite retains its existing large-JavaScript-chunk advisory. Formatting and diff
+  checks pass. These source checks precede the optimized replacement package.
+- Read the reported local job using SQLite **read-only/query-only** mode, then
+  replay its fields, source cells and exact mapping in a separate MX database.
+  Of **5,682 selected rows**, **5,681 validate** and **one retains its genuine
+  CONTROL NO integer error**. The first 20 rows commit with empty attachment lists
+  while FILE ATTACHMENTS remains Required. The full migration is deliberately
+  not run, and the operator's job/records/settings are untouched. Evidence:
+  `/mnt/ST1000LM049/tests/mx-eight-user-Pf5F64/source-replay-results.json`.
+- Diagnostics count affected rows, including rows on separate sheets, without
+  double-counting repeated messages. They are fetched for preview/reopen rather
+  than every processing batch. Revalidation of an all-failed job creates no
+  records; any successfully imported row prevents remapping that job.
+- Browser testing also exposed the saved-mapping render mutating its own state
+  when restoring ignored columns. Restore those inputs before rendering instead.
+  Earlier attempts that hit that exception, a transient completion-state mismatch
+  or a fixture that incorrectly marked the header as failed are not passing runs.
+  All generated databases, builds and browser audio-disconnected artifacts remain
+  on the external test disk. Those test runs do not replace any deployment.
+  The maintainer subsequently authorized replacing the published RC.4 and the
+  local test, with backups; no RC.5 is published or equal-version guard disabled.
+- Final import API/browser suite passes in **Chromium, Firefox and Linux WebKit**:
+  eight accounts, lost acknowledgements, restart/deduplication, permissions,
+  injected transaction failure, relationship/conditional scalar validation,
+  attachment-free imports with unchanged Required settings, all-failed historical
+  job recovery, ignored-column remapping, normal-form file rejection and honest
+  completion feedback. Evidence:
+  `/mnt/ST1000LM049/tests/mx-eight-user-NkmA0B/import-results.json`.
+  Separate failed-row layout/correction checks pass in all three engines across
+  light/dark themes and 320–1440px viewports, including long errors and paging:
+  `/mnt/ST1000LM049/tests/mx-eight-user-OZfoIL/import-layout-results.json`.
+- The actual optimized replacement repeats the complete three-engine import
+  suite successfully:
+  `/mnt/ST1000LM049/tests/mx-eight-user-T7Z0Rf/import-results.json`.
+  Its read-only source replay repeats 5,681 valid rows, one genuine integer
+  problem and 20 attachment-free commits with Required still enabled:
+  `/mnt/ST1000LM049/tests/mx-eight-user-qRjhNX/source-replay-results.json`.
+  The optimized RC.3 → replacement RC.4 updater passes independent systemd
+  activation, verified snapshots, interrupted downloads, signed offline uploads,
+  eight competing installs, failed-readiness rollback and killed-worker recovery,
+  plus Chromium's operator UI checks:
+  `/mnt/ST1000LM049/tests/mx-updates-nuMNbj/update-results.json`.
+  Replacement release artifacts use
+  `/mnt/ST1000LM049/releases/1.0.0-rc.4-import-fix-20261018`; earlier RC.4
+  artifacts and annotated tags remain archived. The signed package is verified
+  against the unchanged pinned publisher key, every runtime file and paired
+  frontend identity. No database migration or updater-source change is added.
+
 ## RC.4 N1 RC.1 compatibility refresh — 2026-10-18
 
 - N1 `5759dd01e5c11a43f07510dd384c723a4fc2819b` reports product/storage

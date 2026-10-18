@@ -101,6 +101,34 @@ fn job(c: &Connection, uid: &str) -> rusqlite::Result<Value> {
     result["pending"] = json!(pending);
     Ok(result)
 }
+
+// Diagnostics are loaded at preview/reopen, not for every processing batch.
+// Keep common blockers visible without repeatedly scanning all error JSON while
+// a large import is running. Counts refer to rows, not the number of messages.
+fn job_with_validation(c: &Connection, uid: &str) -> rusqlite::Result<Value> {
+    let mut result = job(c, uid)?;
+    let (ready, invalid): (i64, i64) = c.query_row(
+        "SELECT coalesce(sum(state='pending' AND errors_json='[]'),0),
+                coalesce(sum(state IN ('pending','failed') AND errors_json<>'[]'),0)
+         FROM mx_import_rows WHERE job_uid=?1",
+        [uid],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )?;
+    let mut statement = c.prepare(
+        "SELECT json_extract(e.value,'$.field'), json_extract(e.value,'$.message'),
+                count(DISTINCT printf('%d:%d',r.sheet,r.source_row)) AS affected
+         FROM mx_import_rows r, json_each(r.errors_json) e
+         WHERE r.job_uid=?1 AND r.state IN ('pending','failed')
+         GROUP BY 1,2 ORDER BY affected DESC,1,2 LIMIT 8",
+    )?;
+    let issues = statement
+        .query_map([uid], |r| {
+            Ok(json!({"field":r.get::<_,String>(0)?,"message":r.get::<_,String>(1)?,"rows":r.get::<_,i64>(2)?}))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    result["validation"] = json!({"ready":ready,"invalid":invalid,"issues":issues});
+    Ok(result)
+}
 async fn db<F>(work: F) -> Response
 where
     F: FnOnce(&Connection) -> rusqlite::Result<Value> + Send + 'static,
@@ -357,8 +385,8 @@ async fn configure(
     db(move |c|{
         own(c,&claims,&module,&uid)?;
         let tx=rusqlite::Transaction::new_unchecked(c,rusqlite::TransactionBehavior::Immediate)?;
-        let processed:i64=tx.query_row("SELECT count(*) FROM mx_import_rows WHERE job_uid=?1 AND state IN ('imported','failed')",[&uid],|r|r.get(0))?;
-        if processed>0{return Err(invalid("An import that has started cannot be remapped. Correct failed rows instead."));}
+        let imported:i64=tx.query_row("SELECT count(*) FROM mx_import_rows WHERE job_uid=?1 AND state='imported'",[&uid],|r|r.get(0))?;
+        if imported>0{return Err(invalid("An import with saved records cannot be remapped. Correct failed rows instead; saved records will not be imported again."));}
         let fields=load_module_fields_initialized_db(&tx,&module,false)?;
         let metadata=job(&tx,&uid)?;let mut indexes=BTreeSet::new();
         if config.sheets.is_empty()||config.sheets.len()>128{return Err(invalid("Select at least one sheet."));}
@@ -393,7 +421,7 @@ async fn configure(
             }
         }
         tx.execute("UPDATE mx_import_jobs SET config_json=?1,state='ready' WHERE uid=?2",params![json!(config).to_string(),uid])?;
-        let j=job(&tx,&uid)?;if j["total"]==0{return Err(invalid("No populated mapped rows were found after the chosen first data rows."));}tx.commit()?;Ok(j)
+        let j=job_with_validation(&tx,&uid)?;if j["total"]==0{return Err(invalid("No populated mapped rows were found after the chosen first data rows."));}tx.commit()?;Ok(j)
     }).await
 }
 
@@ -544,7 +572,7 @@ async fn process(claims: Claims, Path((module, uid)): Path<(String, String)>) ->
 async fn detail(claims: Claims, Path((module, uid)): Path<(String, String)>) -> Response {
     db(move |c| {
         own(c, &claims, &module, &uid)?;
-        job(c, &uid)
+        job_with_validation(c, &uid)
     })
     .await
 }
@@ -573,9 +601,9 @@ async fn rows(
 ) -> Response {
     db(move|c|{
     own(c,&claims,&module,&uid)?;let page=p.page.max(1);let state=if p.state.is_empty(){"pending"}else{p.state.as_str()};
-    if !matches!(state,"pending"|"failed"|"imported"|"source"){return Err(invalid("Choose pending, failed, imported or source rows."));}
-    let total:i64=c.query_row("SELECT count(*) FROM mx_import_rows WHERE job_uid=?1 AND state=?2 AND (?3 IS NULL OR sheet=?3)",params![uid,state,p.sheet],|r|r.get(0))?;
-    let mut s=c.prepare("SELECT sheet,source_row,cells_json,values_json,errors_json,record_uid FROM mx_import_rows WHERE job_uid=?1 AND state=?2 AND (?3 IS NULL OR sheet=?3) ORDER BY sheet,source_row LIMIT 20 OFFSET ?4")?;
+    if !matches!(state,"pending"|"failed"|"imported"|"source"|"issues"){return Err(invalid("Choose pending, failed, imported, source or preview issues."));}
+    let total:i64=c.query_row("SELECT count(*) FROM mx_import_rows WHERE job_uid=?1 AND (state=?2 OR (?2='issues' AND state IN ('pending','failed') AND errors_json<>'[]')) AND (?3 IS NULL OR sheet=?3)",params![uid,state,p.sheet],|r|r.get(0))?;
+    let mut s=c.prepare("SELECT sheet,source_row,cells_json,values_json,errors_json,record_uid FROM mx_import_rows WHERE job_uid=?1 AND (state=?2 OR (?2='issues' AND state IN ('pending','failed') AND errors_json<>'[]')) AND (?3 IS NULL OR sheet=?3) ORDER BY sheet,source_row LIMIT 20 OFFSET ?4")?;
     let mut rows=s.query_map(params![uid,state,p.sheet,i64::from(page-1)*20],|r|Ok(json!({"sheet":r.get::<_,u32>(0)?,"row":r.get::<_,u32>(1)?,"cells":decode::<Value>(&r.get::<_,String>(2)?)?,"values":decode::<Value>(&r.get::<_,String>(3)?)?,"errors":decode::<Value>(&r.get::<_,String>(4)?)?,"record_uid":r.get::<_,Option<String>>(5)?})))?.collect::<rusqlite::Result<Vec<_>>>()?;
     if state=="pending" {
         let fields=load_module_fields_initialized_db(c,&module,false)?;
@@ -648,6 +676,40 @@ async fn discard(claims: Claims, Path((module, uid)): Path<(String, String)>) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn preview_counts_rows_and_groups_blockers_without_changing_progress() {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch("CREATE TABLE users(uid TEXT PRIMARY KEY);CREATE TABLE mx_modules(uid TEXT PRIMARY KEY);INSERT INTO users VALUES('actor');INSERT INTO mx_modules VALUES('module');").unwrap();
+        ensure(&c).unwrap();
+        c.execute("INSERT INTO mx_import_jobs(uid,module_uid,actor_uid,filename,fingerprint,sheets_json) VALUES('job','module','actor','file','hash','[]')",[]).unwrap();
+        let issue = json!({"field":"Record validation","message":"Department is required."});
+        let other = json!({"field":"Control number","message":"Use an integer."});
+        for (sheet, row, state, errors) in [
+            (0, 2, "pending", json!([issue, issue])),
+            (1, 2, "failed", json!([issue])),
+            (0, 3, "pending", json!([other])),
+            (0, 4, "pending", json!([])),
+            (0, 5, "imported", json!([])),
+            (0, 6, "excluded", json!([issue])),
+        ] {
+            c.execute("INSERT INTO mx_import_rows(job_uid,sheet,source_row,cells_json,operation_uid,state,errors_json) VALUES('job',?1,?2,'{}','op',?3,?4)",params![sheet,row,state,errors.to_string()]).unwrap();
+        }
+        let preview = job_with_validation(&c, "job").unwrap();
+        assert_eq!(preview["validation"]["ready"], 1);
+        assert_eq!(preview["validation"]["invalid"], 3);
+        assert_eq!(preview["validation"]["issues"][0]["rows"], 2);
+        assert_eq!(preview["validation"]["issues"][1]["rows"], 1);
+        assert_eq!(preview["imported"], 1);
+        assert_eq!(preview["failed"], 1);
+        assert_eq!(preview["pending"], 3);
+        assert_eq!(job(&c, "job").unwrap()["total"], 5);
+        c.execute("DELETE FROM mx_import_rows", []).unwrap();
+        let empty = job_with_validation(&c, "job").unwrap();
+        assert_eq!(
+            empty["validation"],
+            json!({"ready":0,"invalid":0,"issues":[]})
+        );
+    }
     #[test]
     fn deleted_module_or_account_does_not_leave_private_source_logs() {
         let c = Connection::open_in_memory().unwrap();
