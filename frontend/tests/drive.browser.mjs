@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium, firefox, webkit } from 'playwright';
 import { startIsolatedMx } from './isolated-mx.mjs';
-import { isolatedBrowserAudio } from './silent-audio.mjs';
+import { disconnectedBrowserAudio } from './silent-audio.mjs';
 import { verifyFileManager } from './drive-file-manager.mjs';
 const root = fileURLToPath(new URL('../', import.meta.url));
 const mx = await startIsolatedMx(root); const results = []; const failures = []; const browsers = [];
@@ -219,7 +219,7 @@ try {
     await call(`/mx/v1/admin/modules/${moduleUid}/fields`, admin, 'POST', { key: 'title', label: 'Title', field_type: 'text' }, [201]);
     await call(`/mx/v1/admin/modules/${moduleUid}/fields`, admin, 'POST', { key: 'files', label: 'Reference files', field_type: 'attachments', config: { multiple: true, storage_name: 'References' } }, [201]);
     const channel = await call('/mx/v1/collaboration/channels', users[2], 'POST', { name: 'Drive copies', member_uids: [users[3].uid] }, [201]);
-    const environment = isolatedBrowserAudio();
+    const environment = disconnectedBrowserAudio(mx.directory);
     const engines = { chromium, firefox, webkit };
     for (const engine of (process.env.MX_TEST_BROWSERS || 'chromium,firefox,webkit').split(',')) {
       const executablePath = engine === 'chromium' ? '/home/altear/.cache/ms-playwright/chromium-1228/chrome-linux64/chrome' : engine === 'firefox' ? '/home/altear/.cache/ms-playwright/firefox-1543/firefox/firefox' : '/home/altear/.cache/mx-network-audit-2026-10-08.fnCQvP/webkit-launch.sh';

@@ -87,13 +87,41 @@ Strict warning-free check:
 RUSTFLAGS="-D warnings" cargo check
 ```
 
-Backend regression tests, including the N1 v4 HTTP-contract tests:
+Backend regression tests, including the NOA v1 / encoding-4 HTTP-contract tests:
 
 ```bash
 cargo test --locked
 ```
 
-The opt-in N1 round-trip test requires a **disposable, isolated N1 v4 instance**
+### Real N1 RC.1 compatibility qualification
+
+Copy a release-built N1 `1.0.0-RC.1` executable and its complete
+`shell/web/n1_config.default.ini` to a dedicated external test directory. The
+runner verifies N1's product/storage/API version output, starts its own isolated
+engine and fragment, and runs the existing real-server Drive and durable Office
+browser suites. It never replaces a running N1/MX test or deployment service.
+
+```bash
+env TMPDIR=/mnt/ST1000LM049/tests/rc4/tmp \
+  MX_TEST_ARTIFACTS=/mnt/ST1000LM049/tests/n1-rc1 \
+  MX_TEST_N1_BINARY=/mnt/ST1000LM049/tests/n1-rc1/litiaina-n1 \
+  MX_TEST_N1_CONFIG_TEMPLATE=/mnt/ST1000LM049/tests/n1-rc1/n1_config.default.ini \
+  MX_TEST_BINARY=/mnt/ST1000LM049/releases/1.0.0-rc.4/staging/update-input/litiaina-mx \
+  MX_TEST_STATIC_SITE_PATH=/mnt/ST1000LM049/releases/1.0.0-rc.4/frontend-dist \
+  node --no-warnings frontend/tests/n1-rc1.integration.mjs
+```
+
+Run from the repository root with Node 24+, installed frontend dependencies and
+the test browsers described below. The directory/template must already exist;
+test data, generated keys and logs stay under a new unique external directory.
+This is a **1D+0P functional compatibility test**, not erasure-code recovery or
+physical-power-loss qualification. Existing live-N1 variables are rejected.
+`MX_TEST_N1_SUITES=drive` or `office` selects one suite; omitted, both run.
+The Office durability runner accepts real N1 only from this runner's owned
+process after checking `/proc` identity, private credentials and configured
+loopback roots/port. Its default isolated-contract behavior is unchanged.
+
+The opt-in N1 round-trip test requires a **disposable, isolated N1 1.0.0-RC.1 instance**
 and a fragment token in `MX_TEST_N1_TOKEN`, with its base URL in
 `MX_TEST_N1_URL`. It checks real one-shot/multipart uploads, downloads, valid
 byte ranges, rename/trash/recovery, and concurrent writes across MX storage
@@ -164,7 +192,7 @@ MX_TEST_AUDIO_SINK=mx_test_silent npm run test:eight-users:browser
 ```
 
 This runner starts its own MX HTTPS server, SQLite database, generated credentials,
-and N1 v4 HTTP contract fixture. It never loads deployment `mx.env`/`mx.config` or
+and NOA v1 / encoding-4 HTTP contract fixture. It never loads deployment `mx.env`/`mx.config` or
 modifies the N1 repository. It checks eight distinct authenticated editors,
 atomic unrelated-field merges, same-field conflicts, retried creates/messages,
 deleted records during module updates, stale drafts after restore, cleared cells,
@@ -197,7 +225,6 @@ folder uploads, and independent copies into collaboration/record attachments:
 MX_TEST_N1_URL=https://127.0.0.1:50001 \
 MX_TEST_N1_CREDENTIALS_FILE=/private/path/n1-test.env \
 MX_TEST_N1_DROP_FINALIZE=1 \
-MX_TEST_AUDIO_SINK=mx_test_silent \
 npm run test:drive:browser
 ```
 
@@ -376,7 +403,7 @@ records.rs            dynamic values, search, sorting, pagination
 attachment_fields.rs  File Attachment field behavior and metadata
 storage.rs            configurable and frozen N1 namespaces
 handler.rs            record/attachment operations and N1 coordination
-n1.rs                 N1 v4 object-key, multipart, and streaming transport
+n1.rs                 NOA v1 object-key, multipart, and streaming transport
 reports.rs            statistics, dashboard reporting, CSV export
 dashboard.rs          dashboard support
 live.rs               WebSocket sessions, live events, and presence

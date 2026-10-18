@@ -42,7 +42,9 @@ lives in `docs/`, not in this README.
 
 ## Runtime
 
-MX runs as the Rust server with SQLite and an N1 v4 object-storage connection.
+MX runs as the Rust server with SQLite and an N1 object-storage connection.
+Current compatibility is **N1 1.0.0-RC.1**, using NOA v1 and storage encoding 4;
+see the [storage compatibility reference](docs/n1-storage.md#release-compatibility).
 Deploy the matching **MX executable and `frontend/dist`** together, alongside
 your configuration and TLS credentials.
 

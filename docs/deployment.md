@@ -17,7 +17,7 @@ deployment credentials during this upgrade.
 ## Deployment package and dependencies
 
 Deploy a matching MX executable and `frontend/dist`, plus your `mx.config`,
-`mx.env` and TLS certificate/key. MX uses SQLite for structured state and N1 v4
+`mx.env` and TLS certificate/key. MX uses SQLite for structured state and N1
 for file objects. There is no separately installed database server or Office server.
 
 Rust/Cargo and Node.js 24+ are needed to build from source, not to run an already
@@ -182,8 +182,10 @@ MX does not yet provide a CLI offline-backup command or automate these steps.
 
 Do not replace the existing database with an empty one, regenerate deployment
 secrets casually, or alter existing N1 keys as part of an MX binary upgrade.
-MX/N1 version numbers need not match: this implementation targets N1 v4.0.0 /
-storage format 4. An MX upgrade is not an N1 storage migration.
+MX/N1 version numbers need not match: MX targets **N1 1.0.0-RC.1**, **NOA v1**
+and **storage encoding 4**. N1's RC numbering reset names the existing encoding;
+it does not require rewriting encoding-4 objects or backups. An MX upgrade is
+not an N1 storage migration. See [compatibility](n1-storage.md#release-compatibility).
 
 Advanced N1, Drive quota/retention and WebRTC traversal settings are in the
 [configuration reference](configuration.md). Build and isolated-test commands

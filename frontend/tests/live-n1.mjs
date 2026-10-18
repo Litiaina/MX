@@ -34,7 +34,8 @@ export async function startLiveN1(directory) {
       const url = new URL(incoming.url, 'http://localhost'); const path = decodeURIComponent(url.pathname);
       const chunks = []; for await (const chunk of incoming) chunks.push(chunk);
       const bytes = Buffer.concat(chunks);
-      requests.push({ method: incoming.method, path, bytes: bytes.length, range: incoming.headers.range });
+      const observation = { method: incoming.method, path, bytes: bytes.length, range: incoming.headers.range };
+      requests.push(observation);
       if (control.rejectDeletes && incoming.method === 'DELETE' && path.startsWith('/noa/v1/objects/')) { outgoing.writeHead(503, { 'Content-Type': 'application/json' }); outgoing.end('{}'); return; }
       const init = path.includes('/multipart/durable/') ? '/noa/v1/upload/multipart/durable/init/' : '/noa/v1/upload/multipart/init/'; const oneShot = '/noa/v1/upload/one-shot/';
       let parameters; let key;
@@ -57,6 +58,7 @@ export async function startLiveN1(directory) {
       }
       const target = new URL(incoming.url, upstream);
       const send = target.protocol === 'https:' ? https.request : httpRequest;
+      let downstreamClosed = false;
       const proxy = send(target, { method: incoming.method, rejectUnauthorized: false, headers: { ...incoming.headers, host: upstream.host } }, (response) => {
         const lostFinalize = Boolean(process.env.MX_TEST_N1_DROP_FINALIZE && path.endsWith('/finalize') && response.statusCode >= 200 && response.statusCode < 300);
         const lostBatch = Boolean(control.dropBatchAcknowledgements > 0 && path === '/noa/v1/upload/batch' && response.statusCode >= 200 && response.statusCode < 300);
@@ -82,8 +84,16 @@ export async function startLiveN1(directory) {
         response.on('error', () => outgoing.destroy());
       });
       proxy.setTimeout(120000, () => proxy.destroy(new Error('Live N1 transport timeout')));
-      proxy.on('error', (error) => { failures.push(error.message); if (!outgoing.headersSent) outgoing.writeHead(502); outgoing.end(); });
-      outgoing.on('close', () => { if (!outgoing.writableFinished) proxy.destroy(); });
+      proxy.on('error', (error) => {
+        // Browser cancellation deliberately destroys its outstanding upstream
+        // socket. Observe that cancellation; do not misreport our own destroy
+        // as an independent N1 transport failure. Unexpected errors still fail.
+        if (downstreamClosed) { observation.cancelledByClient = true; return; }
+        failures.push(`${incoming.method} ${path}: ${error.message}`);
+        if (!outgoing.headersSent) outgoing.writeHead(502);
+        outgoing.end();
+      });
+      outgoing.on('close', () => { if (!outgoing.writableFinished) { downstreamClosed = true; proxy.destroy(); } });
       proxy.end(bytes);
     } catch (error) { failures.push(error.message); outgoing.writeHead(500); outgoing.end('Live integration adapter failed'); }
   });

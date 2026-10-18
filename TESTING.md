@@ -1,5 +1,57 @@
 # MX validation
 
+## RC.4 N1 RC.1 compatibility refresh — 2026-10-18
+
+- N1 `5759dd01e5c11a43f07510dd384c723a4fc2819b` reports product/storage
+  specification **1.0.0-RC.1**, **storage encoding 4**, **NOA v1** and native
+  **n1/0.5**. Its reset does not change MX's API routes or require rewriting
+  encoding-4 data/backups. No native/frontend application source or dependencies
+  change in this refresh; the signed RC.4 runtime package/metadata and publisher
+  key remain byte-identical to the original release.
+- Fresh frontend unit suite: **333 passed across 54 files**. Fresh native suite:
+  **177 passed, zero failed, two opt-in tests ignored**, including the held-writer
+  regression. The 125,000-record/import and updater qualifications below remain
+  the original 2026-10-17 evidence, not new RC.1-backed import/updater claims.
+- The real-engine runner provisions its own N1 RC.1 process, filesystem root,
+  fragment and credentials under a unique external test directory. It runs the
+  existing Drive API/browser suite and durable Office suite against actual N1
+  bytes through the existing fault-injecting loopback proxy. Evidence:
+  Drive (18 cases):
+  `/mnt/ST1000LM049/tests/n1-rc1/mx-n1-rc1-yiGzFn/mx-eight-user-Up1kve/drive-results.json`.
+  Office:
+  `/mnt/ST1000LM049/tests/n1-rc1/mx-n1-rc1-gvSr8o/n1-rc1-results.json`.
+  The default repeat command runs both; `MX_TEST_N1_SUITES=drive` or `office`
+  repeats one suite without claiming coverage of the other.
+- Drive covers multipart resumed after an MX restart, a 130 MiB upload and a full 50 MiB
+  part for a >1 GiB declared upload, eight accounts, quotas, exact range bytes,
+  metadata-only rename/copy, sharing/revocation, version history/restore, batch
+  lost acknowledgements and durable background cleanup. Browser coverage is
+  Chromium, Firefox and Linux WebKit. Office coverage is Chromium, Brave and
+  Firefox: real exports, tab closure during upload, uncertain acknowledgement,
+  offline recovery and visible local-storage failure, with saved contents checked.
+- Earlier runner attempts are not counted as passing: the first omitted required
+  disabled-feature N1 config fields; another correctly refused physical audio;
+  a third completed browser cases but misclassified its own cancelled upstream
+  sockets as N1 faults. The final runner merges N1's complete default template,
+  disconnects browser audio and separately observes downstream cancellation.
+  Unexpected proxy transport failures still fail the suite.
+  The pre-existing Office guard also rejected the first real-engine attempt;
+  it now accepts only the owned disposable process after verifying its kernel
+  working directory/executable, loopback port, private credentials and roots.
+  Arbitrary live-N1 URLs remain rejected before starting MX or browser tests.
+- This is **1D+0P single-root functional compatibility**, not EC redundancy,
+  N1 process-restart, throughput, Safari/iOS or physical-power-loss qualification. Test-only N1 rate
+  limiting/healing are disabled to isolate API behavior. It does not change the
+  running local test service, MCH/DGS services, their objects or configuration;
+  generated test data and credentials remain on the external HDD.
+- At the maintainer's explicit request, RC.4's initial-install archive, guides,
+  release notes/provenance and tag are refreshed before departmental adoption.
+  Original artifacts/commit remain under
+  `/mnt/ST1000LM049/releases/1.0.0-rc.4`; refreshed assets use
+  `/mnt/ST1000LM049/releases/1.0.0-rc.4-n1-rc1-20261018`. Existing RC.4
+  installations need no runtime reinstall; equal-version install rejection is
+  retained. No live N1 upgrade or data migration is implied by this refresh.
+
 ## 1.0.0-rc.4 database-contention hotfix — 2026-10-17
 
 - Fresh native suite: **177 passed, zero failed, two opt-in tests ignored**.

@@ -2,8 +2,8 @@
 // tests recovery boundaries; this is NOT a physical power-loss certification.
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
-import {writeFile} from 'node:fs/promises';
-import {join} from 'node:path';
+import {writeFile,readFile,realpath} from 'node:fs/promises';
+import {join,dirname} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {createServer} from 'node:http';
 import {request as httpsRequest} from 'node:https';
@@ -11,7 +11,22 @@ import {chromium,firefox} from 'playwright';
 import {startIsolatedMx} from './isolated-mx.mjs';
 import {officeFixture,unzip} from './office-fixtures.mjs';
 import {disconnectedBrowserAudio} from './silent-audio.mjs';
-assert.ok(process.env.MX_TEST_ARTIFACTS?.startsWith('/mnt/ST1000LM049/tests'));assert.ok(!process.env.MX_TEST_N1_URL);
+assert.ok(process.env.MX_TEST_ARTIFACTS?.startsWith('/mnt/ST1000LM049/tests'));
+if(process.env.MX_TEST_N1_URL){
+ // Live storage is forbidden except the RC.1 runner's kernel-verified owned
+ // disposable engine. Never accept a mere "allow live" flag or production URL.
+ const engine=process.env.MX_TEST_OWNED_N1_DIR,pid=process.env.MX_TEST_OWNED_N1_PID;
+ assert.match(engine||'',/^\/mnt\/ST1000LM049\/tests\/n1-rc1\/mx-n1-rc1-[^/]+\/engine$/);
+ assert.match(pid||'',/^\d+$/);
+ assert.equal(await realpath(`/proc/${pid}/cwd`),engine);
+ assert.ok((await realpath(`/proc/${pid}/exe`)).startsWith('/mnt/ST1000LM049/tests/n1-rc1/'));
+ const config=await readFile(join(engine,'n1_config.ini'),'utf8');
+ assert.match(config,/^host=127\.0\.0\.1$/m);
+ assert.equal(config.match(/^roots=(.+)$/m)?.[1],join(engine,'storage'));
+ assert.equal(config.match(/^fs_storage_path=(.+)$/m)?.[1],join(engine,'control'));
+ assert.equal(process.env.MX_TEST_N1_URL,`https://127.0.0.1:${config.match(/^https_port=(\d+)$/m)?.[1]}`);
+ assert.equal(await realpath(process.env.MX_TEST_N1_CREDENTIALS_FILE),join(dirname(engine),'test-fragment.env'));
+}
 const mx=await startIsolatedMx(fileURLToPath(new URL('../',import.meta.url))),opened=[],results=[],network=[];
 const proxy=createServer((incoming,outgoing)=>{const upstream=httpsRequest({hostname:'127.0.0.1',port:mx.port,path:incoming.url,method:incoming.method,headers:incoming.headers,rejectUnauthorized:false},response=>{outgoing.writeHead(response.statusCode,response.headers);response.pipe(outgoing);});upstream.on('error',()=>{outgoing.writeHead(502);outgoing.end();});incoming.pipe(upstream);});
 await new Promise(resolve=>proxy.listen(0,'127.0.0.1',resolve));const origin=`http://127.0.0.1:${proxy.address().port}`;

@@ -10,6 +10,14 @@ Existing imported records and histories remain; do not reset or re-import them.
 The signing key and managed update/backup/rollback protocol are unchanged. See
 [RC.4 instructions and limits](releases/1.0.0-rc.4.md).
 
+On 2026-10-18, the maintainer requested an RC.4 replacement before departmental
+adoption to document N1 `1.0.0-RC.1` compatibility. The MX executable, frontend,
+signed update package, metadata and publisher key remain byte-identical; only
+documentation, compatibility evidence, provenance and the initial-install
+archive are refreshed. The previous commit and original artifacts are retained
+for traceability. Existing RC.4 installations need no runtime reinstall.
+The updater's newer-version requirement is unchanged.
+
 ### Earlier candidates
 
 RC.3 defers Office background preparation during active input, scrolling and
@@ -47,8 +55,10 @@ releases only. Historical 4.x development builds are not update targets.
 
 Application version numbers are independent of SQLite migration state, record
 revisions, N1 object keys/storage format and `/mx/v1`. Do not renumber, reset or
-delete any of those to match 1.0. N1 remains independently versioned and compatible
-with v4.0.0 / storage format 4.
+delete any of those to match 1.0. N1 remains independently versioned: current
+compatibility is `1.0.0-RC.1`, NOA v1 and storage encoding 4. The earlier private
+N1 `4.0.0` product label describes the same encoding-4 baseline, not a required
+format migration.
 
 Read the [candidate scope, transition procedure and acceptance gates](releases/1.0.0-rc.1.md).
 The sections below describe the historical builds at their original versions;

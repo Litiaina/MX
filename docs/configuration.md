@@ -29,16 +29,20 @@ must be between 5 and 100 MiB; it defaults to 16 MiB when omitted. The N1 server
 must allow a part at least this large. Increasing an upload limit does not
 require sending the complete object as one N1 part.
 
-MX uses the N1 v4.0.0 `/noa/v1` fragment-scoped API. Storage layouts remain
+MX targets **N1 1.0.0-RC.1**, using the unchanged **NOA v1** (`/noa/v1`)
+fragment-scoped API and **storage encoding 4**. N1's storage-format specification
+is named `1.0.0-RC.1`; the earlier private `4.0.0` product label is historical,
+not a different API or a request to rewrite stored data. Storage layouts remain
 logical object-key prefixes: uploading an object creates its virtual parent
 prefixes automatically. MX does not call `posix/mkdir`, which N1 format 4
 rejects. This applies to record attachments, collaboration files, profile
 photos, notification sounds, deployment logos, and database backups.
 Multipart initiation, raw part uploads, finalization, and byte-range media
-streaming use the v4 contracts. Namespace mutations are checked for reported
+streaming use the NOA v1 contracts. Namespace mutations are checked for reported
 per-key conflicts and failures even when N1 returns HTTP 200.
 
-N1 storage format 4 does **not** automatically migrate older development
+N1 RC.1 retains existing encoding-4 data and backups without migration. Encoding 4
+does **not** automatically migrate older, unsupported development
 roots. Updating MX's API integration does not migrate existing attachment
 bytes or change their stored object keys. Before switching an existing
 deployment, follow N1's storage-upgrade guidance and verify that the configured

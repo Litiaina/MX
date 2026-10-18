@@ -9,6 +9,17 @@ Changes after the first 1.0 candidate will be recorded here.
 
 ## [1.0.0-rc.4] - 2026-10-17
 
+### Compatibility refresh - 2026-10-18
+
+- Align current compatibility guidance with N1 `1.0.0-RC.1`, NOA v1 and unchanged
+  storage encoding 4. Product numbering does not rename routes or migrate data.
+- Refresh RC.4's documentation, initial-install archive and compatibility
+  provenance at the maintainer's request before departmental adoption. Preserve
+  the original runtime bytes, signed update package/metadata and publisher key;
+  installed RC.4 instances need no reinstall. Keep equal-version update rejection.
+- Add an isolated real-engine compatibility runner for Drive and Office suites;
+  never reuse production/test-deployment fragments, credentials or storage roots.
+
 ### Fixed
 
 - Initialize application schemas and compatibility backfills before serving
