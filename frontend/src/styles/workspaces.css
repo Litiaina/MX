@@ -99,21 +99,6 @@
   .column-summary small { color:var(--muted);font-size:.68rem; }.column-summary strong { color:var(--text);font-size:.82rem;overflow-wrap:anywhere; }.summary-caption { color:var(--muted); }
   .summary-scope { margin:.4rem 0;color:var(--muted);font-size:.7rem;line-height:1.5; }
   @media(max-width:820px){.records-table tfoot{display:block;margin-top:.6rem;border:1px solid var(--line);border-radius:.45rem;overflow:hidden}.records-table tfoot tr{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));background:var(--surface-2)}.records-table tfoot .summary-caption{grid-column:1/-1;padding:.5rem}.records-table tfoot td{display:block;min-width:0;min-height:5rem;height:auto;padding:.5rem;border:0;overflow:visible}.records-table tfoot td:empty{display:none}.records-table tfoot td:has(.column-summary)::before{content:attr(data-label);display:block;font-size:.7rem;font-weight:600;margin-bottom:.25rem;overflow-wrap:anywhere}.column-summary{min-width:0}}
-  .records-table td.inline-editable-cell { padding: .28rem .35rem; }
-  .record-cell-conflict { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
-  .record-cell-conflict > div:first-child { min-width: 0; display: grid; gap: .18rem; }
-  .record-cell-conflict small { overflow-wrap: anywhere; color: var(--muted); }
-  .cell-edit-button { min-width: 6rem; width: 100%; min-height: 2rem; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: .45rem; padding: .3rem .45rem; border: 1px solid transparent; border-radius: .35rem; background: transparent; color: inherit; font: inherit; text-align: left; }
-  .cell-edit-button > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .cell-edit-button > svg { opacity: 0; color: var(--muted); transition: opacity .12s ease; }
-  .cell-edit-button:hover, .cell-edit-button:focus-visible { border-color: var(--line); background: var(--surface-raised); }
-  .cell-edit-button:hover > svg, .cell-edit-button:focus-visible > svg { opacity: 1; }
-  .long-text-cell .cell-edit-button { align-items: start; }
-  .long-text-cell .cell-edit-button > span { display: block; overflow: visible; white-space: pre-wrap; overflow-wrap: anywhere; text-overflow: clip; line-height: 1.4; }
-  .records-table td.editing-cell { padding: .2rem; background: var(--surface-raised) !important; box-shadow: inset 0 0 0 1px var(--line-strong); }
-  .cell-editor { width: 100%; min-width: 7rem; min-height: 2.15rem; padding: .32rem .45rem; border-color: var(--primary); border-radius: .32rem; background: var(--surface); color: var(--text); font-size: inherit; }
-  .long-text-cell-editor { min-width: 20rem; min-height: 6rem; resize: vertical; line-height: 1.45; white-space: pre-wrap; }
-  .cell-editor:focus { outline: 2px solid color-mix(in srgb, var(--primary) 18%, transparent); outline-offset: 0; }
   .record-form > label > span { display: flex; align-items: center; flex-wrap: wrap; gap: .3rem; }
   .record-relationship { display:grid;gap:.4rem;min-width:0;align-self:start; }
   .schema-card.dependency-focus { outline:2px solid var(--primary);outline-offset:3px;scroll-margin-block:5rem; }
@@ -613,7 +598,6 @@
     .attachment-section .record-file-row { grid-template-columns: 3.75rem minmax(0, 1fr); }
     .record-attachment-thumbnail { width: 3.75rem; height: 3rem; }
     .attachment-section .record-file-row > .inline-actions { grid-column: 1 / -1; }
-    .records-table .long-text-cell-editor { min-width: 0; }
   }
 
   /* Editing is always visible; destructive actions remain in a compact menu. */
@@ -858,9 +842,6 @@
       text-transform: uppercase;
     }
     .records-table tr.clickable-row td.long-text-cell { min-width: 0; overflow-wrap: anywhere; }
-    .records-table .cell-edit-button { min-width: 0; padding: .18rem .3rem; }
-    .records-table .cell-edit-button > svg { opacity: .55; }
-    .records-table .cell-editor { min-width: 0; }
     .records-table tr.clickable-row .row-index-column {
       position: absolute;
       top: .65rem;

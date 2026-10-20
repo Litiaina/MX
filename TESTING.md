@@ -1,5 +1,179 @@
 # MX validation
 
+## 1.0.0-rc.5 — candidate qualification
+
+This candidate is published with maintainer authorization on 2026-10-20, not
+certified as stable 1.0.0. Publication does not deploy it to production servers.
+Existing data and modules are preserved. Synthetic QA modules were added only
+to the explicitly authorized local test, never to product seeds or packages.
+
+### Coverage
+
+- Native checks: **188 passed, two opt-in cases ignored**. Frontend: **346 passed
+  across 56 files**. Production compilation, paired versions and bundled Office
+  checksums pass; Svelte reports zero errors/warnings. Vite retains its large-chunk advisory;
+  this is not a claim that initial-load bundle size has been optimized.
+- Advanced real-HTTP tests cover combined names/searchable relationship labels,
+  select codes with independent numeric values, filtered incoming totals,
+  edit/cancel/trash/restore, and concurrent idempotent retries without double
+  deductions. Invalid numeric reconfiguration rolls back rather than committing
+  half-recalculated records. Cycles are rejected even in an empty module.
+- Privacy checks use eight accounts and inspect direct reads/writes, pagination,
+  keyset windows, search/filter/counts/summaries, exports, history, attachments,
+  preview-ticket revocation, imports and raw live-event payloads. Creator and
+  administrator restrictions are API policies, not just hidden UI controls.
+  Required administrator-only fields do not block ordinary users' imports.
+- Chromium, Firefox and Linux WebKit exercise the configuration builders,
+  full-record editing, contextual sends, module-selection/dirty guards, personal
+  bold fields, 200% text and mobile/light/dark layouts. Live privacy changes
+  purge newly restricted dirty inputs, local drafts and cached record views.
+  Drive/dropdown regressions also pass in all three engines. Targeted Chromium
+  regressions cover importer corrections, conditional forms, column totals,
+  archive errors and record-window scrolling; relationship auto-fill runs in
+  all three engines.
+- Field-error dialogs and in-place datatype conversion run in all three engines:
+  errors stay visible in focused dialogs, keyboard focus is retained, archived
+  keys are explained, concurrent creates have one winner, and widening Text to
+  Long text preserves 800 imported records and their values/history exactly.
+- Fresh-account Collaboration People regressions cover no selection before a
+  chat exists, profile viewing, exactly one real selected chat, search and view
+  switching in Chromium, Firefox and WebKit, in light/dark themes. The regression
+  first reproduced the original failure (three highlighted rows instead of zero).
+- The release pass repeats native/frontend checks, the optimized advanced-record
+  HTTP suite and three-engine notification routing. A real RC.4 → RC.5 independent
+  systemd-worker rehearsal verifies signed staging, configurable maintenance,
+  activation, the final database backup, post-migration rollback, eight competing
+  install requests and recovery after killing the activation worker. The Updates
+  UI is checked in Chromium; this does not restart an existing deployment.
+- A **100,000-linked-record fixture** verifies filtered balances, eight creator
+  scopes, exact totals and bounded 50-row cursors. **24 concurrent HTTP reads**
+  finish while an independent connection holds an uncommitted WAL writer.
+  The optimized build's slowest measured request was **7,008 ms** on this local
+  fixture. This is a correctness/contention check, not an ingestion benchmark
+  or a promise of subsecond response at every scale.
+- Migration rehearsal copies the existing test database before starting the
+  candidate. **10,563 records, four modules and 14 Drive items** survive startup,
+  authenticated reads and restart. All **17 business-table content hashes**
+  remain unchanged; 10,563 creator-provenance rows are added, and SQLite integrity
+  and foreign-key checks pass. The original database is opened read-only for
+  that rehearsal.
+- Notification tests instrument browser delivery rather than claiming a visible
+  OS banner. They exercise foreground suppression, background/minimized routing,
+  multi-tab deduplication, offline/reconnect recovery, a cancelled page exit and
+  a one-day incorrect workstation clock, plus recovery after initial inbox
+  initialization exhausts its request retries. Unique IndexedDB receipts coordinate
+  tabs; storage-restricted contexts have a documented best-effort fallback.
+  An additional diagnostic regression retains constructor failures after
+  refocusing/switching modules and prevents a test using unsaved preferences.
+  This fixes misleading feedback, not an unverified claim that every client's
+  OS banner now works. The optional `MX_TEST_BRAVE_EXECUTABLE` also exercises a
+  locally installed Brave; real Chrome/Windows banners remain a manual gate.
+
+### Repeat the new suites
+
+Use Node 24+, installed frontend test dependencies, and a freshly built native
+binary with its matching production frontend. From `frontend`, set disposable
+paths once; do not point a runner at a live N1 service:
+
+```sh
+export MX_TEST_BINARY='/absolute/test-build/release/litiaina-mx'
+export MX_TEST_STATIC_SITE_PATH='/absolute/test-build/dist'
+export MX_TEST_ARTIFACTS='/absolute/disposable/test-root'
+npm run test:records:advanced
+npm run test:records:advanced-ui
+npm run test:records:privacy
+npm run test:records:advanced-scale
+npm run test:notifications:focus
+npm run test:collaboration:people
+```
+
+These suites create isolated MX/SQLite/storage-contract fixtures and retain
+JSON results and browser screenshots in the printed artifact directory. Browser
+audio is disconnected. The scale and upgrade runners require the explicitly
+allowed test-storage roots used by the local qualification environment. For an
+existing-data rehearsal, `test:upgrade:existing` additionally requires explicit
+`MX_TEST_UPGRADE_DB` and `MX_TEST_UPGRADE_ADMIN` paths; it backs up the source and
+never launches the candidate against that original database.
+
+### Acceptance gates and limits
+
+The populated local test now runs the optimized RC.5 preview at
+`https://localhost:21001`. Its post-replacement read-only smoke passes in
+Chromium, Firefox and WebKit: all 10,563 records and 17 business-table content
+hashes remain unchanged, and an existing small Drive object downloads through
+MX/N1. N1's binary hash and process ID are unchanged. The fresh verified backup
+and smoke report are retained under
+`/mnt/ST1000LM049/mx/backups/before-local-rc5-20261020.JpqNkR`.
+That rehearsal preceded the authorized RC.5 publication; production deployments
+were not modified. Later local QA data is additive and explicitly requested.
+
+The candidate is eligible for **local acceptance testing**, not an unconditional
+stable-release certification. Before production acceptance:
+
+1. Verify a real OS banner on the organization's actual Windows/browser versions
+   and trusted HTTPS origin: focused MX stays silent at OS level; minimizing or
+   focusing another application produces one alert. Headless Linux tests cannot
+   prove Windows banners, OS policy, Do Not Disturb or browser suspension behavior.
+2. Approve the administrator workflow and sample relationships/balances/privacy
+   using ordinary accounts. Accessible subtotals are not an organization-wide
+   ledger, approval engine or overdraft-prevention mechanism.
+3. Retain a verified backup and the paired previous binary/frontend. Older MX
+   versions do not enforce RC.5 privacy/configuration: rollback requires the
+   corresponding pre-update database snapshot, not just an older executable.
+
+This pass is not a formal penetration test, assistive-technology audit,
+Safari/iOS certification or physical-power-loss qualification. It does not
+promise OS notifications when a browser is closed/discarded. N1 source, storage
+format, production servers and publisher credentials are unchanged.
+
+## Earlier local workspace interaction preview — historical baseline
+
+That earlier pass changed the local source and disposable test builds only. It did not
+publish RC.5, replace any deployed service, seed business modules, or modify N1.
+
+Native unit checks: **180 passed, two opt-in cases ignored**. Frontend unit
+checks: **337 passed across 55 files**. Production frontend compilation and
+paired-version/Office-asset verification pass; Svelte checks report zero errors
+and warnings. Vite retains its existing JavaScript-chunk-size advisory.
+
+- Record cells are read-only/selectable; the full record form retains revision
+  checks, relationship auto-fill and field-conflict decisions.
+- Direct contextual record sends exercise the real collaboration/notification
+  APIs, bounded name search, eight concurrent direct-conversation creates, and
+  two deliberately lost send acknowledgments followed by an idempotent retry.
+  A recipient without module access receives no record metadata or new grant.
+- Personal field emphasis is checked in tables/forms and after reload, with
+  account isolation and stale-preference rejection. Actual computed table text
+  size is measured, not just the setting input. Cancel restores the prior size.
+- The module library starts with no selected editor. Tests create a separate
+  module, verify the original is unchanged, and retain unsaved field/module
+  drafts after cancelling a scope change. Configuration sections are separate.
+- Browser coverage uses Chromium, Firefox and Linux WebKit, light/dark themes,
+  desktop/mobile layouts and 200% text. Extra checks cover enlarged-text reading
+  and send dialogs and keyboard navigation in the compact workspace menu.
+  These are not physical-device, assistive-technology or Safari/iOS certification.
+- The isolated Drive grid/Deployment-spacing regression suite also runs in all
+  three engines. Targeted Chromium suites cover full-form relationship auto-fill
+  and conflicts, conditional forms, column totals, archive-error dialogs and
+  bounded record scrolling/anchors. No production database or live N1 is used.
+
+Run the new browser suite from `frontend`, with an updated native binary and
+the matching production frontend build. Choose a disposable absolute test root:
+
+```sh
+MX_TEST_BINARY='/absolute/test-build/debug/litiaina-mx' \
+MX_TEST_STATIC_SITE_PATH='/absolute/test-build/dist' \
+MX_TEST_ARTIFACTS='/absolute/disposable/test-root' \
+npm run test:records:workspace
+```
+
+The runner closes its isolated MX/SQLite/storage fixture after testing and writes
+screenshots plus `record-workspace-results.json` inside its printed artifact
+directory. `MX_TEST_BROWSERS=chromium` selects a focused run. Never set a live
+`MX_TEST_N1_URL` for this suite. At that point frontend/native versions remained
+`1.0.0-rc.4`; it was a local preview, not a released RC.4 update. The RC.5 section
+above supersedes that earlier version/count baseline.
+
 ## RC.4 importer replacement — 2026-10-18
 
 - Remove the importer-only required-attachment rejection at both preview and

@@ -103,6 +103,18 @@ pub(crate) fn check(c: &Connection, uid: &str) -> rusqlite::Result<ArchiveCheck>
             continue;
         }
         let mut reasons = Vec::new();
+        if d.kind == "rollup"
+            && d.config["direction"] == "incoming"
+            && d.config["source_module_uid"] == module_uid
+        {
+            let filter = d.config["filter"].to_string();
+            if d.config["relationship_field"] == field.key
+                || d.config["target_field"] == field.key
+                || filter.contains(&format!("\"{}\"", field.key))
+            {
+                reasons.push(("incoming_aggregate",format!("Uses {} in an incoming linked-record total or its filter.",field.label),"Reconfigure the source relationship, numeric field or matching conditions in this aggregate, or archive it first.".to_owned()));
+            }
+        }
         if d.module == module_uid {
             for (key, usage) in super::form_rules::references(&d.config) {
                 if key == field.key {
@@ -144,8 +156,7 @@ pub(crate) fn check(c: &Connection, uid: &str) -> rusqlite::Result<ArchiveCheck>
             }
         } else if d.kind == "formula"
             && d.module == module_uid
-            && super::formula::referenced_fields(d.config["expression"].as_str().unwrap_or(""))
-                .contains(&field.key.to_ascii_lowercase())
+            && super::calculated::references(&d.config).contains(&field.key.to_ascii_lowercase())
         {
             reasons.push(("formula_source",format!("Its formula uses the {} field.",field.label),"Change the formula expression to stop using this field, then Save field; or archive the formula first.".to_owned()));
         }

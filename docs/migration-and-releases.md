@@ -2,7 +2,14 @@
 
 [Documentation index](README.md) · [Project overview](../README.md)
 
-## Current line: MX 1.0.0-rc.4
+## Current candidate: MX 1.0.0-rc.5
+
+RC.5 adds calculations, creator-based privacy, administration/reading improvements,
+background-only notification handling and the fresh-directory selection fix.
+It is a release candidate, not stable 1.0.0. See the
+[RC.5 changes and rollback boundaries](releases/1.0.0-rc.5.md).
+
+## Previous candidate: MX 1.0.0-rc.4
 
 RC.4 is a database-contention hotfix. Schema initialization and compatibility
 backfills run before serving requests, not during ordinary read/write handlers.
@@ -13,7 +20,8 @@ The signing key and managed update/backup/rollback protocol are unchanged. See
 On 2026-10-18, an initial documentation-only RC.4 refresh qualified N1
 `1.0.0-RC.1` without changing runtime bytes. A subsequent, explicitly authorized
 **importer hotfix replacement** changes the binary/frontend and signed package
-while retaining version `1.0.0-rc.4` and publisher trust. No RC.5 is published.
+while retaining version `1.0.0-rc.4` and publisher trust. RC.5 was not yet published
+at the time of that replacement.
 Original and intermediate artifacts remain archived for traceability.
 Equal-version protection stays enabled: an earlier RC.4 requires a verified
 operator replacement with backup, not an ordinary same-version UI update.

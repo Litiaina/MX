@@ -18,7 +18,6 @@ use crate::{
         modules::{DEFAULT_MODULE_UID, module_can_for_user},
         mx::{
             attachment_fields::ensure_attachment_fields_schema,
-            formula::evaluate_expression,
             model::FileAttachment,
             schema::{
                 FieldDefinition, ensure_dynamic_schema, field_map_by_key,
@@ -41,6 +40,10 @@ mod windows;
 
 #[derive(Debug, Deserialize, Clone, Default)]
 pub struct DynamicListQuery {
+    #[serde(skip)]
+    pub(crate) actor_uid: Option<String>,
+    #[serde(skip)]
+    pub(crate) actor_level: i64,
     pub page: Option<usize>,
     pub limit: Option<usize>,
     pub q: Option<String>,
@@ -149,15 +152,6 @@ impl NormalizedValue {
                     "0".to_string()
                 }
             }
-        }
-    }
-
-    fn as_number(&self) -> Option<f64> {
-        match self {
-            Self::Integer(value) => Some(*value as f64),
-            Self::Real(value) => Some(*value),
-            Self::Boolean(value) => Some(if *value { 1.0 } else { 0.0 }),
-            Self::Text(value) => value.trim().parse::<f64>().ok(),
         }
     }
 }
@@ -584,45 +578,25 @@ fn apply_formula_values(
     fields: &[FieldDefinition],
     values: &mut BTreeMap<String, NormalizedValue>,
 ) -> Result<(), String> {
-    let formula_fields = fields
+    let mut json_values = values
         .iter()
-        .filter(|field| field.field_type == "formula")
-        .collect::<Vec<_>>();
-    if formula_fields.is_empty() {
-        return Ok(());
-    }
-
-    // Re-evaluate several times so formulas may reference earlier or later
-    // computed fields. Blank numeric inputs are treated as zero.
-    for _ in 0..=formula_fields.len() {
-        for field in &formula_fields {
-            let mut variables = fields
-                .iter()
-                .map(|candidate| (candidate.key.to_ascii_lowercase(), 0.0))
-                .collect::<BTreeMap<_, _>>();
-            for (key, value) in values.iter() {
-                if let Some(number) = value.as_number() {
-                    variables.insert(key.to_ascii_lowercase(), number);
-                }
+        .map(|(key, value)| (key.clone(), normalized_to_json(value)))
+        .collect();
+    super::calculated::evaluate(fields, &mut json_values, false)?;
+    for field in fields.iter().filter(|field| field.field_type == "formula") {
+        match json_values.get(&field.key) {
+            Some(Value::String(value)) => {
+                values.insert(field.key.clone(), NormalizedValue::Text(value.clone()));
             }
-            let expression = field
-                .config
-                .get("expression")
-                .and_then(Value::as_str)
-                .unwrap_or("");
-            let decimals = field
-                .config
-                .get("decimals")
-                .and_then(Value::as_u64)
-                .unwrap_or(2)
-                .min(12) as i32;
-            let raw = evaluate_expression(expression, Some(&variables))
-                .map_err(|error| format!("{}: {error}", field.label))?;
-            let factor = 10_f64.powi(decimals);
-            values.insert(
-                field.key.clone(),
-                NormalizedValue::Real((raw * factor).round() / factor),
-            );
+            Some(value) if value.as_f64().is_some() => {
+                values.insert(
+                    field.key.clone(),
+                    NormalizedValue::Real(value.as_f64().unwrap()),
+                );
+            }
+            _ => {
+                values.remove(&field.key);
+            }
         }
     }
     Ok(())
@@ -632,30 +606,7 @@ pub(super) fn calculate_formula_json_values(
     fields: &[FieldDefinition],
     values: &mut BTreeMap<String, Value>,
 ) -> Result<(), String> {
-    let mut normalized = BTreeMap::new();
-    for field in fields {
-        let Some(value) = values.get(&field.key) else {
-            continue;
-        };
-        let converted = match field.field_type.as_str() {
-            "integer" | "auto_number" => value.as_i64().map(NormalizedValue::Integer),
-            "decimal" | "formula" => value.as_f64().map(NormalizedValue::Real),
-            "boolean" => value.as_bool().map(NormalizedValue::Boolean),
-            _ => value
-                .as_str()
-                .map(|value| NormalizedValue::Text(value.to_string())),
-        };
-        if let Some(converted) = converted {
-            normalized.insert(field.key.clone(), converted);
-        }
-    }
-    apply_formula_values(fields, &mut normalized)?;
-    for field in fields.iter().filter(|field| field.field_type == "formula") {
-        if let Some(value) = normalized.get(&field.key) {
-            values.insert(field.key.clone(), normalized_to_json(value));
-        }
-    }
-    Ok(())
+    super::calculated::evaluate(fields, values, false)
 }
 
 fn load_normalized_record_values(
@@ -705,6 +656,8 @@ pub(crate) fn recalculate_module_formulas(
     actor_uid: &str,
 ) -> rusqlite::Result<()> {
     let fields = load_module_fields_db(connection, module_uid, false)?;
+    super::calculated::order(&fields)
+        .map_err(|error| rusqlite::Error::InvalidParameterName(format!("MX_CONFIG:{error}")))?;
     if !fields.iter().any(|field| field.field_type == "formula") {
         return Ok(());
     }
@@ -1135,6 +1088,7 @@ fn rule_restore_values(
     changes: &BTreeMap<String, Value>,
     key: &str,
     actor: &str,
+    record_uid: &str,
 ) -> rusqlite::Result<BTreeMap<String, Value>> {
     if !super::form_rules::configured(fields) {
         return Ok(BTreeMap::new());
@@ -1189,6 +1143,9 @@ fn rule_restore_values(
         .iter()
         .filter(|f| super::form_rules::writable(&f.field_type))
     {
+        if !super::privacy::field_record_allowed(c, record_uid, &f.uid, actor, level)? {
+            continue;
+        }
         if roots.contains(&f.key)
             || !super::form_rules::ancestors(fields, &f.key).is_disjoint(&roots)
         {
@@ -1237,7 +1194,15 @@ fn patch_record_db(
             let Some(current_record_revision) = current_record_revision else {
                 return Ok(PatchDbResult::NotFound);
             };
+            super::privacy::check_record(&transaction, &uid, &actor_uid)?;
             let fields = load_module_fields_initialized_db(&transaction, &module_uid, false)?;
+            super::privacy::check_values(
+                &transaction,
+                Some(&uid),
+                &fields,
+                &raw_changes,
+                &actor_uid,
+            )?;
             let field_map = field_map_by_key(&fields);
             let mut raw_changes = raw_changes.clone();
             if base_revision < 1 || base_revision > current_record_revision {
@@ -1310,6 +1275,7 @@ fn patch_record_db(
                                 &raw_changes,
                                 key,
                                 &actor_uid,
+                                &uid,
                             )?,
                         });
                     }
@@ -1329,6 +1295,13 @@ fn patch_record_db(
             )?;
             raw_changes = super::form_rules::prepare(&fields, &raw_changes, &current_values, true)
                 .map_err(rusqlite::Error::InvalidParameterName)?;
+            super::privacy::check_values(
+                &transaction,
+                Some(&uid),
+                &fields,
+                &raw_changes,
+                &actor_uid,
+            )?;
             let current_values_for_conflicts = current_values.clone();
             let mut prospective = current_values;
             prospective.extend(raw_changes.clone());
@@ -1381,6 +1354,7 @@ fn patch_record_db(
                             &raw_changes,
                             key,
                             &actor_uid,
+                            &uid,
                         )?,
                     });
                 }
@@ -1429,7 +1403,7 @@ fn patch_record_db(
                 };
                 let current = current_field_value(&transaction, &uid, field)?;
                 let next = normalized_to_json(value);
-                if current.as_f64() == next.as_f64() {
+                if current == next {
                     continue;
                 }
                 write_single_dynamic_value(&transaction, &uid, field, Some(value))?;
@@ -1523,11 +1497,16 @@ pub(super) fn import_validate(
     values: &BTreeMap<String, Value>,
     actor: &str,
 ) -> Result<BTreeMap<String, Value>, String> {
-    let mut values = values.clone();
-    super::relationships::fill_missing(connection, fields, &mut values, actor)
+    let mut fields = fields.to_vec();
+    super::privacy::waive_hidden_requirements(connection, &mut fields, actor)
         .map_err(|e| e.to_string())?;
-    let prepared = super::form_rules::prepare(fields, &values, &BTreeMap::new(), false)?;
-    let effective = super::form_rules::effective_fields(fields, &prepared);
+    super::privacy::check_values(connection,None,&fields,values,actor).map_err(|_|"The import maps a field you cannot write. Remove that mapping or ask an administrator to review field access.".to_owned())?;
+    let mut values = values.clone();
+    super::relationships::fill_missing(connection, &fields, &mut values, actor)
+        .map_err(|e| e.to_string())?;
+    let prepared = super::form_rules::prepare(&fields, &values, &BTreeMap::new(), false)?;
+    super::privacy::check_values(connection,None,&fields,&prepared,actor).map_err(|_|"An automatic value targets a field you cannot write. Ask an administrator to review this configuration.".to_owned())?;
+    let effective = super::form_rules::effective_fields(&fields, &prepared);
     validate_payload(&effective, &prepared)?;
     // Spreadsheet migration imports record values only. Attachment inputs are
     // deliberately outside its mapping/validation scope, including required
@@ -1576,11 +1555,13 @@ pub(super) fn create_record_commit(
         // validated against the actual schema inside the write transaction.
         let fields = load_module_fields_db(&transaction, &module_uid, false)?;
         let mut request_values = request_values;
+        super::privacy::check_values(&transaction, None, &fields, &request_values, &actor_uid)?;
         super::relationships::fill_missing(&transaction, &fields, &mut request_values, &actor_uid)?;
         request_values =
             super::form_rules::prepare(&fields, &request_values, &BTreeMap::new(), false)
                 .map_err(rusqlite::Error::InvalidParameterName)?;
-        let effective_fields = super::form_rules::effective_fields(&fields, &request_values);
+        let mut effective_fields = super::form_rules::effective_fields(&fields, &request_values);
+        super::privacy::waive_hidden_requirements(&transaction, &mut effective_fields, &actor_uid)?;
         let mut values = validate_payload(&effective_fields, &request_values)
             .map_err(rusqlite::Error::InvalidParameterName)?;
         let uid = Uuid::new_v4().to_string();
@@ -1659,6 +1640,7 @@ pub(super) fn create_record_commit(
             ],
         )?;
 
+        super::privacy::claim(&transaction, &uid, &actor_uid)?;
         write_dynamic_values(&transaction, &uid, &fields, &values)?;
         initialize_field_revisions(&transaction, &uid, &fields, &values, &actor_uid)?;
         let version_uid =
@@ -1698,6 +1680,23 @@ fn update_record_db(
             rusqlite::TransactionBehavior::Immediate,
         )?;
         let fields = load_module_fields_initialized_db(&transaction, &module_uid, false)?;
+        super::privacy::check_record(&transaction, &uid, &actor_uid)?;
+        super::privacy::check_values(
+            &transaction,
+            Some(&uid),
+            &fields,
+            &request_values,
+            &actor_uid,
+        )?;
+        if !super::privacy::restricted(
+            &fields,
+            super::privacy::creator(&transaction, &uid)?.as_deref() == Some(&actor_uid),
+            super::privacy::level(&transaction, &actor_uid)?,
+        )
+        .is_empty()
+        {
+            return Err(rusqlite::Error::InvalidParameterName("MX_FORBIDDEN:This record contains restricted fields. Use the normal record form (partial save) rather than replacing the complete record.".into()));
+        }
 
         let existing = transaction.query_row(
             r#"
@@ -1866,6 +1865,7 @@ fn value_from_row(
             }
         }),
         "integer" | "auto_number" => integer.map_or(Value::Null, |value| json!(value)),
+        "formula" if text.is_some() => text.map_or(Value::Null, Value::String),
         "decimal" | "formula" => real.map_or(Value::Null, |value| json!(value)),
         "boolean" => boolean.map_or(Value::Null, |value| json!(value != 0)),
         _ => text.map_or(Value::Null, |value| json!(value)),
@@ -2009,7 +2009,7 @@ fn sql_value_expression(alias: &str) -> String {
             WHEN 'integer' THEN CAST({alias}.value_integer AS TEXT)
             WHEN 'auto_number' THEN CAST({alias}.value_integer AS TEXT)
             WHEN 'decimal' THEN CAST({alias}.value_real AS TEXT)
-            WHEN 'formula' THEN CAST({alias}.value_real AS TEXT)
+            WHEN 'formula' THEN COALESCE({alias}.value_text, CAST({alias}.value_real AS TEXT))
             WHEN 'boolean' THEN CASE {alias}.value_boolean WHEN 1 THEN 'true' ELSE 'false' END
             ELSE COALESCE({alias}.value_text, '')
         END"#
@@ -2027,6 +2027,19 @@ fn build_where_clause(
         "e.deleted_at IS NULL".to_string(),
     ];
     let mut sql_params: Vec<SqlValue> = vec![SqlValue::Text(module_uid.to_string())];
+    if let Some(actor) = &query.actor_uid {
+        conditions.push(super::privacy::record_sql("e", actor, query.actor_level));
+    }
+    let field_scope = query
+        .actor_uid
+        .as_ref()
+        .map(|actor| super::privacy::field_sql("f", "e", actor, query.actor_level))
+        .unwrap_or_else(|| "1".into());
+    let file_scope = query
+        .actor_uid
+        .as_ref()
+        .map(|actor| super::privacy::attachment_sql("af", "e", actor, query.actor_level))
+        .unwrap_or_else(|| "1".into());
     let match_mode = normalize_match_mode(query.match_mode.as_deref());
     let expression = sql_value_expression("rv");
 
@@ -2049,12 +2062,14 @@ fn build_where_clause(
                     WHERE rv.record_uid = e.uid
                       AND f.active = 1
                       AND f.searchable = 1
+                      AND {field_scope}
                       AND LOWER({expression}) LIKE LOWER(?) ESCAPE '!'
                 )
                 OR EXISTS (
                     SELECT 1
                     FROM mx_attachments af
                     WHERE af.entry_uid = e.uid
+                      AND {file_scope}
                       AND LOWER(af.file_name) LIKE LOWER(?) ESCAPE '!'
                 )
             )"#
@@ -2065,6 +2080,7 @@ fn build_where_clause(
                 SELECT 1 FROM mx_record_values rv
                 JOIN mx_fields f ON f.uid=rv.field_uid
                 WHERE rv.record_uid=e.uid AND f.active=1 AND f.searchable=1
+                  AND {field_scope}
                   AND LOWER({expression}) LIKE LOWER(?) ESCAPE '!'
             )"#
             )
@@ -2123,6 +2139,7 @@ fn build_where_clause(
                       ON f.uid = rv.field_uid
                     WHERE rv.record_uid = e.uid
                       AND f.uid = ?
+                      AND {field_scope}
                       AND LOWER({expression}) LIKE LOWER(?) ESCAPE '!'
                 )"#
             ));
@@ -2147,11 +2164,11 @@ fn build_where_clause(
         .filter(|value| !value.is_empty())
     {
         Some("with") => conditions.push(
-            "EXISTS (SELECT 1 FROM mx_attachments af WHERE af.entry_uid = e.uid)".to_string(),
+            format!("EXISTS (SELECT 1 FROM mx_attachments af WHERE af.entry_uid = e.uid AND {file_scope})"),
         ),
 
         Some("without") => conditions.push(
-            "NOT EXISTS (SELECT 1 FROM mx_attachments af WHERE af.entry_uid = e.uid)".to_string(),
+            format!("NOT EXISTS (SELECT 1 FROM mx_attachments af WHERE af.entry_uid = e.uid AND {file_scope})"),
         ),
 
         Some(_) => {
@@ -2205,17 +2222,31 @@ fn build_order_clause(query: &DynamicListQuery, fields: &[FieldDefinition]) -> S
 
     let value_column = match field.field_type.as_str() {
         "integer" | "auto_number" => "rv.value_integer",
+        "formula" if super::calculated::text(&field.config) => "rv.value_text COLLATE NOCASE",
         "decimal" | "formula" => "rv.value_real",
         "boolean" => "rv.value_boolean",
         _ => "rv.value_text COLLATE NOCASE",
     };
 
+    let scope = query
+        .actor_uid
+        .as_ref()
+        .map(|actor| {
+            super::privacy::scope_sql(
+                field.config["access_scope"].as_str().unwrap_or("module"),
+                "e",
+                actor,
+                query.actor_level,
+            )
+        })
+        .unwrap_or_else(|| "1".into());
     format!(
         r#"ORDER BY (
             SELECT {value_column}
             FROM mx_record_values rv
             WHERE rv.record_uid = e.uid
               AND rv.field_uid = '{field_uid}'
+              AND {scope}
             LIMIT 1
         ) {direction}, e.rowid DESC"#
     )
@@ -2233,10 +2264,22 @@ fn list_records_db(
         if include_attachments {
             ensure_attachment_fields_schema(connection)?;
         }
+        super::privacy::ensure(connection)?;
         let transaction = connection.unchecked_transaction()?;
         let connection = &transaction;
-        let fields =
+        let mut fields =
             super::schema::load_module_fields_initialized_db(connection, &module_uid, false)?;
+        let live = fields
+            .iter()
+            .filter(|field| super::calculated::live(field, &fields))
+            .map(|field| field.uid.clone())
+            .collect::<std::collections::BTreeSet<_>>();
+        for field in &mut fields {
+            if live.contains(&field.uid) {
+                field.searchable = false;
+                field.sortable = false;
+            }
+        }
 
         if query.window.is_some() {
             return windows::list(
@@ -2273,8 +2316,14 @@ fn list_records_db(
             })?;
 
         let order_clause = build_order_clause(&query, &fields);
-        let summaries =
-            super::column_summaries::calculate(connection, &fields, &where_clause, &base_params)?;
+        let summaries = super::column_summaries::calculate_scoped(
+            connection,
+            &fields,
+            &where_clause,
+            &base_params,
+            query.actor_uid.as_deref(),
+            query.actor_level,
+        )?;
         let data_sql = format!(
             r#"
             SELECT e.uid
@@ -2393,6 +2442,8 @@ fn database_error_response(error: SqliteDatabaseError) -> Response {
                 (StatusCode::CONFLICT, "MX_OPERATION:")
             } else if message.starts_with("MX_REVISION:") {
                 (StatusCode::CONFLICT, "MX_REVISION:")
+            } else if message.starts_with("MX_FORBIDDEN:") {
+                (StatusCode::FORBIDDEN, "MX_FORBIDDEN:")
             } else {
                 (StatusCode::BAD_REQUEST, "MX_FORMULA:")
             };
@@ -2461,8 +2512,16 @@ async fn present_response(status: StatusCode, claims: &Claims, mut value: Value)
             let tx = c.unchecked_transaction()?;
             if let Some(rows) = value.get_mut("data").and_then(Value::as_array_mut) {
                 super::relationships::present_many(&tx, &claims, rows)?;
+                for row in rows {
+                    super::privacy::redact(&tx, &claims.uid, claims.access_level, row)?;
+                }
             } else {
+                let uid = value["uid"].as_str().unwrap_or("");
+                if !super::privacy::record_allowed(&tx, uid, &claims.uid, claims.access_level)? {
+                    return Err(rusqlite::Error::QueryReturnedNoRows);
+                }
                 super::relationships::present(&tx, &claims, &mut value)?;
+                super::privacy::redact(&tx, &claims.uid, claims.access_level, &mut value)?;
             }
             tx.commit()?;
             Ok(value)
@@ -2640,8 +2699,12 @@ async fn get_record_for_module(claims: Claims, module_uid: String, uid: String) 
     }
     let include_attachments =
         module_permission(&module_uid, &claims.uid, claims.access_level, "attachments").await;
-    match tokio::task::spawn_blocking(move || get_record_db(module_uid, uid, include_attachments))
-        .await
+    let actor = claims.uid.clone();
+    match tokio::task::spawn_blocking(move || {
+        with_sql_connection(|connection| super::privacy::check_record(connection, &uid, &actor))?;
+        get_record_db(module_uid, uid, include_attachments)
+    })
+    .await
     {
         Ok(Ok(record)) => present_response(StatusCode::OK, &claims, json!(record)).await,
         Ok(Err(error)) => database_error_response(error),
@@ -2748,7 +2811,7 @@ async fn patch_record_for_module(
 async fn list_records_for_module(
     claims: Claims,
     module_uid: String,
-    query: DynamicListQuery,
+    mut query: DynamicListQuery,
 ) -> Response {
     if !claims.can_read_records()
         || !module_permission(&module_uid, &claims.uid, claims.access_level, "read").await
@@ -2757,6 +2820,8 @@ async fn list_records_for_module(
     }
     let include_attachments =
         module_permission(&module_uid, &claims.uid, claims.access_level, "attachments").await;
+    query.actor_uid = Some(claims.uid.clone());
+    query.actor_level = claims.access_level;
     match tokio::task::spawn_blocking(move || {
         list_records_db(module_uid, query, include_attachments)
     })

@@ -18,7 +18,7 @@
   let busy = $state(false), running = $state(false), keepRunning = $state(false), error = $state(''), status = $state(''), transferred = $state(0);
   let result = $state<ImportRows>({ rows: [], total: 0, page: 1, limit: 20 }), rowState = $state('pending'), rowPage = $state(1), correction = $state<ImportRow | null>(null);
   let gone = false, retryTimer: ReturnType<typeof setTimeout> | undefined, dialog: HTMLDivElement;
-  const fields = $derived(schema.fields.filter(importWritable));
+  const fields = $derived(schema.fields.filter(field=>importWritable(field)&&(schema.viewer_access_level===0||field.config.access_scope!=='administrators')));
   const attachmentFields = $derived(importAttachmentFields(schema.fields));
   const noValidRows = $derived(!!job?.pending && job.validation?.ready === 0);
   const sheet = $derived(job?.sheets[sheetIndex]);

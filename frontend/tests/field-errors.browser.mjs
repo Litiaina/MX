@@ -45,9 +45,9 @@ try {
   const truncated = await field(first.uid,'a'.repeat(63)+'b','Truncated storage collision','text',[409]);
   assert.equal(truncated.field_key_conflict.field.key,long);
   await field(first.uid,truncated.field_key_conflict.suggested_key,'Corrected long key');
-  const defaultField = await call('/mx/v1/admin/schema/fields','POST',{key:'reserved_default',label:'Default reservation',field_type:'text'},[201]);
-  const defaultDuplicate = await call('/mx/v1/admin/schema/fields','POST',{key:'reserved_default',label:'Default duplicate',field_type:'date'},[409]);
-  assert.equal(defaultDuplicate.field_key_conflict.field.uid,defaultField.uid);
+  // Fresh installations have no implicit legacy module. Never manufacture one
+  // just to satisfy the previous dropdown-era test assumption.
+  await call('/mx/v1/admin/schema/fields','POST',{key:'reserved_default',label:'No implicit module',field_type:'text'},[404]);
   // The availability check and creation share one immediate write transaction.
   const concurrent = await Promise.all(Array.from({length:8},() => mx.call(`/mx/v1/admin/modules/${first.uid}/fields`,owner.access_token,'POST',{key:'race_key',label:'Race field',field_type:'text'},[201,409])));
   assert.equal(concurrent.filter(result=>result.status===201).length,1);
@@ -57,7 +57,7 @@ try {
   const database = new DatabaseSync(join(mx.directory,'test.db'),{readOnly:true});
   assert.equal(database.prepare('SELECT value_text FROM mx_record_values WHERE record_uid=? AND field_uid=?').get(original.uid,archived.uid).value_text,'Keep historical data');
   database.close();
-  results.api.push('Archived and active/case-insensitive keys, available suggestions, per-module isolation, legacy long-key storage collisions, default module, eight concurrent creates (one winner), rejected schema unchanged, archived history preserved');
+  results.api.push('Archived and active/case-insensitive keys, available suggestions, per-module isolation, legacy long-key storage collisions, no implicit starter module, eight concurrent creates (one winner), rejected schema unchanged, archived history preserved');
 
   for (const engine of (process.env.MX_TEST_BROWSERS||'chromium,firefox,webkit').split(',')) {
     const current = await module(`Popup ${engine}`);
@@ -73,7 +73,7 @@ try {
     await page.addInitScript(tokens=>{sessionStorage.setItem('mx_access_token',tokens.access_token);sessionStorage.setItem('mx_refresh_token',tokens.refresh_token);},owner);
     await page.goto(`https://127.0.0.1:${mx.port}/#admin`);
     await page.getByRole('button',{name:'Modules & fields',exact:true}).click();
-    await page.getByRole('combobox',{name:'Change module',exact:true}).selectOption(current.uid);
+    await page.getByRole('button',{name:`Configure ${current.name}`,exact:true}).click();
     const form = page.getByRole('form',{name:'Add field',exact:true});
     await form.getByRole('textbox',{name:'Label',exact:true}).fill('Issuer');
     await form.getByRole('combobox',{name:'Type',exact:true}).selectOption('date');

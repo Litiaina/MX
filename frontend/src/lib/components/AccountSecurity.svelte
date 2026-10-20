@@ -23,6 +23,7 @@
   import type { NotificationPreferences, NotificationSoundInfo, UserPreferences } from '../api/domain';
   import { deleteNotificationSound, loadNotificationSound, loadNotificationSoundInfo, loadPreferences, savePreferences, uploadNotificationSound } from '../api/workspace';
   import { decodeNotificationSound, playNotificationSound } from '../util/notificationAudio';
+  import { desktopCapability,desktopExplanation,lastDesktopAttempt,type DesktopStatus } from '../util/desktopNotifications';
   import { clearProfilePhotoCache } from '../util/profilePhoto';
   import ProfileAvatar from './ProfileAvatar.svelte';
 
@@ -64,6 +65,22 @@
   let notificationSound = $state<NotificationSoundInfo>({ exists: false });
   let selectedSound = $state<File | null>(null);
   let soundUploadProgress = $state(0);
+  let desktopStatus=$state<DesktopStatus>('permission-needed');
+  let desktopReadiness=$state<DesktopStatus>('permission-needed');
+  let desktopAttemptAt=$state<number|null>(null);
+  let desktopTestQueued=$state(false);
+  const notificationSettingsDirty=$derived(JSON.stringify(notifications)!==JSON.stringify(accountPreferences?.notifications??null));
+  onMount(()=>{
+    desktopReadiness=desktopCapability();
+    const last=lastDesktopAttempt(session.uid);desktopStatus=last?.status??desktopReadiness;desktopAttemptAt=last?.at??null;
+    const status=()=>{const last=lastDesktopAttempt(session.uid);if(last){desktopStatus=last.status;desktopAttemptAt=last.at;}};
+    const refresh=()=>{desktopReadiness=desktopCapability();if(desktopAttemptAt===null)desktopStatus=desktopReadiness;};
+    const testFinished=()=>{desktopTestQueued=false;};
+    window.addEventListener('mx-desktop-status',status);window.addEventListener('focus',refresh);window.addEventListener('mx-desktop-test-result',testFinished);
+    return()=>{window.removeEventListener('mx-desktop-status',status);window.removeEventListener('focus',refresh);window.removeEventListener('mx-desktop-test-result',testFinished);};
+  });
+  async function enableDesktopPermission(){try{if(desktopCapability()==='permission-needed')await Notification.requestPermission();desktopReadiness=desktopCapability();if(desktopAttemptAt===null)desktopStatus=desktopReadiness;}catch{desktopStatus='failed';desktopAttemptAt=Date.now();}}
+  function queueDesktopTest(){if(notificationSettingsDirty||!notifications?.browser_enabled||desktopCapability()!=='ready')return;desktopTestQueued=true;window.dispatchEvent(new CustomEvent('mx-test-desktop-notification'));}
 
   onMount(() => void loadNotificationSettings());
 
@@ -102,9 +119,13 @@
         const permission = await Notification.requestPermission();
         if (permission !== 'granted') notifications.browser_enabled = false;
       }
-      const response = await savePreferences({ ...accountPreferences, notifications });
+      // This screen may have been open while appearance/reading settings were
+      // changed elsewhere. Preserve them and reject a concurrent overwrite.
+      const latest=await loadPreferences();
+      const response = await savePreferences({ ...latest.preferences, notifications },latest.revision);
       accountPreferences = response.preferences; notifications = { ...response.preferences.notifications };
-      notice = 'Notification preferences saved.';
+      desktopReadiness=desktopCapability();if(desktopAttemptAt===null)desktopStatus=desktopReadiness;
+      notice = `Notification preferences saved.${notifications.browser_enabled&&desktopReadiness!=='ready'?' '+desktopExplanation(desktopReadiness):''}`;
     } catch (reason) { fail(reason); } finally { busyAction = ''; }
   }
   function chooseNotificationSound(event: Event) {
@@ -489,6 +510,20 @@
             <div class="notification-delivery-options">
               <label class="checkbox"><input type="checkbox" bind:checked={notifications.browser_enabled} /> Show operating-system notifications when MX is in the background</label>
               <label class="checkbox"><input type="checkbox" bind:checked={notifications.sound_enabled} /> Play sounds for immediate notifications and incoming calls</label>
+            </div>
+            <div class="notice" role="status" aria-label="Desktop notification diagnostics">
+              <strong>{desktopAttemptAt===null?'Desktop delivery':'Last desktop alert attempt'}</strong>
+              <p>{desktopExplanation(desktopStatus)}</p>
+              {#if desktopAttemptAt!==null}<small>Attempted at {new Date(desktopAttemptAt).toLocaleTimeString()}. Returning to MX does not change this result.</small>{/if}
+              <p>Browser permission: {desktopReadiness==='ready'?'Allowed':desktopReadiness==='denied'?'Blocked':desktopReadiness==='permission-needed'?'Not granted':desktopReadiness==='insecure'?'Requires trusted HTTPS':'Not supported'} · Saved MX desktop alerts: {accountPreferences?.notifications.browser_enabled?'On':'Off'}</p>
+              {#if notificationSettingsDirty}<p><strong>Unsaved notification settings.</strong> Save them before testing or relying on desktop alerts.</p>{/if}
+              <div class="button-row">
+                {#if notificationSettingsDirty}<button class="button primary small" type="submit" disabled={busyAction!==''}>Save notification settings</button>{/if}
+                <button class="button small" type="button" onclick={enableDesktopPermission} disabled={desktopReadiness==='unsupported'||desktopReadiness==='insecure'||busyAction!==''}>Enable permission</button>
+                <button class="button small" type="button" disabled={notificationSettingsDirty||!notifications.browser_enabled||desktopReadiness!=='ready'||busyAction!==''||desktopTestQueued} onclick={queueDesktopTest}>Test when I switch away</button>
+              </div>
+              {#if desktopTestQueued}<small>A test is queued. Switch to another app or minimize MX; it will not open a popup while you are working here.</small>{/if}
+              <p>Focused MX uses in-app alerts. Keep MX open; browser suspension and OS notification policy can prevent banners. MX does not use an Internet push service.</p>
             </div>
 
             <section class:disabled={!notifications.sound_enabled} class="notification-sound-card">

@@ -55,7 +55,8 @@ try{
   const context=await browser.newContext({ignoreHTTPSErrors:true,viewport:{width:1440,height:1000},locale:'en-US'});
   await context.addInitScript(tokens=>{sessionStorage.setItem('mx_access_token',tokens.access_token);sessionStorage.setItem('mx_refresh_token',tokens.refresh_token);},owner);
   const page=await context.newPage();inspected=page;const errors=[];page.on('pageerror',e=>errors.push(e.message));
-  await page.goto(`https://127.0.0.1:${mx.port}/#admin`);await page.getByRole('button',{name:'Modules & fields',exact:true}).click();await page.getByRole('combobox',{name:'Change module',exact:true}).selectOption(module.uid);
+  await page.goto(`https://127.0.0.1:${mx.port}/#admin`);await page.getByRole('button',{name:'Modules & fields',exact:true}).click();await page.getByRole('button',{name:`Configure ${module.name}`,exact:true}).click();
+  await page.getByRole('navigation',{name:'Module configuration sections',exact:true}).getByRole('button',{name:'Column totals',exact:true}).click();
   await page.getByRole('combobox',{name:'Summary for Amount',exact:true}).selectOption('sum');
   await page.getByRole('spinbutton',{name:'Summary decimals for Amount',exact:true}).fill('2');
   await page.getByRole('button',{name:'Save summary for Amount',exact:true}).click();await page.getByRole('status').filter({hasText:'Amount summary saved.'}).waitFor();
@@ -69,11 +70,13 @@ try{
   const even=await call(`${root}?q=Even&limit=256`,owner),evenText=even.summaries.amount.value.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
   await until(()=>value.innerText().then(text=>text===evenText),'filtered total');
   const nextAmount=engine==='chromium'?250:engine==='firefox'?260:270;
-  await page.getByRole('button',{name:'Edit Amount for row 1',exact:true}).click();
-  await page.locator('[data-active-cell-editor]').fill(String(nextAmount));await page.locator('[data-active-cell-editor]').press('Enter');
+  await page.getByRole('button',{name:'Edit Entry 1',exact:true}).click();
+  const recordForm=page.getByRole('dialog',{name:'Edit Entry',exact:true});
+  await recordForm.getByRole('spinbutton',{name:'Amount',exact:true}).fill(String(nextAmount));
+  await recordForm.getByRole('button',{name:'Update Entry',exact:true}).click();await recordForm.waitFor({state:'hidden'});
   const afterEdit=await call(`${root}?q=Even&limit=256`,owner);
   const display=n=>n.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
-  await until(async()=>{const actual=await call(`${root}?q=Even&limit=256`,owner);return actual.data[0].values.amount===nextAmount&&await value.innerText()===display(actual.summaries.amount.value);},'inline edit refreshes filtered totals');
+  await until(async()=>{const actual=await call(`${root}?q=Even&limit=256`,owner);return actual.data[0].values.amount===nextAmount&&await value.innerText()===display(actual.summaries.amount.value);},'full record edit refreshes filtered totals');
   const removed=afterEdit.data[0];await call(`${root}/${removed.uid}`,owner,'DELETE',undefined,[204]);
   const afterDelete=await call(`${root}?q=Even&limit=256`,owner);
   await until(()=>value.innerText().then(text=>text===display(afterDelete.summaries.amount.value)),'live deletion refreshes totals');
@@ -88,7 +91,7 @@ try{
     await page.screenshot({path:join(mx.directory,`${engine}-totals-${theme}-${width}.png`)});
   }
   await page.setViewportSize({width:1440,height:1000});await page.getByRole('searchbox',{name:'Search cash flow',exact:true}).fill('does-not-exist');await page.getByRole('button',{name:'Search',exact:true}).click();await until(()=>value.innerText().then(text=>text==='0.00'),'empty filtered total');
-  assert.deepEqual(errors,[]);results.push({engine,ui:'admin configuration, aligned footer, pagination/filter updates, inline edit/live delete/restore, empty totals, light/dark/mobile'});console.log(JSON.stringify(results.at(-1)));await browser.close();
+  assert.deepEqual(errors,[]);results.push({engine,ui:'admin configuration, aligned footer, pagination/filter updates, full-record edit/live delete/restore, empty totals, light/dark/mobile'});console.log(JSON.stringify(results.at(-1)));await browser.close();
  }
 }catch(error){process.exitCode=1;results.push({failure:error.stack});if(inspected&&!inspected.isClosed())await inspected.screenshot({path:join(mx.directory,'totals-failure.png')}).catch(()=>{});}
 finally{for(const b of browsers)await b.close().catch(()=>{});await writeFile(join(mx.directory,'record-summaries-results.json'),JSON.stringify({passed:!process.exitCode,results},null,2));console.log(JSON.stringify({passed:!process.exitCode,results,artifacts:mx.directory}));await mx.close();}

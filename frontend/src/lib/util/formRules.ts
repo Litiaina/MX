@@ -2,7 +2,7 @@ import type {FieldDefinition,JsonValue} from '../api/domain';
 export interface Condition {field:string;operator:string;value?:JsonValue}
 export interface ConditionGroup {match:'all'|'any';conditions:Condition[];groups?:ConditionGroup[]}
 export interface FormRules {visible_when?:ConditionGroup;enabled_when?:ConditionGroup;required_when?:ConditionGroup;exclusive_group?:string;exclusive_required?:boolean}
-export interface OptionDetail {value:string;label?:string;available_when?:ConditionGroup;fill?:Record<string,JsonValue>}
+export interface OptionDetail {value:string;label?:string;number?:number;available_when?:ConditionGroup;fill?:Record<string,JsonValue>}
 export interface FieldState {visible:boolean;enabled:boolean;required:boolean}
 export const writable=(field:FieldDefinition)=>['text','long_text','integer','decimal','boolean','date','select','relationship'].includes(field.field_type);
 export const fieldRules=(field:FieldDefinition)=>(field.config.form_rules||{}) as unknown as FormRules;

@@ -1,5 +1,10 @@
 <script lang="ts">
-  import { tick, onDestroy, untrack } from 'svelte';
+  import { tick, onDestroy, untrack, getContext } from 'svelte';
+  import { writable, type Writable } from 'svelte/store';
+  import { fieldIsBold, moduleReadingContext } from '../util/readingPreferences';
+  import type { ModuleReadingMap } from '../api/domain';
+  import Send from '@lucide/svelte/icons/send';
+  import SendRecordDialog from './SendRecordDialog.svelte';
   import ArrowLeft from '@lucide/svelte/icons/arrow-left';
   import DownloadIcon from '@lucide/svelte/icons/download';
   import Eye from '@lucide/svelte/icons/eye';
@@ -33,6 +38,8 @@
   type PreviewEntry = { key: string; name: string; mimeType: string; detail: string; storedUid?: string; pendingFile?: File };
 
   let values = $state<Record<string, JsonValue>>({});
+  const readingPreferences = getContext<Writable<ModuleReadingMap>>(moduleReadingContext) || writable<ModuleReadingMap>({});
+  let sendOpen = $state(false);
   let destroyed=false;onDestroy(()=>destroyed=true);
   const relationshipRequests = new Map<string,AbortController>();
   let relationshipLoading = $state<Record<string,boolean>>({});
@@ -101,7 +108,7 @@
       recoveredRelationshipPending = new Set(Array.isArray(saved?.relationship_pending)?saved.relationship_pending:[]);
       if (!record && saved?.create_submission?.uid) restoredSubmission = saved.create_submission;
       if (saved?.values && typeof saved.values === 'object') {
-        const editable = new Set(schema.fields.filter((field) => field.active && !['attachments', 'auto_number', 'formula', 'lookup', 'rollup'].includes(field.field_type)).map((field) => field.key));
+        const editable = new Set(schema.fields.filter((field) => field.active && !record?.restricted_fields?.includes(field.key) && !(schema.viewer_access_level !== 0 && field.config.access_scope === 'administrators') && !['attachments', 'auto_number', 'formula', 'lookup', 'rollup'].includes(field.field_type)).map((field) => field.key));
         for (const [key, value] of Object.entries(saved.values)) {
           if (!editable.has(key)) continue;
           const savedOriginal = saved.original?.[key] ?? null;
@@ -144,7 +151,7 @@
     void applyLiveMessage(message);
   });
 
-  const fields = $derived(schema.fields.filter((field) => field.active && (canAttachments || field.field_type !== 'attachments')).sort((a, b) => a.position - b.position));
+  const fields = $derived(schema.fields.filter((field) => field.active && !current?.restricted_fields?.includes(field.key) && (schema.viewer_access_level===0||field.config.access_scope!=='administrators') && (canAttachments || field.field_type !== 'attachments')).sort((a, b) => a.position - b.position));
   const states=$derived(Object.fromEntries(fields.map(field=>[field.key,fieldState(field,values)])));
   const unassignedFiles = $derived(current?.attached_files.filter((file) => !file.attachment_field_uid) || []);
 
@@ -260,6 +267,9 @@
     if (message.type === 'sync.required') { await refreshOpenRecord('This record was resynchronized after the live connection recovered.'); return; }
     if (!message.payload || typeof message.payload !== 'object') return;
     const payload = message.payload as Record<string, unknown>;
+    if ((message.type.startsWith('schema.')||message.type.startsWith('module.'))&&(!payload.module_uid||payload.module_uid===moduleUid)) {
+      await refreshOpenRecord('Record access and field configuration were refreshed.');return;
+    }
     if (payload.record_uid !== current.uid) return;
     if (message.type === 'record.deleted') { deletedRemotely = true; onClose(); return; }
     if (message.type === 'attachment.created' || message.type === 'attachment.deleted') {
@@ -267,6 +277,7 @@
       return;
     }
     if (message.type !== 'record.fields.updated') { if (message.type === 'record.updated') await refreshOpenRecord('This record was refreshed after another user updated it.'); return; }
+    if (payload.requires_refresh) { await refreshOpenRecord('This open record was updated with the latest saved values.'); return; }
     const changes = payload.changes && typeof payload.changes === 'object' ? payload.changes as Record<string, JsonValue> : {};
     const hasDirtyFields = fields.some((field) => isDirty(field.key));
     for (const [key, latestValue] of Object.entries(changes)) {
@@ -283,9 +294,17 @@
     try {
       const latest = await getRecord(opened.uid, moduleUid || undefined);
       if (!current || current.uid !== opened.uid) return;
+      // Permission changes must discard newly restricted local values too.
+      // Preserve drafts only for fields the current response still authorizes.
+      for (const key of latest.restricted_fields || []) {
+        delete values[key]; delete original[key];
+        const field=schema.fields.find(f=>f.key===key);if(field)delete pending[field.uid];
+      }
+      if(JSON.stringify(latest.restricted_fields||[])!==JSON.stringify(opened.restricted_fields||[])) {previewOpen=false;historyOpen=false;selectedVersion=null;}
       const next = cloneJson(latest);
       let dirtyCount = 0;
       for (const field of fields.filter((item) => item.field_type !== 'attachments')) {
+        if (latest.restricted_fields?.includes(field.key)) continue;
         const latestValue = latest.values[field.key] ?? null;
         if (isDirty(field.key)) {
           next.values[field.key] = cloneJson(original[field.key] ?? null);
@@ -296,9 +315,16 @@
         }
       }
       persisted = next;
+      persistDraft();
       if (!dirtyCount) workingRevision = latest.revision;
       liveNotice = dirtyCount ? `Saved data changed elsewhere. Your ${dirtyCount} unsaved field${dirtyCount === 1 ? '' : 's'} remain local and will be checked when you save.` : message;
-    } catch { liveNotice = 'Live data changed, but this open record could not be refreshed yet. Saving will still check for conflicts.'; }
+    } catch (reason) {
+      if(reason instanceof ApiError&&[403,404].includes(reason.status)&&current?.uid===opened.uid) {
+        try{sessionStorage.removeItem(draftStorageKey());}catch{/* Restricted storage. */}
+        previewOpen=false;historyOpen=false;selectedVersion=null;values={};original={};pending={};onClose();return;
+      }
+      liveNotice = 'Live data changed, but this open record could not be refreshed yet. Saving will still check for conflicts.';
+    }
   }
 
   function useLatest(conflict: FieldConflict) { const restored={...conflict.related_values,[conflict.field_key]:conflict.current_value};for(const[key,value]of Object.entries(restored)){values[key]=cloneJson(value);original[key]=cloneJson(value);}conflicts = conflicts.filter((item) => !Object.hasOwn(restored,item.field_key));if(Object.keys(conflict.related_values||{}).length)liveNotice='The branch change was cancelled to keep the latest stored details. Other unsaved fields remain local.'; if (!conflicts.length) error = '';persistDraft(); }
@@ -342,7 +368,7 @@
     if (!current) return;
     const module = moduleUid || 'mx-default-records';
     const link = `${location.origin}${location.pathname}#module/${encodeURIComponent(module)}?record=${encodeURIComponent(current.uid)}`;
-    try { await navigator.clipboard.writeText(link); liveNotice = 'Record link copied. Paste it into Collaboration to share this record securely.'; }
+    try { await navigator.clipboard.writeText(link); liveNotice = 'Record link copied.'; }
     catch { error = 'The browser could not copy the record link. Copy it from the address bar instead.'; }
   }
 
@@ -555,11 +581,11 @@
 
 <svelte:window onkeydown={handleDialogKeydown} />
 
-<div class="overlay record-editor-overlay" class:subdialog-open={historyOpen || previewOpen} role="presentation" aria-hidden={historyOpen || previewOpen ? 'true' : undefined} inert={historyOpen || previewOpen} onclick={(event) => event.target === event.currentTarget && attemptClose()}>
+<div class="overlay record-editor-overlay" class:subdialog-open={historyOpen || previewOpen || sendOpen} role="presentation" aria-hidden={historyOpen || previewOpen || sendOpen ? 'true' : undefined} inert={historyOpen || previewOpen || sendOpen} onclick={(event) => event.target === event.currentTarget && attemptClose()}>
   <div bind:this={dialogElement} class="dialog record-dialog" role="dialog" aria-modal="true" aria-labelledby="record-title">
     <header class="dialog-head">
       <div><p class="eyebrow">{current ? (canWrite ? 'Edit existing' : 'View existing') : 'Create new'}</p><h2 id="record-title">{current ? `${canWrite ? 'Edit' : 'View'} ${recordLabel}` : `New ${recordLabel}`}</h2>{#if current}<p class="muted record-dialog-context">{canWrite ? 'Editing' : 'Viewing'} {recordIdentity(current)}</p>{/if}</div>
-      <div class="inline-actions">{#if current && allowEdit && !canWrite}<button class="button primary small icon-label" type="button" onclick={onEdit}><Pencil size={14} />Edit {recordLabel.toLowerCase()}</button>{/if}{#if current}<button class="button small" type="button" onclick={copyRecordLink}>Copy link</button><button bind:this={historyButtonElement} class="button small icon-label" type="button" onclick={openHistory}><HistoryIcon size={15} />History</button>{/if}{#if fields.some((field) => field.field_type === 'attachments') || unassignedFiles.length}<button class="button small attachment-shortcut" type="button" onclick={jumpToAttachments}>Attachments{current ? ` · ${attachmentCount}` : ''}</button>{/if}<button class="icon-button" type="button" onclick={attemptClose} aria-label="Close"><X size={18} /></button></div>
+      <div class="inline-actions">{#if current && allowEdit && !canWrite}<button class="button primary small icon-label" type="button" onclick={onEdit}><Pencil size={14} />Edit {recordLabel.toLowerCase()}</button>{/if}{#if current}<button class="button small icon-label" type="button" disabled={busy || deletedRemotely} onclick={() => sendOpen = true}><Send size={15}/>Send record</button><button class="button small" type="button" onclick={copyRecordLink}>Copy link</button><button bind:this={historyButtonElement} class="button small icon-label" type="button" onclick={openHistory}><HistoryIcon size={15} />History</button>{/if}{#if fields.some((field) => field.field_type === 'attachments') || unassignedFiles.length}<button class="button small attachment-shortcut" type="button" onclick={jumpToAttachments}>Attachments{current ? ` · ${attachmentCount}` : ''}</button>{/if}<button class="icon-button" type="button" onclick={attemptClose} aria-label="Close"><X size={18} /></button></div>
     </header>
     {#if error}<div class="notice error">{error}</div>{/if}
     {#if liveNotice}<div class="notice live-notice">{liveNotice}</div>{/if}
@@ -570,6 +596,7 @@
         {@const availability=states[definition.key]}
         {@const field={...definition,required:availability.required}}
         {#if availability.visible}
+        <div class="personal-record-field" class:personal-field-bold={fieldIsBold($readingPreferences,moduleUid,field.uid)} data-field-uid={field.uid}>
         {#if field.field_type === 'attachments'}
           <fieldset class="field-block full attachment-drop attachment-section"><legend>{field.label}{#if field.required}<b class="required-mark"> *</b>{/if}</legend>
             {#if field.config.description}<p class="muted small">{String(field.config.description)}</p>{/if}
@@ -607,6 +634,7 @@
         {:else}
           <label><span>{field.label}{#if field.required}<b class="required-mark"> *</b>{/if}</span><input type={field.field_type === 'date' ? 'date' : field.field_type === 'integer' || field.field_type === 'decimal' ? 'number' : 'text'} step={field.field_type === 'decimal' ? 'any' : field.field_type === 'integer' ? 1 : undefined} required={field.required} disabled={!canWrite||!availability.enabled} value={String(fieldValue(field))} oninput={(event) => setValue(field, event.currentTarget)} /></label>
         {/if}
+        </div>
         {/if}
       {/each}
       {#if current}<RelatedRecords module={moduleUid || 'mx-default-records'} record={current.uid} />{/if}
@@ -622,6 +650,7 @@
 </div>
 
 {#if driveAttachmentField}<DrivePicker onChoose={(item) => void attachDriveFile(item)} onClose={() => driveAttachmentField = null} />{/if}
+{#if sendOpen && current}<SendRecordDialog recordUid={current.uid} recordLabel={recordIdentity(current)} hasUnsavedChanges={fields.some(field=>isDirty(field.key)) || Object.values(pending).some(files=>files.length>0)} onClose={() => sendOpen = false}/>{/if}
 {#if previewOpen && activePreview}
   {#key activePreview.key}<FilePreview fileName={activePreview.name} load={() => loadPreview(activePreview)} navigationItems={previewEntries} activeIndex={previewIndex} onNavigate={navigatePreview} onClose={closePreview} />{/key}
 {/if}
@@ -645,7 +674,7 @@
           {#if selectedVersion}
             <div class="panel-heading"><div><p class="eyebrow">Snapshot</p><h3>Version {selectedVersion.version}</h3><p class="muted">{selectedVersion.attachments.length} attachment{selectedVersion.attachments.length === 1 ? '' : 's'} in this saved state</p></div>{#if canWrite}<button class="button primary small" disabled={historyLoading} onclick={() => restoreVersion(selectedVersion!)}>Restore this version</button>{/if}</div>
             {#if historyLoading}<div class="history-detail-status"><div class="loader"></div><span>Loading saved state…</span></div>{/if}
-            <dl>{#each fields.filter((field) => field.field_type !== 'attachments') as field}<div><dt>{field.label}</dt><dd>{String(selectedVersion.values[field.key] ?? '—')}</dd></div>{/each}</dl>
+            <dl>{#each fields.filter((field) => field.field_type !== 'attachments') as field}<div class:personal-field-bold={fieldIsBold($readingPreferences,moduleUid,field.uid)}><dt>{field.label}</dt><dd>{String(selectedVersion.values[field.key] ?? '—')}</dd></div>{/each}</dl>
           {:else if historyLoading}<div class="history-detail-placeholder"><div class="loader"></div><strong>Loading the newest saved state…</strong></div>
           {:else}<div class="empty-state compact"><HistoryIcon size={24} /><strong>Select a version</strong><p>Review its saved field values before restoring it.</p></div>{/if}
         </section>
@@ -653,3 +682,9 @@
     </div>
   </div>
 {/if}
+
+<style>
+  .personal-record-field{display:contents;}
+  .personal-field-bold{font-weight:750;}
+  .personal-field-bold :global(input),.personal-field-bold :global(textarea),.personal-field-bold :global(select),.personal-field-bold :global(label>span),.personal-field-bold :global(legend),.personal-field-bold :global(.relationship-input button){font-weight:750;}
+</style>

@@ -81,6 +81,20 @@ pub(crate) fn config(kind: &str, value: &Value) -> Result<Value, String> {
             json!({"target_module_uid":module,"label_field":label,"multiple":value.get("multiple").and_then(Value::as_bool).unwrap_or(false),"on_delete":"restrict","auto_fill":mappings}),
         )
     } else {
+        if kind == "rollup" && value["direction"] == "incoming" {
+            let source = required("source_module_uid")?;
+            let relation = required("relationship_field")?;
+            let function = value["function"].as_str().unwrap_or("sum");
+            let target = value["target_field"].as_str().unwrap_or("");
+            if !matches!(function, "count" | "sum" | "average" | "min" | "max")
+                || (function != "count" && target.is_empty())
+            {
+                return Err("Choose a calculation and a numeric source field.".into());
+            }
+            return Ok(
+                json!({"direction":"incoming","source_module_uid":source,"relationship_field":relation,"target_field":target,"function":function,"filter":value.get("filter").cloned().unwrap_or(Value::Null)}),
+            );
+        }
         let relationship = required("relationship_field")?;
         let target = value
             .get("target_field")
@@ -103,6 +117,25 @@ pub(crate) fn config(kind: &str, value: &Value) -> Result<Value, String> {
     }
 }
 
+/// Run inside the schema transaction, after a definition changes. An incoming
+/// total lives in a DIFFERENT module, so validating only the edited module can
+/// leave a broken reference even when it contains no records yet.
+pub(crate) fn validate_dependents(c: &Connection, changed_module: &str) -> rusqlite::Result<()> {
+    let definitions=c.prepare("SELECT f.module_uid,COALESCE(f.module_key,f.field_key),f.label,f.field_type,f.config_json,m.name FROM mx_fields f JOIN mx_modules m ON m.uid=f.module_uid WHERE f.active=1 AND m.active=1 AND f.field_type IN ('relationship','lookup','rollup')")?
+        .query_map([],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?,r.get::<_,String>(3)?,r.get::<_,String>(4)?,r.get::<_,String>(5)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
+    for (module, key, label, kind, raw, module_name) in definitions {
+        let config: Value = serde_json::from_str(&raw)
+            .map_err(|e| invalid(format!("MX_CONFIG:{module_name} → {label}: {e}")))?;
+        if module == changed_module
+            || config["source_module_uid"] == changed_module
+            || config["target_module_uid"] == changed_module
+        {
+            validate_config(c,&module,&key,&kind,&config).map_err(|e|invalid(format!("MX_CONFIG:{module_name} → {label}: reconfigure this dependency before changing its source. {e}")))?;
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn validate_config(
     c: &Connection,
     module: &str,
@@ -110,6 +143,40 @@ pub(crate) fn validate_config(
     kind: &str,
     config: &Value,
 ) -> rusqlite::Result<()> {
+    if kind == "rollup" && config["direction"] == "incoming" {
+        let source = config["source_module_uid"].as_str().unwrap_or("");
+        if !c.query_row(
+            "SELECT EXISTS(SELECT 1 FROM mx_modules WHERE uid=?1 AND active=1)",
+            [source],
+            |r| r.get::<_, bool>(0),
+        )? {
+            return Err(invalid(
+                "MX_CONFIG:The incoming aggregate's source module is unavailable. Choose an active source module.",
+            ));
+        }
+        let source_fields = load_module_fields_initialized_db(c, source, false)?;
+        let relation=source_fields.iter().find(|f|f.field_type=="relationship"&&f.key==config["relationship_field"].as_str().unwrap_or("")&&f.config["target_module_uid"]==module).ok_or_else(||invalid("MX_CONFIG:Choose a relationship in the source module that links back to this module."))?;
+        if config["function"] != "count" {
+            let target = source_fields
+                .iter()
+                .find(|f| f.key == config["target_field"].as_str().unwrap_or(""))
+                .ok_or_else(|| invalid("MX_CONFIG:Choose an active numeric source field."))?;
+            if !super::calculated::numeric(target)
+                || super::calculated::live(target, &source_fields)
+                || target.field_type == "select"
+            {
+                return Err(invalid(
+                    "MX_CONFIG:Aggregate a saved numeric field or a numeric formula using local values; live linked calculations cannot be aggregated recursively.",
+                ));
+            }
+        }
+        if !config["filter"].is_null() {
+            super::form_rules::validate_filter(&config["filter"], &source_fields)
+                .map_err(|e| invalid(format!("MX_CONFIG:{e}")))?;
+        }
+        let _ = relation;
+        return Ok(());
+    }
     if kind == "relationship" {
         let target = config["target_module_uid"].as_str().unwrap_or("");
         let valid: bool = c.query_row(
@@ -147,7 +214,13 @@ pub(crate) fn validate_config(
                 .ok_or_else(|| {
                     invalid("MX_CONFIG:Choose an existing active field to fill in this module.")
                 })?;
-            if !compatible(&source.field_type, &destination.field_type) {
+            let source_kind =
+                if source.field_type == "formula" && super::calculated::text(&source.config) {
+                    "text"
+                } else {
+                    &source.field_type
+                };
+            if !compatible(source_kind, &destination.field_type) {
                 return Err(invalid(
                     "MX_CONFIG:Auto-fill fields must have compatible types. Calculated fields, links and attachments cannot be filled.",
                 ));
@@ -224,6 +297,7 @@ fn mapped_values(
     field: &FieldDefinition,
     value: &Value,
     explicit: &BTreeMap<String, Value>,
+    actor: &str,
 ) -> rusqlite::Result<BTreeMap<String, Value>> {
     let mappings = field.config["auto_fill"]
         .as_array()
@@ -247,6 +321,21 @@ fn mapped_values(
     let source_values = if let Some(id) = linked.first() {
         let target = field.config["target_module_uid"].as_str().unwrap_or("");
         let source_fields = load_module_fields_initialized_db(c, target, false)?;
+        let level = super::privacy::level(c, actor)?;
+        let hidden = super::privacy::restricted(
+            &source_fields,
+            super::privacy::creator(c, id)?.as_deref() == Some(actor),
+            level,
+        );
+        if mappings.iter().any(|mapping| {
+            mapping["source_field"]
+                .as_str()
+                .is_some_and(|key| hidden.contains(key))
+        }) {
+            return Err(invalid(
+                "Access to an automatic source value is restricted. No values were copied.",
+            ));
+        }
         let mut values = super::records::load_record_values(c, std::slice::from_ref(id))?
             .remove(id)
             .unwrap_or_default();
@@ -295,7 +384,7 @@ pub(crate) fn fill_missing(
             {
                 continue;
             }
-            fills.extend(mapped_values(c, fields, field, value, changes)?);
+            fills.extend(mapped_values(c, fields, field, value, changes, actor)?);
         }
     }
     for (key, value) in fills {
@@ -436,7 +525,7 @@ pub(crate) fn validate_selection(
         }
         for id in ids(value) {
             let exists:bool = c.query_row("SELECT EXISTS(SELECT 1 FROM mx_records WHERE uid=?1 AND module_uid=?2 AND deleted_at IS NULL)",params![id,target],|r|r.get(0))?;
-            if !exists {
+            if !exists || !super::privacy::record_allowed(c, &id, actor, level)? {
                 return Err(invalid(
                     "The selected related record is unavailable. Choose another record.",
                 ));
@@ -447,9 +536,10 @@ pub(crate) fn validate_selection(
 }
 
 fn scalar(c: &Connection, id: &str, key: &str) -> rusqlite::Result<Value> {
-    c.query_row("SELECT f.field_type,v.value_text,v.value_integer,v.value_real,v.value_boolean FROM mx_record_values v JOIN mx_fields f ON f.uid=v.field_uid WHERE v.record_uid=?1 AND COALESCE(f.module_key,f.field_key)=?2 AND f.active=1",params![id,key],|r|{
+    c.query_row("SELECT f.field_type,v.value_text,v.value_integer,v.value_real,v.value_boolean,f.config_json FROM mx_record_values v JOIN mx_fields f ON f.uid=v.field_uid WHERE v.record_uid=?1 AND COALESCE(f.module_key,f.field_key)=?2 AND f.active=1",params![id,key],|r|{
         let kind:String=r.get(0)?;
-        Ok(match kind.as_str(){"integer"|"auto_number"=>r.get::<_,Option<i64>>(2)?.map_or(Value::Null,|v|json!(v)),"decimal"|"formula"=>r.get::<_,Option<f64>>(3)?.map_or(Value::Null,|v|json!(v)),"boolean"=>r.get::<_,Option<i64>>(4)?.map_or(Value::Null,|v|json!(v!=0)),_=>r.get::<_,Option<String>>(1)?.map_or(Value::Null,Value::String)})
+        let config:Value=serde_json::from_str(&r.get::<_,String>(5)?).unwrap_or(Value::Null);
+        Ok(match kind.as_str(){"integer"|"auto_number"=>r.get::<_,Option<i64>>(2)?.map_or(Value::Null,|v|json!(v)),"formula" if super::calculated::text(&config)=>r.get::<_,Option<String>>(1)?.map_or(Value::Null,Value::String),"decimal"|"formula"=>r.get::<_,Option<f64>>(3)?.map_or(Value::Null,|v|json!(v)),"boolean"=>r.get::<_,Option<i64>>(4)?.map_or(Value::Null,|v|json!(v!=0)),_=>r.get::<_,Option<String>>(1)?.map_or(Value::Null,Value::String)})
     }).optional().map(|v|v.unwrap_or(Value::Null))
 }
 fn label(c: &Connection, id: &str, key: &str) -> rusqlite::Result<String> {
@@ -530,16 +620,73 @@ fn present_fields(
             labels[&field.key] = json!({"restricted":true,"items":[]});
             continue;
         }
-        let items=ids(&record["values"][&field.key]).into_iter().map(|uid|Ok(json!({"uid":uid,"label":label(c,&uid,field.config["label_field"].as_str().unwrap_or(""))?}))).collect::<rusqlite::Result<Vec<_>>>()?;
-        labels[&field.key] = json!({"restricted":false,"items":items});
+        let mut items = Vec::new();
+        let mut visible_ids = Vec::new();
+        let source_fields = load_module_fields_initialized_db(c, target, false)?;
+        let label_key = field.config["label_field"].as_str().unwrap_or("");
+        let label_field = source_fields.iter().find(|f| f.key == label_key);
+        for uid in ids(&record["values"][&field.key]) {
+            if !super::privacy::record_allowed(c, &uid, &claims.uid, claims.access_level)? {
+                continue;
+            }
+            let label_allowed = label_field.is_some_and(|f| {
+                super::privacy::field_allowed(
+                    f,
+                    super::privacy::creator(c, &uid).ok().flatten().as_deref() == Some(&claims.uid),
+                    claims.access_level,
+                )
+            });
+            items.push(json!({"uid":uid,"label":if label_allowed{label(c,&uid,label_key)?}else{"Restricted field".into()}}));
+            visible_ids.push(uid);
+        }
+        let restricted = visible_ids.len() != ids(&record["values"][&field.key]).len();
+        if restricted {
+            record["values"][&field.key] = if field.config["multiple"] == true {
+                json!(visible_ids)
+            } else {
+                Value::Null
+            };
+            allowed.insert(field.key.clone(), false);
+        }
+        labels[&field.key] = json!({"restricted":restricted,"items":items});
     }
     for field in fields.iter().filter(|f| computed(&f.field_type)) {
+        if field.field_type == "rollup" && field.config["direction"] == "incoming" {
+            record["values"][&field.key] =
+                incoming(c, claims, record["uid"].as_str().unwrap_or(""), field)?;
+            continue;
+        }
         let relation = field.config["relationship_field"].as_str().unwrap_or("");
         if !allowed.get(relation).copied().unwrap_or(false) {
             record["values"][&field.key] = Value::Null;
             continue;
         }
         let linked = ids(&record["values"][relation]);
+        let target = fields
+            .iter()
+            .find(|f| f.key == relation)
+            .and_then(|f| f.config["target_module_uid"].as_str())
+            .unwrap_or("");
+        let target_fields = load_module_fields_initialized_db(c, target, false)?;
+        let source = target_fields
+            .iter()
+            .find(|f| f.key == field.config["target_field"].as_str().unwrap_or(""));
+        let mut restricted = false;
+        for uid in &linked {
+            if source.is_some_and(|f| {
+                !super::privacy::field_allowed(
+                    f,
+                    super::privacy::creator(c, uid).ok().flatten().as_deref() == Some(&claims.uid),
+                    claims.access_level,
+                )
+            }) {
+                restricted = true;
+            }
+        }
+        if restricted {
+            record["values"][&field.key] = Value::Null;
+            continue;
+        }
         let values = linked
             .iter()
             .map(|id| scalar(c, id, field.config["target_field"].as_str().unwrap_or("")))
@@ -576,7 +723,177 @@ fn present_fields(
         };
     }
     record["relationships"] = labels;
+    let mut values: BTreeMap<String, Value> =
+        serde_json::from_value(record["values"].clone()).unwrap_or_default();
+    super::calculated::evaluate(fields, &mut values, true).map_err(invalid)?;
+    record["values"] = json!(values);
     Ok(())
+}
+
+fn incoming(
+    c: &Connection,
+    claims: &Claims,
+    uid: &str,
+    field: &FieldDefinition,
+) -> rusqlite::Result<Value> {
+    if uid.is_empty() {
+        return Ok(Value::Null);
+    }
+    let source = field.config["source_module_uid"].as_str().unwrap_or("");
+    if !module_can_for_user_initialized(c, source, &claims.uid, claims.access_level, "read")? {
+        return Ok(Value::Null);
+    }
+    let fields = load_module_fields_initialized_db(c, source, false)?;
+    let relationship=fields.iter().find(|f|f.key==field.config["relationship_field"].as_str().unwrap_or("")).ok_or_else(||invalid("The aggregate relationship is unavailable. Ask an administrator to reconfigure this field."))?;
+    let target = fields
+        .iter()
+        .find(|f| f.key == field.config["target_field"].as_str().unwrap_or(""));
+    let method = field.config["function"].as_str().unwrap_or("sum");
+    let row_scope = super::privacy::record_sql("r", &claims.uid, claims.access_level);
+    let relation_scope = super::privacy::scope_sql(
+        relationship.config["access_scope"]
+            .as_str()
+            .unwrap_or("module"),
+        "r",
+        &claims.uid,
+        claims.access_level,
+    );
+    let field_scope = target
+        .map(|f| {
+            super::privacy::scope_sql(
+                f.config["access_scope"].as_str().unwrap_or("module"),
+                "r",
+                &claims.uid,
+                claims.access_level,
+            )
+        })
+        .unwrap_or_else(|| "1".into());
+    let filter = if field.config["filter"].is_null() {
+        None
+    } else {
+        Some(
+            super::form_rules::validate_filter(&field.config["filter"], &fields)
+                .map_err(invalid)?,
+        )
+    };
+    let mut bind = vec![
+        rusqlite::types::Value::Text(uid.to_owned()),
+        rusqlite::types::Value::Text(relationship.uid.clone()),
+        rusqlite::types::Value::Text(source.to_owned()),
+    ];
+    let filter_sql = filter
+        .as_ref()
+        .map(|g| filter_sql(g, &fields, &mut bind, &claims.uid, claims.access_level))
+        .transpose()?
+        .unwrap_or_else(|| "1".into());
+    let expression=target.map(|f|format!("(SELECT COALESCE(v.value_real,v.value_integer) FROM mx_record_values v WHERE v.record_uid=r.uid AND v.field_uid='{}')",f.uid.replace('\'',"''"))).unwrap_or_else(||"1".into());
+    let calculation = match method {
+        "count" => "COUNT(*)".into(),
+        "sum" => format!("SUM({expression})"),
+        "average" => format!("AVG({expression})"),
+        "min" => format!("MIN({expression})"),
+        "max" => format!("MAX({expression})"),
+        _ => return Err(invalid("Invalid aggregate calculation.")),
+    };
+    let sql = format!(
+        "SELECT {calculation} FROM mx_record_links l JOIN mx_records r ON r.uid=l.record_uid WHERE l.target_uid=?1 AND l.field_uid=?2 AND r.module_uid=?3 AND r.deleted_at IS NULL AND {row_scope} AND {relation_scope} AND {field_scope} AND {filter_sql}"
+    );
+    let value: Option<f64> =
+        c.query_row(&sql, rusqlite::params_from_iter(bind.iter()), |r| r.get(0))?;
+    if value.is_some_and(|n| !n.is_finite()) {
+        return Err(invalid("Aggregate result is not finite."));
+    }
+    Ok(value.map_or_else(
+        || {
+            if matches!(method, "count" | "sum") {
+                json!(0)
+            } else {
+                Value::Null
+            }
+        },
+        |v| json!(v),
+    ))
+}
+fn filter_sql(
+    group: &super::form_rules::Group,
+    fields: &[FieldDefinition],
+    bind: &mut Vec<rusqlite::types::Value>,
+    actor: &str,
+    level: i64,
+) -> rusqlite::Result<String> {
+    let mut terms = Vec::new();
+    for condition in &group.conditions {
+        let field = fields
+            .iter()
+            .find(|f| f.key == condition.field)
+            .ok_or_else(|| invalid("Filter field is unavailable."))?;
+        let column = match field.field_type.as_str() {
+            "integer" | "auto_number" => "value_integer",
+            "decimal" => "value_real",
+            "boolean" => "value_boolean",
+            _ => "value_text COLLATE NOCASE",
+        };
+        let expr = format!(
+            "(SELECT {column} FROM mx_record_values WHERE record_uid=r.uid AND field_uid='{}')",
+            field.uid.replace('\'', "''")
+        );
+        let values = if matches!(condition.operator.as_str(), "empty" | "not_empty") {
+            vec![]
+        } else if matches!(condition.operator.as_str(), "in" | "not_in") {
+            condition.value.as_array().unwrap().clone()
+        } else {
+            vec![condition.value.clone()]
+        };
+        let scope = super::privacy::scope_sql(
+            field.config["access_scope"].as_str().unwrap_or("module"),
+            "r",
+            actor,
+            level,
+        );
+        let mut slots = Vec::new();
+        for value in values {
+            bind.push(match value {
+                Value::String(s) => rusqlite::types::Value::Text(s),
+                Value::Number(n) => n
+                    .as_i64()
+                    .map(rusqlite::types::Value::Integer)
+                    .unwrap_or(rusqlite::types::Value::Real(n.as_f64().unwrap())),
+                Value::Bool(v) => rusqlite::types::Value::Integer(v as i64),
+                _ => rusqlite::types::Value::Null,
+            });
+            slots.push(format!("?{}", bind.len()));
+        }
+        let test = match condition.operator.as_str() {
+            "empty" => format!("({expr} IS NULL OR {expr}='')"),
+            "not_empty" => format!("({expr} IS NOT NULL AND {expr}<>'')"),
+            "in" => format!("{expr} IN ({})", slots.join(",")),
+            "not_in" => format!("({expr} IS NULL OR {expr} NOT IN ({}))", slots.join(",")),
+            op => {
+                let comparison = match op {
+                    "eq" => "IS",
+                    "neq" => "IS NOT",
+                    "gt" => ">",
+                    "gte" => ">=",
+                    "lt" => "<",
+                    "lte" => "<=",
+                    _ => return Err(invalid("Unsupported aggregate filter comparison.")),
+                };
+                format!("{expr} {comparison} {}", slots[0])
+            }
+        };
+        terms.push(format!("({scope} AND {test})"));
+    }
+    for child in &group.groups {
+        terms.push(filter_sql(child, fields, bind, actor, level)?);
+    }
+    Ok(format!(
+        "({})",
+        terms.join(if group.r#match == "any" {
+            " OR "
+        } else {
+            " AND "
+        })
+    ))
 }
 
 #[cfg(test)]
@@ -761,7 +1078,7 @@ async fn preview(
         if !ids(&request.value).is_empty() && !module_can_for_user_initialized(&tx, target, &claims.uid, claims.access_level, "read")? { return Err(invalid("Access to linked records is restricted.")); }
         let selected = BTreeMap::from([(field.key.clone(), request.value.clone())]);
         validate_selection(&tx, &fields, &selected, &claims.uid)?;
-            let fills = mapped_values(&tx, &fields, field, &request.value, &BTreeMap::new())?;
+            let fills = mapped_values(&tx, &fields, field, &request.value, &BTreeMap::new(),&claims.uid)?;
         let mut record = json!({"values":selected});
         present_fields(&tx, &claims, &mut record, &fields, &mut BTreeMap::new())?;
         let computed = fields.iter().filter(|f| computed(&f.field_type) && f.config["relationship_field"] == field.key)
@@ -811,9 +1128,12 @@ async fn options(
         let field=load_module_fields_initialized_db(c,&source,false)?.into_iter().find(|f|f.uid==uid).ok_or(rusqlite::Error::QueryReturnedNoRows)?;
         let target=field.config["target_module_uid"].as_str().unwrap_or("");
         if !module_can_for_user_initialized(c,&source,&claims.uid,claims.access_level,"read")? || !module_can_for_user_initialized(c,target,&claims.uid,claims.access_level,"read")? {return Err(invalid("Access to linked records is restricted."));}
+        super::privacy::ensure(c)?;
+        let row_scope=super::privacy::record_sql("r",&claims.uid,claims.access_level);
+        let field_scope=super::privacy::field_sql("f","r",&claims.uid,claims.access_level);
         let pattern=format!("%{}%",query.q.unwrap_or_default().chars().take(150).collect::<String>().replace('\\',"\\\\").replace('%',"\\%").replace('_',"\\_"));
         let page=query.page.unwrap_or(1).clamp(1,1_000_000);let key=field.config["label_field"].as_str().unwrap_or("");
-        let mut statement=c.prepare("SELECT r.uid FROM mx_records r LEFT JOIN mx_fields f ON f.module_uid=r.module_uid AND f.active=1 AND COALESCE(f.module_key,f.field_key)=?2 LEFT JOIN mx_record_values v ON v.record_uid=r.uid AND v.field_uid=f.uid WHERE r.module_uid=?1 AND r.deleted_at IS NULL AND COALESCE(v.value_text,CAST(v.value_integer AS TEXT),CAST(v.value_real AS TEXT),CASE v.value_boolean WHEN 1 THEN 'true' WHEN 0 THEN 'false' END,'Unnamed record') LIKE ?3 ESCAPE '\\' ORDER BY COALESCE(v.value_text,CAST(v.value_integer AS TEXT),CAST(v.value_real AS TEXT),CASE v.value_boolean WHEN 1 THEN 'true' WHEN 0 THEN 'false' END,'Unnamed record') COLLATE NOCASE,r.uid LIMIT 51 OFFSET ?4")?;
+        let mut statement=c.prepare(&format!("SELECT r.uid FROM mx_records r LEFT JOIN mx_fields f ON f.module_uid=r.module_uid AND f.active=1 AND COALESCE(f.module_key,f.field_key)=?2 LEFT JOIN mx_record_values v ON v.record_uid=r.uid AND v.field_uid=f.uid WHERE r.module_uid=?1 AND r.deleted_at IS NULL AND {row_scope} AND {field_scope} AND COALESCE(v.value_text,CAST(v.value_integer AS TEXT),CAST(v.value_real AS TEXT),CASE v.value_boolean WHEN 1 THEN 'true' WHEN 0 THEN 'false' END,'Unnamed record') LIKE ?3 ESCAPE '\\' ORDER BY COALESCE(v.value_text,CAST(v.value_integer AS TEXT),CAST(v.value_real AS TEXT),CASE v.value_boolean WHEN 1 THEN 'true' WHEN 0 THEN 'false' END,'Unnamed record') COLLATE NOCASE,r.uid LIMIT 51 OFFSET ?4"))?;
         let ids=statement.query_map(params![target,key,pattern,((page-1)*50) as i64],|r|r.get::<_,String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
         let items=ids.iter().take(50).map(|id|Ok(json!({"uid":id,"label":label(c,id,key)?}))).collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(json!({"items":items,"page":page,"has_next":ids.len()>50}))
@@ -834,23 +1154,28 @@ async fn related(
 ) -> Response {
     let result=tokio::task::spawn_blocking(move||with_sql_connection(|c|{
         if !module_can_for_user_initialized(c,&module,&claims.uid,claims.access_level,"read")? {return Err(invalid("Access denied."));}
+        if !super::privacy::record_allowed(c,&uid,&claims.uid,claims.access_level)?{return Err(rusqlite::Error::QueryReturnedNoRows);}
         let exists:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM mx_records WHERE uid=?1 AND module_uid=?2 AND deleted_at IS NULL)",params![uid,module],|r|r.get(0))?;
         if !exists{return Err(rusqlite::Error::QueryReturnedNoRows);}
         // Filter allowed modules in SQL BEFORE pagination, never leak hidden counts.
         let modules=c.prepare("SELECT uid FROM mx_modules WHERE active=1")?.query_map([],|r|r.get::<_,String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
         let allowed=modules.into_iter().filter_map(|m|match module_can_for_user_initialized(c,&m,&claims.uid,claims.access_level,"read"){Ok(true)=>Some(Ok(m)),Ok(false)=>None,Err(e)=>Some(Err(e))}).collect::<rusqlite::Result<Vec<_>>>()?;
         let page=query.page.unwrap_or(1).clamp(1,1_000_000);
-        let mut statement=c.prepare("SELECT r.uid,r.module_uid,m.name,f.label FROM mx_record_links l JOIN mx_records r ON r.uid=l.record_uid JOIN mx_modules m ON m.uid=r.module_uid JOIN mx_fields f ON f.uid=l.field_uid WHERE l.target_uid=?1 AND r.deleted_at IS NULL AND f.active=1 AND r.module_uid IN (SELECT value FROM json_each(?2)) ORDER BY m.name,r.uid,f.uid LIMIT 51 OFFSET ?3")?;
+        let row_scope=super::privacy::record_sql("r",&claims.uid,claims.access_level);
+        let field_scope=super::privacy::field_sql("f","r",&claims.uid,claims.access_level);
+        let mut statement=c.prepare(&format!("SELECT r.uid,r.module_uid,m.name,f.label FROM mx_record_links l JOIN mx_records r ON r.uid=l.record_uid JOIN mx_modules m ON m.uid=r.module_uid JOIN mx_fields f ON f.uid=l.field_uid WHERE l.target_uid=?1 AND r.deleted_at IS NULL AND f.active=1 AND {row_scope} AND {field_scope} AND r.module_uid IN (SELECT value FROM json_each(?2)) ORDER BY m.name,r.uid,f.uid LIMIT 51 OFFSET ?3"))?;
         let rows=statement.query_map(params![uid,json!(allowed).to_string(),((page-1)*50) as i64],|r|Ok(json!({"uid":r.get::<_,String>(0)?,"module_uid":r.get::<_,String>(1)?,"module_name":r.get::<_,String>(2)?,"relationship_label":r.get::<_,String>(3)?})))?.collect::<rusqlite::Result<Vec<_>>>()?;
         let more=rows.len()>50;
         let mut display_fields=BTreeMap::new();let mut items=Vec::new();
         for mut row in rows.into_iter().take(50) {
             let source=row["module_uid"].as_str().unwrap_or("");
             if !display_fields.contains_key(source) {
-                let key=load_module_fields_initialized_db(c,source,false)?.into_iter().find(|f|!matches!(f.field_type.as_str(),"attachments"|"relationship"|"lookup"|"rollup")).map(|f|f.key).unwrap_or_default();
-                display_fields.insert(source.to_owned(),key);
+                display_fields.insert(source.to_owned(),load_module_fields_initialized_db(c,source,false)?);
             }
-            row["label"]=json!(label(c,row["uid"].as_str().unwrap_or(""),&display_fields[source])?);
+            let record=row["uid"].as_str().unwrap_or("");
+            let is_creator=super::privacy::creator(c,record)?.as_deref()==Some(&claims.uid);
+            let key=display_fields[source].iter().find(|f|!matches!(f.field_type.as_str(),"attachments"|"relationship"|"lookup"|"rollup")&&super::privacy::field_allowed(f,is_creator,claims.access_level)).map(|f|f.key.as_str()).unwrap_or("");
+            row["label"]=json!(if key.is_empty(){"Record".to_owned()}else{label(c,record,key)?});
             items.push(row);
         }
         Ok(json!({"items":items,"page":page,"has_next":more}))

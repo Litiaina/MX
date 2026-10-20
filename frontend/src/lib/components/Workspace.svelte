@@ -1,5 +1,8 @@
 <script lang="ts">
-  import { onMount, onDestroy, untrack } from 'svelte';
+  import { onMount, onDestroy, untrack, setContext } from 'svelte';
+  import { writable } from 'svelte/store';
+  import type { ModuleReadingMap } from '../api/domain';
+  import { moduleReadingContext } from '../util/readingPreferences';
   import Phone from '@lucide/svelte/icons/phone';
   import PhoneIncoming from '@lucide/svelte/icons/phone-incoming';
   import PhoneOff from '@lucide/svelte/icons/phone-off';
@@ -15,6 +18,8 @@
   import { appearanceScale, primaryForeground, validAccentColor } from '../util/appearance';
   import { decodeNotificationSound, playNotificationSound, unlockNotificationAudio } from '../util/notificationAudio';
   import { notificationPresentation } from '../util/notificationKinds';
+  import { DesktopNotifications } from '../util/desktopNotifications';
+  import { loadNotificationUpdates } from '../api/workspace';
   import { recordNotificationIntent } from '../util/interactions';
   import { requestConfirmation } from '../confirmation';
   import AccountSecurity from './AccountSecurity.svelte';
@@ -35,7 +40,15 @@
   let { session, deployment, onSessionChanged, onSessionEnded, onDeploymentChanged }:
     { session: Session; deployment: DeploymentConfig; onSessionChanged: () => Promise<unknown>; onSessionEnded: (message: string) => void; onDeploymentChanged: () => Promise<void> } = $props();
   type View = 'dashboard' | 'records' | 'collaboration' | 'drive' | 'admin' | 'account';
+  const readingPreferences = writable<ModuleReadingMap>({});
+  let disposed=false;let preferenceLoad=0;
+  let notificationRequests=new AbortController();
+  let pageLeaving=false;
+  onDestroy(()=>{disposed=true;preferenceLoad++;notificationRequests.abort();});
+  setContext(moduleReadingContext, readingPreferences);
   const driveUploads = untrack(() => createDriveUploads(session.uid));
+  const desktopAlerts = untrack(() => new DesktopNotifications(session.uid));
+  onMount(() => { desktopAlerts.start(); return () => desktopAlerts.stop(); });
   onDestroy(() => driveUploads.dispose());
   onMount(() => {
     const warnUploads = (event: BeforeUnloadEvent) => { if (driveUploads.active()) { event.preventDefault(); event.returnValue = ''; } };
@@ -51,6 +64,10 @@
   let activeCollaborationNewestVisible = $state(false);
   let notificationPreferences = $state<UserPreferences['notifications']>(defaultNotificationPreferences());
   let notificationPreferencesReady = false;
+  const notificationSeen=new Set<string>();
+  let notificationWatermark=0;let notificationWatermarkUid='';let notificationCursorReady=false;let catchingNotifications=false;let catchNotificationsAgain=false;
+  let notificationInitialization:Promise<void>|null=null;
+  let desktopTestRequested=false;
   let modules = $state<ModuleDefinition[]>([]);
   let selectedModuleUid = $state('mx-default-records');
   let linkedRecordUid = $state('');
@@ -68,6 +85,7 @@
   let dismissedCallUids = $state<string[]>([]);
   let autoScale = $state(true); let scale = $state(100); let fontScale = $state(16); let autoRefresh = $state(0); let theme = $state(''); let accentColor = $state('');
   let density = $state(''); let contentWidth = $state(''); let reducedMotion = $state(false); let settingsBusy = $state(false); let settingsError = $state('');
+  let appearanceBeforeSettings: {theme:string;accentColor:string;density:string;contentWidth:string;reducedMotion:boolean;autoScale:boolean;scale:number;fontScale:number;autoRefresh:number} | null=null;
   let notificationToasts = $state<MxNotification[]>([]);
   let customNotificationSound: AudioBuffer | null = null;
   const notificationToastTimers = new Map<string, number>();
@@ -86,7 +104,7 @@
   onMount(() => {
     applyScale();
     applyPersonalAppearance();
-    void loadAccountPreferences().finally(() => { notificationPreferencesReady = true; void refreshOngoingCalls(); });
+    void loadAccountPreferences().finally(() => { notificationPreferencesReady = true; void refreshOngoingCalls();void catchUpNotifications(); });
     void loadWorkspaceModules();
     const fromHash = hashView();
     view = fromHash || defaultView();
@@ -106,7 +124,25 @@
     window.addEventListener('keydown', unlockAudio, { once: true });
     if (navigator.userActivation?.hasBeenActive) unlockAudio();
     const callRefreshTimer = window.setInterval(() => void refreshOngoingCalls(), 15_000);
-    return () => { client.stop(); live = false; window.clearInterval(callRefreshTimer); window.clearTimeout(callSessionNoticeTimer); window.removeEventListener('hashchange', handleHash); window.removeEventListener('resize', handleResize); window.removeEventListener('pointerdown', unlockAudio); window.removeEventListener('keydown', unlockAudio); for (const timer of notificationToastTimers.values()) window.clearTimeout(timer); stopIncomingCallAlert(); for (const notification of callBrowserNotifications.values()) notification.close(); callBrowserNotifications.clear(); resetPersonalAppearance(); };
+    const notificationRefreshTimer=window.setInterval(()=>void catchUpNotifications(),30000);
+    const pauseNotifications=(event:Event)=>{
+      pageLeaving=true;notificationRequests.abort();
+      // Other exit-warning handlers may cancel AFTER this handler runs. Check
+      // the final event state, not the order of listeners, and let the next
+      // focus/online/poll resume after a cancelled exit. Never fetch during exit.
+      if(event.type==='beforeunload')queueMicrotask(()=>{if(!disposed&&event.defaultPrevented){pageLeaving=false;notificationRequests=new AbortController();}});
+    };
+    const offlineNotifications=()=>notificationRequests.abort();
+    const resumeNotifications=()=>{if(pageLeaving)return;if(notificationRequests.signal.aborted)notificationRequests=new AbortController();if(catchingNotifications)catchNotificationsAgain=true;else void catchUpNotifications();};
+    const restoreNotifications=()=>{pageLeaving=false;if(notificationRequests.signal.aborted)notificationRequests=new AbortController();void catchUpNotifications();};
+    window.addEventListener('beforeunload',pauseNotifications);window.addEventListener('pagehide',pauseNotifications);window.addEventListener('pageshow',restoreNotifications);
+    const requestDesktopTest=()=>{desktopTestRequested=true;};
+    const runDesktopTest=()=>{if(desktopTestRequested&&!desktopAlerts.focused()){desktopTestRequested=false;void desktopAlerts.deliver({uid:`test:${crypto.randomUUID()}`,title:'MX notification test',body:'MX is in the background. Normal updates use this path too.',onOpen:()=>{location.hash='account';}},!!notificationPreferences.browser_enabled).then(status=>window.dispatchEvent(new CustomEvent('mx-desktop-test-result',{detail:status})));}};
+    window.addEventListener('mx-test-desktop-notification',requestDesktopTest);window.addEventListener('blur',runDesktopTest);document.addEventListener('visibilitychange',runDesktopTest);
+    window.addEventListener('offline',offlineNotifications);window.addEventListener('online',resumeNotifications);window.addEventListener('focus',resumeNotifications);
+    document.addEventListener('visibilitychange',resumeNotifications);
+    const cleanupNotifications=()=>{notificationRequests.abort();clearInterval(notificationRefreshTimer);window.removeEventListener('beforeunload',pauseNotifications);window.removeEventListener('pagehide',pauseNotifications);window.removeEventListener('pageshow',restoreNotifications);window.removeEventListener('offline',offlineNotifications);window.removeEventListener('online',resumeNotifications);window.removeEventListener('focus',resumeNotifications);document.removeEventListener('visibilitychange',resumeNotifications);window.removeEventListener('mx-test-desktop-notification',requestDesktopTest);window.removeEventListener('blur',runDesktopTest);document.removeEventListener('visibilitychange',runDesktopTest);};
+    return () => { cleanupNotifications();client.stop(); live = false; window.clearInterval(callRefreshTimer); window.clearTimeout(callSessionNoticeTimer); window.removeEventListener('hashchange', handleHash); window.removeEventListener('resize', handleResize); window.removeEventListener('pointerdown', unlockAudio); window.removeEventListener('keydown', unlockAudio); for (const timer of notificationToastTimers.values()) window.clearTimeout(timer); stopIncomingCallAlert(); for (const notification of callBrowserNotifications.values()) notification.close(); callBrowserNotifications.clear(); resetPersonalAppearance(); };
   });
 
   async function loadWorkspaceModules() {
@@ -177,7 +213,7 @@
       return;
     }
     if (message.type.startsWith('message.') || message.type.startsWith('channel.') || message.type.startsWith('file.')) { lastCollaborationEvent = message; collaborationRevision += 1; notificationRevision += 1; if(message.type.startsWith('file.')) dashboardRevision += 1; return; }
-    if (message.type.startsWith('module.')) { void loadWorkspaceModules(); recordRevision += 1; dashboardRevision += 1; return; }
+    if (message.type.startsWith('module.')) { void loadWorkspaceModules(); lastRecordEvent=message;recordRevision += 1; dashboardRevision += 1; return; }
     if (message.type === 'presence.changed') { dashboardRevision += 1; collaborationRevision += 1; return; }
     if (message.type === 'sync.required') {
       resynchronize();
@@ -188,6 +224,7 @@
     if (message.type === 'deployment.updated') void onDeploymentChanged();
   }
   function resynchronize() {
+    void catchUpNotifications();
     recordRevision += 1; dashboardRevision += 1; adminRevision += 1;
     notificationRevision += 1; collaborationRevision += 1;
     lastRecordEvent = { type: 'sync.required' };
@@ -280,6 +317,7 @@
       .sort((left, right) => right.started_at - left.started_at)[0] || null;
   }
   function stopIncomingCallAlert(channelUid = '') {
+    desktopAlerts.close(`call:${channelUid}`);
     if (!channelUid || ringingDirectCallKey.startsWith(`${channelUid}:`)) {
       stopDirectCallRingtone?.();
       stopDirectCallRingtone = null;
@@ -328,17 +366,8 @@
         stopDirectCallRingtone = stop;
       }
     }
-    if (!notificationPreferences.browser_enabled || !('Notification' in window) || Notification.permission !== 'granted') return;
-    const notification = new Notification(strategy.title, {
-      body: strategy.body,
-      icon: deployment.branding.logo_url || '/images/system-icon.png',
-      tag: `mx-call-${alertKey}`,
-      requireInteraction: strategy.requireInteraction,
-      silent: true
-    });
-    callBrowserNotifications.set(alertKey, notification);
-    notification.onclick = () => { window.focus(); stopIncomingCallAlert(call.channel_uid); location.hash = `collaboration?channel=${encodeURIComponent(call.channel_uid)}`; };
-    notification.onclose = () => callBrowserNotifications.delete(alertKey);
+    if (inQuietHours(notificationPreferences.quiet_hours_start, notificationPreferences.quiet_hours_end)) return;
+    void desktopAlerts.deliver({uid:`call:${alertKey}`,title:strategy.title,body:strategy.body,icon:deployment.branding.logo_url||'/images/system-icon.png',onOpen:()=>{stopIncomingCallAlert(call.channel_uid);location.hash=`collaboration?channel=${encodeURIComponent(call.channel_uid)}`;}},!!notificationPreferences.browser_enabled);
   }
   function inQuietHours(start: string | null, end: string | null) {
     if (!start || !end) return false;
@@ -379,29 +408,46 @@
   function announceNotification(message: LiveMessage) {
     const item = asNotification(message);
     if (!item) { void refreshUnreadCount(); return; }
+    if(notificationSeen.has(item.uid))return;
+    notificationSeen.add(item.uid);if(notificationSeen.size>2048)notificationSeen.delete(notificationSeen.values().next().value!);
     if (notificationMatchesOpenContext(item)) { void acknowledgeContextNotification(item); return; }
     unreadNotifications += 1;
     if (!alertImmediately() || inQuietHours(notificationPreferences.quiet_hours_start, notificationPreferences.quiet_hours_end)) return;
     notificationToasts = [item, ...notificationToasts.filter((toast) => toast.uid !== item.uid)].slice(0, 4);
     const existing = notificationToastTimers.get(item.uid); if (existing) window.clearTimeout(existing);
     notificationToastTimers.set(item.uid, window.setTimeout(() => dismissToast(item.uid), 9000));
-    void deliverDeviceAlert(item);
+    if(Number(message.at||item.created_at)-item.created_at<15*60*1000)void deliverDeviceAlert(item);
+  }
+  async function catchUpNotifications() {
+    if(disposed||pageLeaving||catchingNotifications||!notificationPreferencesReady)return;
+    if(!notificationCursorReady){
+      // A failed initial inbox/preferences request must not disable recovery
+      // until a reload. Retry on the existing reconnect/focus/poll lifecycle.
+      notificationInitialization??=loadAccountPreferences().finally(()=>{notificationInitialization=null;});
+      await notificationInitialization;
+      if(disposed||pageLeaving||catchingNotifications||!notificationCursorReady)return;
+    }
+    catchingNotifications=true;
+    const signal=notificationRequests.signal;
+    try {
+      for(let batch=0;batch<10&&!disposed;batch++) {
+        const response=await loadNotificationUpdates(notificationWatermark,notificationWatermarkUid,signal);
+        if(disposed||signal.aborted)return;
+        for(const item of response.notifications) {
+          if(!item.read_at)announceNotification({type:'notification.created',at:response.server_time,payload:item});
+          notificationWatermark=item.created_at;notificationWatermarkUid=item.uid;
+        }
+        unreadNotifications=response.unread;
+        if(response.notifications.length<100)break;
+      }
+    }catch{/* Durable inbox and the last acknowledged cursor remain intact for retry. */}
+    finally{catchingNotifications=false;if(catchNotificationsAgain&&!disposed&&!pageLeaving){catchNotificationsAgain=false;queueMicrotask(()=>void catchUpNotifications());}}
   }
   async function deliverDeviceAlert(item: MxNotification) {
-    // A user can have MX open in several tabs. A short randomized claim keeps
-    // those tabs from playing the same sound and OS notification in chorus.
-    await new Promise((resolve) => window.setTimeout(resolve, Math.floor(Math.random() * 80)));
-    const key = `mx-notification-alert:${item.uid}`;
-    const now = Date.now();
-    try {
-      const previous = Number(localStorage.getItem(key)?.split(':')[0] || 0);
-      if (previous > now - 15_000) return;
-      const claim = `${now}:${crypto.randomUUID()}`;
-      localStorage.setItem(key, claim);
-      window.setTimeout(() => { if (localStorage.getItem(key) === claim) localStorage.removeItem(key); }, 15_000);
-    } catch { /* Storage can be unavailable in privacy modes; alert this tab. */ }
-    if (notificationPreferences.sound_enabled) void playNotificationSound(notificationPreferences.sound_source === 'custom' ? customNotificationSound : null, notificationPreferences.sound_volume ?? 70).catch(() => undefined);
-    showBrowserNotification(item);
+    if(disposed||!notificationPreferencesReady||!alertImmediately()||inQuietHours(notificationPreferences.quiet_hours_start,notificationPreferences.quiet_hours_end))return;
+    await desktopAlerts.deliver({uid:item.uid,title:item.title||deployment.branding.display_name,body:item.body||'You have a new MX notification.',icon:deployment.branding.logo_url||'/images/system-icon.png',onOpen:()=>openNotification(item)},!!notificationPreferences.browser_enabled,()=>{
+      if(notificationPreferences.sound_enabled)void playNotificationSound(notificationPreferences.sound_source==='custom'?customNotificationSound:null,notificationPreferences.sound_volume??70).catch(()=>undefined);
+    });
   }
   function dismissToast(uid: string) {
     const timer = notificationToastTimers.get(uid); if (timer) window.clearTimeout(timer);
@@ -428,12 +474,6 @@
     }
     else if (item.target_type === 'channel' && item.target_uid) location.hash = `collaboration?channel=${encodeURIComponent(item.target_uid)}`;
     else if (item.module_uid) location.hash = `module/${encodeURIComponent(item.module_uid)}`;
-  }
-  function showBrowserNotification(item: MxNotification) {
-    const preferences = notificationPreferences;
-    if (!preferences?.browser_enabled || !('Notification' in window) || Notification.permission !== 'granted') return;
-    const notification = new Notification(item.title || deployment.branding.display_name, { body: item.body || 'You have a new MX notification.', icon: deployment.branding.logo_url || '/images/system-icon.png', tag: item.uid });
-    notification.onclick = () => { window.focus(); openNotification(item); notification.close(); };
   }
   async function refreshUnreadCount() {
     try { unreadNotifications = (await loadNotifications(true)).unread; }
@@ -487,18 +527,19 @@
   }
   function applyScale() {
     const value = autoScale ? recommendedScale() : Math.min(160, Math.max(85, Number(scale) || 100));
-    const fontPixels = Math.min(24, Math.max(10, Number(fontScale) || 16));
+    const fontPixels = Math.min(32, Math.max(10, Number(fontScale) || 16));
     const font = fontPixels / 16 * 100;
-    // Typography and interface density are separate preferences. Previously
-    // both values were multiplied into the root font size, making the two
-    // controls behave identically.
-    document.documentElement.style.removeProperty('font-size');
+    // Every rem-based component must respond, including scoped Svelte styles.
+    // Percentage sizing preserves the browser's own preferred default size.
     for (const legacyProperty of ['--interface-scale', '--interface-viewport-width', '--interface-viewport-height']) document.documentElement.style.removeProperty(legacyProperty);
     const { interfaceRatio, fontRatio } = appearanceScale(value, font);
+    document.documentElement.style.fontSize = `${fontRatio * 100}%`;
     document.documentElement.style.setProperty('--interface-factor', String(interfaceRatio));
     document.documentElement.style.setProperty('--user-interface-factor', String(interfaceRatio));
-    document.documentElement.style.setProperty('--font-scale', String(fontRatio));
-    document.documentElement.style.setProperty('--application-font-scale', String(fontRatio));
+    // Legacy styles already multiply these variables; keep them at one to
+    // avoid scaling those labels twice while scoped component text scales once.
+    document.documentElement.style.setProperty('--font-scale', '1');
+    document.documentElement.style.setProperty('--application-font-scale', '1');
   }
   function applyPersonalAppearance() {
     setTheme(theme);
@@ -511,8 +552,15 @@
     document.documentElement.dataset.reducedMotion = reducedMotion ? 'true' : 'false';
     applyScale();
   }
+  function openDisplaySettings(){appearanceBeforeSettings={theme,accentColor,density,contentWidth,reducedMotion,autoScale,scale,fontScale,autoRefresh};settingsError='';settingsOpen=true;}
+  function cancelDisplaySettings(){
+    if(settingsBusy)return;
+    if(appearanceBeforeSettings){({theme,accentColor,density,contentWidth,reducedMotion,autoScale,scale,fontScale,autoRefresh}=appearanceBeforeSettings);applyPersonalAppearance();}
+    appearanceBeforeSettings=null;settingsOpen=false;
+  }
   function resetPersonalAppearance() {
-    for (const property of ['--interface-factor', '--font-scale', '--application-font-scale']) document.documentElement.style.removeProperty(property);
+    for (const property of ['font-size', '--interface-factor', '--user-interface-factor', '--font-scale', '--application-font-scale']) document.documentElement.style.removeProperty(property);
+    readingPreferences.set({});
     document.documentElement.dataset.theme = deployment.appearance.default_theme;
     document.documentElement.dataset.density = deployment.appearance.density;
     document.documentElement.dataset.reducedMotion = 'false';
@@ -524,9 +572,13 @@
     return { browser_enabled: false, sound_enabled: true, sound_source: 'default', sound_volume: 70, messages: null, mentions: null, channel_activity: null, record_created: null, record_updated: null, record_assigned: null, attachment_received: null, workflow_changes: null, task_activity: null, digest: null, quiet_hours_start: null, quiet_hours_end: null };
   }
   async function loadAccountPreferences() {
+    const generation=++preferenceLoad;
     try {
-      const [response, inbox] = await Promise.all([loadPreferences(), loadNotifications(true)]);
+      const [response, inbox] = await Promise.all([loadPreferences(), loadNotifications(false)]);
+      if(disposed||generation!==preferenceLoad)return;
+      if(!notificationCursorReady){const newest=inbox.notifications[0];notificationWatermark=newest?.created_at||0;notificationWatermarkUid=newest?.uid||'';notificationCursorReady=true;}
       const preferences = response.preferences;
+      readingPreferences.set(preferences.module_reading || {});
       theme = preferences.theme || '';
       accentColor = preferences.accent_color || '';
       autoScale = preferences.auto_scale ?? true;
@@ -539,7 +591,9 @@
       reducedMotion = preferences.reduced_motion ?? false;
       notificationPreferences = { ...preferences.notifications };
       unreadNotifications = inbox.unread;
+      notificationPreferencesReady=true;
       await prepareNotificationSound();
+      if(disposed||generation!==preferenceLoad)return;
       applyPersonalAppearance();
     } catch (reason) {
       settingsError = reason instanceof Error ? reason.message : 'Could not load account preferences.';
@@ -553,7 +607,7 @@
   }
   async function saveDisplaySettings() {
     scale = Math.min(160, Math.max(85, Number(scale) || 100));
-    fontScale = Math.min(24, Math.max(10, Number(fontScale) || 16));
+    fontScale = Math.min(32, Math.max(10, Number(fontScale) || 16));
     autoRefresh = Math.max(0, Number(autoRefresh) || 0);
     settingsBusy = true; settingsError = '';
     try {
@@ -567,9 +621,9 @@
         content_width: (contentWidth || null) as UserPreferences['content_width'],
         reduced_motion: reducedMotion, auto_refresh_seconds: autoRefresh,
         notifications: current.preferences.notifications || defaultNotificationPreferences()
-      });
+      }, current.revision);
       notificationPreferences = { ...current.preferences.notifications };
-      applyPersonalAppearance(); settingsOpen = false;
+      applyPersonalAppearance(); appearanceBeforeSettings=null; settingsOpen = false;
     } catch (reason) {
       settingsError = reason instanceof Error ? reason.message : 'Could not save account preferences.';
     } finally { settingsBusy = false; }
@@ -579,7 +633,7 @@
 <div class="application">
   <WorkspaceSidebar {deployment} {session} {modules} {view} {selectedModuleUid} {selectedModule} {live} open={mobileOpen} onToggle={() => mobileOpen = !mobileOpen} onNavigate={go} onNavigateModule={goModule} onExport={() => exportReport('records', undefined, '', '', selectedModule?.uid || 'mx-default-records')} />
   <main class="main-stage">
-    <WorkspaceTopbar productName={deployment.branding.display_name} {viewTitle} {live} navigationOpen={mobileOpen} {notificationRevision} {unreadNotifications} onToggleNavigation={() => mobileOpen = !mobileOpen} onRefresh={refreshCurrent} onOpenSettings={() => settingsOpen = true} onToggleTheme={toggleTheme} onOpenAccount={() => go('account')} onSignOut={() => onSessionEnded('Signed out.')} onUnread={(count) => unreadNotifications = count} onOpenNotification={openNotification} />
+    <WorkspaceTopbar productName={deployment.branding.display_name} {viewTitle} {live} navigationOpen={mobileOpen} {notificationRevision} {unreadNotifications} onToggleNavigation={() => mobileOpen = !mobileOpen} onRefresh={refreshCurrent} onOpenSettings={openDisplaySettings} onToggleTheme={toggleTheme} onOpenAccount={() => go('account')} onSignOut={() => onSessionEnded('Signed out.')} onUnread={(count) => unreadNotifications = count} onOpenNotification={openNotification} />
     <UpdateNotice isAdmin={session.access_level===0} onOpenUpdates={()=>{localStorage.setItem('mx_admin_tab','updates');window.dispatchEvent(new Event('mx:open-updates'));go('admin');}} />
     {#if view === 'dashboard'}<DashboardView isAdmin={session.access_level === 0} revision={dashboardRevision} dashboardLabel={deployment.terminology.dashboard_label} recordSingular={deployment.terminology.record_singular} recordPlural={deployment.terminology.record_plural} />
     {:else if view === 'records' && selectedModule}{#key selectedModuleUid}<RecordsView {session} accessLevel={session.access_level} moduleUid={selectedModule.uid} modulePermission={selectedModulePermission} openRecordUid={linkedRecordUid} openRequestRevision={linkedRecordRequestRevision} focusLinkedAttachments={linkedRecordFocusAttachments} revision={recordRevision} liveMessage={lastRecordEvent} recordSingular={selectedModule.singular_name} recordPlural={selectedModule.name} />{/key}
@@ -648,7 +702,7 @@
     bind:reducedMotion
     bind:autoRefresh
     {recommendedScale}
-    onClose={() => settingsOpen = false}
+    onClose={cancelDisplaySettings}
     onThemeChange={setTheme}
     onAppearanceChange={applyPersonalAppearance}
     onScaleChange={applyScale}

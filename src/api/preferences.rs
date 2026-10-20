@@ -1,4 +1,7 @@
-use std::{collections::HashMap, sync::OnceLock};
+use std::{
+    collections::{BTreeMap, BTreeSet, HashMap},
+    sync::OnceLock,
+};
 
 use axum::{
     Json,
@@ -69,6 +72,12 @@ impl Default for NotificationPreferences {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
+pub struct ModuleReadingPreferences {
+    pub bold_fields: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default, deny_unknown_fields)]
 pub struct UserPreferences {
     pub theme: Option<String>,
     pub accent_color: Option<String>,
@@ -82,12 +91,14 @@ pub struct UserPreferences {
     pub reduced_motion: Option<bool>,
     pub auto_refresh_seconds: Option<u32>,
     pub default_workspace: Option<String>,
+    pub module_reading: BTreeMap<String, ModuleReadingPreferences>,
     pub notifications: NotificationPreferences,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct SavePreferencesRequest {
     pub preferences: UserPreferences,
+    pub revision: Option<i64>,
 }
 
 #[derive(Debug, Clone)]
@@ -171,15 +182,15 @@ fn validate(preferences: &UserPreferences) -> Result<(), &'static str> {
     }
     if preferences
         .font_size_px
-        .is_some_and(|value| !(10..=24).contains(&value))
+        .is_some_and(|value| !(10..=32).contains(&value))
     {
-        return Err("font size must be between 10 and 24 pixels");
+        return Err("font size must be between 10 and 32 pixels");
     }
     if preferences
         .font_scale_percent
-        .is_some_and(|value| !(85..=150).contains(&value))
+        .is_some_and(|value| !(85..=200).contains(&value))
     {
-        return Err("font scale must be between 85 and 150 percent");
+        return Err("font scale must be between 85 and 200 percent");
     }
     if preferences
         .density
@@ -219,6 +230,34 @@ fn validate(preferences: &UserPreferences) -> Result<(), &'static str> {
     }
     if preferences.notifications.sound_volume > 100 {
         return Err("notification sound volume must be between 0 and 100");
+    }
+    // These are personal presentation references, never module access grants.
+    // Bound the stored map and use stable IDs so renaming fields cannot retarget it.
+    let valid_id = |id: &str| {
+        !id.is_empty()
+            && id.len() <= 80
+            && id
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
+    };
+    if preferences.module_reading.len() > 256
+        || preferences
+            .module_reading
+            .values()
+            .map(|v| v.bold_fields.len())
+            .sum::<usize>()
+            > 8192
+        || preferences.module_reading.iter().any(|(module, reading)| {
+            !valid_id(module)
+                || reading.bold_fields.len() > 1024
+                || reading.bold_fields.iter().any(|id| !valid_id(id))
+                || reading.bold_fields.iter().collect::<BTreeSet<_>>().len()
+                    != reading.bold_fields.len()
+        })
+    {
+        return Err(
+            "Invalid personal field emphasis: use unique field IDs within the supported module/field limits.",
+        );
     }
     for value in [
         preferences.notifications.quiet_hours_start.as_deref(),
@@ -598,6 +637,33 @@ pub async fn get_preferences(claims: Claims) -> Response {
     }
 }
 
+fn save_preferences_db(
+    connection: &rusqlite::Connection,
+    uid: &str,
+    text: &str,
+    expected_revision: Option<i64>,
+) -> rusqlite::Result<(i64, i64)> {
+    let tx =
+        rusqlite::Transaction::new_unchecked(connection, rusqlite::TransactionBehavior::Immediate)?;
+    let revision = tx
+        .query_row(
+            "SELECT revision FROM mx_user_preferences WHERE user_uid=?1",
+            [uid],
+            |r| r.get::<_, i64>(0),
+        )
+        .optional()?
+        .unwrap_or(0);
+    if expected_revision.is_some_and(|expected| expected != revision) {
+        return Err(rusqlite::Error::InvalidParameterName(
+            "MX_PREFERENCES_CONFLICT".into(),
+        ));
+    }
+    let now = chrono::Utc::now().timestamp_millis();
+    tx.execute("INSERT INTO mx_user_preferences(user_uid,revision,preferences_json,updated_at) VALUES(?1,1,?2,?3) ON CONFLICT(user_uid) DO UPDATE SET revision=mx_user_preferences.revision+1,preferences_json=excluded.preferences_json,updated_at=excluded.updated_at", params![uid,text,now])?;
+    tx.commit()?;
+    Ok((revision + 1, now))
+}
+
 pub async fn save_preferences(
     claims: Claims,
     Json(request): Json<SavePreferencesRequest>,
@@ -617,27 +683,16 @@ pub async fn save_preferences(
         }
     };
     let preferences = request.preferences;
+    let expected_revision = request.revision;
     let result = tokio::task::spawn_blocking(move || -> Result<(i64, i64), SqliteDatabaseError> {
         with_sql_connection(|connection| {
             ensure_preferences_schema(connection)?;
-            let now = chrono::Utc::now().timestamp_millis();
-            connection.execute(
-                r#"
-                INSERT INTO mx_user_preferences(user_uid, revision, preferences_json, updated_at)
-                VALUES (?1, 1, ?2, ?3)
-                ON CONFLICT(user_uid) DO UPDATE SET
-                    revision = mx_user_preferences.revision + 1,
-                    preferences_json = excluded.preferences_json,
-                    updated_at = excluded.updated_at
-                "#,
-                params![uid, text, now],
-            )?;
-            let revision = connection.query_row(
-                "SELECT revision FROM mx_user_preferences WHERE user_uid = ?1",
-                params![uid],
-                |row| row.get(0),
-            )?;
-            Ok((revision, now))
+            Ok(save_preferences_db(
+                connection,
+                &uid,
+                &text,
+                expected_revision,
+            )?)
         })
     })
     .await;
@@ -660,6 +715,14 @@ pub async fn save_preferences(
                 }),
             )
         }
+        Ok(Err(SqliteDatabaseError::Sqlite(rusqlite::Error::InvalidParameterName(ref marker))))
+            if marker == "MX_PREFERENCES_CONFLICT" =>
+        {
+            api_json(
+                StatusCode::CONFLICT,
+                json!({"response":"Your preferences changed in another window. Reload the latest settings before saving; your changes have not been applied."}),
+            )
+        }
         Ok(Err(error)) => {
             crate::report_error!(format!("{error}"), "preferences", "save_preferences()");
             api_json(
@@ -680,6 +743,74 @@ pub async fn save_preferences(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn personal_reading_is_bounded_and_backwards_compatible() {
+        let mut preferences: UserPreferences = serde_json::from_str(r#"{"theme":"dark"}"#).unwrap();
+        assert!(preferences.module_reading.is_empty());
+        preferences.font_size_px = Some(32);
+        preferences.font_scale_percent = Some(200);
+        preferences.module_reading.insert(
+            "module-1".into(),
+            ModuleReadingPreferences {
+                bold_fields: vec!["field-1".into()],
+            },
+        );
+        assert!(validate(&preferences).is_ok());
+        preferences.font_size_px = Some(33);
+        assert!(validate(&preferences).is_err());
+        preferences.font_size_px = Some(32);
+        preferences
+            .module_reading
+            .get_mut("module-1")
+            .unwrap()
+            .bold_fields
+            .push("field-1".into());
+        assert!(
+            validate(&preferences).is_err(),
+            "Duplicate references rejected"
+        );
+        preferences
+            .module_reading
+            .get_mut("module-1")
+            .unwrap()
+            .bold_fields = vec!["field/<script>".into()];
+        assert!(validate(&preferences).is_err());
+    }
+
+    #[test]
+    fn preference_revision_conflicts_cannot_overwrite_another_save_or_account() {
+        let connection = rusqlite::Connection::open_in_memory().unwrap();
+        connection.execute_batch("CREATE TABLE users(uid TEXT PRIMARY KEY);INSERT INTO users VALUES('alice'),('bob');").unwrap();
+        ensure_preferences_schema(&connection).unwrap();
+        assert_eq!(
+            save_preferences_db(&connection, "alice", r#"{"theme":"light"}"#, Some(0))
+                .unwrap()
+                .0,
+            1
+        );
+        assert!(save_preferences_db(&connection, "alice", "{}", Some(0)).is_err());
+        assert_eq!(
+            save_preferences_db(&connection, "bob", "{}", Some(0))
+                .unwrap()
+                .0,
+            1
+        );
+        let saved: String = connection
+            .query_row(
+                "SELECT preferences_json FROM mx_user_preferences WHERE user_uid='alice'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(saved, r#"{"theme":"light"}"#);
+        assert_eq!(
+            save_preferences_db(&connection, "alice", "{}", Some(1))
+                .unwrap()
+                .0,
+            2
+        );
+    }
 
     #[test]
     fn validates_supported_preference_ranges() {

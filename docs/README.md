@@ -13,6 +13,8 @@ implementation details and advanced configuration.
 | Create modules and enter your first records | [Getting started](getting-started.md) |
 | Import Excel, ODS, CSV or TSV rows | [Spreadsheet import walkthrough](importing-records.md) |
 | Select an employee once and display their classification | [Relationships and automatic values](relationships.md) |
+| Combine names, calculate numeric choices and linked balances | [Calculations and privacy](calculations-and-privacy.md) |
+| Limit records or fields to their creator | [Record and field access](calculations-and-privacy.md#limit-a-record-or-field-to-its-creator) |
 | Understand “Allow multiple linked records” | [Single versus multiple selection](relationships.md#what-allow-multiple-linked-records-means) |
 | Choose between Lookup and editable auto-fill | [Which method to use](relationships.md#choose-the-result-you-need) |
 | Show different fields for different choices | [Conditional forms](conditional-forms.md) |
@@ -21,11 +23,13 @@ implementation details and advanced configuration.
 | Understand a field archive dependency | [Archiving fields](modules-and-fields.md#understand-why-a-field-cannot-be-archived) |
 | Organize, upload and share files | [MX Drive](drive.md) |
 | Message, call and share screens | [Collaboration](collaboration.md) |
+| Enable background-only desktop alerts | [Desktop notifications](desktop-notifications.md) |
 | Open, edit, save or prepare an offline Office document | [Office editor](office.md) |
 
 ## Deployment administrators
 
-- [Current candidate: MX 1.0.0-rc.4](releases/1.0.0-rc.4.md)
+- [Current candidate: MX 1.0.0-rc.5](releases/1.0.0-rc.5.md)
+- [Published candidate: MX 1.0.0-rc.4](releases/1.0.0-rc.4.md)
 - [Deployment and upgrade procedure](deployment.md)
 - [Signed updates, maintenance windows and rollback](updates.md)
 - [Configuration reference](configuration.md)

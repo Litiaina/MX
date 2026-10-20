@@ -18,6 +18,8 @@ describe('appearanceScale', () => {
 
   it('clamps persisted values to the supported ranges', () => {
     expect(appearanceScale(500, 10)).toMatchObject({ interfaceRatio: 1.6, fontRatio: .625 });
+    expect(appearanceScale(100, 500).fontRatio).toBe(2);
+    expect(appearanceScale(100, 200).fontRatio).toBe(2);
   });
 });
 

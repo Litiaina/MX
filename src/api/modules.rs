@@ -948,9 +948,21 @@ pub async fn create_module(claims: Claims, Json(request): Json<CreateModuleReque
         json!({})
     };
     let config_text = config.to_string();
+    if !matches!(
+        config
+            .get("record_visibility")
+            .and_then(Value::as_str)
+            .unwrap_or("module"),
+        "module" | "creator"
+    ) {
+        return api_json(
+            StatusCode::BAD_REQUEST,
+            json!({"response":"Choose record visibility: module members or record creators."}),
+        );
+    }
     let position = request.position;
     let result = tokio::task::spawn_blocking(move || -> Result<ModuleDefinition, SqliteDatabaseError> { with_sql_connection(|connection| {
-        ensure_module_schema(connection)?; let transaction = connection.unchecked_transaction()?; let now = chrono::Utc::now().timestamp_millis();
+        ensure_module_schema(connection)?; let transaction = rusqlite::Transaction::new_unchecked(connection,rusqlite::TransactionBehavior::Immediate)?; let now = chrono::Utc::now().timestamp_millis();
         let mut candidate = base_slug.clone(); let mut suffix = 2; while transaction.query_row("SELECT EXISTS(SELECT 1 FROM mx_modules WHERE slug = ?1)", params![candidate], |row| row.get::<_,bool>(0))? { candidate = format!("{base_slug}-{suffix}"); suffix += 1; }
         let position = position.unwrap_or(transaction.query_row("SELECT COALESCE(MAX(position), -10) + 10 FROM mx_modules", [], |row| row.get(0))?);
         transaction.execute("INSERT INTO mx_modules(uid,slug,name,singular_name,description,icon,color,position,active,config_json,created_at,updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,1,?9,?10,?10)", params![uid,candidate,name,singular,description,icon,color,position,config_text,now])?;
@@ -1000,13 +1012,15 @@ pub async fn update_module(
     let db_uid = uid.clone();
     let actor_uid = claims.uid;
     let result = tokio::task::spawn_blocking(move || -> Result<ModuleDefinition, SqliteDatabaseError> { with_sql_connection(|connection| {
-        ensure_module_schema(connection)?; let existing = load_module_db(connection,&db_uid)?.ok_or(rusqlite::Error::QueryReturnedNoRows)?; let transaction = connection.unchecked_transaction()?;
+        ensure_module_schema(connection)?; let transaction = rusqlite::Transaction::new_unchecked(connection,rusqlite::TransactionBehavior::Immediate)?; let existing = load_module_db(&transaction,&db_uid)?.ok_or(rusqlite::Error::QueryReturnedNoRows)?;
         let name = request.name.as_deref().map(|value| clean(value,80)).filter(|value| !value.is_empty()).unwrap_or(existing.name);
         let singular = request.singular_name.as_deref().map(|value| clean(value,80)).filter(|value| !value.is_empty()).unwrap_or(existing.singular_name);
         let description = request.description.as_deref().map(|value| clean(value,500)).unwrap_or(existing.description); let icon = request.icon.as_deref().map(|value| clean(value,12)).filter(|value| !value.is_empty()).unwrap_or(existing.icon);
         let color = request.color.filter(|value| valid_color(value)).unwrap_or(existing.color); let config = request.config.filter(Value::is_object).unwrap_or(existing.config);
+        if !matches!(config.get("record_visibility").and_then(Value::as_str).unwrap_or("module"),"module"|"creator") { return Err(rusqlite::Error::InvalidParameterName("Choose record visibility: module members or record creators.".into())); }
         transaction.execute("UPDATE mx_modules SET name=?2,singular_name=?3,description=?4,icon=?5,color=?6,position=?7,active=?8,config_json=?9,updated_at=?10 WHERE uid=?1", params![db_uid,name,singular,description,icon,color,request.position.unwrap_or(existing.position),if request.active.unwrap_or(existing.active){1}else{0},config.to_string(),chrono::Utc::now().timestamp_millis()])?;
         if let Some(permissions) = request.permissions { for permission in permissions { if !(0..=3).contains(&permission.access_level) { continue; } let administrator = permission.access_level == 0; transaction.execute("INSERT INTO mx_module_permissions(module_uid,access_level,can_read,can_create,can_update,can_delete,can_configure,can_report,can_attachments) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9) ON CONFLICT(module_uid,access_level) DO UPDATE SET can_read=excluded.can_read,can_create=excluded.can_create,can_update=excluded.can_update,can_delete=excluded.can_delete,can_configure=excluded.can_configure,can_report=excluded.can_report,can_attachments=excluded.can_attachments", params![db_uid,permission.access_level,(administrator || permission.can_read) as i64,(administrator || permission.can_create) as i64,(administrator || permission.can_update) as i64,(administrator || permission.can_delete) as i64,(administrator || permission.can_configure) as i64,(administrator || permission.can_report) as i64,(administrator || permission.can_attachments) as i64])?; } }
+        crate::api::mx::relationships::validate_dependents(&transaction,&db_uid)?;
         transaction.commit()?; load_module_db(connection,&db_uid)?.ok_or(rusqlite::Error::QueryReturnedNoRows)
     })}).await;
     match result {
@@ -1022,6 +1036,12 @@ pub async fn update_module(
             StatusCode::NOT_FOUND,
             json!({"response":"module was not found"}),
         ),
+        Ok(Err(SqliteDatabaseError::Sqlite(rusqlite::Error::InvalidParameterName(message)))) => {
+            api_json(
+                StatusCode::BAD_REQUEST,
+                json!({"response":message.trim_start_matches("MX_CONFIG:")}),
+            )
+        }
         _ => api_json(
             StatusCode::INTERNAL_SERVER_ERROR,
             json!({"response":"failed to update module"}),
@@ -1064,8 +1084,8 @@ pub async fn delete_module(
             ensure_module_schema(connection)?;
             let transaction = connection.unchecked_transaction()?;
             if table_exists(&transaction, "mx_fields")? {
-                let linked:bool=transaction.query_row("SELECT EXISTS(SELECT 1 FROM mx_fields WHERE module_uid!=?1 AND active=1 AND field_type='relationship' AND json_extract(config_json,'$.target_module_uid')=?1)",[&preflight_uid],|r|r.get(0))?;
-                if linked {return Err(rusqlite::Error::InvalidParameterName("Remove relationships to this module before deleting it.".into()));}
+                let dependencies=transaction.prepare("SELECT m.name || ' → ' || f.label FROM mx_fields f JOIN mx_modules m ON m.uid=f.module_uid WHERE f.module_uid!=?1 AND f.active=1 AND ((f.field_type='relationship' AND json_extract(f.config_json,'$.target_module_uid')=?1) OR (f.field_type='rollup' AND json_extract(f.config_json,'$.direction')='incoming' AND json_extract(f.config_json,'$.source_module_uid')=?1)) ORDER BY m.name,f.label")?.query_map([&preflight_uid],|r|r.get::<_,String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
+                if !dependencies.is_empty() {return Err(rusqlite::Error::InvalidParameterName(format!("Remove relationships and incoming totals before deleting this module. Still used by: {}.",dependencies.join("; "))));}
             }
             let module_name = transaction
                 .query_row(
@@ -1190,7 +1210,7 @@ pub async fn delete_module(
     let delete_uid = uid.clone();
     let deletion = tokio::task::spawn_blocking(move || -> Result<bool, SqliteDatabaseError> {
         with_sql_connection(|connection| {
-            let transaction = connection.unchecked_transaction()?;
+            let transaction = rusqlite::Transaction::new_unchecked(connection,rusqlite::TransactionBehavior::Immediate)?;
             if table_exists(&transaction, "mx_notifications")? {
                 transaction.execute("DELETE FROM mx_notifications WHERE module_uid = ?1", params![&delete_uid])?;
             }

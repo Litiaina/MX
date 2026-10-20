@@ -7,15 +7,14 @@ const api = readFileSync(new URL('./api/workspace.ts', import.meta.url), 'utf8')
 const workspace = readFileSync(new URL('./components/Workspace.svelte', import.meta.url), 'utf8');
 
 describe('stateless record editing', () => {
-  it('opens table cells immediately and saves against the loaded record revision', () => {
-    expect(records).toContain('baseRevision: row.revision');
-    expect(records).toContain('patchRecord(row.uid, { ...edit.fills,[field.key]: nextValue }, edit.baseRevision');
-    expect(records).toContain('if(edit.previewLoading||edit.previewError||cellConflict)return');
-    expect(records).not.toContain('patchRecord(row.uid, { [field.key]: nextValue }, row.revision');
+  it('keeps table values read-only and edits only through the full record form', () => {
+    expect(records).not.toContain('beginCellEdit');
+    expect(records).not.toContain('cell-edit-button');
+    expect(records).not.toContain('data-active-cell-editor');
+    expect(records).not.toContain('patchRecord(');
     expect(records).not.toContain('claimRecordEdit');
     expect(records).not.toContain('maintainEditLease');
-    const begin = records.slice(records.indexOf('function beginCellEdit'), records.indexOf('function cancelCellEdit'));
-    expect(begin.indexOf('event.stopPropagation()')).toBeLessThan(begin.indexOf('cellSaving) return'));
+    expect(records).toContain('window.getSelection()?.toString()');
   });
 
   it('provides a visible row-level edit action without opening view mode first', () => {

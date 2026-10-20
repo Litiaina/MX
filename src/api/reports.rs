@@ -32,6 +32,8 @@ const REPORT_ERROR_PREFIX: &str = "MX_REPORT:";
 
 #[derive(Debug, Deserialize, Default, Clone)]
 pub struct ReportQuery {
+    #[serde(skip)]
+    pub(crate) actor: Option<(String, i64)>,
     pub module_uid: Option<String>,
     pub group_field_uid: Option<String>,
     pub secondary_group_field_uid: Option<String>,
@@ -166,7 +168,8 @@ fn value_expression(alias: &str, field_type: &str) -> String {
         "integer" | "auto_number" => {
             format!("CAST({alias}.value_integer AS TEXT)")
         }
-        "decimal" | "formula" => format!("CAST({alias}.value_real AS TEXT)"),
+        "formula" => format!("COALESCE({alias}.value_text,CAST({alias}.value_real AS TEXT),'')"),
+        "decimal" => format!("CAST({alias}.value_real AS TEXT)"),
         "boolean" => {
             format!("CASE {alias}.value_boolean WHEN 1 THEN 'true' WHEN 0 THEN 'false' ELSE '' END")
         }
@@ -200,16 +203,24 @@ fn lookup_field(
     module_uid: &str,
     uid: &str,
 ) -> rusqlite::Result<Option<FieldDefinition>> {
-    Ok(load_module_fields_db(connection, module_uid, false)?
-        .into_iter()
-        .find(|field| {
-            field.uid == uid
-                && field.active
-                && !matches!(
-                    field.field_type.as_str(),
-                    "relationship" | "lookup" | "rollup"
-                )
-        }))
+    let fields = load_module_fields_db(connection, module_uid, false)?;
+    if fields.iter().any(|field| {
+        field.uid == uid
+            && field.field_type == "formula"
+            && crate::api::mx::calculated::live(field, &fields)
+    }) {
+        return Err(report_error(
+            "This calculated field uses live linked totals. Reports require saved source values; choose its numeric source field instead.",
+        ));
+    }
+    Ok(fields.into_iter().find(|field| {
+        field.uid == uid
+            && field.active
+            && !matches!(
+                field.field_type.as_str(),
+                "relationship" | "lookup" | "rollup"
+            )
+    }))
 }
 
 fn optional_group_field(
@@ -433,6 +444,52 @@ fn append_context_filters(
     bind: &mut Vec<SqlValue>,
     where_sql: &mut String,
 ) -> rusqlite::Result<()> {
+    if let Some((actor, level)) = &query.actor {
+        crate::api::mx::privacy::ensure(connection)?;
+        where_sql.push_str(&format!(
+            " AND {}",
+            crate::api::mx::privacy::record_sql("r", actor, *level)
+        ));
+        // Requested dimensions, filter fields and measures must be readable on
+        // each included row. Filtering is done BEFORE counting or aggregating.
+        let mut selected = vec![
+            query.group_field_uid.as_deref(),
+            query.secondary_group_field_uid.as_deref(),
+            query.action_field_uid.as_deref(),
+            query.attachment_field_uid.as_deref(),
+            query.date_field_uid.as_deref(),
+        ]
+        .into_iter()
+        .flatten()
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+        if let Some(filters) = query
+            .filters
+            .as_deref()
+            .and_then(|v| serde_json::from_str::<Vec<Value>>(v).ok())
+        {
+            for filter in filters {
+                for key in ["field_uid", "attachment_field_uid"] {
+                    if let Some(uid) = filter[key].as_str() {
+                        selected.push(uid.to_owned());
+                    }
+                }
+            }
+        }
+        for uid in selected {
+            if let Some(field) = lookup_field(connection, report_module(query), &uid)? {
+                where_sql.push_str(&format!(
+                    " AND {}",
+                    crate::api::mx::privacy::scope_sql(
+                        field.config["access_scope"].as_str().unwrap_or("module"),
+                        "r",
+                        actor,
+                        *level
+                    )
+                ));
+            }
+        }
+    }
     let Some(text) = query
         .filters
         .as_deref()
@@ -1014,7 +1071,11 @@ pub async fn save_dashboard_config(
     }
 }
 
-pub async fn get_action_rate_report(claims: Claims, Query(query): Query<ReportQuery>) -> Response {
+pub async fn get_action_rate_report(
+    claims: Claims,
+    Query(mut query): Query<ReportQuery>,
+) -> Response {
+    query.actor = Some((claims.uid.clone(), claims.access_level));
     if !claims.can_read_records() {
         return api_json(StatusCode::FORBIDDEN, json!({"response":"access denied"}));
     }
@@ -1099,8 +1160,17 @@ fn csv_line(values: impl IntoIterator<Item = String>) -> String {
         + "\r\n"
 }
 
-fn detailed_records_csv(connection: &Connection, module_uid: &str) -> rusqlite::Result<String> {
+fn detailed_records_csv_scoped(
+    connection: &Connection,
+    module_uid: &str,
+    actor: &str,
+    level: i64,
+) -> rusqlite::Result<String> {
     ensure_reporting_schema(connection)?;
+    crate::api::mx::privacy::ensure(connection)?;
+    let row_scope = crate::api::mx::privacy::record_sql("r", actor, level);
+    let field_scope = crate::api::mx::privacy::field_sql("f", "r", actor, level);
+    let file_scope = crate::api::mx::privacy::attachment_sql("a", "r", actor, level);
 
     let fields = load_module_fields_db(connection, module_uid, false)?
         .into_iter()
@@ -1122,7 +1192,7 @@ fn detailed_records_csv(connection: &Connection, module_uid: &str) -> rusqlite::
         .collect::<Vec<_>>();
 
     let count: i64 = connection.query_row(
-        "SELECT COUNT(*) FROM mx_records WHERE module_uid=?1 AND deleted_at IS NULL",
+        &format!("SELECT COUNT(*) FROM mx_records r WHERE module_uid=?1 AND deleted_at IS NULL AND {row_scope}"),
         params![module_uid],
         |row| row.get(0),
     )?;
@@ -1132,7 +1202,7 @@ fn detailed_records_csv(connection: &Connection, module_uid: &str) -> rusqlite::
         )));
     }
     let mut uid_statement = connection.prepare(
-        "SELECT uid FROM mx_records WHERE module_uid=?1 AND deleted_at IS NULL ORDER BY rowid ASC",
+        &format!("SELECT uid FROM mx_records r WHERE module_uid=?1 AND deleted_at IS NULL AND {row_scope} ORDER BY rowid ASC"),
     )?;
     let uids = uid_statement
         .query_map(params![module_uid], |row| row.get::<_, String>(0))?
@@ -1141,7 +1211,7 @@ fn detailed_records_csv(connection: &Connection, module_uid: &str) -> rusqlite::
     let mut values_by_record: HashMap<String, HashMap<String, String>> = HashMap::new();
 
     {
-        let mut value_statement = connection.prepare(
+        let mut value_statement = connection.prepare(&format!(
             r#"
             SELECT
                 rv.record_uid,
@@ -1158,10 +1228,10 @@ fn detailed_records_csv(connection: &Connection, module_uid: &str) -> rusqlite::
              AND f.field_type <> 'attachments'
             JOIN mx_records r
               ON r.uid = rv.record_uid
-            WHERE r.module_uid=?1 AND r.deleted_at IS NULL
+            WHERE r.module_uid=?1 AND r.deleted_at IS NULL AND {row_scope} AND {field_scope}
             ORDER BY r.rowid ASC, f.position ASC, f.rowid ASC
             "#,
-        )?;
+        ))?;
 
         let mapped = value_statement.query_map(params![module_uid], |row| {
             let record_uid: String = row.get(0)?;
@@ -1173,6 +1243,9 @@ fn detailed_records_csv(connection: &Connection, module_uid: &str) -> rusqlite::
                     .get::<_, Option<i64>>(4)?
                     .map(|value| value.to_string())
                     .unwrap_or_default(),
+                "formula" if row.get::<_, Option<String>>(3)?.is_some() => {
+                    row.get::<_, String>(3)?
+                }
                 "decimal" | "formula" => row
                     .get::<_, Option<f64>>(5)?
                     .map(|value| value.to_string())
@@ -1201,7 +1274,7 @@ fn detailed_records_csv(connection: &Connection, module_uid: &str) -> rusqlite::
     let mut attachment_totals_by_record: HashMap<String, (u64, u64)> = HashMap::new();
 
     {
-        let mut attachment_statement = connection.prepare(
+        let mut attachment_statement = connection.prepare(&format!(
             r#"
             SELECT
                 entry_uid,
@@ -1209,10 +1282,10 @@ fn detailed_records_csv(connection: &Connection, module_uid: &str) -> rusqlite::
                 file_name,
                 size
             FROM mx_attachments a JOIN mx_records r ON r.uid=a.entry_uid
-            WHERE r.module_uid=?1 AND r.deleted_at IS NULL
+            WHERE r.module_uid=?1 AND r.deleted_at IS NULL AND {row_scope} AND {file_scope}
             ORDER BY a.rowid ASC
             "#,
-        )?;
+        ))?;
 
         let mapped = attachment_statement.query_map(params![module_uid], |row| {
             Ok((
@@ -1279,10 +1352,21 @@ fn detailed_records_csv(connection: &Connection, module_uid: &str) -> rusqlite::
     Ok(output)
 }
 
-fn attachments_csv(connection: &Connection, module_uid: &str) -> rusqlite::Result<String> {
+fn attachments_csv_scoped(
+    connection: &Connection,
+    module_uid: &str,
+    actor: &str,
+    level: i64,
+) -> rusqlite::Result<String> {
     ensure_reporting_schema(connection)?;
+    crate::api::mx::privacy::ensure(connection)?;
+    let scope = format!(
+        "{} AND {}",
+        crate::api::mx::privacy::record_sql("r", actor, level),
+        crate::api::mx::privacy::attachment_sql("a", "r", actor, level)
+    );
 
-    let count: i64 = connection.query_row("SELECT COUNT(*) FROM mx_attachments a JOIN mx_records r ON r.uid=a.entry_uid WHERE r.module_uid=?1 AND r.deleted_at IS NULL",params![module_uid],|row|row.get(0))?;
+    let count: i64 = connection.query_row(&format!("SELECT COUNT(*) FROM mx_attachments a JOIN mx_records r ON r.uid=a.entry_uid WHERE r.module_uid=?1 AND r.deleted_at IS NULL AND {scope}"),params![module_uid],|row|row.get(0))?;
 
     if count.max(0) as usize > MAX_EXPORT_ROWS {
         return Err(report_error(format!(
@@ -1306,7 +1390,7 @@ fn attachments_csv(connection: &Connection, module_uid: &str) -> rusqlite::Resul
         .map(str::to_string),
     );
 
-    let mut statement = connection.prepare(
+    let mut statement = connection.prepare(&format!(
         r#"
         SELECT
             entry_uid,
@@ -1319,10 +1403,10 @@ fn attachments_csv(connection: &Connection, module_uid: &str) -> rusqlite::Resul
             COALESCE(version_id, ''),
             created_at
         FROM mx_attachments a JOIN mx_records r ON r.uid=a.entry_uid
-        WHERE r.module_uid=?1 AND r.deleted_at IS NULL
+        WHERE r.module_uid=?1 AND r.deleted_at IS NULL AND {scope}
         ORDER BY a.rowid ASC
         "#,
-    )?;
+    ))?;
 
     let rows = statement.query_map(params![module_uid], |row| {
         Ok(vec![
@@ -1469,10 +1553,18 @@ pub async fn export_report_csv(claims: Claims, Query(query): Query<ExportQuery>)
     let kind_for_task = kind.clone();
     let result = tokio::task::spawn_blocking(move || -> Result<String, SqliteDatabaseError> {
         with_sql_connection(|connection| match kind_for_task.as_str() {
-            "records" | "detailed_records" => {
-                detailed_records_csv(connection, &module_uid_for_export)
-            }
-            "attachments" => attachments_csv(connection, &module_uid_for_export),
+            "records" | "detailed_records" => detailed_records_csv_scoped(
+                connection,
+                &module_uid_for_export,
+                &claims.uid,
+                claims.access_level,
+            ),
+            "attachments" => attachments_csv_scoped(
+                connection,
+                &module_uid_for_export,
+                &claims.uid,
+                claims.access_level,
+            ),
             "user_performance" => user_performance_csv(
                 connection,
                 &UserPerformanceQuery {
@@ -1483,6 +1575,7 @@ pub async fn export_report_csv(claims: Claims, Query(query): Query<ExportQuery>)
             "action_rate" => action_rate_csv(
                 connection,
                 &ReportQuery {
+                    actor: Some((claims.uid.clone(), claims.access_level)),
                     module_uid: query.module_uid.clone(),
                     group_field_uid: query.group_field_uid.clone(),
                     secondary_group_field_uid: query.secondary_group_field_uid.clone(),

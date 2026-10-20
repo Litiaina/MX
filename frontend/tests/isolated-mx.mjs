@@ -8,6 +8,7 @@ import { createServer } from 'node:net';
 import { request } from 'playwright';
 import { startN1Fixture } from './n1-contract-fixture.mjs';
 import { startLiveN1 } from './live-n1.mjs';
+import {DatabaseSync,backup} from 'node:sqlite';
 
 async function freePort() {
   const server = createServer();
@@ -17,8 +18,10 @@ async function freePort() {
   return port;
 }
 
-export async function startIsolatedMx(root) {
+export async function startIsolatedMx(root,{seedDatabase,beforeStart}={}) {
   const directory = await mkdtemp(join(process.env.MX_TEST_ARTIFACTS || tmpdir(), 'mx-eight-user-'));
+  if(seedDatabase){const source=new DatabaseSync(resolve(seedDatabase),{readOnly:true});try{await backup(source,join(directory,'test.db'));}finally{source.close();}}
+  if(beforeStart)await beforeStart(join(directory,'test.db'));
   const port = await freePort(); const redirectPort = await freePort();
   const signupKey = randomUUID();
   const n1 = process.env.MX_TEST_N1_URL ? await startLiveN1(directory) : await startN1Fixture();

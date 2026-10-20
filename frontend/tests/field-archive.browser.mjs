@@ -72,7 +72,10 @@ try{
     const page=await browser.newPage({ignoreHTTPSErrors:true,viewport:{width:1440,height:950}});const errors=[];page.on('pageerror',e=>{errors.push(e.message);console.error(`${engine}: ${e.message}`);});
     await page.addInitScript(tokens=>{sessionStorage.setItem('mx_access_token',tokens.access_token);sessionStorage.setItem('mx_refresh_token',tokens.refresh_token);},owner);
     await page.goto(`https://127.0.0.1:${mx.port}/#admin`);await page.getByRole('button',{name:'Modules & fields',exact:true}).click();
-    const module=page.getByRole('combobox',{name:'Change module',exact:true});await module.selectOption(employees.uid);
+    const module={
+      async selectOption(uid){if(await page.getByRole('button',{name:'All modules',exact:true}).count())await page.getByRole('button',{name:'All modules',exact:true}).click();const selected=[employees,inventory].find(item=>item.uid===uid);await page.getByRole('button',{name:`Configure ${selected.name}`,exact:true}).click();await page.getByRole('form',{name:'Add field',exact:true}).waitFor();},
+      async inputValue(){return(await page.locator('.module-workbench-scope').innerText()).includes('Inventory')?inventory.uid:employees.uid;}
+    };await module.selectOption(employees.uid);
     const sourceCard=page.locator(`[data-schema-field="${classification.uid}"]`);
     await sourceCard.getByRole('button',{name:'Archive',exact:true}).click();
     const dialog=page.getByRole('dialog',{name:'Cannot archive this field',exact:true});await dialog.waitFor();

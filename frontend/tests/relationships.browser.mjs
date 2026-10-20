@@ -7,7 +7,7 @@ import {join} from 'node:path';
 import {DatabaseSync} from 'node:sqlite';
 import {chromium,firefox,webkit} from 'playwright';
 import {startIsolatedMx} from './isolated-mx.mjs';
-import {isolatedBrowserAudio} from './silent-audio.mjs';
+import {disconnectedBrowserAudio} from './silent-audio.mjs';
 
 const mx=await startIsolatedMx(fileURLToPath(new URL('../',import.meta.url)));
 const browsers=[];const call=async(path,user,method='GET',data,expected=[200])=>(await mx.call(path,user?.access_token,method,data,expected)).body;
@@ -67,23 +67,23 @@ try{
 
   for(const engine of (process.env.MX_TEST_BROWSERS||'chromium,firefox,webkit').split(',')){
     const executablePath=engine==='chromium'?'/home/altear/.cache/ms-playwright/chromium-1228/chrome-linux64/chrome':engine==='firefox'?'/home/altear/.cache/ms-playwright/firefox-1543/firefox/firefox':'/home/altear/.cache/mx-network-audit-2026-10-08.fnCQvP/webkit-launch.sh';
-    const browser=await ({chromium,firefox,webkit})[engine].launch({headless:true,executablePath,env:isolatedBrowserAudio(),...(engine==='chromium'?{args:['--no-sandbox','--mute-audio']}:{})});browsers.push(browser);
+    const browser=await ({chromium,firefox,webkit})[engine].launch({headless:true,executablePath,env:disconnectedBrowserAudio(mx.directory),...(engine==='chromium'?{args:['--no-sandbox','--mute-audio']}:{})});browsers.push(browser);
     const page=await browser.newPage({ignoreHTTPSErrors:true,viewport:{width:1440,height:1000}});const errors=[];page.on('pageerror',error=>errors.push(error.message));
     await page.addInitScript(tokens=>{sessionStorage.setItem('mx_access_token',tokens.access_token);sessionStorage.setItem('mx_refresh_token',tokens.refresh_token);},owner);
     await page.goto(`https://127.0.0.1:${mx.port}/#module/${bills.uid}`);
     await page.getByRole('searchbox',{name:'Search billing',exact:true}).fill('Invoice');await page.getByRole('button',{name:'Search',exact:true}).click();
-    await page.getByRole('button',{name:'Edit patients for row 1',exact:true}).click();await page.getByRole('searchbox',{name:'Search patients',exact:true}).fill('Charlie');
+    await page.getByRole('button',{name:'Edit Bill 1',exact:true}).click();await page.getByRole('searchbox',{name:'Search patients',exact:true}).fill('Charlie');
     await until(async()=>await page.getByRole('combobox',{name:'Choose patients'}).locator('option').count()>1,'Relationship options available');
     await page.getByRole('combobox',{name:'Choose patients'}).selectOption(charlie.uid);
-    await page.getByRole('button',{name:'Save link',exact:true}).click();
+    await page.getByRole('button',{name:'Update Bill',exact:true}).click();await page.locator('.record-dialog').waitFor({state:'hidden'});
     await until(async()=>{const stored=await call(`/mx/v1/modules/${bills.uid}/records/${record.uid}`,owner);return stored.values.patients.includes(charlie.uid)&&stored.values.sum===375;},'Inline selection saved');
     await page.screenshot({path:join(mx.directory,`${engine}-relationship-inline.png`)});
     await page.getByRole('button',{name:'Edit Bill 1',exact:true}).click();
     await page.getByRole('group',{name:'patients',exact:true}).waitFor();
     for(const [theme,width] of [['light',1440],['dark',1440],['dark',390]]){await page.evaluate(value=>document.documentElement.dataset.theme=value,theme);await page.setViewportSize({width,height:850});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));await page.screenshot({path:join(mx.directory,`${engine}-relationship-${theme}-${width}.png`)});}
-    await page.goto(`https://127.0.0.1:${mx.port}/#admin`);await page.getByRole('button',{name:'Modules & fields',exact:true}).click();await page.getByRole('combobox',{name:'Change module',exact:true}).selectOption(bills.uid);
+    await page.goto(`https://127.0.0.1:${mx.port}/#admin`);await page.getByRole('button',{name:'Modules & fields',exact:true}).click();await page.getByRole('button',{name:`Configure ${bills.name}`,exact:true}).click();
     const fieldForm=page.locator('.module-section-panel form').filter({has:page.getByRole('button',{name:'Add field to Billing',exact:true})});
-    await fieldForm.getByLabel('Label',{exact:true}).fill(`UI link ${engine}`);await fieldForm.getByLabel('Key (optional override)',{exact:true}).fill(`ui_link_${engine}`);
+    await fieldForm.getByLabel('Label',{exact:true}).fill(`UI link ${engine}`);await fieldForm.getByLabel('Field key (optional)',{exact:true}).fill(`ui_link_${engine}`);
     await fieldForm.getByRole('combobox',{name:'Type',exact:true}).selectOption('relationship');await fieldForm.getByRole('combobox',{name:'Linked module',exact:true}).selectOption(patients.uid);
     await until(async()=>await fieldForm.getByRole('combobox',{name:'Display field',exact:true}).locator('option').count()>1,'Admin target fields loaded');await fieldForm.getByRole('combobox',{name:'Display field',exact:true}).selectOption('name');
     await fieldForm.getByRole('button',{name:'Add field to Billing',exact:true}).click();await page.getByText('Field created.',{exact:true}).waitFor();

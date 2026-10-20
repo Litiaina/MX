@@ -16,10 +16,8 @@ use crate::{
         live::publish_live_event,
         modules::{DEFAULT_MODULE_UID, ensure_module_schema, load_module_db, module_can_for_user},
         mx::{
-            formula::{referenced_fields, validate_expression},
-            handler::ensure_mx_record_schema,
-            records::recalculate_module_formulas,
-            storage::ensure_storage_layout_schema,
+            formula::validate_expression, handler::ensure_mx_record_schema,
+            records::recalculate_module_formulas, storage::ensure_storage_layout_schema,
         },
     },
     db::connector::{SqliteDatabaseError, with_sql_connection},
@@ -241,7 +239,8 @@ fn normalize_attachment_storage_name(value: &str) -> String {
 fn validate_config(field_type: &str, config: &Value) -> Result<Value, String> {
     let clean = validate_type_config(field_type, config)?;
     let clean = super::column_summaries::validate(field_type, config, clean)?;
-    super::form_rules::normalize(field_type, config, clean)
+    let clean = super::form_rules::normalize(field_type, config, clean)?;
+    super::privacy::normalize(config, clean)
 }
 
 fn validate_type_config(field_type: &str, config: &Value) -> Result<Value, String> {
@@ -312,6 +311,9 @@ fn validate_type_config(field_type: &str, config: &Value) -> Result<Value, Strin
         }
 
         "formula" => {
+            if super::calculated::text(config) {
+                return super::calculated::normalize_text(config);
+            }
             let expression = config
                 .get("expression")
                 .and_then(Value::as_str)
@@ -376,18 +378,14 @@ fn validate_formula_references(
     field_key: &str,
     config: &Value,
 ) -> rusqlite::Result<()> {
-    let expression = config
-        .get("expression")
-        .and_then(Value::as_str)
-        .unwrap_or("");
-    let references = referenced_fields(expression);
+    let references = super::calculated::references(config);
     if references.contains(&field_key.to_ascii_lowercase()) {
         return Err(rusqlite::Error::InvalidParameterName(
             "MX_CONFIG:A formula cannot reference itself.".to_string(),
         ));
     }
     let available = connection
-        .prepare("SELECT LOWER(COALESCE(module_key,field_key)) FROM mx_fields WHERE module_uid=?1 AND active=1 AND field_type NOT IN ('lookup','rollup','relationship','attachments')")?
+        .prepare("SELECT LOWER(COALESCE(module_key,field_key)) FROM mx_fields WHERE module_uid=?1 AND active=1 AND field_type NOT IN ('lookup','relationship','attachments')")?
         .query_map(params![module_uid], |row| row.get::<_, String>(0))?
         .collect::<Result<HashSet<_>, _>>()?;
     let unknown = references
@@ -395,6 +393,32 @@ fn validate_formula_references(
         .filter(|field| !available.contains(field))
         .collect::<Vec<_>>();
     if unknown.is_empty() {
+        let fields = load_module_fields_initialized_db(connection, module_uid, false)?;
+        if config
+            .get("table_summary")
+            .and_then(Value::as_str)
+            .is_some_and(|method| method != "none")
+            && super::calculated::references(config).iter().any(|key| {
+                fields
+                    .iter()
+                    .find(|f| f.key == *key)
+                    .is_some_and(|f| super::calculated::live(f, &fields))
+            })
+        {
+            return Err(rusqlite::Error::InvalidParameterName("MX_CONFIG:Column summaries require saved numeric values, not live linked calculations. Use the incoming total directly or summarize its saved source amount.".into()));
+        }
+        if super::calculated::text(config)
+            && super::calculated::references(config).iter().any(|key| {
+                fields
+                    .iter()
+                    .find(|f| f.key == *key)
+                    .is_some_and(|f| super::calculated::live(f, &fields))
+            })
+        {
+            return Err(rusqlite::Error::InvalidParameterName(
+                "MX_CONFIG:Combined text uses saved scalar fields, not live linked totals.".into(),
+            ));
+        }
         Ok(())
     } else {
         Err(rusqlite::Error::InvalidParameterName(format!(
@@ -1310,7 +1334,18 @@ async fn load_module_schema(
                 if load_module_db(connection, &module_uid)?.is_none() {
                     return Err(rusqlite::Error::QueryReturnedNoRows);
                 }
-                let fields = load_module_fields_db(connection, &module_uid, include_archived)?;
+                let mut fields = load_module_fields_db(connection, &module_uid, include_archived)?;
+                let live = fields
+                    .iter()
+                    .filter(|field| super::calculated::live(field, &fields))
+                    .map(|field| field.uid.clone())
+                    .collect::<HashSet<_>>();
+                for field in &mut fields {
+                    if live.contains(&field.uid) {
+                        field.searchable = false;
+                        field.sortable = false;
+                    }
+                }
                 let system_fields = load_system_fields_db(connection)?;
 
                 Ok(SchemaResponse {
@@ -1361,7 +1396,11 @@ pub async fn get_record_schema(claims: Claims) -> Response {
     }
 
     match load_schema(false).await {
-        Ok(schema) => api_json(StatusCode::OK, json!(schema)),
+        Ok(schema) => {
+            let mut value = json!(schema);
+            value["viewer_access_level"] = json!(claims.access_level);
+            api_json(StatusCode::OK, value)
+        }
         Err(error) => {
             crate::report_error!(error, "function", "get_record_schema()");
 
@@ -1402,7 +1441,11 @@ pub async fn get_module_record_schema(claims: Claims, Path(module_uid): Path<Str
     }
     let include_archived = claims.can_manage_accounts();
     match load_module_schema(module_uid, include_archived).await {
-        Ok(schema) => api_json(StatusCode::OK, json!(schema)),
+        Ok(schema) => {
+            let mut value = json!(schema);
+            value["viewer_access_level"] = json!(claims.access_level);
+            api_json(StatusCode::OK, value)
+        }
         Err(error) => {
             crate::report_error!(error, "function", "get_module_record_schema()");
             api_json(
@@ -2579,7 +2622,8 @@ pub async fn update_schema_field(
                 )?;
 
                 rebuild_unique_values_for_field(connection, &updated)?;
-                if updated.field_type == "formula" && updated.active {
+                super::relationships::validate_dependents(connection,&module_uid)?;
+                if matches!(updated.field_type.as_str(),"formula"|"select") && updated.active {
                     recalculate_module_formulas(connection, &module_uid, &formula_actor_uid)?;
                 }
 

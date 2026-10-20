@@ -10,6 +10,36 @@ A fresh installation can contain multiple independently configured modules, and 
 
 Administrators add only what that deployment requires.
 
+### Finding the right configuration
+
+Open **Administration → Modules & fields**. MX shows a searchable module library;
+it does not silently open the first module for editing. Choose **Configure
+[module name]** for an existing module, or **New module** to create a separate,
+empty one. Check **You are configuring** before making changes.
+
+Configuration is divided into **Fields**, **Module details**, **Permissions**,
+**Form rules**, **Column totals** and **File storage**. **All modules** returns
+to the library. Unsaved field drafts, module changes and storage changes trigger
+a confirmation before switching modules or starting a new-module workflow.
+
+### Reading and editing records
+
+Table cells display values; they do not activate individual cell editors. You
+can select and copy text without accidentally editing it. Click a row to view
+the full record, or its **Edit** button to change it in the complete form. The
+normal revision checks and per-field conflict decisions still protect saves.
+
+Use **Reading settings** in the module toolbar to choose fields you personally
+want in bold. This changes their labels and values in your table, record form
+and history. It is saved to your account per module, using stable field IDs;
+it changes neither other people's views nor record data or permissions.
+
+For larger text across the application, open **Personal settings → Text size**.
+Standard, Large, Extra large and 200% presets are available, with a 10–32 base
+size range. These scale application text and rem-based controls together, while
+respecting the browser's preferred default size. Document contents retain their
+own formatting. Browser zoom remains available too.
+
 ### Account module isolation
 
 Module authorization is the intersection of two server-side layers:
@@ -87,8 +117,8 @@ dependent choices. MX asks before clearing existing/unsaved details or queued fi
 Cancelling keeps the details; confirming affects only the local edit until Save.
 Previously saved values stay in record history. Stored attachments are never
 automatically deleted. Tables keep stable columns and show **Not applicable**
-for inactive branches. An inline change that needs additional required details
-opens the record form with that choice already selected.
+for inactive branches. Change a choice in the full record form to see its
+applicable detail fields before saving.
 
 The server independently applies these rules to creates, PATCH/PUT saves and version
 restoration, inside the existing atomic record/version transaction. Unrelated stale
@@ -112,7 +142,7 @@ Archiving a referenced field names the rules that must be changed first.
 ### Record-column summaries
 
 For cash-flow, rental and similar modules, open **Administration → Modules &
-fields**, select the module and use **Column summaries**. Choose a calculation
+fields → Configure [module name] → Column totals**. Choose a calculation
 for each integer, decimal or formula field: **Sum / total**, **Average**,
 **Minimum**, **Maximum** or **Count values**. Set the display decimal places
 (0–12) and click that field's **Save summary**. Auto-number fields support count
@@ -168,7 +198,7 @@ to the inventory's existing **Classification** field. Add more mappings for
 department, job title or other compatible fields, then **Save field**.
 
 Selecting an employee immediately fills the configured fields in the record
-form and inline table editor. Changing the selection replaces the copied values;
+form. Changing the selection replaces the copied values;
 clearing it clears them. Copied fields remain editable and are saved as ordinary
 record values with normal revision/conflict checks and version history. They
 are **snapshots**, not live lookups: later employee edits do not alter already

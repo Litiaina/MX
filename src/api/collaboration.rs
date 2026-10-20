@@ -447,15 +447,26 @@ pub(crate) fn ensure_space_directory_schema(
     "#)
 }
 
-pub async fn list_collaboration_people(claims: Claims) -> Response {
+#[derive(Debug, Default, Deserialize)]
+pub struct PeopleQuery {
+    q: Option<String>,
+    limit: Option<usize>,
+}
+
+pub async fn list_collaboration_people(
+    claims: Claims,
+    Query(query): Query<PeopleQuery>,
+) -> Response {
     let current_uid = claims.uid;
+    let needle = like_pattern(&clean_text(query.q.as_deref().unwrap_or(""), 200));
+    let limit = query.limit.unwrap_or(1000).clamp(1, 1000);
     let result = tokio::task::spawn_blocking(move || {
         with_sql_connection(|connection| {
             let mut statement = connection.prepare(
-                "SELECT user.uid,user.name,photo.updated_at FROM users user LEFT JOIN mx_user_profile_photos photo ON photo.user_uid=user.uid WHERE user.uid<>?1 ORDER BY user.name COLLATE NOCASE LIMIT 1000",
+                "SELECT user.uid,user.name,photo.updated_at FROM users user LEFT JOIN mx_user_profile_photos photo ON photo.user_uid=user.uid WHERE user.uid<>?1 AND user.name LIKE ?2 ESCAPE '\\' ORDER BY user.name COLLATE NOCASE,user.uid LIMIT ?3",
             )?;
             statement
-                .query_map(params![current_uid], |row| {
+                .query_map(params![current_uid, needle, (limit + 1) as i64], |row| {
                     Ok(json!({"uid":row.get::<_,String>(0)?,"name":row.get::<_,String>(1)?,"profile_photo_updated_at":row.get::<_,Option<i64>>(2)?}))
                 })?
                 .collect::<Result<Vec<_>, _>>()
@@ -463,7 +474,11 @@ pub async fn list_collaboration_people(claims: Claims) -> Response {
     })
     .await;
     match result {
-        Ok(Ok(people)) => api_json(StatusCode::OK, json!({"people":people})),
+        Ok(Ok(mut people)) => {
+            let has_more = people.len() > limit;
+            people.truncate(limit);
+            api_json(StatusCode::OK, json!({"people":people,"has_more":has_more}))
+        }
         _ => api_json(
             StatusCode::INTERNAL_SERVER_ERROR,
             json!({"response":"failed to load collaboration people"}),
@@ -686,7 +701,8 @@ fn advance_channel_read(
 ) -> rusqlite::Result<ChannelReadAdvance> {
     ensure_collaboration_schema(connection)?;
     ensure_notification_schema(connection)?;
-    let transaction = connection.unchecked_transaction()?;
+    let transaction =
+        rusqlite::Transaction::new_unchecked(connection, rusqlite::TransactionBehavior::Immediate)?;
     let (latest_message_id, latest_message_at): (i64, i64) = transaction.query_row(
         "SELECT COALESCE(MAX(rowid), 0), COALESCE(MAX(created_at), 0) FROM mx_messages WHERE channel_uid = ?1",
         params![channel_uid],
@@ -764,7 +780,10 @@ fn load_record_links(
     user_uid: &str,
     access_level: i64,
 ) -> rusqlite::Result<Vec<MessageRecordLink>> {
-    let mut statement = connection.prepare(
+    crate::api::mx::privacy::ensure(connection)?;
+    let scope = crate::api::mx::privacy::field_sql("field", "record", user_uid, access_level);
+    let rows = crate::api::mx::privacy::record_sql("record", user_uid, access_level);
+    let mut statement = connection.prepare(&format!(
         r#"
         SELECT
             record.uid,
@@ -776,14 +795,14 @@ fn load_record_links(
                     WHEN 'integer' THEN CAST(value.value_integer AS TEXT)
                     WHEN 'auto_number' THEN CAST(value.value_integer AS TEXT)
                     WHEN 'decimal' THEN CAST(value.value_real AS TEXT)
-                    WHEN 'formula' THEN CAST(value.value_real AS TEXT)
+                    WHEN 'formula' THEN COALESCE(value.value_text,CAST(value.value_real AS TEXT))
                     WHEN 'boolean' THEN CASE value.value_boolean WHEN 1 THEN 'Yes' ELSE 'No' END
                     ELSE NULLIF(TRIM(value.value_text), '')
                 END
                 FROM mx_record_values value
                 JOIN mx_fields field ON field.uid = value.field_uid
                 WHERE value.record_uid = record.uid
-                  AND field.active = 1
+                  AND field.active = 1 AND {scope}
                   AND field.field_type <> 'attachments'
                 ORDER BY field.position, field.rowid
                 LIMIT 1
@@ -791,10 +810,10 @@ fn load_record_links(
         FROM mx_message_record_links link
         JOIN mx_records record ON record.uid = link.record_uid
         JOIN mx_modules module ON module.uid = record.module_uid
-        WHERE link.message_uid = ?1
+        WHERE link.message_uid = ?1 AND {rows}
         ORDER BY module.name COLLATE NOCASE, record.rowid
         "#,
-    )?;
+    ))?;
     let candidates = statement
         .query_map(params![message_uid], |row| {
             Ok(MessageRecordLink {
@@ -1583,12 +1602,20 @@ pub async fn create_direct_channel(
     let result = tokio::task::spawn_blocking(move || -> Result<(String, bool), SqliteDatabaseError> {
         with_sql_connection(|connection| {
             ensure_collaboration_schema(connection)?;
-            let other_exists: bool = connection.query_row("SELECT EXISTS(SELECT 1 FROM users WHERE uid = ?1)", params![db_other_uid], |row| row.get(0))?;
-            if !other_exists { return Err(rusqlite::Error::QueryReturnedNoRows); }
+            // Reusing a conversation is read-only: do not compete with record
+            // imports for SQLite's writer slot on every contextual send.
             if let Some(uid) = connection.query_row("SELECT uid FROM mx_channels WHERE direct_key = ?1", params![direct_key], |row| row.get::<_, String>(0)).optional()? {
                 return Ok((uid, false));
             }
-            let transaction = connection.unchecked_transaction()?;
+            // Serialize the find-or-create decision; simultaneous sends must
+            // reuse the same conversation rather than race its unique key.
+            let transaction = rusqlite::Transaction::new_unchecked(connection, rusqlite::TransactionBehavior::Immediate)?;
+            let other_exists: bool = transaction.query_row("SELECT EXISTS(SELECT 1 FROM users WHERE uid = ?1)", params![db_other_uid], |row| row.get(0))?;
+            if !other_exists { return Err(rusqlite::Error::QueryReturnedNoRows); }
+            if let Some(uid) = transaction.query_row("SELECT uid FROM mx_channels WHERE direct_key = ?1", params![direct_key], |row| row.get::<_, String>(0)).optional()? {
+                transaction.commit()?;
+                return Ok((uid, false));
+            }
             let uid = Uuid::new_v4().to_string();
             let now = chrono::Utc::now().timestamp_millis();
             transaction.execute(
@@ -1604,12 +1631,14 @@ pub async fn create_direct_channel(
     }).await;
     match result {
         Ok(Ok((uid, created))) => {
-            publish_user_event(
-                &other_uid,
-                "channel.created",
-                Some(&actor_uid),
-                json!({"channel_uid":uid,"kind":"direct"}),
-            );
+            if created {
+                publish_user_event(
+                    &other_uid,
+                    "channel.created",
+                    Some(&actor_uid),
+                    json!({"channel_uid":uid,"kind":"direct"}),
+                );
+            }
             api_json(
                 if created {
                     StatusCode::CREATED
@@ -1737,6 +1766,7 @@ pub async fn send_message(
                 if !module_can_for_user(&transaction, &module_uid, &sender_uid, access_level, "read")? {
                     return Err(rusqlite::Error::InvalidParameterName("you cannot share a record you cannot access".to_string()));
                 }
+                crate::api::mx::privacy::check_record(&transaction,&record_uid,&sender_uid)?;
                 transaction.execute("INSERT OR IGNORE INTO mx_message_record_links(message_uid, record_uid) VALUES (?1, ?2)", params![message_uid, record_uid])?;
             }
             operations::complete(&transaction, &sender_uid, &scope, operation.as_ref(), &message_uid)?;

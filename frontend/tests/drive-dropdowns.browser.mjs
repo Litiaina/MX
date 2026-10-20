@@ -73,6 +73,8 @@ async function coreDropdowns(page, browser, owner) {
     { name: 'schema', open: async () => {
       await page.goto(`https://127.0.0.1:${mx.port}/#admin`);
       await page.getByRole('button', { name: 'Modules & fields', exact: true }).click();
+      await page.getByRole('button', { name: 'Configure Dropdown module', exact: true }).click();
+      await page.getByRole('navigation',{name:'Module configuration sections',exact:true}).getByRole('button',{name:'Module details',exact:true}).click();
       await page.locator('.module-builder').getByRole('combobox', { name: 'Navigation icon', exact: true }).waitFor();
     } },
     { name: 'report-builder', open: async () => {
@@ -120,7 +122,7 @@ async function coreDropdowns(page, browser, owner) {
     }
     if (screen.name === 'schema') {
       const form = page.locator('.module-builder'), icon = form.getByRole('combobox', { name: 'Navigation icon', exact: true });
-      const moduleUid = await page.getByRole('combobox', { name: 'Change module', exact: true }).inputValue();
+      const moduleUid = (await call('/mx/v1/modules',owner)).modules.find(module=>module.name==='Dropdown module').uid;
       const next = await icon.inputValue() === 'folder' ? 'database' : 'folder';
       await icon.selectOption(next);
       await form.getByRole('button', { name: 'Save changes', exact: true }).click();
@@ -140,6 +142,7 @@ try {
   const owner = await call('/mx/v1/auth/authenticate', null, 'POST', { email: 'dropdown-owner@test.invalid', password });
   await call('/mx/v1/user/create', owner, 'POST', { email: 'dropdown-member@test.invalid', name: 'Dropdown Member', password, access_level: 2 }, [201]);
   const member = await call('/mx/v1/auth/authenticate', null, 'POST', { email: 'dropdown-member@test.invalid', password });
+  await call('/mx/v1/admin/modules',owner,'POST',{name:'Dropdown module',singular_name:'Dropdown item'},[201]);
   for (const name of (process.env.MX_TEST_BROWSERS || 'chromium,firefox,webkit').split(',')) {
     const folder = await call(`${base}/folders`, owner, 'POST', { operation_uid: randomUUID(), name: `Dropdown ${name}` });
     const groupName = `Dropdown Group ${name}`;

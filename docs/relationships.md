@@ -41,7 +41,7 @@ named Users, but that does not make it the built-in Accounts administration page
 
 ### Step 1 — Create the name selector
 
-1. Open **Administration → Modules & fields** and select Inventory in **Change module**.
+1. Open **Administration → Modules & fields → Configure Inventory → Fields**.
 2. In the new-field form, enter **Label:** `Issuer`.
 3. Set **Type:** `Relationship / linked record`.
 4. Set **Linked module:** `Employees`.

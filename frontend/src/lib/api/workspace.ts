@@ -127,8 +127,8 @@ export function exportReport(kind: string, widget?: DashboardWidget, dateFrom = 
 }
 export const loadPresence = () => apiJson<PresenceResponse>('/mx/v1/presence');
 export const loadPreferences = () => apiJson<PreferencesResponse>('/mx/v1/account/preferences');
-export const savePreferences = (preferences: UserPreferences) =>
-  apiJson<PreferencesResponse & { response: string }>('/mx/v1/account/preferences', jsonRequest('PUT', { preferences }));
+export const savePreferences = (preferences: UserPreferences, revision?: number) =>
+  apiJson<PreferencesResponse & { response: string }>('/mx/v1/account/preferences', jsonRequest('PUT', { preferences, revision }));
 export const loadNotificationSoundInfo = () => apiJson<NotificationSoundInfo>('/mx/v1/account/notification-sound/info');
 export const uploadNotificationSound = (file: File, onProgress?: (loaded: number, total: number) => void) => {
   const body = new FormData(); body.append('sound', file);
@@ -140,7 +140,8 @@ export async function loadNotificationSound(version?: number) {
   return (await apiFile(`/mx/v1/account/notification-sound${suffix}`)).blob;
 }
 export const loadNotifications = (unreadOnly = false) =>
-  apiJson<{ notifications: MxNotification[]; unread: number }>(`/mx/v1/notifications?unread_only=${unreadOnly}`);
+  apiJson<{ notifications: MxNotification[]; unread: number;server_time:number }>(`/mx/v1/notifications?unread_only=${unreadOnly}`);
+export const loadNotificationUpdates=(after:number,afterUid:string,signal?:AbortSignal)=>apiJson<{notifications:MxNotification[];unread:number;server_time:number}>(`/mx/v1/notifications?limit=100&after=${after}&after_uid=${encodeURIComponent(afterUid)}`,{signal,maxAttempts:1});
 export const markNotificationRead = (uid: string) =>
   apiJson<void>(`/mx/v1/notifications/${encodeURIComponent(uid)}/read`, { method: 'POST' });
 export const markAllNotificationsRead = () =>
@@ -148,7 +149,12 @@ export const markAllNotificationsRead = () =>
 export const globalSearch = (q: string, limit = 30) =>
   apiJson<{ results: GlobalSearchResult[] }>(`/mx/v1/search?q=${encodeURIComponent(q)}&limit=${limit}`);
 export const listChannels = () => apiJson<{ channels: CollaborationChannel[]; file_max_size_bytes?: number }>('/mx/v1/collaboration/channels');
-export const listCollaborationPeople = () => apiJson<{ people: CollaborationPerson[] }>('/mx/v1/collaboration/people');
+export const listCollaborationPeople = (q?: string, limit?: number) => {
+  const params = new URLSearchParams();
+  if (q !== undefined) params.set('q', q);
+  if (limit !== undefined) params.set('limit', String(limit));
+  return apiJson<{ people: CollaborationPerson[]; has_more?: boolean }>(`/mx/v1/collaboration/people${params.size ? `?${params}` : ''}`);
+};
 export const createChannel = (data: { name: string; description: string; member_uids: string[]; kind: 'channel' | 'group' }) =>
   apiJson<{ uid: string }>('/mx/v1/collaboration/channels', jsonRequest('POST', data));
 export const createDirectChannel = (user_uid: string) =>

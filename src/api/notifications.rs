@@ -55,6 +55,8 @@ pub struct NotificationQuery {
     pub unread_only: Option<bool>,
     pub before: Option<i64>,
     pub limit: Option<usize>,
+    pub after: Option<i64>,
+    pub after_uid: Option<String>,
 }
 
 pub(crate) fn ensure_notification_schema(
@@ -260,6 +262,11 @@ pub async fn notify_module_readers(
 ) {
     let lookup_module = module_uid.clone();
     let lookup_actor = actor_uid.clone();
+    let lookup_record = target_uid.clone();
+    let lookup_field = data
+        .get("attachment_field_uid")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
     let recipients = tokio::task::spawn_blocking(move || {
         with_sql_connection(|connection| {
             ensure_module_schema(connection)?;
@@ -274,11 +281,29 @@ pub async fn notify_module_readers(
                      AND (u.access_level=0 OR account.can_read=1)
                      AND u.uid<>?2"#,
             )?;
-            statement
+            let recipients = statement
                 .query_map(params![lookup_module, lookup_actor], |row| {
                     row.get::<_, String>(0)
                 })?
-                .collect::<Result<Vec<_>, _>>()
+                .collect::<Result<Vec<_>, _>>()?;
+            recipients
+                .into_iter()
+                .filter_map(|uid| {
+                    match crate::api::mx::privacy::level(connection, &uid).and_then(|level| {
+                        crate::api::mx::privacy::field_record_allowed(
+                            connection,
+                            &lookup_record,
+                            lookup_field.as_deref().unwrap_or(""),
+                            &uid,
+                            level,
+                        )
+                    }) {
+                        Ok(true) => Some(Ok(uid)),
+                        Ok(false) => None,
+                        Err(e) => Some(Err(e)),
+                    }
+                })
+                .collect::<rusqlite::Result<Vec<_>>>()
         })
     })
     .await;
@@ -287,7 +312,10 @@ pub async fn notify_module_readers(
     };
     let dedup_key = if kind == "record.updated" || kind.starts_with("attachment.") {
         Some(format!(
-            "record-activity:{module_uid}:{target_uid}:{actor_uid}:{}",
+            "record-activity:{kind}:{module_uid}:{target_uid}:{}:{actor_uid}:{}",
+            data.get("attachment_field_uid")
+                .and_then(Value::as_str)
+                .unwrap_or(""),
             chrono::Utc::now().timestamp() / 300
         ))
     } else {
@@ -320,10 +348,16 @@ pub async fn list_notifications(
     let limit = query.limit.unwrap_or(50).clamp(1, 100);
     let unread_only = query.unread_only.unwrap_or(false);
     let before = query.before.unwrap_or(i64::MAX);
+    let after = query.after;
+    let after_uid = query.after_uid.unwrap_or_default();
     let result = tokio::task::spawn_blocking(move || {
         with_sql_connection(|connection| {
             ensure_notification_schema(connection)?;
             ensure_module_schema(connection)?;
+            crate::api::mx::privacy::ensure(connection)?;
+            let record_scope=crate::api::mx::privacy::record_sql("nr",&uid,access_level);
+            let attachment_scope=crate::api::mx::privacy::field_sql("nf","nr",&uid,access_level);
+            let privacy_scope=format!("(n.target_type IS NOT 'record' OR EXISTS(SELECT 1 FROM mx_records nr WHERE nr.uid=n.target_uid AND {record_scope} AND (json_extract(n.data_json,'$.attachment_field_uid') IS NULL OR EXISTS(SELECT 1 FROM mx_fields nf WHERE nf.uid=json_extract(n.data_json,'$.attachment_field_uid') AND {attachment_scope}))))");
             let sql = format!(
                 r#"
                 SELECT {} FROM mx_notifications n
@@ -331,6 +365,8 @@ pub async fn list_notifications(
                 WHERE n.recipient_uid = ?1
                   AND n.created_at < ?2
                   AND (?3 = 0 OR n.read_at IS NULL)
+                  AND (?6 IS NULL OR n.created_at>?6 OR (n.created_at=?6 AND n.uid>?7))
+                  AND {privacy_scope}
                   AND (
                     n.module_uid IS NULL OR ?5=0 OR EXISTS(
                       SELECT 1
@@ -345,7 +381,9 @@ pub async fn list_notifications(
                         AND account.can_read=1
                     )
                   )
-                ORDER BY n.created_at DESC
+                ORDER BY CASE WHEN ?6 IS NOT NULL THEN n.created_at END ASC,
+                         CASE WHEN ?6 IS NOT NULL THEN n.uid END ASC,
+                         n.created_at DESC,n.uid DESC
                 LIMIT ?4
                 "#,
                 select_columns()
@@ -357,14 +395,15 @@ pub async fn list_notifications(
                     before,
                     if unread_only { 1 } else { 0 },
                     limit as i64,
-                    access_level
+                    access_level,after,after_uid
                 ],
                 notification_from_row,
             )?;
             let notifications = rows.collect::<Result<Vec<_>, _>>()?;
             let unread: i64 = connection.query_row(
-                r#"SELECT COUNT(*) FROM mx_notifications n
+                &format!(r#"SELECT COUNT(*) FROM mx_notifications n
                     WHERE recipient_uid=?1 AND read_at IS NULL
+                      AND {privacy_scope}
                       AND (n.module_uid IS NULL OR ?2=0 OR EXISTS(
                         SELECT 1 FROM mx_module_permissions role
                         JOIN mx_module_account_permissions account
@@ -372,7 +411,7 @@ pub async fn list_notifications(
                         JOIN mx_modules module ON module.uid=role.module_uid AND module.active=1
                         WHERE role.module_uid=n.module_uid AND role.access_level=?2
                           AND role.can_read=1 AND account.can_read=1
-                      ))"#,
+                      ))"#),
                 params![uid, access_level],
                 |row| row.get(0),
             )?;
@@ -384,7 +423,7 @@ pub async fn list_notifications(
     match result {
         Ok(Ok((notifications, unread))) => api_json(
             StatusCode::OK,
-            json!({"notifications":notifications,"unread":unread}),
+            json!({"notifications":notifications,"unread":unread,"server_time":chrono::Utc::now().timestamp_millis()}),
         ),
         Ok(Err(error)) => {
             crate::report_error!(format!("{error}"), "notifications", "list_notifications()");

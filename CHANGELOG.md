@@ -5,7 +5,46 @@ deployment maintainer's local date.
 
 ## [Unreleased]
 
-No unreleased changes.
+## [1.0.0-rc.5] - 2026-10-20
+
+### Added and improved
+
+- Add calculated text fields for complete-name relationship labels and automatic
+  copies; retain stable record links and skip configurable empty name parts.
+- Add optional numeric choice values independent of stored codes/display labels,
+  filtered incoming linked-record totals and live balance formulas. Reject
+  recursive calculations and incompatible source/dependency changes atomically.
+- Add opt-in creator-only records and creator/admin-only fields with server-side
+  filtering across reads, writes, counts, summaries, search, exports, history,
+  collaboration, attachment preview URLs and live events. Preserve genuine
+  creator provenance; never infer ownership from the last editor.
+- Route desktop alerts only while MX is unfocused/hidden; deduplicate across tabs,
+  recover missed durable notifications, and show permission/delivery diagnostics.
+  Keep focused alerts inside MX and document browser/OS delivery limitations.
+- Preserve the last desktop-alert result/time across focus and module changes,
+  distinguish browser permission from the saved MX setting, and require saving
+  notification changes before running a test. Do not replace failures with Ready.
+- Serialize module configuration mutations and collaboration read-marker writes
+  before their reads to avoid deferred-transaction upgrade races with notifications.
+
+- Replace individual table-cell editors with selectable read-only values and
+  full-record viewing/editing; retain normal optimistic save/conflict checks.
+- Send a saved record and context directly to a person from its row menu or
+  record dialog. Reuse direct conversations and message operation IDs on retry;
+  keep recipient permissions unchanged and warn about unsaved form edits.
+- Add account-specific bold-field reading preferences for each module, with
+  stable field IDs and revision-checked preference saves. Make personal text
+  sizing affect rem-based components consistently, up to 200% of the base size.
+- Replace automatic first-module editing with a searchable module library;
+  separate Fields, Details, Permissions, Rules, Totals and File storage, and
+  preserve/caution about unsaved drafts when changing scope.
+
+### Fixed
+
+- Do not highlight every person in Collaboration on a fresh deployment with no
+  selected conversation. Highlight only the person whose existing private chat
+  is actually open; viewing a profile or filtering the directory does not select
+  other people. Add fresh-account regressions in Chromium, Firefox and WebKit.
 
 ## [1.0.0-rc.4] - 2026-10-17
 

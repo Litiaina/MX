@@ -1,7 +1,7 @@
 {
   "name": "litiaina-mx-frontend",
   "private": true,
-  "version": "1.0.0-rc.4",
+  "version": "1.0.0-rc.5",
   "type": "module",
   "engines": {
     "node": ">=24.0.0"
@@ -38,6 +38,14 @@
     "test:records:window": "node tests/record-window.browser.mjs",
     "test:records:navigation": "node tests/record-navigation.browser.mjs",
     "test:records:summaries": "node tests/record-summaries.browser.mjs",
+    "test:records:workspace": "node --no-warnings tests/record-workspace.browser.mjs",
+    "test:records:advanced": "node --no-warnings tests/advanced-records.integration.mjs",
+    "test:records:advanced-ui": "node --no-warnings tests/advanced-records.browser.mjs",
+    "test:records:advanced-scale": "node --no-warnings tests/advanced-records.scale.mjs",
+    "test:notifications:focus": "node --no-warnings tests/notifications-focus.browser.mjs",
+    "test:collaboration:people": "node --no-warnings tests/collaboration-people.browser.mjs",
+    "test:records:privacy": "node --no-warnings tests/record-privacy.browser.mjs",
+    "test:upgrade:existing": "node --no-warnings tests/upgrade-existing.integration.mjs",
     "test:records:import": "node tests/import-records.browser.mjs",
     "test:records:import-menu": "node tests/module-import-menu.browser.mjs",
     "test:records:import-layout": "node tests/import-layout.browser.mjs",

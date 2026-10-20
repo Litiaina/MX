@@ -1,5 +1,12 @@
 <script lang="ts">
-  import { onMount, onDestroy, tick, untrack } from 'svelte';
+  import { onMount, onDestroy, tick, untrack, getContext } from 'svelte';
+  import { writable, type Writable } from 'svelte/store';
+  import Bold from '@lucide/svelte/icons/bold';
+  import Send from '@lucide/svelte/icons/send';
+  import SendRecordDialog from './SendRecordDialog.svelte';
+  import type { ModuleReadingMap } from '../api/domain';
+  import { fieldIsBold, moduleReadingContext } from '../util/readingPreferences';
+  import ModuleReadingDialog from './ModuleReadingDialog.svelte';
   import ChevronDown from '@lucide/svelte/icons/chevron-down';
   import ChevronUp from '@lucide/svelte/icons/chevron-up';
   import Ellipsis from '@lucide/svelte/icons/ellipsis';
@@ -12,15 +19,13 @@
   import { ApiError } from '../api/client';
   import type { LiveMessage } from '../live/client';
   import { requestConfirmation } from '../confirmation';
-  import type { ColumnSummary, FieldConflict, JsonValue, ModulePermission, MxRecord, SchemaResponse } from '../api/domain';
-  import {relationshipPreview} from '../api/relationships';
+  import type { ColumnSummary, JsonValue, ModulePermission, MxRecord, SchemaResponse } from '../api/domain';
   import { summaryNames, summaryValue } from '../util/columnSummaries';
   import type { Session } from '../api/types';
-  import { deleteRecord, getRecord, listRecords, loadModuleSchema, loadSchema, patchRecord } from '../api/workspace';
+  import { deleteRecord, getRecord, listRecords, loadModuleSchema, loadSchema } from '../api/workspace';
   import RecordEditor from './RecordEditor.svelte';
   import ImportRecords from './ImportRecords.svelte';
-  import RelationshipInput from './RelationshipInput.svelte';
-  import {fieldState,optionLabel,availableOptions,prepareForm} from '../util/formRules';
+  import {fieldState,optionLabel} from '../util/formRules';
   import TableScrollbar from './TableScrollbar.svelte';
   import { floatingMenu } from '../util/floating';
   import { windowPieces, mergeWindow, windowAnchor, type RecordViewPosition } from '../util/recordWindow';
@@ -28,6 +33,9 @@
 
   let { session, accessLevel, moduleUid = '', modulePermission = null, openRecordUid = '', openRequestRevision = 0, focusLinkedAttachments = false, revision = 0, liveMessage = null, recordSingular = 'Record', recordPlural = 'Records' }: { session: Session; accessLevel: number; moduleUid?: string; modulePermission?: ModulePermission | null; openRecordUid?: string; openRequestRevision?: number; focusLinkedAttachments?: boolean; revision?: number; liveMessage?: LiveMessage | null; recordSingular?: string; recordPlural?: string } = $props();
   let schema = $state<SchemaResponse | null>(null);
+  const readingPreferences = getContext<Writable<ModuleReadingMap>>(moduleReadingContext) || writable<ModuleReadingMap>({});
+  let readingOpen = $state(false);
+  let sendRecord = $state<MxRecord | null>(null);
   let importer = $state<'new' | 'history' | null>(null);
   let importMenuOpen = $state(false);
   let importMenuAnchor = $state<HTMLButtonElement | null>(null);
@@ -70,11 +78,7 @@
   let editorAnchor:RecordViewPosition|undefined;
   let editorChanges=$state<Record<string,JsonValue>|null>(null);
   let editorWritable = $state(false);
-  let cellEdit = $state<{ rowUid: string; fieldKey: string; value: string; baseRevision: number; fills:Record<string,JsonValue>; computed:Record<string,JsonValue>; previewLoading:boolean; previewError:string } | null>(null);
-  let cellRequest:AbortController|undefined;
-  onDestroy(()=>{ rememberPosition(); requestController?.abort(); edgeController?.abort(); cellRequest?.abort(); cancelAnimationFrame(importFocusFrame); cancelAnimationFrame(scrollFrame);cancelAnimationFrame(measureFrame); clearTimeout(positionTimer); });
-  let cellSaving = $state(false);
-  let cellConflict = $state<{ conflicts: FieldConflict[]; recordRevision: number } | null>(null);
+  onDestroy(()=>{ rememberPosition(); requestController?.abort(); edgeController?.abort(); cancelAnimationFrame(importFocusFrame); cancelAnimationFrame(scrollFrame);cancelAnimationFrame(measureFrame); clearTimeout(positionTimer); });
   let focusAttachments = $state(false);
   let lastRevision = $state(0);
   let columnOverrides = $state<{ shown: string[]; hidden: string[] }>({ shown: [], hidden: [] });
@@ -97,7 +101,7 @@
   const visibleFields = $derived(eligibleFields.filter((field) => selectedKeys.includes(field.key)));
   const summaryFields = $derived(visibleFields.filter(field => !!field.config.table_summary && field.config.table_summary !== 'none'));
   const searchableFields = $derived(schema?.fields.filter((field) => field.active && field.searchable && field.field_type !== 'attachments').sort((a, b) => a.position - b.position) || []);
-  const pinnedRows = $derived([cellEdit?.rowUid || '', focusedRow, rowMenuUid].filter(Boolean));
+  const pinnedRows = $derived([focusedRow, rowMenuUid].filter(Boolean));
   const columnWidths=$derived(recordColumnWidths(visibleFields,viewportWidth,measuredColumns));
   const fixedColumns=$derived(!mobileRows&&(continuous||validColumnSnapshot(measuredColumns,visibleFields,viewportWidth)));
   const tableWidth=$derived(columnWidths.reduce((sum,width)=>sum+width,0));
@@ -147,7 +151,7 @@
       else { deletedRecordUids.delete(uid); deletionGenerations.delete(uid); }
     });
   });
-  $effect(() => { if (revision !== lastRevision && schema) { lastRevision = revision; if(continuous)updatesAvailable=true;else void refresh(liveMessage?.type.startsWith('schema.') === true); } });
+  $effect(() => { if (revision !== lastRevision && schema) { lastRevision = revision; const accessOrSchema=liveMessage?.type.startsWith('schema.')||liveMessage?.type.startsWith('module.');if(continuous&&!accessOrSchema)updatesAvailable=true;else void refresh(!!accessOrSchema); } });
   $effect(() => { if (schema && openRecordUid && (openRecordUid !== openedDeepLink || openRequestRevision !== openedRequestRevision)) void openLinkedRecord(openRecordUid); });
 
   function closeRowMenuAndFocus() { rowMenuUid = ''; rowMenuAnchor?.focus({ preventScroll: true }); }
@@ -159,7 +163,11 @@
   }
   function menuKeydown(event: KeyboardEvent) {
     if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
-      event.preventDefault(); (event.currentTarget as HTMLElement).querySelector<HTMLElement>('[role="menuitem"]')?.focus();
+      event.preventDefault();
+      const items = [...(event.currentTarget as HTMLElement).querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not([disabled])')];
+      const index = items.indexOf(document.activeElement as HTMLButtonElement);
+      const next = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 : (index + (event.key === 'ArrowUp' ? -1 : 1) + items.length) % items.length;
+      items[next]?.focus();
     } else if (event.key === 'Tab') closeRowMenuAndFocus();
   }
 
@@ -403,7 +411,6 @@
     if (rows.some((row) => row.uid === uid)) total = Math.max(0, total - 1);
     rows = rows.filter((row) => row.uid !== uid);
     cursors.delete(uid);const {[uid]:removedHeight,...remainingHeights}=rowHeights;rowHeights=remainingHeights;
-    if (cellEdit?.rowUid === uid) { cellEdit = null; cellConflict = null; }
     if (rowMenuUid === uid) rowMenuUid = '';
     if (editor?.uid === uid) closeEditor();
     void restoreAnchor(anchor);
@@ -433,8 +440,7 @@
       if (!files.length) return '—';
       return files.length === 1 ? files[0].file_name : `${files.length} files`;
     }
-    const preview=cellEdit?.rowUid===row.uid?{...cellEdit.fills,...cellEdit.computed}:{};
-    const value = Object.hasOwn(preview,key)?preview[key]:row.values[key];
+    const value = row.values[key];
     if (field?.field_type === 'relationship' && row.relationships?.[key]?.restricted) return 'Access restricted';
     if (value == null || value === '') return '—';
     if (typeof value === 'boolean') return value ? 'Yes' : 'No';
@@ -447,87 +453,7 @@
     }
     return String(value);
   }
-
-  function canEditCell(field: SchemaResponse['fields'][number],row?:MxRecord) {
-    return canUpdate && !['attachments', 'auto_number', 'formula', 'lookup', 'rollup'].includes(field.field_type)&&(!row||fieldState(field,row.values).enabled);
-  }
-  function beginCellEdit(event: MouseEvent, row: MxRecord, field: SchemaResponse['fields'][number]) {
-    event.preventDefault(); event.stopPropagation();
-    if (!canEditCell(field,row) || cellSaving) return;
-    error = '';
-    const raw = row.values[field.key];
-    cellConflict = null;
-    cellRequest?.abort();
-    cellEdit = { rowUid: row.uid, fieldKey: field.key, value: field.field_type === 'boolean' ? String(raw === true) : Array.isArray(raw) ? JSON.stringify(raw) : raw == null ? '' : String(raw), baseRevision: row.revision, fills:{},computed:{},previewLoading:false,previewError:'' };
-    void tick().then(() => {
-      const control = document.querySelector<HTMLInputElement | HTMLSelectElement>('[data-active-cell-editor]');
-      control?.focus();
-      if (control instanceof HTMLInputElement && control.type === 'text') control.select();
-    });
-  }
-  function cancelCellEdit(event?: Event) { event?.stopPropagation(); cellRequest?.abort();cellEdit = null;cellConflict=null; }
-  async function resolveCellConflict(conflict:FieldConflict,keepMine:boolean) {
-    if (!cellConflict || !cellEdit || !schema) return;
-    const { recordRevision } = cellConflict;
-    if(!keepMine&&Object.keys(conflict.related_values||{}).length){cancelCellEdit();error='The latest values were kept; the conflicting choice change was cancelled.';await refresh();return;}
-    if(!keepMine){if(conflict.field_key===cellEdit.fieldKey)cellEdit.value=Array.isArray(conflict.current_value)?JSON.stringify(conflict.current_value):String(conflict.current_value??'');else cellEdit.fills[conflict.field_key]=conflict.current_value;}
-    cellConflict.conflicts=cellConflict.conflicts.filter(item=>item.field_key!==conflict.field_key);
-    if(cellConflict.conflicts.length)return;
-    const row = rows.find((item) => item.uid === cellEdit!.rowUid);
-    const field = schema.fields.find((item) => item.key === cellEdit!.fieldKey);
-    if (!row || !field) return;
-    cellEdit.baseRevision = recordRevision;
-    cellConflict = null; error = '';
-    await commitCellEdit(row, field);
-  }
-  async function selectCellRelationship(field:SchemaResponse['fields'][number],value:JsonValue){
-    if(!cellEdit)return;
-    cellRequest?.abort();const edit=cellEdit;
-    edit.value=Array.isArray(value)?JSON.stringify(value):String(value??'');edit.fills={};edit.computed={};edit.previewError='';
-    if(!schema?.fields.some(f=>['lookup','rollup'].includes(f.field_type)&&f.config.relationship_field===field.key)&&!(Array.isArray(field.config.auto_fill)&&field.config.auto_fill.length))return;
-    const controller=new AbortController();cellRequest=controller;edit.previewLoading=true;
-    try{const preview=await relationshipPreview(field.uid,value,controller.signal);if(controller.signal.aborted||cellEdit!==edit)return;edit.fills=preview.values;edit.computed=preview.computed;}
-    catch(reason){if(!controller.signal.aborted&&cellEdit===edit)edit.previewError=reason instanceof Error?reason.message:'Could not load linked fields.';}
-    finally{if(cellRequest===controller&&cellEdit===edit)edit.previewLoading=false;}
-  }
-  function cellEditValue(field: SchemaResponse['fields'][number], value: string) {
-    if (value === '') return null;
-    if (field.field_type === 'relationship' && field.config.multiple === true) { try { return JSON.parse(value); } catch { return []; } }
-    if (field.field_type === 'boolean') return value === 'true';
-    if (field.field_type === 'integer') return Number.parseInt(value, 10);
-    if (field.field_type === 'decimal') return Number(value);
-    return value;
-  }
-  async function commitCellEdit(row: MxRecord, field: SchemaResponse['fields'][number]) {
-    if (!cellEdit || cellSaving || cellEdit.rowUid !== row.uid || cellEdit.fieldKey !== field.key) return;
-    const edit = cellEdit;
-    if(edit.previewLoading||edit.previewError||cellConflict)return;
-    const nextValue = cellEditValue(field, edit.value);
-    if (!Object.keys(edit.fills).length&&JSON.stringify(nextValue) === JSON.stringify(row.values[field.key] ?? null)) { cellEdit = null; return; }
-    cellSaving = true; error = '';
-    try {
-      const input={...edit.fills,[field.key]:nextValue};
-      const prepared=prepareForm(eligibleFields,row.values,input);
-      if(prepared.resets.length&&!await requestConfirmation({title:'Clear details from the previous choice?',description:`The following fields no longer apply: ${prepared.resets.map(key=>eligibleFields.find(f=>f.key===key)?.label||key).join(', ')}. Their values will be cleared in the next record version. Stored files are retained.`,confirmLabel:'Change choice',tone:'danger'}))return;
-      if(cellEdit!==edit)return;
-      if(prepared.errors.length){openRecord(row,false,true);editorChanges=input;return;}
-      const saved = await patchRecord(row.uid, { ...edit.fills,[field.key]: nextValue }, edit.baseRevision, moduleUid || undefined);
-      if (!deletedRecordUids.has(saved.uid)) rows = rows.map((item) => item.uid === saved.uid ? saved : item);
-      cellEdit = null;
-      await refresh();
-    } catch (reason) {
-      error = reason instanceof Error ? reason.message : `The ${field.label.toLowerCase()} cell could not be saved.`;
-      if (reason instanceof ApiError && reason.status === 409 && reason.payload && typeof reason.payload === 'object') {
-        const payload = reason.payload as { conflicts?: FieldConflict[]; current_record_revision?: number };
-        if (payload.conflicts?.length) cellConflict = { conflicts: payload.conflicts, recordRevision: Number(payload.current_record_revision || row.revision) };
-      }
-    } finally { cellSaving = false; }
-  }
-  function cellEditorKeydown(event: KeyboardEvent, row: MxRecord, field: SchemaResponse['fields'][number]) {
-    event.stopPropagation();
-    if (event.key === 'Escape') { event.preventDefault(); cancelCellEdit(); }
-    else if (event.key === 'Enter' && (field.field_type !== 'long_text' || !event.shiftKey)) { event.preventDefault(); void commitCellEdit(row, field); }
-  }
+  function recordTitle(row:MxRecord){const field=eligibleFields.find(field=>field.field_type!=='attachments'&&fieldState(field,row.values).visible&&row.values[field.key]!=null&&row.values[field.key]!=='');return `${recordSingular} · ${field?display(row,field.key).slice(0,200):row.uid}`;}
 
   async function searchSubmit(event: SubmitEvent) { event.preventDefault(); page = 1; await refresh(); }
   function scheduleSearch() { window.clearTimeout(searchTimer); searchTimer = window.setTimeout(() => { page = 1; void refresh(); }, 350); }
@@ -545,7 +471,7 @@
   function resetColumns() { columnOverrides = { shown: [], hidden: [] }; selectedKeys = eligibleFields.filter((field) => field.table_visible).map((field) => field.key); saveColumnOverrides(); }
   async function changePageSize() { page = 1; await refresh(); }
   async function clearFilters() { filters = {}; search = ''; attachmentMode = ''; sortBy = ''; sortDir = 'asc'; page = 1; await refresh(); }
-  function openRecord(row: MxRecord, attachments = false, edit = false) { if (deletedRecordUids.has(row.uid)) return;editorAnchor=currentAnchor();rememberPosition(); editorChanges=null;rowMenuUid = ''; if (cellEdit) cancelCellEdit(); focusAttachments = attachments; editorWritable = edit && canUpdate; editor = row; }
+  function openRecord(row: MxRecord, attachments = false, edit = false) { if (deletedRecordUids.has(row.uid)) return;editorAnchor=currentAnchor();rememberPosition(); editorChanges=null;rowMenuUid = ''; focusAttachments = attachments; editorWritable = edit && canUpdate; editor = row; }
   function closeEditor() { const anchor=editorAnchor;editorChanges=null;focusAttachments = false; editorWritable = false; editor = undefined; if (openRecordUid) location.hash = `module/${encodeURIComponent(moduleUid || 'mx-default-records')}`;void tick().then(()=>restoreAnchor(anchor)); }
   async function removeRecord(row: MxRecord, event: MouseEvent) {
     event.stopPropagation();
@@ -567,13 +493,13 @@
     {#if canCreate}<button class="button primary records-new-button" onclick={() => { editorChanges=null;focusAttachments = false; editorWritable = true; editor = null; }}>+ New {recordSingular.toLowerCase()}</button>{/if}
     <form class="search-form" onsubmit={searchSubmit}><label class="records-search-input"><Search size={16} aria-hidden="true" /><input bind:value={search} oninput={scheduleSearch} type="search" placeholder={canAttachments ? 'Search configured fields and attachment filenames…' : 'Search configured fields…'} aria-label={`Search ${recordPlural.toLowerCase()}`} /></label><select bind:value={matchMode} onchange={() => { page = 1; void refresh(); }} aria-label="Search matching"><option value="contains">Contains</option><option value="prefix">Starts with</option><option value="exact">Exact</option></select><button class="button" type="submit">Search</button></form>
     <details class="toolbar-menu"><summary class="button">Columns</summary><div class="toolbar-popover">{#each eligibleFields as field}<label class="checkbox"><input type="checkbox" checked={selectedKeys.includes(field.key)} onchange={(event) => toggleColumn(field.key, event.currentTarget.checked)} /> {field.label}</label>{/each}<button class="button small" type="button" onclick={resetColumns}>Use administrator defaults</button><small>Only your overrides are saved, so new fields can follow the deployment defaults.</small></div></details>
+    <button class="button reading-settings-button" type="button" onclick={() => readingOpen = true} disabled={!schema}><Bold size={15} aria-hidden="true"/>Reading settings</button>
     <button class="button records-refresh-button" onclick={() => refresh(true)}>Refresh</button>
     {#if canCreate && schema}<button class="button module-import-trigger" type="button" data-module-import-actions aria-label="Module actions" title="Module actions" aria-haspopup="menu" aria-expanded={importMenuOpen} aria-controls={importMenuOpen ? 'module-import-menu' : undefined} onclick={toggleImportMenu} onkeydown={importTriggerKeydown}><Ellipsis size={18} aria-hidden="true" /></button>{/if}
   </div>
     <details class="advanced-search"><summary>Advanced filters and sorting</summary><form class="filter-grid" onsubmit={searchSubmit}>{#each searchableFields as field}<label>{field.label}{#if field.field_type === 'select'}<select value={filters[field.key] || ''} onchange={(event) => filters[field.key] = event.currentTarget.value}><option value="">Any value</option>{#each (field.config.options as (string | number | boolean)[] || []) as option}<option value={String(option)}>{String(option)}</option>{/each}</select>{:else if field.field_type === 'boolean'}<select value={filters[field.key] || ''} onchange={(event) => filters[field.key] = event.currentTarget.value}><option value="">Either</option><option value="true">Yes</option><option value="false">No</option></select>{:else}<input type={field.field_type === 'date' ? 'date' : ['integer', 'decimal', 'formula'].includes(field.field_type) ? 'number' : 'text'} value={filters[field.key] || ''} oninput={(event) => filters[field.key] = event.currentTarget.value} placeholder={field.field_type === 'date' ? undefined : 'Field contains…'} />{/if}</label>{/each}{#if canAttachments}<label>Attachments<select bind:value={attachmentMode}><option value="">With or without files</option><option value="with">With attachments</option><option value="without">Without attachments</option></select></label>{/if}<label>Sort field<select bind:value={sortBy}><option value="">Default order</option>{#each eligibleFields.filter((field) => field.sortable) as field}<option value={field.key}>{field.label}</option>{/each}</select></label><label>Sort direction<select bind:value={sortDir}><option value="asc">Ascending</option><option value="desc">Descending</option></select></label><div class="button-row"><button class="button primary">Apply filters</button><button class="button" type="button" onclick={clearFilters}>Clear all</button></div></form></details>
   {#if error}<div class="notice error">{error}</div>{/if}
-  {#if continuous && updatesAvailable}<div class="record-updates" role="status"><span>Records changed. Your browsing position is kept.</span><button class="button small" disabled={loading||!!cellEdit} onclick={()=>void refresh(true)}>Refresh this view</button></div>{/if}
-  {#if cellConflict}{#each cellConflict.conflicts as conflict}<div class="notice record-cell-conflict"><div><strong>{conflict.label} changed elsewhere</strong><small>Stored: {String(conflict.current_value ?? 'Empty')} · Yours: {String(conflict.your_value ?? 'Empty')}</small></div><div class="inline-actions"><button class="button small" type="button" onclick={()=>void resolveCellConflict(conflict,false)}>Use stored</button><button class="button primary small" type="button" onclick={() => void resolveCellConflict(conflict,true)}>Keep mine</button></div></div>{/each}{/if}
+  {#if continuous && updatesAvailable}<div class="record-updates" role="status"><span>Records changed. Your browsing position is kept.</span><button class="button small" disabled={loading} onclick={()=>void refresh(true)}>Refresh this view</button></div>{/if}
   <div class="records-view-controls">
     <div class="records-result-summary" aria-live="polite" aria-label={`${total.toLocaleString()} ${total === 1 ? recordSingular.toLowerCase() : recordPlural.toLowerCase()}`}>
       <span><strong>{total.toLocaleString()}</strong> {total === 1 ? 'result' : 'results'}</span>
@@ -583,13 +509,13 @@
       <button class="button" aria-label="Load earlier" title="Load earlier records" disabled={loading||edgeLoading||!windowBefore} onclick={()=>void loadEdge('before')}><ChevronUp size={16} aria-hidden="true" /></button>
       <button class="button" aria-label="Load more" title="Load more records" disabled={loading||edgeLoading||!windowAfter} onclick={()=>void loadEdge('after')}><ChevronDown size={16} aria-hidden="true" /></button>
     </div>{/if}
-    <label>View<select aria-label="Record navigation" value={String(continuous)} disabled={!!cellEdit||cellSaving} onchange={event=>viewChanged(event.currentTarget.value==='true')}><option value="false">Pages</option><option value="true">Continuous scroll</option></select></label>
-    {#if continuous}<label>Batch<select aria-label="Record batch size" bind:value={pageSize} disabled={!!cellEdit||cellSaving} onchange={()=>viewChanged()}><option value={25}>25</option><option value={50}>50</option><option value={100}>100</option><option value={256}>256</option></select></label>{/if}
+    <label>View<select aria-label="Record navigation" value={String(continuous)} onchange={event=>viewChanged(event.currentTarget.value==='true')}><option value="false">Pages</option><option value="true">Continuous scroll</option></select></label>
+    {#if continuous}<label>Batch<select aria-label="Record batch size" bind:value={pageSize} onchange={()=>viewChanged()}><option value={25}>25</option><option value={50}>50</option><option value={100}>100</option><option value={256}>256</option></select></label>{/if}
   </div>
   <div class="table-wrap records-table" class:continuous-records={continuous} aria-busy={loading} id={`records-table-${moduleUid || 'default'}`} bind:this={tableViewport} use:observeViewport onscroll={scrolled} onfocusin={event=>focusedRow=(event.target as Element)?.closest<HTMLElement>('[data-record-uid]')?.dataset.recordUid||''} onfocusout={event=>focusedRow=(event.relatedTarget as Element)?.closest?.<HTMLElement>('[data-record-uid]')?.dataset.recordUid||''}>
     <table aria-label={recordPlural} aria-rowcount={continuous?-1:undefined} style:table-layout={fixedColumns?'fixed':undefined} style:width={fixedColumns?`${tableWidth}px`:undefined}>
       {#if fixedColumns}<colgroup>{#each columnWidths as width}<col style:width={`${width}px`}/>{/each}</colgroup>{/if}
-      <thead><tr aria-rowindex={continuous?1:undefined}><th class="row-index-column">#</th>{#each visibleFields as field}<th><button class="table-sort" class:sortable={field.sortable} onclick={() => field.sortable && sort(field.key)}>{field.label}{#if sortBy === field.key}{#if sortDir === 'asc'}<ChevronUp size={14} />{:else}<ChevronDown size={14} />{/if}{/if}</button></th>{/each}<th class="record-actions-column">Actions</th></tr></thead>
+      <thead><tr aria-rowindex={continuous?1:undefined}><th class="row-index-column">#</th>{#each visibleFields as field}<th data-field-uid={field.uid} class:personal-field-bold={fieldIsBold($readingPreferences,moduleUid,field.uid)}><button class="table-sort" class:sortable={field.sortable} onclick={() => field.sortable && sort(field.key)}>{field.label}{#if sortBy === field.key}{#if sortDir === 'asc'}<ChevronUp size={14} />{:else}<ChevronDown size={14} />{/if}{/if}</button></th>{/each}<th class="record-actions-column">Actions</th></tr></thead>
       <tbody>
         {#if loading && !rows.length}
           <tr class="records-state-row"><td class="table-message" colspan={visibleFields.length + 2}>Loading {recordPlural.toLowerCase()}…</td></tr>
@@ -601,41 +527,24 @@
             {:else}
             {@const rowIndex=piece.index}
             {@const row=rows[rowIndex]}
-            <tr data-record-uid={row.uid} aria-rowindex={continuous?baseIndex+rowIndex+2:undefined} use:measureRow={row.uid} onclick={(event) => { if (event.target instanceof Element && event.target.closest('.relationship-input')) return; openRecord(row); }} class="clickable-row">
+            <tr data-record-uid={row.uid} aria-rowindex={continuous?baseIndex+rowIndex+2:undefined} use:measureRow={row.uid} onclick={(event) => { if (event.target instanceof Element && event.target.closest('button,a,input,textarea,select')) return; if (window.getSelection()?.toString()) return; openRecord(row); }} class="clickable-row">
               <td class="row-index-column" data-label="Row"><span title={`${recordSingular} ${row.uid}${continuous?' · position in this browsing session':''}`}>{rowNumber(rowIndex)}</span></td>
               {#each visibleFields as field}
-                {@const editingCell = cellEdit?.rowUid === row.uid && cellEdit.fieldKey === field.key}
-                <td class:inline-editable-cell={canEditCell(field,row)} class:editing-cell={editingCell} class={field.field_type === 'long_text' ? 'long-text-cell' : ''} data-label={field.label} data-field-type={field.field_type} title={editingCell || canEditCell(field,row) || field.field_type === 'long_text' ? undefined : display(row, field.key)}>
-                  {#if !fieldState(field,row.values).visible}<span class="muted">Not applicable</span>
+                <td class:personal-field-bold={fieldIsBold($readingPreferences,moduleUid,field.uid)} class={field.field_type === 'long_text' ? 'long-text-cell' : ''} data-field-uid={field.uid} data-label={field.label} data-field-type={field.field_type} title={field.field_type === 'long_text' ? undefined : display(row, field.key)}>
+                  {#if row.restricted_fields?.includes(field.key)}<span class="muted">Restricted</span>
+                  {:else if !fieldState(field,row.values).visible}<span class="muted">Not applicable</span>
                   {:else if field.field_type === 'attachments'}
                     {@const fieldFiles = row.attached_files.filter((file) => file.attachment_field_uid === field.uid)}
                     <button class="attachment-cell-button" class:empty={!fieldFiles.length} onclick={(event) => { event.stopPropagation(); openRecord(row, true); }}>{fieldFiles.length ? `${fieldFiles.length} file${fieldFiles.length === 1 ? '' : 's'}` : 'No files'}</button>
-                  {:else if editingCell && cellEdit}
-                    {#if field.field_type === 'relationship'}
-                      <RelationshipInput {field} value={field.config.multiple === true ? JSON.parse(cellEdit.value || '[]') : cellEdit.value || null} labels={row.relationships?.[field.key]} disabled={cellSaving||!!cellConflict} onChange={value=>void selectCellRelationship(field,value)} />
-                      {#if cellEdit.previewLoading}<small role="status">Loading linked fields…</small>{/if}
-                      {#if cellEdit.previewError}<p role="alert">{cellEdit.previewError}</p><button class="button small" type="button" onclick={()=>void selectCellRelationship(field,cellEditValue(field,cellEdit!.value))}>Retry linked fields</button>{/if}
-                      <div class="inline-actions"><button type="button" class="button small primary" disabled={cellSaving||cellEdit.previewLoading||!!cellEdit.previewError||!!cellConflict} onclick={event=>{event.stopPropagation();void commitCellEdit(row,field);}}>Save link</button><button type="button" class="button small" disabled={cellSaving} onclick={event=>{event.stopPropagation();cancelCellEdit();}}>Cancel</button></div>
-                    {:else if field.field_type === 'long_text'}
-                      <textarea class="cell-editor long-text-cell-editor" data-active-cell-editor bind:value={cellEdit.value} disabled={cellSaving} rows="4" onclick={(event) => event.stopPropagation()} onkeydown={(event) => cellEditorKeydown(event, row, field)} onblur={() => void commitCellEdit(row, field)} aria-label={`Edit ${field.label}`} placeholder="Enter text · Shift + Enter for a new line"></textarea>
-                    {:else if field.field_type === 'select'}
-                      <select class="cell-editor" aria-label={`Edit ${field.label}`} data-active-cell-editor bind:value={cellEdit.value} disabled={cellSaving} onclick={(event) => event.stopPropagation()} onkeydown={(event) => cellEditorKeydown(event, row, field)} onblur={() => void commitCellEdit(row, field)}><option value="">Select…</option>{#each availableOptions(field,row.values) as option}<option value={option}>{optionLabel(field,option)}</option>{/each}</select>
-                    {:else if field.field_type === 'boolean'}
-                      <select class="cell-editor" data-active-cell-editor bind:value={cellEdit.value} disabled={cellSaving} onclick={(event) => event.stopPropagation()} onkeydown={(event) => cellEditorKeydown(event, row, field)} onblur={() => void commitCellEdit(row, field)}><option value="true">Yes</option><option value="false">No</option></select>
-                    {:else}
-                      <input class="cell-editor" data-active-cell-editor bind:value={cellEdit.value} disabled={cellSaving} type={field.field_type === 'date' ? 'date' : ['integer', 'decimal'].includes(field.field_type) ? 'number' : 'text'} step={field.field_type === 'decimal' ? 'any' : field.field_type === 'integer' ? 1 : undefined} onclick={(event) => event.stopPropagation()} onkeydown={(event) => cellEditorKeydown(event, row, field)} onblur={() => void commitCellEdit(row, field)} />
-                    {/if}
-                  {:else if canEditCell(field,row)}
-                    <button class="cell-edit-button" type="button" disabled={cellSaving} title={`Edit ${field.label}`} aria-label={`Edit ${field.label} for row ${rowNumber(rowIndex)}`} onclick={(event) => beginCellEdit(event, row, field)}><span>{display(row, field.key)}</span><Pencil size={12} /></button>
                   {:else}
-                    {display(row, field.key)}
+                    <span class="record-cell-value">{display(row, field.key)}</span>
                   {/if}
                 </td>
               {/each}
               <td class="record-actions-column">
                 <div class="record-row-actions" data-record-actions={row.uid}>
                   <button class="button record-primary-action" type="button" title={canUpdate ? `Edit ${recordSingular.toLowerCase()}` : `View ${recordSingular.toLowerCase()}`} aria-label={`${canUpdate ? 'Edit' : 'View'} ${recordSingular} ${rowNumber(rowIndex)}`} onclick={(event) => { event.stopPropagation(); rowMenuUid = ''; openRecord(row, false, canUpdate); }}>{#if canUpdate}<Pencil size={14} /><span>Edit</span>{:else}<Eye size={14} /><span>View</span>{/if}</button>
-                  {#if canDelete}<button class="record-actions-trigger" type="button" aria-label={`More actions for ${recordSingular} ${rowNumber(rowIndex)}`} aria-haspopup="menu" aria-expanded={rowMenuUid === row.uid} onclick={(event) => toggleRowMenu(event, row.uid)}><Ellipsis size={17} /></button>{/if}
+                  <button class="record-actions-trigger" type="button" aria-label={`More actions for ${recordSingular} ${rowNumber(rowIndex)}`} aria-haspopup="menu" aria-expanded={rowMenuUid === row.uid} onclick={(event) => toggleRowMenu(event, row.uid)}><Ellipsis size={17} /></button>
                 </div>
               </td>
             </tr>
@@ -656,9 +565,10 @@
 
 <TableScrollbar target={tableViewport} enabled={editor === undefined} alwaysVisible={continuous} />
 
-{#if canDelete && menuRow && rowMenuAnchor}
+{#if menuRow && rowMenuAnchor}
   <div class="record-row-menu" data-record-actions={menuRow.uid} role="menu" aria-label={`${recordSingular} actions`} tabindex="-1" onkeydown={menuKeydown} use:floatingMenu={{ anchor: rowMenuAnchor, close: () => rowMenuUid = '' }}>
-    <button class="danger-text" role="menuitem" type="button" disabled={deletingUid === menuRow.uid} onclick={(event) => removeRecord(menuRow, event)}><Trash2 size={14} />{deletingUid === menuRow.uid ? 'Moving…' : 'Move to trash'}</button>
+    <button role="menuitem" type="button" onclick={() => { sendRecord = menuRow!; closeRowMenuAndFocus(); }}><Send size={14}/>Send record</button>
+    {#if canDelete}<button class="danger-text" role="menuitem" type="button" disabled={deletingUid === menuRow.uid} onclick={(event) => removeRecord(menuRow, event)}><Trash2 size={14} />{deletingUid === menuRow.uid ? 'Moving…' : 'Move to trash'}</button>{/if}
   </div>
 {/if}
 
@@ -671,9 +581,15 @@
 
 {#if editor !== undefined && schema}<RecordEditor {schema} {moduleUid} record={editor} initialChanges={editorChanges} canWrite={editor === null ? canCreate : editorWritable && canUpdate} canDelete={editorWritable && canDelete} {canAttachments} allowEdit={editor !== null && canUpdate} {liveMessage} {focusAttachments} recordLabel={recordSingular} onEdit={() => editorWritable = true} onClose={closeEditor} onSaved={() => refresh(true)} />{/if}
 
+{#if readingOpen && schema}<ModuleReadingDialog {moduleUid} moduleName={recordPlural} fields={eligibleFields} onSaved={preferences => $readingPreferences = preferences} onClose={() => readingOpen = false}/>{/if}
+{#if sendRecord}<SendRecordDialog recordUid={sendRecord.uid} recordLabel={recordTitle(sendRecord)} onClose={() => sendRecord = null}/>{/if}
+
 {#if importer && schema}{#key moduleUid}<ImportRecords {schema} {moduleUid} history={importer === 'history'} onClose={() => { importer = null; importMenuAnchor?.focus({ preventScroll: true }); }} onChanged={() => refresh(true)} />{/key}{/if}
 
 <style>
+  .personal-field-bold,.personal-field-bold .table-sort,.personal-field-bold .attachment-cell-button{font-weight:750;}
+  .long-text-cell .record-cell-value{display:block;white-space:pre-wrap;overflow-wrap:anywhere;}
+  .reading-settings-button{order:3;}
   .records-page.continuous-page{display:flex;flex-direction:column;width:100%;max-width:none;min-width:0;height:calc(100dvh - var(--topbar-height));min-height:24rem;padding-bottom:max(.5rem,env(safe-area-inset-bottom));}
   .records-page.continuous-page>*{min-width:0;}
   .continuous-page>:not(.continuous-records){flex-shrink:0;}
@@ -695,6 +611,11 @@
   .module-import-menu button:hover, .module-import-menu button:focus-visible { background: var(--surface-2); }
   .module-import-menu button :global(svg) { flex-shrink: 0; }
   @media (max-width: 760px) {
-    .records-toolbar { grid-template-columns: minmax(0, 1fr) auto auto; }
+    .records-toolbar { grid-template-columns: repeat(2,minmax(0,1fr)); }
+    .records-toolbar .toolbar-menu{min-width:0;}
+    .records-toolbar .toolbar-menu>summary{min-width:0;width:100%;justify-content:center;white-space:normal;}
+    .records-toolbar>.reading-settings-button,.records-toolbar>.records-refresh-button{min-width:0;width:100%;justify-content:center;white-space:normal;}
+    .module-import-trigger{justify-self:end;}
   }
+  @media(max-width:480px){.records-toolbar .search-form{grid-template-columns:minmax(0,1fr);}.records-toolbar .search-form>*{grid-column:1/-1;}.records-toolbar .search-form>select{width:100%;}}
 </style>

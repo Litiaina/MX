@@ -28,6 +28,7 @@ pub(crate) fn initialize(connection: &Connection) -> rusqlite::Result<()> {
     api::audit::ensure_audit_schema(connection)?;
     api::operations::ensure_schema(connection)?;
     api::mx::imports::ensure(connection)?;
+    api::mx::privacy::ensure(connection)?;
     api::drive::ensure_drive_schema(connection)?;
     api::reports::ensure_reporting_schema(connection)?;
     api::backup::ensure_backup_schema(connection)?;

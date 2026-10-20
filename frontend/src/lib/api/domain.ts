@@ -28,6 +28,7 @@ export interface SystemFieldDefinition {
 }
 
 export interface SchemaResponse {
+  viewer_access_level?:number;
   revision: number;
   fields: FieldDefinition[];
   system_fields: SystemFieldDefinition[];
@@ -102,6 +103,8 @@ export interface FileAttachment {
 export interface RelationshipState { restricted: boolean; items: {uid:string;label:string}[] }
 
 export interface MxRecord {
+  restricted_fields?:string[];
+  creator_uid?:string|null;
   relationships?: Record<string, RelationshipState>;
   uid: string;
   revision: number;
@@ -243,6 +246,9 @@ export interface NotificationSoundInfo {
   url?: string;
 }
 
+export interface ModuleReadingPreferences { bold_fields: string[] }
+export type ModuleReadingMap = Record<string, ModuleReadingPreferences>;
+
 export interface UserPreferences {
   theme: 'light' | 'dark' | 'system' | null;
   accent_color: string | null;
@@ -255,6 +261,7 @@ export interface UserPreferences {
   reduced_motion: boolean | null;
   auto_refresh_seconds: number | null;
   default_workspace: string | null;
+  module_reading?: ModuleReadingMap;
   notifications: NotificationPreferences;
 }
 

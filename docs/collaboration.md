@@ -50,9 +50,28 @@ use this buffer or total deadline.
 
 A pending new-record operation is retained with its draft in the current tab's
 session storage. A lost save response does not mean the server failed to save:
-retry the retained operation to reconcile it. Inline cell editing keeps the
-original revision loaded when editing began, even after a background refresh.
-Concurrent edits still use the normal field-conflict decisions.
+retry the retained operation to reconcile it. Record editing happens in the full
+form, not individual table cells. Concurrent edits still use the normal
+field-conflict decisions.
+
+### Send a record directly to a person
+
+In a module, choose a row's **⋯ → Send record**, or use **Send record** in the
+record viewer/editor. Search for a person, select them, add an optional context
+message, and click **Send record**. MX creates or reuses your direct conversation
+and sends the message with a linked record card. The recipient receives the
+normal collaboration notification. You stay in the module; no clipboard or
+manual conversation navigation is required.
+
+This sends a live link to the **saved** record, not a copy of unsaved form edits
+or an attachment. An editor with unsaved changes warns you before sending.
+Recipients must already have module access to see the record card; otherwise
+only your message is visible. Sending never grants permissions. **Copy link**
+remains available as a separate utility.
+
+After an uncertain response, **Retry same send** reuses the original operation,
+recipient and message to avoid duplicate messages or notifications. The pending
+send is retained only while the dialog remains open, not as a durable outbox.
 
 Chat composers retain separate in-memory drafts per conversation. After an
 uncertain send, **Retry send** reconciles the original message operation;

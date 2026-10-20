@@ -202,17 +202,26 @@ fn api_json(status: StatusCode, body: JsonValue) -> Response {
 async fn record_module_permission(
     record_uid: String,
     user_uid: String,
-    access_level: i64,
+    _access_level: i64,
     capability: &'static str,
 ) -> Option<String> {
     tokio::task::spawn_blocking(move || {
         with_sql_connection(|connection| {
             ensure_record_lifecycle_schema(connection)?;
+            let access_level = crate::api::mx::privacy::level(connection, &user_uid)?;
             let module_uid = connection.query_row(
                 "SELECT module_uid FROM mx_records WHERE uid=?1 AND deleted_at IS NULL",
                 params![record_uid],
                 |row| row.get::<_, String>(0),
             )?;
+            if !crate::api::mx::privacy::record_allowed(
+                connection,
+                &record_uid,
+                &user_uid,
+                access_level,
+            )? {
+                return Ok(None);
+            }
             if module_can_for_user(connection, &module_uid, &user_uid, access_level, capability)?
                 && module_can_for_user(
                     connection,
@@ -232,6 +241,20 @@ async fn record_module_permission(
     .ok()
     .and_then(Result::ok)
     .flatten()
+}
+
+async fn attachment_privacy(
+    record_uid: String,
+    field_or_attachment: String,
+    is_field: bool,
+    actor: String,
+    _level: i64,
+) -> bool {
+    tokio::task::spawn_blocking(move||with_sql_connection(|c|{
+        let level=crate::api::mx::privacy::level(c,&actor)?;
+        let field=if is_field {field_or_attachment}else{c.query_row("SELECT COALESCE(attachment_field_uid,'') FROM mx_attachments WHERE uid=?1 AND entry_uid=?2",params![field_or_attachment,record_uid],|r|r.get::<_,String>(0))?};
+        crate::api::mx::privacy::field_record_allowed(c,&record_uid,&field,&actor,level)
+    })).await.ok().and_then(Result::ok).unwrap_or(false)
 }
 
 async fn attachment_field_belongs_to_module(field_uid: String, module_uid: String) -> bool {
@@ -1766,6 +1789,7 @@ async fn execute_insert_attachment(
     entry_uid: String,
     attachment: FileAttachment,
     base_revision: i64,
+    actor_uid: String,
 ) -> Result<i64, MxOperationError> {
     let database_result =
         tokio::task::spawn_blocking(move || -> Result<i64, SqliteDatabaseError> {
@@ -1777,6 +1801,10 @@ async fn execute_insert_attachment(
                     connection,
                     rusqlite::TransactionBehavior::Immediate,
                 )?;
+                let level=crate::api::mx::privacy::level(&transaction,&actor_uid)?;
+                let module:String=transaction.query_row("SELECT module_uid FROM mx_records WHERE uid=?1 AND deleted_at IS NULL",[&entry_uid],|r|r.get(0))?;
+                if level>2 || !module_can_for_user(&transaction,&module,&actor_uid,level,"update")? || !module_can_for_user(&transaction,&module,&actor_uid,level,"attachments")? {return Err(rusqlite::Error::InvalidParameterName("Attachment permissions changed during upload. No attachment was added.".into()));}
+                if !crate::api::mx::privacy::field_record_allowed(&transaction,&entry_uid,attachment.attachment_field_uid.as_deref().unwrap_or(""),&actor_uid,level)? {return Err(rusqlite::Error::InvalidParameterName("Attachment access changed during upload. No attachment was added.".into()));}
                 let current_revision: i64 = transaction.query_row(
                     "SELECT revision FROM mx_records WHERE uid=?1 AND deleted_at IS NULL",
                     params![entry_uid],
@@ -1913,6 +1941,7 @@ async fn execute_delete_attachment_metadata(
     entry_uid: String,
     attachment_uid: String,
     base_revision: i64,
+    actor_uid: String,
 ) -> Result<i64, SqliteError> {
     let database_result =
         tokio::task::spawn_blocking(move || -> Result<i64, SqliteDatabaseError> {
@@ -1923,6 +1952,11 @@ async fn execute_delete_attachment_metadata(
                     connection,
                     rusqlite::TransactionBehavior::Immediate,
                 )?;
+                let level=crate::api::mx::privacy::level(&transaction,&actor_uid)?;
+                let field:String=transaction.query_row("SELECT COALESCE(attachment_field_uid,'') FROM mx_attachments WHERE uid=?1 AND entry_uid=?2",params![attachment_uid,entry_uid],|r|r.get(0))?;
+                let module:String=transaction.query_row("SELECT module_uid FROM mx_records WHERE uid=?1 AND deleted_at IS NULL",[&entry_uid],|r|r.get(0))?;
+                if level>1 || !module_can_for_user(&transaction,&module,&actor_uid,level,"delete")? || !module_can_for_user(&transaction,&module,&actor_uid,level,"attachments")? {return Err(rusqlite::Error::InvalidParameterName("Attachment permissions changed. No attachment was removed.".into()));}
+                if !crate::api::mx::privacy::field_record_allowed(&transaction,&entry_uid,&field,&actor_uid,level)? {return Err(rusqlite::Error::InvalidParameterName("Attachment access changed. No attachment was removed.".into()));}
                 let current_revision: i64 = transaction.query_row(
                     "SELECT revision FROM mx_records WHERE uid=?1 AND deleted_at IS NULL",
                     params![entry_uid],
@@ -1980,6 +2014,7 @@ pub async fn execute_upload_mx_attachment(
     mime_type: String,
     bytes: Vec<u8>,
     base_revision: i64,
+    actor_uid: String,
 ) -> Result<(FileAttachment, i64), MxOperationError> {
     if bytes.is_empty() {
         return Err(MxOperationError::InvalidRequest(
@@ -2134,7 +2169,9 @@ pub async fn execute_upload_mx_attachment(
     };
 
     let revision =
-        match execute_insert_attachment(entry_uid, attachment.clone(), base_revision).await {
+        match execute_insert_attachment(entry_uid, attachment.clone(), base_revision, actor_uid)
+            .await
+        {
             Ok(revision) => revision,
             Err(error) => {
                 let _ = n1_soft_delete(&object_key).await;
@@ -2149,12 +2186,15 @@ pub async fn execute_delete_mx_attachment(
     entry_uid: String,
     attachment_uid: String,
     base_revision: i64,
+    actor_uid: String,
 ) -> Result<i64, MxOperationError> {
     let attachment = execute_get_attachment(entry_uid.clone(), attachment_uid.clone()).await?;
 
     n1_soft_delete(&attachment.object_key).await?;
 
-    match execute_delete_attachment_metadata(entry_uid, attachment_uid, base_revision).await {
+    match execute_delete_attachment_metadata(entry_uid, attachment_uid, base_revision, actor_uid)
+        .await
+    {
         Ok(revision) => Ok(revision),
         Err(error) => {
             let _ = n1_recover(&attachment.object_key).await;
@@ -2423,6 +2463,7 @@ async fn upload_mx_attachments_inner(
             mime_type,
             bytes,
             upload_base_revision,
+            actor_uid.clone(),
         )
         .await
         {
@@ -2466,7 +2507,7 @@ async fn upload_mx_attachments_inner(
                 attachment.file_name
             ),
             entry_uid.clone(),
-            json!({"record_uid":entry_uid,"module_uid":module_uid,"attachment_uid":attachment.uid,"file_name":attachment.file_name}),
+            json!({"record_uid":entry_uid,"module_uid":module_uid,"attachment_uid":attachment.uid,"attachment_field_uid":attachment.attachment_field_uid,"file_name":attachment.file_name}),
         ));
     }
 
@@ -2482,6 +2523,17 @@ pub async fn upload_mx_attachment_field(
     multipart: Multipart,
 ) -> Response {
     if !claims.can_write_records() {
+        return mx_access_denied();
+    }
+    if !attachment_privacy(
+        entry_uid.clone(),
+        attachment_field_uid.clone(),
+        true,
+        claims.uid.clone(),
+        claims.access_level,
+    )
+    .await
+    {
         return mx_access_denied();
     }
     let Some(module_uid) = record_module_permission(
@@ -2515,6 +2567,17 @@ pub async fn delete_mx_attachment(
     Path((entry_uid, attachment_uid)): Path<(String, String)>,
     Query(query): Query<AttachmentMutationQuery>,
 ) -> Response {
+    if !attachment_privacy(
+        entry_uid.clone(),
+        attachment_uid.clone(),
+        false,
+        claims.uid.clone(),
+        claims.access_level,
+    )
+    .await
+    {
+        return mx_access_denied();
+    }
     if !claims.can_delete_records()
         || record_module_permission(
             entry_uid.clone(),
@@ -2531,7 +2594,14 @@ pub async fn delete_mx_attachment(
     let record_uid = entry_uid.clone();
     let deleted_attachment_uid = attachment_uid.clone();
 
-    match execute_delete_mx_attachment(entry_uid, attachment_uid, query.base_revision).await {
+    match execute_delete_mx_attachment(
+        entry_uid,
+        attachment_uid,
+        query.base_revision,
+        claims.uid.clone(),
+    )
+    .await
+    {
         Ok(record_revision) => {
             capture_record_lifecycle_event(
                 record_uid.clone(),
@@ -2565,6 +2635,17 @@ pub async fn issue_mx_attachment_preview_ticket(
     claims: Claims,
     Path((record_uid, attachment_uid)): Path<(String, String)>,
 ) -> Response {
+    if !attachment_privacy(
+        record_uid.clone(),
+        attachment_uid.clone(),
+        false,
+        claims.uid.clone(),
+        claims.access_level,
+    )
+    .await
+    {
+        return mx_access_denied();
+    }
     if !claims.can_read_records()
         || record_module_permission(
             record_uid.clone(),
@@ -2676,6 +2757,17 @@ pub async fn stream_mx_attachment(Path(ticket): Path<String>, headers: HeaderMap
             json!({"response":"preview link expired; reopen the file"}),
         );
     };
+    if !attachment_privacy(
+        ticket_data.record_uid.clone(),
+        ticket_data.attachment_uid.clone(),
+        false,
+        ticket_data.user_uid.clone(),
+        ticket_data.access_level,
+    )
+    .await
+    {
+        return mx_access_denied();
+    }
 
     if record_module_permission(
         ticket_data.record_uid.clone(),
@@ -2701,6 +2793,17 @@ pub async fn preview_mx_attachment(
     Path((entry_uid, attachment_uid)): Path<(String, String)>,
     headers: HeaderMap,
 ) -> Response {
+    if !attachment_privacy(
+        entry_uid.clone(),
+        attachment_uid.clone(),
+        false,
+        claims.uid.clone(),
+        claims.access_level,
+    )
+    .await
+    {
+        return mx_access_denied();
+    }
     if !claims.can_read_records()
         || record_module_permission(
             entry_uid.clone(),
@@ -2769,6 +2872,17 @@ pub async fn download_mx_attachment(
     claims: Claims,
     Path((entry_uid, attachment_uid)): Path<(String, String)>,
 ) -> Response {
+    if !attachment_privacy(
+        entry_uid.clone(),
+        attachment_uid.clone(),
+        false,
+        claims.uid.clone(),
+        claims.access_level,
+    )
+    .await
+    {
+        return mx_access_denied();
+    }
     if !claims.can_read_records()
         || record_module_permission(
             entry_uid.clone(),

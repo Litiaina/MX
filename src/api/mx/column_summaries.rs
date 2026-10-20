@@ -32,7 +32,8 @@ pub fn validate(field_type: &str, input: &Value, mut clean: Value) -> Result<Val
     if !matches!(
         field_type,
         "integer" | "decimal" | "formula" | "auto_number"
-    ) || !matches!(method, "sum" | "average" | "min" | "max" | "count")
+    ) || (field_type == "formula" && super::calculated::text(&clean))
+        || !matches!(method, "sum" | "average" | "min" | "max" | "count")
         || (field_type == "auto_number" && method != "count")
     {
         return Err("Choose sum, average, minimum, maximum or count for a numeric field; auto numbers support count only.".into());
@@ -181,6 +182,47 @@ pub fn calculate(
                 "Column summary exceeds the supported numeric range.".into(),
             ));
         }
+    }
+    Ok(result)
+}
+
+pub(crate) fn calculate_scoped(
+    c: &Connection,
+    fields: &[FieldDefinition],
+    clause: &str,
+    parameters: &[SqlValue],
+    actor: Option<&str>,
+    level: i64,
+) -> rusqlite::Result<BTreeMap<String, ColumnSummary>> {
+    let Some(actor) = actor.filter(|_| level != 0) else {
+        return calculate(c, fields, clause, parameters);
+    };
+    let mut result = BTreeMap::new();
+    for field in fields
+        .iter()
+        .filter(|f| f.config.get("table_summary").is_some())
+    {
+        let scope = super::privacy::scope_sql(
+            field.config["access_scope"].as_str().unwrap_or("module"),
+            "e",
+            actor,
+            level,
+        );
+        let mut calculation_fields = fields.to_vec();
+        for candidate in &mut calculation_fields {
+            if candidate.uid != field.uid {
+                candidate
+                    .config
+                    .as_object_mut()
+                    .map(|object| object.remove("table_summary"));
+            }
+        }
+        result.extend(calculate(
+            c,
+            &calculation_fields,
+            &format!("{clause} AND {scope}"),
+            parameters,
+        )?);
     }
     Ok(result)
 }

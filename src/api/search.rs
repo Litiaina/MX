@@ -54,8 +54,13 @@ fn search_records(
     limit: usize,
 ) -> rusqlite::Result<Vec<GlobalSearchResult>> {
     ensure_record_lifecycle_schema(connection)?;
+    crate::api::mx::privacy::ensure(connection)?;
+    let row_scope = crate::api::mx::privacy::record_sql("record", user_uid, access_level);
+    let field_scope = crate::api::mx::privacy::field_sql("field", "record", user_uid, access_level);
+    let file_scope =
+        crate::api::mx::privacy::attachment_sql("attachment", "record", user_uid, access_level);
     let pattern = like_pattern(query);
-    let mut statement = connection.prepare(
+    let mut statement = connection.prepare(&format!(
         r#"
         SELECT
             record.uid,
@@ -69,14 +74,14 @@ fn search_records(
                     WHEN 'integer' THEN CAST(value.value_integer AS TEXT)
                     WHEN 'auto_number' THEN CAST(value.value_integer AS TEXT)
                     WHEN 'decimal' THEN CAST(value.value_real AS TEXT)
-                    WHEN 'formula' THEN CAST(value.value_real AS TEXT)
+                    WHEN 'formula' THEN COALESCE(value.value_text,CAST(value.value_real AS TEXT))
                     WHEN 'boolean' THEN CASE value.value_boolean WHEN 1 THEN 'Yes' ELSE 'No' END
                     ELSE NULLIF(TRIM(value.value_text), '')
                 END
                 FROM mx_record_values value
                 JOIN mx_fields field ON field.uid = value.field_uid
                 WHERE value.record_uid = record.uid
-                  AND field.active = 1
+                  AND field.active = 1 AND {field_scope}
                   AND field.field_type NOT IN ('attachments','relationship','lookup','rollup')
                 ORDER BY field.position, field.rowid
                 LIMIT 1
@@ -86,20 +91,20 @@ fn search_records(
                     WHEN 'integer' THEN CAST(value.value_integer AS TEXT)
                     WHEN 'auto_number' THEN CAST(value.value_integer AS TEXT)
                     WHEN 'decimal' THEN CAST(value.value_real AS TEXT)
-                    WHEN 'formula' THEN CAST(value.value_real AS TEXT)
+                    WHEN 'formula' THEN COALESCE(value.value_text,CAST(value.value_real AS TEXT))
                     WHEN 'boolean' THEN CASE value.value_boolean WHEN 1 THEN 'Yes' ELSE 'No' END
                     ELSE COALESCE(value.value_text, '')
                 END
                 FROM mx_record_values value
                 JOIN mx_fields field ON field.uid = value.field_uid
                 WHERE value.record_uid = record.uid
-                  AND field.active = 1
+                  AND field.active = 1 AND {field_scope}
                   AND field.searchable = 1
                   AND LOWER(CASE field.field_type
                     WHEN 'integer' THEN CAST(value.value_integer AS TEXT)
                     WHEN 'auto_number' THEN CAST(value.value_integer AS TEXT)
                     WHEN 'decimal' THEN CAST(value.value_real AS TEXT)
-                    WHEN 'formula' THEN CAST(value.value_real AS TEXT)
+                    WHEN 'formula' THEN COALESCE(value.value_text,CAST(value.value_real AS TEXT))
                     WHEN 'boolean' THEN CASE value.value_boolean WHEN 1 THEN 'true' ELSE 'false' END
                     ELSE COALESCE(value.value_text, '')
                   END) LIKE LOWER(?3) ESCAPE '!'
@@ -108,7 +113,7 @@ fn search_records(
             ), (
                 SELECT 'File: ' || attachment.file_name
                 FROM mx_attachments attachment
-                WHERE attachment.entry_uid = record.uid
+                WHERE attachment.entry_uid = record.uid AND {file_scope}
                   AND permission.can_attachments=1
                   AND (?1=0 OR account.can_attachments=1)
                   AND LOWER(attachment.file_name) LIKE LOWER(?3) ESCAPE '!'
@@ -125,7 +130,7 @@ fn search_records(
           ON account.module_uid=record.module_uid
          AND account.user_uid=?2
         WHERE module.active = 1
-          AND record.deleted_at IS NULL
+          AND record.deleted_at IS NULL AND {row_scope}
           AND (?1=0 OR account.can_read=1)
           AND (
               EXISTS (
@@ -133,13 +138,13 @@ fn search_records(
                   FROM mx_record_values value
                   JOIN mx_fields field ON field.uid = value.field_uid
                   WHERE value.record_uid = record.uid
-                    AND field.active = 1
+                    AND field.active = 1 AND {field_scope}
                     AND field.searchable = 1
                     AND LOWER(CASE field.field_type
                       WHEN 'integer' THEN CAST(value.value_integer AS TEXT)
                       WHEN 'auto_number' THEN CAST(value.value_integer AS TEXT)
                       WHEN 'decimal' THEN CAST(value.value_real AS TEXT)
-                      WHEN 'formula' THEN CAST(value.value_real AS TEXT)
+                      WHEN 'formula' THEN COALESCE(value.value_text,CAST(value.value_real AS TEXT))
                       WHEN 'boolean' THEN CASE value.value_boolean WHEN 1 THEN 'true' ELSE 'false' END
                       ELSE COALESCE(value.value_text, '')
                     END) LIKE LOWER(?3) ESCAPE '!'
@@ -147,7 +152,7 @@ fn search_records(
               OR EXISTS (
                   SELECT 1
                   FROM mx_attachments attachment
-                  WHERE attachment.entry_uid = record.uid
+                  WHERE attachment.entry_uid = record.uid AND {file_scope}
                     AND permission.can_attachments=1
                     AND (?1=0 OR account.can_attachments=1)
                     AND LOWER(attachment.file_name) LIKE LOWER(?3) ESCAPE '!'
@@ -156,7 +161,7 @@ fn search_records(
         ORDER BY record.rowid DESC
         LIMIT ?4
         "#,
-    )?;
+    ))?;
 
     statement
         .query_map(

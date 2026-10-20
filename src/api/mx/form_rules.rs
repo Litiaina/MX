@@ -44,6 +44,8 @@ pub struct OptionDetail {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub number: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub available_when: Option<Group>,
     #[serde(default)]
     pub fill: BTreeMap<String, Value>,
@@ -54,7 +56,7 @@ pub struct State {
     pub enabled: bool,
     pub required: bool,
 }
-fn rules(field: &FieldDefinition) -> Rules {
+pub(crate) fn rules(field: &FieldDefinition) -> Rules {
     serde_json::from_value(field.config.get("form_rules").cloned().unwrap_or(json!({})))
         .unwrap_or_default()
 }
@@ -333,7 +335,55 @@ fn conditions(group: &Group) -> Vec<&Condition> {
         .chain(group.groups.iter().flat_map(conditions))
         .collect()
 }
+pub(crate) fn validate_filter(raw: &Value, fields: &[FieldDefinition]) -> Result<Group, String> {
+    let group: Group = serde_json::from_value(raw.clone())
+        .map_err(|_| "Choose valid aggregate filter conditions.")?;
+    let mut nodes = 0;
+    validate_group(&group, 1, &mut nodes)?;
+    for condition in conditions(&group) {
+        let field = fields
+            .iter()
+            .find(|f| f.key == condition.field)
+            .ok_or_else(|| {
+                format!(
+                    "Aggregate filter field '{}' is missing or archived.",
+                    condition.field
+                )
+            })?;
+        if !writable(&field.field_type) || field.field_type == "relationship" {
+            return Err("Aggregate filters use ordinary saved scalar fields.".into());
+        }
+        if !matches!(condition.operator.as_str(), "empty" | "not_empty") {
+            if matches!(condition.operator.as_str(), "gt" | "gte" | "lt" | "lte")
+                && !matches!(field.field_type.as_str(), "integer" | "decimal")
+            {
+                return Err("Numeric filter comparisons require numeric fields.".into());
+            }
+            let values = if matches!(condition.operator.as_str(), "in" | "not_in") {
+                condition
+                    .value
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .collect::<Vec<_>>()
+            } else {
+                vec![&condition.value]
+            };
+            for value in values {
+                let canonical = super::records::canonical_rule_value(field, value)?;
+                if !equal(&canonical, value) {
+                    return Err(format!(
+                        "Use the correct value type for aggregate filter {}.",
+                        field.label
+                    ));
+                }
+            }
+        }
+    }
+    Ok(group)
+}
 pub fn validate_fields(fields: &[FieldDefinition]) -> Result<(), String> {
+    super::privacy::validate_fields(fields)?;
     for f in fields {
         let r = rules(f);
         let details = options(f);

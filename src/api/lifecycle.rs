@@ -297,6 +297,7 @@ async fn delete_for_module(claims: Claims, module_uid: String, uid: String) -> R
             params![uid, module_uid], |row| row.get::<_, i64>(0),
         )? != 0;
         if !exists { return Err(rusqlite::Error::QueryReturnedNoRows); }
+        crate::api::mx::privacy::check_record(&transaction,&uid,&actor_uid)?;
         transaction.execute(
             "UPDATE mx_records SET deleted_at=?2, deleted_by=?3 WHERE uid=?1 AND deleted_at IS NULL",
             params![uid, chrono::Utc::now().timestamp_millis(), actor_uid],
@@ -360,6 +361,7 @@ async fn versions_for_module(claims: Claims, module_uid: String, record_uid: Str
     let result = tokio::task::spawn_blocking(move || with_sql_connection(|connection| {
         ensure_record_lifecycle_schema(connection)?;
         if !can(connection, &module_uid, &permission_claims, "read") { return Err(rusqlite::Error::InvalidParameterName("forbidden".into())); }
+        crate::api::mx::privacy::check_record(connection,&record_uid,&permission_claims.uid)?;
         let mut statement = connection.prepare(
             r#"SELECT v.uid,v.version_no,v.event,v.actor_uid,COALESCE(a.name,v.actor_uid),v.created_at
                FROM mx_record_versions v LEFT JOIN users a ON a.uid=v.actor_uid
@@ -369,6 +371,10 @@ async fn versions_for_module(claims: Claims, module_uid: String, record_uid: Str
     })).await;
     match result {
         Ok(Ok(versions)) => api_json(StatusCode::OK, json!({"versions":versions})),
+        Ok(Err(SqliteDatabaseError::Sqlite(rusqlite::Error::QueryReturnedNoRows))) => api_json(
+            StatusCode::NOT_FOUND,
+            json!({"response":"record history was not found"}),
+        ),
         Ok(Err(SqliteDatabaseError::Sqlite(rusqlite::Error::InvalidParameterName(_)))) => api_json(
             StatusCode::FORBIDDEN,
             json!({"response":"module access denied"}),
@@ -393,6 +399,7 @@ async fn version_detail_for_module(
             if !can(connection, &module_uid, &permission_claims, "read") {
                 return Err(rusqlite::Error::InvalidParameterName("forbidden".into()));
             }
+            crate::api::mx::privacy::check_record(connection,&record_uid,&permission_claims.uid)?;
             let (uid, version, event, actor_uid, actor_name, created_at) = connection.query_row(
                 r#"SELECT v.uid,v.version_no,v.event,v.actor_uid,COALESCE(a.name,v.actor_uid),v.created_at
                    FROM mx_record_versions v LEFT JOIN users a ON a.uid=v.actor_uid
@@ -411,6 +418,7 @@ async fn version_detail_for_module(
                 let kind: String = row.get(1)?;
                 let value = match kind.as_str() {
                     "integer" | "auto_number" => row.get::<_,Option<i64>>(3)?.map_or(Value::Null, |value| json!(value)),
+                    "formula" if row.get::<_,Option<String>>(2)?.is_some()=>json!(row.get::<_,String>(2)?),
                     "decimal" | "formula" => row.get::<_,Option<f64>>(4)?.map_or(Value::Null, |value| json!(value)),
                     "boolean" => row.get::<_,Option<i64>>(5)?.map_or(Value::Null, |value| json!(value != 0)),
                     "relationship" => row.get::<_,Option<String>>(2)?.map_or(Value::Null, |value| if value.starts_with('[') {serde_json::from_str(&value).unwrap_or(Value::Null)} else {json!(value)}),
@@ -419,14 +427,22 @@ async fn version_detail_for_module(
                 values.insert(key, value);
             }
             let mut statement = connection.prepare("SELECT attachment_uid,file_name,mime_type,size,attachment_field_uid FROM mx_record_version_attachments WHERE version_uid=?1 ORDER BY file_name COLLATE NOCASE")?;
-            let attachments = statement.query_map(params![uid], |row| Ok(json!({
+            let mut attachments = statement.query_map(params![uid], |row| Ok(json!({
                 "uid":row.get::<_,String>(0)?, "file_name":row.get::<_,String>(1)?,
                 "mime_type":row.get::<_,String>(2)?, "size":row.get::<_,i64>(3)?,
                 "attachment_field_uid":row.get::<_,Option<String>>(4)?
             })))?.collect::<Result<Vec<_>,_>>()?;
             let fields=crate::api::mx::schema::load_module_fields_db(connection,&module_uid,true)?;
+            let is_creator=crate::api::mx::privacy::creator(connection,&record_uid)?.as_deref()==Some(&permission_claims.uid);
+            let hidden=crate::api::mx::privacy::restricted(&fields,is_creator,permission_claims.access_level);
+            values.retain(|key,_|!hidden.contains(key));
+            attachments.retain(|file|file["attachment_field_uid"].as_str().is_none_or(|uid|!fields.iter().any(|f|f.uid==uid&&hidden.contains(&f.key))));
             for field in fields.iter().filter(|f|f.field_type=="relationship") {
-                if !module_can_for_user(connection,field.config["target_module_uid"].as_str().unwrap_or(""),&permission_claims.uid,permission_claims.access_level,"read")? {values.insert(field.key.clone(),Value::Null);}
+                let mut allowed=module_can_for_user(connection,field.config["target_module_uid"].as_str().unwrap_or(""),&permission_claims.uid,permission_claims.access_level,"read")?;
+                for id in crate::api::mx::relationships::ids(values.get(&field.key).unwrap_or(&Value::Null)) {
+                    allowed &= crate::api::mx::privacy::record_allowed(connection,&id,&permission_claims.uid,permission_claims.access_level)?;
+                }
+                if !allowed {values.insert(field.key.clone(),Value::Null);}
             }
             Ok(RecordVersionDetail { uid, record_uid, module_uid, version, event, actor_uid, actor_name, created_at, values, attachments })
         })
@@ -470,6 +486,9 @@ async fn restore_version_for_module(
         )? != 0;
         if !exists { return Err(rusqlite::Error::QueryReturnedNoRows); }
         let fields=crate::api::mx::schema::load_module_fields_initialized_db(&transaction,&module_uid,false)?;
+        crate::api::mx::privacy::check_record(&transaction,&record_uid,&actor_uid)?;
+        let hidden=crate::api::mx::privacy::restricted(&fields,crate::api::mx::privacy::creator(&transaction,&record_uid)?.as_deref()==Some(&actor_uid),permission_claims.access_level);
+        if !hidden.is_empty() {return Err(rusqlite::Error::InvalidParameterName("forbidden: restoring a complete version requires access to all its fields".into()));}
         let mut relationship_values=BTreeMap::new();
         for field in fields.iter().filter(|f|f.field_type=="relationship") {
             let raw:Option<String>=transaction.query_row("SELECT value_text FROM mx_record_version_values WHERE version_uid=?1 AND field_uid=?2",params![version_uid,field.uid],|r|r.get(0)).optional()?.flatten();

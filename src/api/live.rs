@@ -65,6 +65,70 @@ struct LiveEnvelope {
     text: String,
 }
 
+async fn event_visible(text: &str, actor: &str) -> bool {
+    let Ok(event) = serde_json::from_str::<Value>(text) else {
+        return false;
+    };
+    let payload = &event["payload"];
+    let module = payload
+        .get("module_uid")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    let record = payload
+        .get("record_uid")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .or_else(|| {
+            if payload["target_type"] == "record" {
+                payload["target_uid"].as_str().map(str::to_owned)
+            } else {
+                None
+            }
+        });
+    let payload_field = payload
+        .get("attachment_field_uid")
+        .or_else(|| {
+            payload
+                .get("data")
+                .and_then(|data| data.get("attachment_field_uid"))
+        })
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    if module.is_none() && record.is_none() {
+        return true;
+    }
+    let actor = actor.to_owned();
+    tokio::task::spawn_blocking(move || {
+        with_sql_connection(|c| {
+            let level = crate::api::mx::privacy::level(c, &actor)?;
+            if let Some(module) = module {
+                if !crate::api::modules::module_can_for_user_initialized(
+                    c, &module, &actor, level, "read",
+                )? {
+                    return Ok(false);
+                }
+            }
+            if let Some(record) = record {
+                if !crate::api::mx::privacy::record_allowed(c, &record, &actor, level)? {
+                    return Ok(false);
+                }
+                if let Some(field) = payload_field.as_deref() {
+                    if !crate::api::mx::privacy::field_record_allowed(
+                        c, &record, field, &actor, level,
+                    )? {
+                        return Ok(false);
+                    }
+                }
+            }
+            Ok(true)
+        })
+    })
+    .await
+    .ok()
+    .and_then(Result::ok)
+    .unwrap_or(false)
+}
+
 impl LiveHub {
     fn new() -> Self {
         let (events, _) = broadcast::channel(EVENT_BUFFER_CAPACITY);
@@ -134,8 +198,17 @@ fn publish_event(
     recipient_uid: Option<String>,
     event_type: &str,
     actor_uid: Option<&str>,
-    payload: Value,
+    mut payload: Value,
 ) {
+    // Broadcasts invalidate authenticated views; they are not an alternative
+    // record API. Never put field values or file names in the shared transport.
+    // A recipient re-fetches through current row AND field authorization, even
+    // if permissions changed after the transaction that produced this event.
+    if event_type == "record.fields.updated" {
+        payload = json!({"record_uid":payload["record_uid"],"module_uid":payload["module_uid"],"record_revision":payload["record_revision"],"requires_refresh":true});
+    } else if event_type == "attachment.created" || event_type == "attachment.deleted" {
+        payload = json!({"record_uid":payload["record_uid"],"attachment_field_uid":payload["attachment_field_uid"]});
+    }
     let sequence = hub().sequence.fetch_add(1, Ordering::Relaxed) + 1;
     let body = json!({
         "type": event_type,
@@ -464,6 +537,7 @@ async fn run_live_socket(socket: WebSocket, ticket: LiveTicket) {
                             if envelope.recipient_uid.as_deref().is_some_and(|uid| uid != event_recipient_uid) {
                                 continue;
                             }
+                            if !event_visible(&envelope.text,&event_recipient_uid).await {continue;}
                             if sender.send(Message::Text(envelope.text.into())).await.is_err() {
                                 break;
                             }

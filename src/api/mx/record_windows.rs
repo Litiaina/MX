@@ -32,7 +32,9 @@ fn scope(module: &str, query: &DynamicListQuery, attachments: bool) -> String {
         query.attachments,
         query.sort_by,
         query.sort_dir,
-        attachments
+        attachments,
+        query.actor_uid,
+        query.actor_level
     ]))
     .unwrap();
     Sha256::digest(bytes)
@@ -121,12 +123,14 @@ pub(super) fn list(
     let expression = field.map(|field| {
         let column = match field.field_type.as_str() {
             "integer" | "auto_number" => "value_integer",
+            "formula" if super::super::calculated::text(&field.config)=>"value_text COLLATE NOCASE",
             "decimal" | "formula" => "value_real",
             "boolean" => "value_boolean",
             _ => "value_text COLLATE NOCASE",
         };
         let collate=if column.starts_with("value_text") { " COLLATE NOCASE" } else { "" };
-        format!("(SELECT {column} FROM mx_record_values WHERE record_uid=e.uid AND field_uid='{}' LIMIT 1){collate}", quote_sql_literal(&field.uid))
+        let privacy=query.actor_uid.as_ref().map(|actor|super::super::privacy::scope_sql(field.config["access_scope"].as_str().unwrap_or("module"),"e",actor,query.actor_level)).unwrap_or_else(||"1".into());
+        format!("(SELECT {column} FROM mx_record_values WHERE record_uid=e.uid AND field_uid='{}' AND {privacy} LIMIT 1){collate}", quote_sql_literal(&field.uid))
     }).unwrap_or_else(|| "e.rowid".to_string());
     let (where_clause, params) = build_where_clause(module, query, fields, attachments)
         .map_err(rusqlite::Error::InvalidParameterName)?;
@@ -141,7 +145,14 @@ pub(super) fn list(
         0
     };
     let summaries = if metadata {
-        super::super::column_summaries::calculate(connection, fields, &where_clause, &params)?
+        super::super::column_summaries::calculate_scoped(
+            connection,
+            fields,
+            &where_clause,
+            &params,
+            query.actor_uid.as_deref(),
+            query.actor_level,
+        )?
     } else {
         BTreeMap::new()
     };

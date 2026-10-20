@@ -23,13 +23,15 @@ Upgrades preserve existing modules, including any earlier generic Records module
 
 1. Sign in as an Administrator.
 2. Open **Administration → Modules & fields**.
-3. Click **New module**. This creates a separate module; it does not rename the
-   module currently selected in **Change module**.
+3. Click **New module**. This creates a separate module; it does not rename an
+   existing module. The module library opens without selecting one for editing.
 4. Enter **Module name:** `Employees` and **Singular name:** `Employee`.
 5. Click **Create new module**. The configuration scope switches to Employees.
 
-Always check **Module in scope** before changing fields. All field settings
-below it belong to that selected module.
+Always check **You are configuring** before changing fields. To configure another
+module, choose **All modules → Configure [module name]**. Use the **Fields**,
+**Module details**, **Permissions**, **Form rules**, **Column totals** and
+**File storage** sections to focus on one task at a time.
 
 ## 3. Add the information an employee record needs
 

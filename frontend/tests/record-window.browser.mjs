@@ -7,7 +7,7 @@ import {fileURLToPath} from 'node:url';
 import {chromium,firefox,webkit} from 'playwright';
 import {startIsolatedMx} from './isolated-mx.mjs';
 import {disconnectedBrowserAudio} from './silent-audio.mjs';
-assert.ok(process.env.MX_TEST_ARTIFACTS?.startsWith('/mnt/ST1000LM049/tests'));
+assert.ok(process.env.MX_TEST_ARTIFACTS?.startsWith('/mnt/ST1000LM049/tests/') || process.env.MX_TEST_ARTIFACTS?.startsWith('/home/altear/Temp Environment/'));
 assert.ok(!process.env.MX_TEST_N1_URL);
 const mx=await startIsolatedMx(fileURLToPath(new URL('../',import.meta.url))),browsers=[],results=[];
 const call=async(path,user,method='GET',data,expected=[200])=>(await mx.call(path,user?.access_token,method,data,expected)).body;
@@ -54,7 +54,7 @@ try {
   const initial=await table.locator('[data-record-uid]').count();assert.ok(initial<50,`Only visible rows + buffer should render (${initial})`);
   assert.equal(await page.locator('.record-window-status').count(),0,'no permanent bottom navigation bar');
   assert.ok(await page.getByRole('group',{name:'Load record windows'}).evaluate(node=>!!node.closest('.records-view-controls')),'manual navigation shares the existing toolbar');
-  const longText=table.locator('.long-text-cell .cell-edit-button > span').filter({hasText:'Final visible line'}).first();await longText.waitFor();
+  const longText=table.locator('.long-text-cell .record-cell-value').filter({hasText:'Final visible line'}).first();await longText.waitFor();
   const fullText=await longText.evaluate(node=>{const style=getComputedStyle(node);return{height:node.clientHeight,scrollHeight:node.scrollHeight,lineHeight:parseFloat(style.lineHeight),whiteSpace:style.whiteSpace,clamp:style.webkitLineClamp};});
   assert.ok(fullText.height>fullText.lineHeight*3,'long text expands beyond three lines');
   assert.ok(fullText.scrollHeight<=fullText.height+1,'all long text fits without hidden overflow');assert.equal(fullText.whiteSpace,'pre-wrap');assert.ok(!fullText.clamp||fullText.clamp==='none');
