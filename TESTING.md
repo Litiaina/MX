@@ -1,5 +1,65 @@
 # MX validation
 
+## 1.0.0-rc.6 — Collaboration and record Office recovery
+
+RC.6 packages the locally tested fixes after RC.5 as a newly numbered candidate,
+with maintainer authorization on 2026-10-20. Published RC.5 is not replaced.
+Native application behavior and N1 are unchanged; the MX executable and frontend
+are rebuilt with matching RC.6 identities. No new schema migration is introduced.
+
+- The RC.6 native rebuild passes **188 tests**, with two opt-in cases ignored.
+  Native `--version` reports `1.0.0-rc.6`; runtime dependencies remain unchanged.
+- Production frontend build passes with zero Svelte errors/warnings; **353 tests
+  across 57 files pass**. The existing Vite large-chunk advisory remains.
+- `test:collaboration:files` passes in Chromium, Brave, Firefox and Linux WebKit:
+  multi-format clipboard files, duplicate prevention, native text paste/drag,
+  file drops without browser navigation, nearby rejection feedback, per-chat
+  drafts, actual upload/download through the isolated storage contract, and
+  outsider denial. Conversation changes close old previews. Shared Drive cards
+  open Office directly without bypassing viewer permissions or changing revisions.
+- `test:records:office` passes in those four engines: stored module attachments
+  open without server PDF conversion, preserve return context, and leave the
+  record and history unchanged. Private attachment fields and inaccessible
+  modules remain protected. Blocked popups retain Open/Download recovery; ordinary
+  text previews still work.
+- Actual bundled-engine Word/Excel rendering passes in Chromium, Brave and
+  Firefox for chat and record attachments. **Linux WebKit on this host lacks
+  worker WebGL**: its tested outcome is an explicit error and byte-exact original
+  download, not successful Office rendering. Tests neither bypass the graphics
+  gate nor download the large engine after this capability failure.
+- The existing People selection regression passes again in Chromium, Firefox
+  and WebKit, including fresh accounts, profile cards, search and light/dark themes.
+- A cache regression confirms an older cache-first Office worker cannot serve
+  its Drive-only shell for the new attachment entry. Attachment viewers do not
+  create Drive identities, autosave, or retain private local/offline drafts.
+- The final RC.6 build repeats both attachment suites in four engines and the
+  People regression in three. Native CLI diagnostics create no deployment files.
+  An isolated **RC.5 → RC.6** independent-systemd rehearsal passes signed staging,
+  configurable automatic/manual policy, final backup, activation, competing
+  install requests, post-migration rollback and killed-worker recovery. The
+  Chromium Updates UI retains unsaved policy and reconciles a lost acknowledgement.
+  This does not upgrade or restart an existing production or populated test service.
+- Signed-package verification checks all **29 runtime files**, the existing
+  publisher signature, paired binary/frontend identities, bundled Office notices
+  and exclusion of deployment credentials/databases. The installer retains the
+  existing README branding block and logo asset.
+
+Repeat from `frontend` with the isolated test paths described below:
+
+```sh
+npm run test:collaboration:files
+npm run test:records:office
+npm run test:collaboration:people
+```
+
+Browser clipboard/drop tests dispatch real browser `DataTransfer` events; they
+do **not** certify a physical Windows clipboard. Manual acceptance must include
+copying files from the operator's actual desktop/Explorer and dropping files in
+their browser. If that platform exposes no clipboard file bytes, use Attach or
+drag/drop; MX does not fetch pasted local paths. Chat/record copies are read-only;
+editing/versioned saves use the shared Drive item instead. Production, real OS
+notification banners and every Office format are not qualified by these suites.
+
 ## 1.0.0-rc.5 — candidate qualification
 
 This candidate is published with maintainer authorization on 2026-10-20, not

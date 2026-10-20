@@ -95,10 +95,10 @@ export async function previewAttachment(recordUid: string, attachmentUid: string
   };
 }
 
-export const issueRecordAttachmentPreviewTicket = (recordUid: string, attachmentUid: string) =>
+export const issueRecordAttachmentPreviewTicket = (recordUid: string, attachmentUid: string, signal?: AbortSignal) =>
   apiJson<{ url: string; file_name: string; mime_type: string; expires_in_seconds: number }>(
     `/mx/v1/records/${encodeURIComponent(recordUid)}/attachments/${encodeURIComponent(attachmentUid)}/preview-ticket`,
-    { method: 'POST' }
+    { method: 'POST', signal }
   );
 
 export const loadDashboardConfig = () => apiJson<DashboardConfigResponse>('/mx/v1/dashboard/config');
@@ -214,10 +214,10 @@ export async function previewMessageFile(fileUid: string) {
     mimeType: headers.get('content-type') || blob.type || 'application/octet-stream'
   };
 }
-export const issueMessageFilePreviewTicket = (fileUid: string) =>
+export const issueMessageFilePreviewTicket = (fileUid: string, signal?: AbortSignal) =>
   apiJson<{ url: string; file_name: string; mime_type: string; expires_in_seconds: number }>(
     `/mx/v1/collaboration/files/${encodeURIComponent(fileUid)}/preview-ticket`,
-    { method: 'POST' }
+    { method: 'POST', signal }
   );
 
 export async function prepareMessageFilePreview(fileUid: string, fileName: string) {

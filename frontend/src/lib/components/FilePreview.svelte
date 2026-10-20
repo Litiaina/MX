@@ -20,7 +20,7 @@
     navigationNoun?: string;
     onStep?: (direction:-1|1)=>void;
     onClose: () => void;
-    officeActions?: {open?:()=>void;download:()=>void};
+    officeActions?: {open?:()=>void;download:()=>void;description?:string};
     onDownloadOriginal?:()=>void|Promise<void>;
   } = $props();
 
@@ -283,7 +283,7 @@
         <div class="preview-fallback preview-office-prompt">
           <FileText size={38}/>
           <h3>{officeActions.open?'Open in MX Office':'Download this Office document'}</h3>
-          <p class="muted">{officeActions.open?'View or edit this document in a new tab.':'Download this document to open it in your Office application.'}</p>
+          <p class="muted">{officeActions.description || (officeActions.open?'View or edit this document in a new tab.':'Download this document to open it in your Office application.')}</p>
           <div class="preview-prompt-actions">
             {#if officeActions.open}<button class="button primary" onclick={officeActions.open}>Open in MX Office</button>{/if}
             <button class="button" onclick={officeActions.download}>Download original</button>

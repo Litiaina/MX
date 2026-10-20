@@ -30,4 +30,10 @@ describe('bounded Office resource inspection',()=>{
     expect(()=>checkOfficeInputSize(OFFICE_INPUT_BUDGET+1)).toThrow('not a Drive upload limit');
     await expect(officeResources(archive(300*1024**2),'.xlsx')).rejects.toThrow('original is unchanged');
   });
+  it('explains the chat budget without claiming the attachment is a Drive item',()=>{
+    expect(()=>checkOfficeInputSize(OFFICE_INPUT_BUDGET, 'chat')).not.toThrow();
+    expect(()=>checkOfficeInputSize(OFFICE_INPUT_BUDGET+1, 'chat')).toThrow('shared original is unchanged');
+    expect(()=>checkOfficeInputSize(OFFICE_INPUT_BUDGET+1, 'chat')).toThrow('not an upload limit');
+    expect(()=>checkOfficeInputSize(OFFICE_INPUT_BUDGET+1, 'record')).toThrow('record attachment');
+  });
 });

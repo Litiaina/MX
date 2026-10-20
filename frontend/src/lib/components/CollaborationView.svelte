@@ -43,6 +43,9 @@
   import { ApiError } from '../api/client';
   import { operationUid } from '../api/operation';
   import { shouldSendChatMessage } from '../util/interactions';
+  import { clipboardFiles, transferredFiles, transferHasFiles, uniqueFiles } from '../util/collaborationFiles';
+  import { officeExtension } from '../office/formats';
+  import { openMessageOffice } from '../office/launch';
   import FilePreview from './FilePreview.svelte';
   import DrivePicker from './DrivePicker.svelte';
   import HardDrive from '@lucide/svelte/icons/hard-drive';
@@ -60,6 +63,7 @@
   let channels = $state<CollaborationChannel[]>([]); let selected = $state<CollaborationChannel | null>(null);
   let messages = $state<ChatMessage[]>([]); let pinnedMessages = $state<ChatMessage[]>([]); let pinsOpen = $state(false); let readStates = $state<ChannelReadState[]>([]); let users = $state<CollaborationPerson[]>([]); let onlineUserUids = $state<string[]>([]); let peopleLoading = $state(false); let peopleError = $state(''); let body = $state('');
   let pendingFiles = $state<File[]>([]); let loading = $state(true); let conversationLoading = $state(false); let sending = $state(false); let error = $state('');
+  let attachmentNotice = $state(''); let fileDragDepth = $state(0);
   let drivePickerOpen = $state(false); let driveCopying = $state(false);
   type PendingSend = { channelUid: string; uid: string; body: string; mentions: string[]; records: string[]; reply: string | null };
   let pendingSend = $state<PendingSend | null>(null);
@@ -77,6 +81,7 @@
   let messageMenuUid = $state(''); let reactionMenuUid = $state(''); let editingMessageUid = $state(''); let editingBody = $state(''); let messageActionBusy = $state(''); let deleteCandidate = $state<ChatMessage | null>(null);
   let conversationSearchOpen = $state(false); let messageSearch = $state(''); let messageSearchResults = $state<ChatMessage[]>([]); let messageSearching = $state(false); let focusedMessageUid = $state('');
   let channelFiles = $state<ChannelFile[]>([]); let channelFileTotal = $state(0); let fileSearch = $state(''); let filesLoading = $state(false); let filesLoaded = $state(false);
+  let sharedFilesGeneration = 0;
   let channelDriveItems = $state<DriveItem[]>([]); let channelDriveTotal = $state(0); let driveFilesLoading = $state(false); let driveFilesError = $state(''); let driveFilesGeneration = 0;
   let manageOpen = $state(false); let manageLoading = $state(false); let manageBusy = $state(''); let manageError = $state(''); let manageNotice = $state(''); let channelMembers = $state<ChannelMember[]>([]); let membersLoaded = $state(false); let manageName = $state(''); let manageDescription = $state(''); let manageInvitePolicy = $state<CollaborationChannel['invite_policy']>('admins'); let addMemberUid = $state(''); let addMemberRole = $state<'member' | 'admin'>('member'); let manageMemberSearch = $state(''); let addMemberPickerOpen = $state(false);
   let manageMemberSearchInput = $state<HTMLInputElement>();
@@ -294,6 +299,7 @@
       error = 'Wait for this send to finish before switching conversations.';
       return;
     }
+    attachmentNotice = ''; fileDragDepth = 0; previewFile = null;
     if (changingConversation && selected) {
       composerDrafts.set(selected.uid, { body, files: [...pendingFiles], records: [...pendingRecordUids], mentions: [...pendingMentionUids], reply: replyingTo, submission: pendingSend });
     }
@@ -310,7 +316,7 @@
     selected = channel; messages = []; pinnedMessages = []; pinsOpen = false; readStates = []; hasMoreMessages = false; conversationLoading = true; error = ''; toolsOpen = false; mentionOpen = false; messageMenuUid = ''; reactionMenuUid = ''; editingMessageUid = ''; deleteCandidate = null; replyingTo = null; reachedBeginning = false; selectedCallState = null;
     if (changingConversation) replyingTo = draft?.reply || null;
     onChannelChanged(channel.uid, false);
-    closeConversationSearch(); channelFiles = []; channelFileTotal = 0; fileSearch = ''; filesLoaded = false; manageOpen = false; channelMembers = []; membersLoaded = false;
+    closeConversationSearch(); ++sharedFilesGeneration; channelFiles = []; channelFileTotal = 0; fileSearch = ''; filesLoaded = false; filesLoading = false; manageOpen = false; channelMembers = []; membersLoaded = false;
     ++driveFilesGeneration; channelDriveItems=[];channelDriveTotal=0;driveFilesLoading=false;driveFilesError='';
     if (channel.kind !== 'direct') void loadConversationMembers();
     void loadSelectedCall(channelUid);
@@ -399,30 +405,43 @@
     finally { driveCopying = false; }
   }
   function queueSharedFiles(files: FileList | File[]) {
-    if (sending || pendingSend) return;
+    if (sending || pendingSend) { attachmentNotice = 'Finish or retry this send before attaching more files.'; return; }
     const incoming = Array.from(files);
     const oversized = incoming.filter((file) => file.size > sharedFileMaxBytes);
-    const accepted = incoming.filter((file) => file.size <= sharedFileMaxBytes && !pendingFiles.some((pending) => pending.name === file.name && pending.size === file.size && pending.lastModified === file.lastModified));
+    const accepted = uniqueFiles(incoming.filter((file) => file.size <= sharedFileMaxBytes), pendingFiles);
     if (accepted.length) pendingFiles = [...pendingFiles, ...accepted];
-    error = oversized.length
+    attachmentNotice = oversized.length
       ? `${oversized.map((file) => file.name).join(', ')} ${oversized.length === 1 ? 'is' : 'are'} larger than the ${sharedFileLimitLabel()} chat file limit.`
       : '';
   }
-  function clipboardImageExtension(mimeType: string) { return ({ 'image/jpeg': 'jpg', 'image/svg+xml': 'svg', 'image/tiff': 'tiff' } as Record<string, string>)[mimeType.toLocaleLowerCase()] || mimeType.split('/')[1]?.replace(/[^a-z0-9]/gi, '') || 'png'; }
-  function namedClipboardImage(file: File, index: number, timestamp: string) {
-    if (file.name.trim() && !/^(?:image|clipboard)(?:\.[a-z0-9]+)?$/i.test(file.name.trim())) return file;
-    const suffix = index ? `-${index + 1}` : '';
-    return new File([file], `Screenshot-${timestamp}${suffix}.${clipboardImageExtension(file.type)}`, { type: file.type || 'image/png', lastModified: file.lastModified || Date.now() });
-  }
   function composerPaste(event: ClipboardEvent) {
     const clipboard = event.clipboardData;
-    if (!clipboard) return;
-    let images = Array.from(clipboard.items).filter((item) => item.kind === 'file' && item.type.toLocaleLowerCase().startsWith('image/')).map((item) => item.getAsFile()).filter((file): file is File => !!file);
-    if (!images.length) images = Array.from(clipboard.files).filter((file) => file.type.toLocaleLowerCase().startsWith('image/'));
-    if (!images.length) return;
+    if (!selected || !clipboard) return;
+    const target = event.target instanceof Element ? event.target : null;
+    if (target?.closest('input,textarea,[contenteditable="true"]') && target !== composerTextarea) return;
+    const incoming = transferredFiles(clipboard);
+    if (!incoming.files.length && !incoming.directories) return;
     event.preventDefault();
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    queueSharedFiles(images.map((file, index) => namedClipboardImage(file, index, timestamp)));
+    queueSharedFiles(clipboardFiles(incoming.files, timestamp));
+    if (incoming.directories) attachmentNotice = 'Folders cannot be attached to chat. Share the folder from MX Drive, or choose its files.';
+  }
+  function conversationDragOver(event: DragEvent) {
+    if (!transferHasFiles(event.dataTransfer)) return;
+    event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = selected && !sending && !pendingSend ? 'copy' : 'none';
+  }
+  function conversationDragEnter(event: DragEvent) {
+    if (!transferHasFiles(event.dataTransfer)) return;
+    event.preventDefault(); fileDragDepth++;
+  }
+  function conversationDrop(event: DragEvent) {
+    if (!transferHasFiles(event.dataTransfer)) return;
+    event.preventDefault(); event.stopPropagation(); fileDragDepth = 0;
+    if (!selected) { error = 'Open a conversation before attaching files.'; return; }
+    const incoming = transferredFiles(event.dataTransfer!);
+    queueSharedFiles(incoming.files);
+    if (incoming.directories) attachmentNotice = 'Folders cannot be attached to chat. Share the folder from MX Drive, or choose its files.';
   }
   function initials(value: string) { return value.split(/\s+/).filter(Boolean).map((part) => part[0]).join('').slice(0, 2).toUpperCase() || 'MX'; }
   function dayKey(value: number) { const date = new Date(value); return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`; }
@@ -669,8 +688,18 @@
       composerForm?.requestSubmit();
     }
   }
-  function downloadSharedFile(file: MessageFile) { void download(`/mx/v1/collaboration/files/${file.uid}/download`, file.file_name); }
-  function showSharedFile(file: MessageFile) { previewFile = file; }
+  async function downloadSharedFile(file: MessageFile) {
+    try { await download(`/mx/v1/collaboration/files/${file.uid}/download`, file.file_name); }
+    catch (reason) { attachmentNotice = reason instanceof Error ? reason.message : 'The original could not be downloaded. Retry when connected.'; }
+  }
+  function showSharedFile(file: MessageFile) {
+    if (officeExtension(file.file_name) && openMessageOffice(file.uid)) return;
+    previewFile = file;
+  }
+  function retryOfficePreview(file: MessageFile) {
+    if (openMessageOffice(file.uid)) previewFile = null;
+    else attachmentNotice = 'Allow popups for MX to open this document. You can still download the original.';
+  }
   function recordHref(record: MessageRecordLink) { return `#module/${encodeURIComponent(record.module_uid)}?record=${encodeURIComponent(record.uid)}`; }
 
   function closeConversationSearch() { conversationSearchOpen = false; messageSearch = ''; messageSearchResults = []; messageSearching = false; }
@@ -710,15 +739,17 @@
   }
   async function loadSharedFiles(reset = false) {
     if (!selected || filesLoading) return;
+    const channelUid = selected.uid, request = ++sharedFilesGeneration;
     filesLoading = true; error = '';
     try {
       const offset = reset ? 0 : channelFiles.length;
-      const result = await listChannelFiles(selected.uid, fileSearch.trim(), 50, offset);
+      const result = await listChannelFiles(channelUid, fileSearch.trim(), 50, offset);
+      if (request !== sharedFilesGeneration || selected?.uid !== channelUid) return;
       channelFiles = reset ? result.files : [...channelFiles, ...result.files];
       channelFileTotal = result.total;
       filesLoaded = true;
-    } catch (reason) { fail(reason); }
-    finally { filesLoading = false; }
+    } catch (reason) { if (request === sharedFilesGeneration && selected?.uid === channelUid) fail(reason); }
+    finally { if (request === sharedFilesGeneration && selected?.uid === channelUid) filesLoading = false; }
   }
   async function loadDriveFiles(reset=false) {
     if(!selected) return;
@@ -856,7 +887,8 @@
     </aside>
 
     <div class:show-details={detailsOpen && !!selected} class:thread-open={mobileThreadOpen} class="collaboration-content">
-      <main class="conversation-main">
+      <main class="conversation-main" onpaste={composerPaste} ondragover={conversationDragOver} ondragenter={conversationDragEnter} ondragleave={() => fileDragDepth = Math.max(0, fileDragDepth - 1)} ondrop={conversationDrop}>
+        {#if fileDragDepth > 0}<div class="conversation-drop-hint" role="status"><Paperclip size={28}/><strong>{selected && !sending && !pendingSend ? `Drop files to attach to ${selected.name}` : selected ? 'Finish this send before attaching files' : 'Open a conversation first'}</strong><span>Files are sent only when you choose Send.</span></div>{/if}
         {#if error}<div class="collaboration-error notice error"><span>{error}</span><button onclick={() => error = ''} aria-label="Dismiss error"><X size={15} /></button></div>{/if}
         {#if selected}
           {@const directPerson = selected.kind === 'direct' ? personByUid(selected.direct_user_uid) : null}
@@ -939,6 +971,7 @@
             {/each}{/if}
           </div>
           <form class="message-composer" bind:this={composerForm} onsubmit={submit}>
+            {#if attachmentNotice}<div class="composer-file-notice" role="alert"><span>{attachmentNotice}</span><button type="button" aria-label="Dismiss attachment notice" onclick={() => attachmentNotice = ''}><X size={14}/></button></div>{/if}
             {#if replyingTo}<div class="composer-reply-context"><Reply size={15} /><span><strong>Replying to {replyingTo.sender_name}</strong><small>{replySnippet(replyingTo)}</small></span><button type="button" disabled={sending || !!pendingSend} onclick={() => replyingTo = null} aria-label="Cancel reply"><X size={14} /></button></div>{/if}
             {#if pendingFiles.length || pendingRecordUids.length || pendingMentionUids.length}<div class="pending-shares">{#each pendingFiles as file, index}{#if isPendingImage(file)}<div class="pending-image-share"><img src={pendingImageUrl(file)} alt="" /><span><strong>{file.name}</strong><small>{fileSize(file.size)} · Image ready to send</small></span><button type="button" aria-label={`Remove ${file.name}`} onclick={() => removePendingFile(index)}><X size={13} /></button></div>{:else}<span><i><Paperclip size={12} /></i>{file.name} · {fileSize(file.size)}<button type="button" aria-label={`Remove ${file.name}`} onclick={() => removePendingFile(index)}><X size={12} /></button></span>{/if}{/each}{#each pendingRecordUids as uid}<span><i><FileText size={12} /></i>Record · {uid.slice(0, 12)}<button type="button" aria-label={`Remove record ${uid}`} onclick={() => pendingRecordUids = pendingRecordUids.filter((item) => item !== uid)}><X size={12} /></button></span>{/each}{#each pendingMentionUids as uid}<span><i><AtSign size={12} /></i>{personName(uid)}<button type="button" aria-label={`Remove mention ${personName(uid)}`} onclick={() => pendingMentionUids = pendingMentionUids.filter((item) => item !== uid)}><X size={12} /></button></span>{/each}</div>{/if}
             {#if toolsOpen}<div class="composer-context-tools"><label><span>Link an MX record</span><div><input bind:value={recordLinkInput} placeholder="Record UID or copied MX link" aria-label="Record to link" /><button class="button small" type="button" onclick={addRecordLink} disabled={!recordLinkInput.trim()}>Add</button></div></label><label><span>Mention someone</span><div><select bind:value={mentionUser} aria-label="Person to mention"><option value="">Choose a person…</option>{#each mentionablePeople.filter((user) => !pendingMentionUids.includes(user.uid)) as user}<option value={user.uid}>{user.name}</option>{/each}</select><button class="button small" type="button" onclick={addMention} disabled={!mentionUser}>Add</button></div></label></div>{/if}
@@ -946,7 +979,7 @@
               <button class="composer-action" type="button" disabled={sending || !!pendingSend || driveCopying} onclick={() => drivePickerOpen = true} title="Attach a copy from MX Drive"><HardDrive size={14} /><span>{driveCopying ? 'Copying Drive file…' : 'MX Drive'}</span></button>
               {#if mentionOpen}<div id="composer-mention-options" class="composer-mention-menu" role="listbox" aria-label="People in this conversation"><header><AtSign size={14} /><span><strong>Mention someone</strong><small>{mentionQuery ? `Results for “${mentionQuery}”` : 'People in this conversation'}</small></span></header>{#if mentionSuggestions.length}<div>{#each mentionSuggestions as user, index}<button class:active={mentionActiveIndex === index} type="button" role="option" aria-selected={mentionActiveIndex === index} onmouseenter={() => mentionActiveIndex = index} onmousedown={(event) => event.preventDefault()} onclick={() => chooseMention(user)}><span class="message-avatar"><ProfileAvatar userUid={user.uid} name={user.name} updatedAt={user.profile_photo_updated_at} online={isUserOnline(user.uid)} /></span><span><strong>{user.name}</strong><small class:online={isUserOnline(user.uid)}>{isUserOnline(user.uid) ? 'Online' : 'Offline'}</small></span><span class="mention-enter">↵</span></button>{/each}</div>{:else}<p>{membersLoaded || selected.kind === 'direct' ? 'No matching people in this conversation.' : 'Loading people…'}</p>{/if}</div>{/if}
               {#if pendingSend}<p class="muted small" role="status">A send is pending. Retry sends the same message, not a duplicate. Check shared files before retrying an interrupted upload.</p>{/if}
-              <textarea bind:this={composerTextarea} bind:value={body} readonly={sending || !!pendingSend} oninput={composerInput} onkeydown={composerKeydown} onpaste={composerPaste} rows="2" placeholder={`Message ${selected.name}`} aria-label="Message" aria-autocomplete="list" aria-controls="composer-mention-options"></textarea>
+              <textarea bind:this={composerTextarea} bind:value={body} readonly={sending || !!pendingSend} oninput={composerInput} onkeydown={composerKeydown} rows="2" placeholder={`Message ${selected.name}`} aria-label="Message" aria-autocomplete="list" aria-controls="composer-mention-options"></textarea>
               <div class="composer-commandbar"><div><label class="composer-action" title={`Attach files up to ${sharedFileLimitLabel()}`} aria-label={`Attach files up to ${sharedFileLimitLabel()}`}><span><Paperclip size={13} /></span><span class="composer-action-label">Attach</span><input type="file" multiple disabled={sending || !!pendingSend} onchange={(event) => { if (event.currentTarget.files) queueSharedFiles(event.currentTarget.files); event.currentTarget.value = ''; }} /></label><button class:active={toolsOpen} class="composer-action" type="button" disabled={sending || !!pendingSend} onclick={() => toolsOpen = !toolsOpen} title="Add context" aria-label="Add context"><span><Link2 size={13} /></span><span class="composer-action-label">Add context</span></button></div><span class="composer-hint">Type @ to mention · Enter to send · Shift + Enter for a new line</span><button class="button primary send-message icon-label" disabled={sending || driveCopying || (!pendingSend && !body.trim() && !pendingFiles.length && !pendingRecordUids.length)}>{#if !sending}<Send size={13} />{/if}<span class="send-message-label">{sending ? 'Sending…' : pendingSend ? 'Retry send' : 'Send'}</span></button></div>
             </div>
           </form>
@@ -983,9 +1016,16 @@
   </div>
 {/if}
 
+<style>
+  .conversation-drop-hint{position:absolute;inset:8px;z-index:40;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:20px;border:2px dashed var(--primary);border-radius:12px;background:var(--surface);color:var(--text);pointer-events:none;text-align:center;}
+  .conversation-drop-hint strong{font-size:1rem;}.conversation-drop-hint span{font-size:.8rem;color:var(--muted);}
+  .composer-file-notice{display:flex;align-items:center;gap:8px;margin-bottom:8px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--surface-raised,var(--surface));font-size:.8rem;overflow-wrap:anywhere;}
+  .composer-file-notice span{flex:1;min-width:0;}.composer-file-notice button{flex:none;display:inline-flex;align-items:center;padding:4px;background:transparent;border:0;color:inherit;cursor:pointer;}
+</style>
+
 {#if drivePickerOpen}<DrivePicker onChoose={(item) => void attachDriveFile(item)} onClose={() => drivePickerOpen = false} />{/if}
 {#if previewFile}
-  <FilePreview fileName={previewFile.file_name} load={() => prepareMessageFilePreview(previewFile!.uid, previewFile!.file_name)} onClose={() => previewFile = null} />
+  {#key previewFile.uid}<FilePreview fileName={previewFile.file_name} load={() => prepareMessageFilePreview(previewFile!.uid, previewFile!.file_name)} onDownloadOriginal={() => downloadSharedFile(previewFile!)} officeActions={/\.(docx?|docm|xlsx?|xlsm|pptx?|pptm|odt|ods|odp|rtf)$/i.test(previewFile.file_name) ? {open:officeExtension(previewFile.file_name)?()=>retryOfficePreview(previewFile!):undefined,download:()=>void downloadSharedFile(previewFile!),description:officeExtension(previewFile.file_name)?'View this chat attachment read-only in a new tab. The original is unchanged.':'This Office format cannot be opened safely in the browser. Download the original to open locally.'} : undefined} onClose={() => previewFile = null} />{/key}
 {/if}
 
 {#if deleteCandidate}

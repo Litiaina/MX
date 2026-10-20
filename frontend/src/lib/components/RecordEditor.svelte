@@ -21,6 +21,8 @@
   import { cloneJson } from '../util/json';
   import { createRecord, deleteAttachment, deleteRecord, download, getRecord, getRecordVersion, listRecordVersions, patchRecord, previewAttachment, restoreRecordVersion, uploadAttachments } from '../api/workspace';
   import FilePreview from './FilePreview.svelte';
+  import { officeExtension } from '../office/formats';
+  import { openRecordOffice } from '../office/launch';
   import DrivePicker from './DrivePicker.svelte';
   import HardDrive from '@lucide/svelte/icons/hard-drive';
   import { driveFile, type DriveItem } from '../api/drive';
@@ -87,6 +89,7 @@
   });
   const previewIndex = $derived(Math.max(0, previewEntries.findIndex((item) => item.key === previewKey)));
   const activePreview = $derived(previewEntries[previewIndex] || null);
+  let officePreviewNotice = $state('');
   const MAX_ATTACHMENT_SIZE = 50 * 1024 * 1024;
 
   $effect(() => {
@@ -553,10 +556,19 @@
     finally { busy = false; }
   }
 
-  function showPreview(uid: string) { previewKey = `stored:${uid}`; previewOpen = true; }
+  function showPreview(uid: string) {
+    const file = current?.attached_files.find(file => file.uid === uid);
+    officePreviewNotice = '';
+    if (current && file && officeExtension(file.file_name)) {
+      if (openRecordOffice(current.uid, uid, moduleUid)) return;
+      officePreviewNotice = 'The browser blocked the viewer tab. Allow popups for MX, or download the original.';
+    }
+    previewKey = `stored:${uid}`; previewOpen = true;
+  }
   function showPending(file: File) { previewKey = `pending:${fileKey(file)}`; previewOpen = true; }
-  function closePreview() { previewOpen = false; previewKey = ''; }
+  function closePreview() { previewOpen = false; previewKey = ''; officePreviewNotice = ''; }
   function navigatePreview(index: number) {
+    officePreviewNotice = '';
     const entry = previewEntries[index];
     if (entry) previewKey = entry.key;
   }
@@ -565,6 +577,17 @@
     if (!current || !entry.storedUid) throw new Error('This attachment is no longer available.');
     const result = await previewAttachment(current.uid, entry.storedUid, entry.name, entry.mimeType);
     return { blob: result.blob, url: result.url, fileName: result.fileName || entry.name, mimeType: result.mimeType };
+  }
+  function launchOfficePreview(entry: PreviewEntry) {
+    if (!current || !entry.storedUid) return;
+    if (openRecordOffice(current.uid, entry.storedUid, moduleUid)) closePreview();
+    else officePreviewNotice = 'The browser blocked the viewer tab. Allow popups for MX, or download the original.';
+  }
+  async function downloadPreviewOriginal(entry: PreviewEntry) {
+    if (entry.pendingFile) {
+      const url = URL.createObjectURL(entry.pendingFile), link = document.createElement('a');
+      link.href = url; link.download = entry.name; link.click(); setTimeout(() => URL.revokeObjectURL(url), 30000);
+    } else if (current && entry.storedUid) await download(`/mx/v1/records/${encodeURIComponent(current.uid)}/attachments/${encodeURIComponent(entry.storedUid)}/download`, entry.name);
   }
   function jumpToAttachments() { dialogElement?.querySelector<HTMLElement>('.attachment-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
   function attemptClose() {
@@ -652,7 +675,7 @@
 {#if driveAttachmentField}<DrivePicker onChoose={(item) => void attachDriveFile(item)} onClose={() => driveAttachmentField = null} />{/if}
 {#if sendOpen && current}<SendRecordDialog recordUid={current.uid} recordLabel={recordIdentity(current)} hasUnsavedChanges={fields.some(field=>isDirty(field.key)) || Object.values(pending).some(files=>files.length>0)} onClose={() => sendOpen = false}/>{/if}
 {#if previewOpen && activePreview}
-  {#key activePreview.key}<FilePreview fileName={activePreview.name} load={() => loadPreview(activePreview)} navigationItems={previewEntries} activeIndex={previewIndex} onNavigate={navigatePreview} onClose={closePreview} />{/key}
+  {#key activePreview.key}<FilePreview fileName={activePreview.name} load={() => loadPreview(activePreview)} onDownloadOriginal={() => downloadPreviewOriginal(activePreview)} officeActions={/\.(docx?|docm|xlsx?|xlsm|pptx?|pptm|odt|ods|odp|rtf)$/i.test(activePreview.name) ? {open:activePreview.storedUid && officeExtension(activePreview.name)?()=>launchOfficePreview(activePreview):undefined,download:()=>void downloadPreviewOriginal(activePreview).catch(reason=>officePreviewNotice=reason instanceof Error?reason.message:String(reason)),description:officePreviewNotice || (activePreview.pendingFile?'This document is not uploaded yet. Save the record, then open its attachment in MX Office. You can download the queued file now.':officeExtension(activePreview.name)?'View the original attachment read-only in a new tab. No changes are made to the record.':'This Office format cannot be opened safely in the browser. Download the original to open locally.')} : undefined} navigationItems={previewEntries} activeIndex={previewIndex} onNavigate={navigatePreview} onClose={closePreview} />{/key}
 {/if}
 
 {#if historyOpen}

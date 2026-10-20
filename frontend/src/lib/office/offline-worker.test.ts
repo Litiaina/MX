@@ -21,6 +21,14 @@ function harness(contents=new Map<string,Map<string,Response>>(), fetcher: (path
   return {contents,lifecycle,request};
 }
 describe('Office-only offline asset cache',()=>{
+  it('an old complete cache cannot serve the old Drive shell for the new attachment entry',async()=>{
+    const old=new Map([['/office/precache.json',Response.json({cache:'mx-office-assets-old'})],['/office/index.html',new Response('old Drive-only editor')]]);
+    let fetched='';
+    const worker=harness(new Map([['mx-office-assets-old',old]]),async request=>{fetched=(request as unknown as {url:string}).url;return new Response('new attachment viewer');});
+    expect(await(await worker.request('/office/index.html'))!.text()).toBe('old Drive-only editor');
+    expect(await(await worker.request('/office/attachment.html'))!.text()).toBe('new attachment viewer');
+    expect(new URL(fetched).pathname).toBe('/office/attachment.html');
+  });
   it('cold activation offline retains the complete installed generation',async()=>{
     const manifest={cache:'mx-office-assets-installed',assets:['/office/index.html']};
     const contents=new Map([['mx-office-assets-installed',new Map([

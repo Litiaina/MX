@@ -11,16 +11,16 @@
 
 </div>
 
-Self-hosted, modular digital workplace platform. **Current candidate: 1.0.0-rc.5.**
+Self-hosted, modular digital workplace platform. **Current candidate: 1.0.0-rc.6.**
 
-RC.5 adds configurable calculations/privacy, clearer administration and personal
-reading settings, and hardened notifications. It remains a release candidate,
-not a stable-release certification. Existing deployments update through the
-signed updater; publication does not force an immediate restart.
+RC.6 fixes Collaboration file paste/drop and browser-based Office viewing for
+chat and record attachments. Shared Drive documents retain their editing
+permissions and versioning. It remains a release candidate, not a stable-release
+certification. Publication does not force an immediate restart.
 
 This is a candidate for the new 1.0 release line, not the final stable release.
 The earlier 4.x labels remain development history. Read the
-[current candidate notes](docs/releases/1.0.0-rc.5.md) and, for a 4.x deployment,
+[current candidate notes](docs/releases/1.0.0-rc.6.md) and, for a 4.x deployment,
 the [one-time version-reset instructions](docs/releases/1.0.0-rc.1.md#upgrading-a-4x-development-installation)
 before upgrading an existing installation.
 

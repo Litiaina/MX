@@ -79,6 +79,38 @@ an attachment error does not create another base message. Switching conversation
 is paused only while a send is actively running. Chat drafts and local file
 selections are not a persistent outbox and do not survive a full page reload.
 
+### Attaching and viewing files
+
+The following recovery changes are available starting in RC.6. Deploy the
+matching executable and frontend; the already published RC.5 remains unchanged.
+
+1. Open the intended conversation. Use **Attach**, paste copied files into the
+   message composer, or drop files onto the conversation. Word, Excel, PDF and
+   other files use the same attachment queue as pasted images.
+2. Check the filenames above the composer, add a message if needed, then choose
+   **Send**. Pasting/dropping does not send immediately. Remove an unwanted file
+   with its **Remove [filename]** button. Sending still enforces the configured
+   chat attachment limit; Drive upload settings are separate.
+3. For an Office **chat attachment**, select its preview. MX opens a read-only
+   viewer in a separate tab, using the bundled browser engine, not a server PDF
+   conversion. **Download original** keeps the original bytes unchanged. A chat
+   attachment is an immutable copy, not an editable shared Drive file.
+4. To edit a shared Office document with MX versions, share the actual Drive item
+   and choose **Open in MX Office** below its conversation card. Existing viewer
+   or editor permission still applies; attaching a copy grants no Drive access.
+
+Clipboard paste can use only file bytes the browser exposes. MX never reads a
+pasted local path or URL as an uploaded file. If a browser/OS clipboard provides
+no files, use **Attach** or drag/drop. Whole folders are not chat attachments:
+share them from MX Drive instead. A folder drop is explained beside the composer,
+not silently converted into an empty file. Plain-text paste stays native.
+
+Stored Word/Excel attachments in module records use the same read-only viewer.
+Use **Preview [filename]** in the record. The viewer has **Return to record** and
+**Download original**; it cannot save the attachment as a Drive version or alter
+the record. Existing module, creator and field permissions still apply. A queued
+file must first be saved/uploaded with its record before opening in MX Office.
+
 Uploads have progress/stall and processing deadlines. MX retries transient N1
 standard-multipart failures at the same part index with identical bytes, and
 checks the committed version after an uncertain finalize response. This is not

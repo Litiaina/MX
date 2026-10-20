@@ -1,6 +1,6 @@
 [package]
 name = "litiaina-mx"
-version = "1.0.0-rc.5"
+version = "1.0.0-rc.6"
 description = "Self-hosted modular digital workplace platform"
 edition = "2024"
 

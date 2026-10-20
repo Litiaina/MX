@@ -4,7 +4,7 @@
   import Check from '@lucide/svelte/icons/check';
   import X from '@lucide/svelte/icons/x';
   import { officeLoadingSteps, loadingBytes, loadingPercent, type OfficeLoadingProgress } from '../office/loading';
-  let { progress, fileName = '', failed = false, onCancel, onRetry, onDownload, onReturn, downloadLabel='Download loaded copy' }: { progress: OfficeLoadingProgress; fileName?: string; failed?: boolean; onCancel?:()=>void;onRetry?:()=>void;onDownload?:()=>void;onReturn?:()=>void;downloadLabel?:string } = $props();
+  let { progress, fileName = '', failed = false, onCancel, onRetry, onDownload, onReturn, downloadLabel='Download loaded copy', returnLabel='Return to Drive', failureDetail='See the error details. Use Document options to download a loaded copy or return to Drive.' }: { progress: OfficeLoadingProgress; fileName?: string; failed?: boolean; onCancel?:()=>void;onRetry?:()=>void;onDownload?:()=>void;onReturn?:()=>void;downloadLabel?:string;returnLabel?:string;failureDetail?:string } = $props();
   let elapsed = $state(0);
   const index = $derived(officeLoadingSteps.findIndex(step => step.phase === progress.phase));
   const percent = $derived(loadingPercent(progress.loaded, progress.total));
@@ -22,7 +22,7 @@
     {#if fileName}<p class="file-name" title={fileName}>{fileName}</p>{/if}
     <div class="current-status" role="status" aria-live="polite" aria-atomic="true">
       <strong>{failed ? 'Stopped at' : `Step ${index + 1} of ${officeLoadingSteps.length} ·`} {officeLoadingSteps[index].title}</strong>
-      <p>{failed ? 'See the error details. Use Document options to download a loaded copy or return to Drive.' : progress.detail}</p>
+      <p>{failed ? failureDetail : progress.detail}</p>
     </div>
     {#if !failed}
       {#if percent === null}<div class="loading-track" role="progressbar" aria-label="Current loading step"><span></span></div>{:else}<progress aria-label={progress.phase === 'document' ? 'Document download progress' : 'Editor resources download progress'} max="100" value={percent}></progress>{/if}
@@ -45,7 +45,7 @@
       {#if !failed && onCancel}<button onclick={onCancel}>Cancel opening</button>{/if}
       {#if failed && onRetry}<button onclick={onRetry}>Retry opening</button>{/if}
       {#if failed && onDownload}<button onclick={onDownload}>{downloadLabel}</button>{/if}
-      {#if failed && onReturn}<button onclick={onReturn}>Return to Drive</button>{/if}
+      {#if failed && onReturn}<button onclick={onReturn}>{returnLabel}</button>{/if}
     </div>
   </div>
 </section>

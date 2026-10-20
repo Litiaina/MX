@@ -41,7 +41,7 @@ export default defineConfig(({ mode }) => {
     build: {
       outDir: 'dist',
       emptyOutDir: true,
-      rolldownOptions: { input: { main: 'index.html', office: 'office/index.html' } }
+      rolldownOptions: { input: { main: 'index.html', office: 'office/index.html', attachment: 'office/attachment.html' } }
     },
     server: {
       host: '127.0.0.1',

@@ -5,6 +5,26 @@ deployment maintainer's local date.
 
 ## [Unreleased]
 
+## [1.0.0-rc.6] - 2026-10-20
+
+### Fixed
+
+- Accept clipboard files of all supported attachment types, not images only;
+  preserve plain-text paste and document filenames, deduplicate pending files,
+  and support file drops into the conversation without browser navigation.
+  Explain rejected folders and attachment problems beside the composer.
+- Open supported chat Office attachments in the bundled browser engine as
+  read-only originals, without requiring a server LibreOffice converter or
+  creating a writable Drive item. Retain original-byte download and access
+  checks. Shared Drive documents have a direct MX Office action with their
+  existing editing permissions/versioning.
+- Use the same read-only browser viewer for stored module/record Office
+  attachments, with existing record/field access checks and original downloads.
+  Preserve the record form and its values; queued files explain that they must
+  be saved first. A separate public entry avoids old cached Drive-only shells.
+- Close attachment previews when switching conversations and ignore obsolete
+  shared-file-list responses. Preserve published RC.5 and existing updater trust.
+
 ## [1.0.0-rc.5] - 2026-10-20
 
 ### Added and improved

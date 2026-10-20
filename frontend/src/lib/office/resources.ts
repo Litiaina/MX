@@ -4,7 +4,8 @@ export interface OfficeResources { expandedBytes: number | null; large: boolean 
 // This engine has a fixed 1-GiB heap. Do not buffer multi-gigabyte originals
 // into it; Drive storage/uploads and streamed downloads remain unrestricted.
 export const OFFICE_INPUT_BUDGET = 128 * 1024 ** 2;
-export function checkOfficeInputSize(size: number): void {
+export function checkOfficeInputSize(size: number, source: 'drive' | 'chat' | 'record' = 'drive'): void {
+  if (size > OFFICE_INPUT_BUDGET && source !== 'drive') throw new Error(`This ${source} attachment exceeds the browser viewer’s 128 MiB loading budget. The shared original is unchanged. Download it to open locally; this is an editor memory limit, not an upload limit.`);
   if (size > OFFICE_INPUT_BUDGET) throw new Error('This file exceeds the browser editor’s 128 MiB loading budget. It is stored safely in Drive. Download the original to edit locally; this is not a Drive upload limit.');
 }
 export async function officeResources(blob: Blob, extension: string): Promise<OfficeResources> {

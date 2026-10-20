@@ -2,14 +2,23 @@
 
 [Documentation index](README.md) · [Project overview](../README.md)
 
-## Current candidate: MX 1.0.0-rc.5
+## Current candidate: MX 1.0.0-rc.6
+
+RC.6 fixes file paste/drop in Collaboration and opens supported chat/record
+Office attachments in the bundled read-only browser viewer, without a server
+converter. Shared Drive cards open the existing versioned editor directly.
+Publisher trust and the update/backup/rollback protocol are unchanged. No new
+database schema or N1 storage-format migration is introduced. See the
+[RC.6 changes and acceptance limits](releases/1.0.0-rc.6.md).
+
+## Previous candidate: MX 1.0.0-rc.5
 
 RC.5 adds calculations, creator-based privacy, administration/reading improvements,
 background-only notification handling and the fresh-directory selection fix.
 It is a release candidate, not stable 1.0.0. See the
 [RC.5 changes and rollback boundaries](releases/1.0.0-rc.5.md).
 
-## Previous candidate: MX 1.0.0-rc.4
+## Earlier candidate: MX 1.0.0-rc.4
 
 RC.4 is a database-contention hotfix. Schema initialization and compatibility
 backfills run before serving requests, not during ordinary read/write handlers.
