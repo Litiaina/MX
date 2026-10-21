@@ -568,6 +568,37 @@ async fn failed_multipart_parts_cancel_without_finalizing() {
 }
 
 #[tokio::test]
+async fn staged_reader_failure_cancels_without_publishing() {
+    let mock = Mock::start(vec![
+        Step::json(
+            "POST",
+            "/noa/v1/upload/multipart/init/staged.bin",
+            session(),
+        ),
+        Step::new(
+            "DELETE",
+            "/noa/v1/upload/multipart/version-1",
+            StatusCode::OK,
+            vec![],
+        ),
+    ])
+    .await;
+    let client = client();
+    let result = N1Storage::new(&client, &mock.base, "test-fragment-token", 5)
+        .upload_reader(
+            "staged.bin",
+            "application/octet-stream",
+            tokio::io::empty(),
+            6 * 1024 * 1024,
+        )
+        .await;
+    assert!(
+        matches!(result, Err(MxOperationError::N1(message)) if message.contains("Could not read staged upload part"))
+    );
+    assert_eq!(mock.requests().requests.len(), 2);
+}
+
+#[tokio::test]
 async fn lost_finalize_acknowledgement_checks_exact_committed_version() {
     for (committed_version, expected_success) in [("version-1", true), ("older-version", false)] {
         let mut steps = vec![

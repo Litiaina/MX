@@ -28,7 +28,8 @@ implementation details and advanced configuration.
 
 ## Deployment administrators
 
-- [Current candidate: MX 1.0.0-rc.6](releases/1.0.0-rc.6.md)
+- [Current candidate: MX 1.0.0-rc.7](releases/1.0.0-rc.7.md)
+- [Published candidate: MX 1.0.0-rc.6](releases/1.0.0-rc.6.md)
 - [Published candidate: MX 1.0.0-rc.5](releases/1.0.0-rc.5.md)
 - [Published candidate: MX 1.0.0-rc.4](releases/1.0.0-rc.4.md)
 - [Deployment and upgrade procedure](deployment.md)

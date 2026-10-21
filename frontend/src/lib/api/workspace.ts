@@ -1,5 +1,8 @@
 import { apiFile, apiJson, apiUpload, jsonRequest } from './client';
 import { operationUid } from './operation';
+import type { UploadLimits, UploadSettings } from './domain';
+export const loadUploadLimits = () => apiJson<UploadLimits>('/mx/v1/uploads/limits');
+export const saveUploadLimits = (revision: number, settings: UploadSettings) => apiJson<UploadLimits>('/mx/v1/admin/upload-limits', jsonRequest('PUT', {revision,settings}));
 import type {
   ActionRateRow, AuditPage, BackupEntry, DashboardConfigResponse, DashboardWidget,
   DeploymentConfig, DeploymentResponse, FieldDefinition, JsonValue, MxRecord, PresenceResponse,

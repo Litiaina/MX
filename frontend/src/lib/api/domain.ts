@@ -172,6 +172,15 @@ export interface DeploymentConfig {
 
 export interface DeploymentResponse { revision: number; config: DeploymentConfig; updated_at: number }
 
+export interface UploadSettings { record_max_size_mb: number | null; collaboration_max_size_mb: number | null }
+export interface UploadLimits {
+  revision: number;
+  settings: UploadSettings;
+  defaults: { record_max_size_mb: number; collaboration_max_size_mb: number };
+  record_max_size_bytes: number;
+  collaboration_max_size_bytes: number;
+}
+
 export interface DashboardWidget {
   uid: string;
   kind: 'action_rate' | 'attachment_presence';

@@ -25,7 +25,7 @@ const candidateVersion=process.env.MX_TEST_CANDIDATE_VERSION||'1.0.0-rc.2';
 for(const version of [bootstrapVersion,candidateVersion])assert.match(version,/^1\.0\.0-rc\.[1-9]\d*$/,'Explicit numbered RC fixture versions are required');
 assert.ok(Number(candidateVersion.split('.').at(-1))>Number(bootstrapVersion.split('.').at(-1)),'The candidate must be newer than the preserved bootstrap');
 const brokenVersion=candidateVersion.replace(/\d+$/,value=>String(Number(value)+1));
-const directory=await mkdtemp(join(process.env.MX_TEST_ARTIFACTS,'mx-updates-'));
+const directory=await realpath(await mkdtemp(join(process.env.MX_TEST_ARTIFACTS,'mx-updates-')));
 const deployment=join(directory,'deployment'),root=join(directory,'updates'),configPath=join(directory,'mx-updates.json');
 const id=randomUUID().slice(0,8),unit=`mx-update-test-${id}`,workerUnit=`${unit}-worker`,pathUnit=`${unit}-worker.path`;
 const runtime=join(process.env.XDG_RUNTIME_DIR||`/run/user/${process.getuid()}`,'systemd/user');

@@ -77,7 +77,6 @@ use crate::api::reports::{
 use crate::api::search::global_search;
 use crate::api::user::handler::{create_user, delete_user, modify_user};
 
-use crate::config::load_config::CONFIG;
 use crate::middleware::auth::{
     auth, authorize, bootstrap_status, refresh_access_token, session_info, signup_auth,
 };
@@ -121,6 +120,10 @@ fn bootstrap_routes() -> Router {
 
 fn admin_routes() -> Router {
     Router::new()
+        .route(
+            "/mx/v1/admin/upload-limits",
+            put(crate::api::upload_limits::save_limits),
+        )
         .route("/mx/v1/admin/updates", get(crate::updates::api::status))
         .route(
             "/mx/v1/admin/updates/policy",
@@ -210,6 +213,10 @@ fn admin_routes() -> Router {
 
 fn user_routes() -> Router {
     Router::new()
+        .route(
+            "/mx/v1/uploads/limits",
+            get(crate::api::upload_limits::get_limits),
+        )
         .route("/mx/v1/auth/session", get(session_info))
         .route("/mx/v1/modules", get(list_modules))
         .route("/mx/v1/notifications", get(list_notifications))
@@ -281,13 +288,11 @@ fn user_routes() -> Router {
         )
         .route(
             "/mx/v1/collaboration/messages/{uid}/files",
-            post(upload_message_file).layer(DefaultBodyLimit::max(
-                CONFIG
-                    .n1
-                    .collaboration_file_max_size_mb
-                    .saturating_mul(1024 * 1024)
-                    .saturating_add(1024 * 1024),
-            )),
+            post(upload_message_file)
+                .layer(DefaultBodyLimit::disable())
+                .layer(axum::middleware::from_fn(
+                    crate::api::upload_limits::chat_body,
+                )),
         )
         .route(
             "/mx/v1/collaboration/files/{uid}/download",
@@ -342,12 +347,6 @@ fn user_routes() -> Router {
 }
 
 fn mx_routes() -> Router {
-    let attachment_body_limit = CONFIG
-        .n1
-        .attachment_max_size_mb
-        .saturating_mul(1024 * 1024)
-        .saturating_add(1024 * 1024);
-
     Router::new()
         .route("/mx/v1/schema", get(get_record_schema))
         .route(
@@ -405,7 +404,11 @@ fn mx_routes() -> Router {
         )
         .route(
             "/mx/v1/records/{uid}/attachments/fields/{field_uid}",
-            post(upload_mx_attachment_field).layer(DefaultBodyLimit::max(attachment_body_limit)),
+            post(upload_mx_attachment_field)
+                .layer(DefaultBodyLimit::disable())
+                .layer(axum::middleware::from_fn(
+                    crate::api::upload_limits::record_body,
+                )),
         )
         .route(
             "/mx/v1/records/{record_uid}/attachments/{attachment_uid}",

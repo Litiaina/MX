@@ -6,6 +6,7 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::time::Duration;
+use tokio::io::{AsyncRead, AsyncReadExt};
 
 #[cfg(test)]
 #[path = "n1_tests.rs"]
@@ -271,12 +272,45 @@ impl<'a> N1Storage<'a> {
         mime_type: &str,
         bytes: Vec<u8>,
     ) -> Result<(), MxOperationError> {
+        let size = bytes.len();
+        self.upload_multipart_reader(object_key, mime_type, std::io::Cursor::new(bytes), size)
+            .await
+    }
+
+    /// Disk-spooled module/chat files use the same retry/finalize protocol as
+    /// in-memory callers, keeping at most a configured N1 part in RAM.
+    pub(crate) async fn upload_reader<R: AsyncRead + Unpin>(
+        &self,
+        object_key: &str,
+        mime_type: &str,
+        mut reader: R,
+        size: usize,
+    ) -> Result<(), MxOperationError> {
+        let (part_size, _) = multipart_plan(size, self.part_size_mb);
+        if size <= part_size {
+            let mut bytes = vec![0; size];
+            reader.read_exact(&mut bytes).await.map_err(|error| {
+                MxOperationError::N1(format!("Could not read staged upload: {error}"))
+            })?;
+            return self.upload_one_shot(object_key, mime_type, bytes).await;
+        }
+        self.upload_multipart_reader(object_key, mime_type, reader, size)
+            .await
+    }
+
+    async fn upload_multipart_reader<R: AsyncRead + Unpin>(
+        &self,
+        object_key: &str,
+        mime_type: &str,
+        mut reader: R,
+        size: usize,
+    ) -> Result<(), MxOperationError> {
         let base_url = &self.base_url;
         let token = self.token;
-        let (part_size, expected_parts) = multipart_plan(bytes.len(), self.part_size_mb);
+        let (part_size, expected_parts) = multipart_plan(size, self.part_size_mb);
         let parameters = N1MultipartParameters {
             content_type: mime_type.to_string(),
-            total_size_bytes: bytes.len() as u64,
+            total_size_bytes: size as u64,
             expected_parts: expected_parts as u64,
             part_size_bytes: part_size as u64,
         };
@@ -312,7 +346,16 @@ impl<'a> N1Storage<'a> {
                 ))
             })?;
 
-        for (part_index, part) in bytes.chunks(part_size).enumerate() {
+        let mut buffer = vec![0; part_size];
+        for part_index in 0..expected_parts {
+            let count = part_size.min(size - part_index * part_size);
+            let part = &mut buffer[..count];
+            if let Err(error) = reader.read_exact(part).await {
+                self.cancel_multipart(object_key, &session.version_id).await;
+                return Err(MxOperationError::N1(format!(
+                    "Could not read staged upload part {part_index}: {error}"
+                )));
+            }
             if let Err(error) = self
                 .upload_part(&session.version_id, part_index, part)
                 .await

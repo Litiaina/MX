@@ -5,6 +5,26 @@ deployment maintainer's local date.
 
 ## [Unreleased]
 
+## [1.0.0-rc.7] - 2026-10-21
+
+### Upload-limit consistency
+
+- Remove the module record form's hard-coded 50 MiB attachment limit. Display
+  and validate the running server's actual policy, including copies from Drive;
+  refresh it when selecting files and keep rejection details beside attachments.
+- Add Administration → Deployment → Upload limits, with independent record/chat
+  limits and explicit Server default/custom/No file-size limit choices. Save administrator overrides
+  with revision checks; apply them to new requests without restart and retain
+  them across restarts. Preserve unsaved upload-policy controls through live
+  reconnect/global refresh. Unrelated identity saves cannot erase saved limits.
+- Use the same effective limits for browser metadata, HTTP bodies and streamed
+  file reads. Reject oversized/chunked uploads before N1 with actionable JSON
+  errors. Keep Drive quotas, import budgets and Office memory budgets separate.
+- Allow `0` in either startup upload-size setting to disable that per-file cap.
+  Stage module/chat files on private temporary disk and send bounded N1 parts,
+  rather than allocating a whole-file server RAM buffer. Report temporary-disk
+  failures clearly; existing multipart retries/finalization checks remain intact.
+
 ## [1.0.0-rc.6] - 2026-10-20
 
 ### Fixed

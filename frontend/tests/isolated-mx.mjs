@@ -75,8 +75,9 @@ max_participants=12
     if (!expected.includes(response.status())) throw new Error(`${method} ${path}: ${response.status()} ${JSON.stringify(body)}`);
     return { body, status: response.status(), milliseconds: Math.round(performance.now() - start) };
   }
-  return { directory, port, api, call, signupKey, n1, async restart() {
+  return { directory, port, api, call, signupKey, n1, async restart({temporaryDirectory}={}) {
     if (child.exitCode === null) { const exit = new Promise((resolve) => child.once('exit', resolve)); child.kill('SIGTERM'); await exit; }
+    if (temporaryDirectory) childEnvironment.TMPDIR = temporaryDirectory;
     child = launch(); const deadline = Date.now() + 30000;
     while (true) { try { if ((await api.get('/ping', { timeout: 1000 })).ok()) break; } catch {} if (child.exitCode !== null || Date.now() > deadline) throw new Error('Isolated MX restart failed'); await new Promise((resolve) => setTimeout(resolve, 100)); }
   }, async close() {

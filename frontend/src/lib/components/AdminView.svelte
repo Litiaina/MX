@@ -15,6 +15,7 @@
   import SchemaAdmin from './admin/SchemaAdmin.svelte';
   import TrashAdmin from './admin/TrashAdmin.svelte';
   import UpdatesAdmin from './admin/UpdatesAdmin.svelte';
+  import UploadLimitsSettings from './admin/UploadLimitsSettings.svelte';
   let { session, revision = 0, administrationLabel = 'Administration', dashboardLabel = 'Dashboard' }: { session: Session; revision?: number; administrationLabel?: string; dashboardLabel?: string } = $props();
   let tab = $state<'accounts' | 'schema' | 'dashboard' | 'trash' | 'deployment' | 'backups' | 'updates' | 'audit'>('accounts');
   onMount(() => { const stored = localStorage.getItem('mx_admin_tab'); if (stored === 'operations') tab = 'deployment'; else if (stored === 'accounts' || stored === 'schema' || stored === 'dashboard' || stored === 'trash' || stored === 'deployment' || stored === 'backups' || stored === 'updates' || stored === 'audit') tab = stored; });
@@ -25,6 +26,7 @@
 <section class="workspace-page admin-page">
   <nav class="subnav admin-subnav" aria-label={`${administrationLabel} sections`}><button class:active={tab === 'accounts'} onclick={() => setTab('accounts')} title="Accounts"><UsersRound size={15} /><span>Accounts</span></button><button class:active={tab === 'schema'} onclick={() => setTab('schema')} title="Modules and fields"><Blocks size={15} /><span>Modules & fields</span></button><button class:active={tab === 'dashboard'} onclick={() => setTab('dashboard')} title={dashboardLabel}><LayoutDashboard size={15} /><span>{dashboardLabel}</span></button><button class:active={tab === 'trash'} onclick={() => setTab('trash')} title="Trash"><Trash2 size={15} /><span>Trash</span></button><button class:active={tab === 'deployment'} onclick={() => setTab('deployment')} title="Deployment"><ServerCog size={15} /><span>Deployment</span></button><button class:active={tab === 'backups'} onclick={() => setTab('backups')} title="Backups"><Archive size={15} /><span>Backups</span></button><button class:active={tab === 'updates'} onclick={() => setTab('updates')} title="Updates"><RefreshCw size={15} /><span>Updates</span></button><button class:active={tab === 'audit'} onclick={() => setTab('audit')} title="Audit"><ScrollText size={15} /><span>Audit</span></button></nav>
   <div class="admin-content">
+    {#if tab === 'deployment'}<UploadLimitsSettings />{/if}
     {#if tab === 'updates'}<UpdatesAdmin {revision} />{:else}
       {#key revision}
         {#if tab === 'accounts'}<AccountsAdmin {session} />{:else if tab === 'schema'}<SchemaAdmin {session} />{:else if tab === 'dashboard'}<DashboardAdmin />{:else if tab === 'trash'}<TrashAdmin />{:else}<OperationsAdmin section={tab} />{/if}

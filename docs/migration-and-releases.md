@@ -2,7 +2,17 @@
 
 [Documentation index](README.md) · [Project overview](../README.md)
 
-## Current candidate: MX 1.0.0-rc.6
+## Current candidate: MX 1.0.0-rc.7
+
+RC.7 removes the module form's hard-coded 50 MiB attachment ceiling and adds
+revision-checked administrator upload settings for records and Collaboration.
+Each supports a custom cap or No file-size limit. Files stage on temporary disk
+and transfer to N1 in bounded parts. New requests use saved limits immediately; `mx.config` remains the startup
+fallback. Existing files, modules, Drive quotas, publisher trust and the signed
+update/backup/rollback protocol are unchanged. No new schema or N1 format
+migration is introduced. See [RC.7 instructions](releases/1.0.0-rc.7.md).
+
+## Previous candidate: MX 1.0.0-rc.6
 
 RC.6 fixes file paste/drop in Collaboration and opens supported chat/record
 Office attachments in the bundled read-only browser viewer, without a server

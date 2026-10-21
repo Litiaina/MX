@@ -5,7 +5,7 @@ use std::{
 };
 
 use axum::{
-    Json,
+    Extension, Json,
     body::Body,
     extract::{Multipart, Path, Query},
     http::{
@@ -32,14 +32,13 @@ use crate::{
         modules::module_can_for_user,
         mx::handler::{
             check_office_preview_size, generate_office_pdf_preview, inline_attachment_response,
-            n1_access_token, n1_download, n1_soft_delete, n1_stream, n1_upload,
+            n1_access_token, n1_download, n1_soft_delete, n1_storage, n1_stream,
             office_preview_supported,
         },
         mx::model::FileAttachment,
         notifications::{NewNotification, ensure_notification_schema, notify_user},
         operations::{self, ClientOperation},
     },
-    config::load_config::CONFIG,
     db::connector::{SqliteDatabaseError, with_sql_connection},
     middleware::auth::Claims,
 };
@@ -1194,16 +1193,19 @@ pub async fn list_channels(claims: Claims) -> Response {
     let result = tokio::task::spawn_blocking(move || {
         with_sql_connection(|connection| {
             ensure_collaboration_schema(connection)?;
-            list_channels_db(connection, &uid)
+            Ok((
+                list_channels_db(connection, &uid)?,
+                crate::api::upload_limits::limits_db(connection)?.1,
+            ))
         })
     })
     .await;
     match result {
-        Ok(Ok(channels)) => api_json(
+        Ok(Ok((channels, maximum))) => api_json(
             StatusCode::OK,
             json!({
                 "channels":channels,
-                "file_max_size_bytes":CONFIG.n1.collaboration_file_max_size_mb.max(1).saturating_mul(1024 * 1024)
+                "file_max_size_bytes":maximum
             }),
         ),
         _ => api_json(
@@ -2268,6 +2270,7 @@ pub async fn add_channel_member(
 pub async fn upload_message_file(
     claims: Claims,
     Path(message_uid): Path<String>,
+    Extension(limit): Extension<crate::api::upload_limits::UploadLimit>,
     mut multipart: Multipart,
 ) -> Response {
     let actor_uid = claims.uid.clone();
@@ -2304,7 +2307,13 @@ pub async fn upload_message_file(
     };
     let field = match multipart.next_field().await {
         Ok(Some(field)) => field,
-        _ => {
+        Err(error) => {
+            return api_json(
+                error.status(),
+                json!({"response":"The upload body could not be read. Retry the file transfer."}),
+            );
+        }
+        Ok(None) => {
             return api_json(
                 StatusCode::BAD_REQUEST,
                 json!({"response":"select a file to share"}),
@@ -2319,26 +2328,10 @@ pub async fn upload_message_file(
         .content_type()
         .unwrap_or("application/octet-stream")
         .to_string();
-    let bytes = match field.bytes().await {
+    let mut bytes = match crate::api::upload_limits::read_file(field, Extension(limit)).await {
         Ok(bytes) => bytes,
-        Err(_) => {
-            return api_json(
-                StatusCode::BAD_REQUEST,
-                json!({"response":"could not read shared file"}),
-            );
-        }
+        Err(response) => return response,
     };
-    let maximum = CONFIG
-        .n1
-        .collaboration_file_max_size_mb
-        .max(1)
-        .saturating_mul(1024 * 1024);
-    if bytes.len() > maximum {
-        return api_json(
-            StatusCode::PAYLOAD_TOO_LARGE,
-            json!({"response":format!("shared files may not exceed {} MiB", CONFIG.n1.collaboration_file_max_size_mb)}),
-        );
-    }
     let file_uid = Uuid::new_v4().to_string();
     let file_size = bytes.len() as i64;
     let object_key = format!(
@@ -2357,7 +2350,17 @@ pub async fn upload_message_file(
             );
         }
     };
-    if n1_upload(&object_key, &mime_type, bytes.clone().to_vec(), &token)
+    let storage = match n1_storage(&token) {
+        Ok(storage) => storage,
+        Err(_) => {
+            return api_json(
+                StatusCode::BAD_GATEWAY,
+                json!({"response":"N1 storage is unavailable"}),
+            );
+        }
+    };
+    if storage
+        .upload_reader(&object_key, &mime_type, &mut bytes.file, file_size as usize)
         .await
         .is_err()
     {

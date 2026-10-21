@@ -11,16 +11,17 @@
 
 </div>
 
-Self-hosted, modular digital workplace platform. **Current candidate: 1.0.0-rc.6.**
+Self-hosted, modular digital workplace platform. **Current candidate: 1.0.0-rc.7.**
 
-RC.6 fixes Collaboration file paste/drop and browser-based Office viewing for
-chat and record attachments. Shared Drive documents retain their editing
-permissions and versioning. It remains a release candidate, not a stable-release
-certification. Publication does not force an immediate restart.
+RC.7 removes the module uploader's hard-coded 50 MiB limit and adds administrator
+controls for record/chat upload limits, including **No file-size limit**, effective
+without restarting MX. Existing
+files and Drive quotas are unchanged. It remains a release candidate, not a
+stable-release certification. Publication does not force an immediate restart.
 
 This is a candidate for the new 1.0 release line, not the final stable release.
 The earlier 4.x labels remain development history. Read the
-[current candidate notes](docs/releases/1.0.0-rc.6.md) and, for a 4.x deployment,
+[current candidate notes](docs/releases/1.0.0-rc.7.md) and, for a 4.x deployment,
 the [one-time version-reset instructions](docs/releases/1.0.0-rc.1.md#upgrading-a-4x-development-installation)
 before upgrading an existing installation.
 

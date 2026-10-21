@@ -482,13 +482,7 @@ pub static CONFIG: LazyLock<Config> = LazyLock::new(|| {
             )
         });
 
-    if attachment_max_size_mb == 0 {
-        crate::fatal_error!(
-            "'attachment_max_size_mb' in section '[n1]' must be greater than 0",
-            "static",
-            "CONFIG"
-        );
-    }
+    // 0 explicitly disables MX's per-file size cap (not storage availability).
 
     let collaboration_file_max_size_mb_value = n1_section
         .get("collaboration_file_max_size_mb")
@@ -506,14 +500,6 @@ pub static CONFIG: LazyLock<Config> = LazyLock::new(|| {
                 "CONFIG"
             )
         });
-
-    if collaboration_file_max_size_mb == 0 {
-        crate::fatal_error!(
-            "'collaboration_file_max_size_mb' in section '[n1]' must be greater than 0",
-            "static",
-            "CONFIG"
-        );
-    }
 
     let multipart_part_size_mb_value = n1_section.get("multipart_part_size_mb").unwrap_or("16");
 

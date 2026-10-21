@@ -23,11 +23,57 @@ collaboration_file_max_size_mb=100
 multipart_part_size_mb=16
 ```
 
-`attachment_max_size_mb` and `collaboration_file_max_size_mb` set the accepted
-file limits. `multipart_part_size_mb` controls each part sent from MX to N1 and
+`attachment_max_size_mb` and `collaboration_file_max_size_mb` set the default
+per-file limits for module records and Collaboration respectively. `mx.config`
+accepts **`0` to disable either per-file cap**; positive values are whole MiB.
+It is read at startup: restart the correct MX service after editing it. A reverse
+proxy can impose a smaller request limit too. `multipart_part_size_mb` controls
+each part sent from MX to N1 and
 must be between 5 and 100 MiB; it defaults to 16 MiB when omitted. The N1 server
 must allow a part at least this large. Increasing an upload limit does not
 require sending the complete object as one N1 part.
+
+### Administrator upload settings (RC.7 onward)
+
+RC.6 and earlier have a record-form bug that hard-codes 50 MiB even when
+the server configuration is higher. Changing `mx.config` alone does not remove
+that browser-side check; the matching fixed frontend/server must be deployed.
+
+After updating to RC.7, open **Administration → Deployment → Upload limits**:
+
+1. Under **Module record attachments**, select **Custom limit** and enter a
+   positive whole MiB value, for example **100** for a 66 MB file, or choose
+   **No file-size limit** to remove MX's per-file cap.
+2. Configure **Collaboration attachments** separately if required.
+3. Choose **Save upload limits**. The current enforced values are displayed;
+   new uploads use them without a service restart. Existing files are untouched.
+4. **Server default** removes that override and uses the value loaded from
+   `mx.config [n1]`. File edits still require restarting MX to reload defaults.
+
+Overrides are saved in MX's deployment settings database and survive restarts
+and updates. A stale administrator save is rejected rather than silently
+overwriting another change; **Refresh current limits** retains your draft for
+review. Saving branding/appearance does not reset upload limits.
+
+These are not Drive per-file limits or storage quotas. Raising them does not
+increase the separate spreadsheet-import or browser Office budgets. Record/chat
+uploads stage each file on private temporary disk (the MX service's `TMPDIR`, or
+the operating system temporary directory) and send N1 parts with bounded memory.
+Ensure this disk has space for simultaneous uploads. Temporary-disk failures
+return an actionable HTTP 507 instead of claiming a successful save. Linux
+spools are unlinked immediately and reclaimed on cancellation/process exit.
+For very large files prefer Drive's resumable upload path. No file-size limit
+does not remove quotas, file-count rules, permissions, or physical storage
+capacity. Changing N1 part size does not bypass an MX or proxy limit.
+
+The API represents **Server default** as `null`, **No file-size limit** as `0`,
+and a custom cap as a positive whole MiB value. These are independent choices
+for module and Collaboration attachments; Drive already has no per-file cap.
+
+When a proxy returns HTTP 413, review its request-body setting (for example
+nginx `client_max_body_size`) as well. Allow multipart overhead above the chosen
+per-file size. Do not change a production proxy or restart MX without planning
+for users' active work.
 
 MX targets **N1 1.0.0-RC.1**, using the unchanged **NOA v1** (`/noa/v1`)
 fragment-scoped API and **storage encoding 4**. N1's storage-format specification

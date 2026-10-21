@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { tick, onDestroy, untrack, getContext } from 'svelte';
+  import { tick, onMount, onDestroy, untrack, getContext } from 'svelte';
   import { writable, type Writable } from 'svelte/store';
   import { fieldIsBold, moduleReadingContext } from '../util/readingPreferences';
   import type { ModuleReadingMap } from '../api/domain';
@@ -14,6 +14,7 @@
   import Trash2 from '@lucide/svelte/icons/trash-2';
   import X from '@lucide/svelte/icons/x';
   import { ApiError } from '../api/client';
+  import { loadUploadLimits } from '../api/workspace';
   import { operationUid } from '../api/operation';
   import type { FieldConflict, FieldDefinition, JsonValue, MxRecord, RecordVersionDetail, RecordVersionSummary, SchemaResponse } from '../api/domain';
   import type { LiveMessage } from '../live/client';
@@ -90,7 +91,29 @@
   const previewIndex = $derived(Math.max(0, previewEntries.findIndex((item) => item.key === previewKey)));
   const activePreview = $derived(previewEntries[previewIndex] || null);
   let officePreviewNotice = $state('');
-  const MAX_ATTACHMENT_SIZE = 50 * 1024 * 1024;
+  let attachmentMaxBytes = $state<number | null>(null);
+  let attachmentProblem = $state('');
+  let attachmentPolicyBusy = $state(false);
+  let attachmentPolicyRequest: Promise<number> | null = null;
+  const attachmentLimitLabel = $derived(attachmentMaxBytes === null ? 'Checking server upload limit…' : attachmentMaxBytes === 0 ? 'No file-size limit' : `Up to ${attachmentMaxBytes / 1024 ** 2} MiB per file`);
+  async function refreshAttachmentLimit(): Promise<number> {
+    if (attachmentPolicyRequest) return attachmentPolicyRequest;
+    attachmentPolicyBusy = true;
+    const request = loadUploadLimits().then(policy => {
+      if (!Number.isSafeInteger(policy.record_max_size_bytes) || policy.record_max_size_bytes < 0) throw new Error('MX returned an invalid record attachment limit. Retry when connected.');
+      if (!destroyed) attachmentMaxBytes = policy.record_max_size_bytes;
+      return policy.record_max_size_bytes;
+    });
+    attachmentPolicyRequest = request;
+    try { return await request; }
+    finally { if (attachmentPolicyRequest === request) { attachmentPolicyRequest = null; attachmentPolicyBusy = false; } }
+  }
+  onMount(() => {
+    if (!canAttachments || !schema.fields.some(field => field.active && field.field_type === 'attachments')) return;
+    const refresh = () => { void refreshAttachmentLimit().catch(reason => { if (!destroyed) attachmentProblem = reason instanceof Error ? reason.message : 'The upload limit could not be checked. Retry before attaching files.'; }); };
+    refresh(); window.addEventListener('focus', refresh);
+    return () => window.removeEventListener('focus', refresh);
+  });
 
   $effect(() => {
     const source = record?.values || {};
@@ -332,14 +355,20 @@
 
   function useLatest(conflict: FieldConflict) { const restored={...conflict.related_values,[conflict.field_key]:conflict.current_value};for(const[key,value]of Object.entries(restored)){values[key]=cloneJson(value);original[key]=cloneJson(value);}conflicts = conflicts.filter((item) => !Object.hasOwn(restored,item.field_key));if(Object.keys(conflict.related_values||{}).length)liveNotice='The branch change was cancelled to keep the latest stored details. Other unsaved fields remain local.'; if (!conflicts.length) error = '';persistDraft(); }
   function keepMine(conflict: FieldConflict) { conflicts = conflicts.filter((item) => item.field_key !== conflict.field_key); if (!conflicts.length) error = ''; liveNotice = 'Your value is ready to save over the latest stored revision.'; }
-  function queueFiles(field: FieldDefinition, list: FileList | File[]) {
+  async function queueFiles(field: FieldDefinition, list: FileList | File[]) {
+    const files = Array.from(list); // Snapshot before the file input is reset.
+    let maximumBytes: number;
+    try { maximumBytes = await refreshAttachmentLimit(); }
+    catch (reason) { attachmentProblem = reason instanceof Error ? reason.message : 'Could not verify the upload limit. Retry when connected.'; return; }
+    if (destroyed || busy || !canWrite || deletedRemotely) return;
+    attachmentProblem = '';
     const queued = [...(pending[field.uid] || [])];
     const storedCount = filesFor(field).length;
     const maximum = attachmentLimit(field);
-    for (const file of Array.from(list)) {
-      if (file.size > MAX_ATTACHMENT_SIZE) { error = `${file.name} exceeds the 50 MiB attachment limit.`; continue; }
+    for (const file of files) {
+      if (maximumBytes > 0 && file.size > maximumBytes) { attachmentProblem = `${file.name} exceeds the current ${maximumBytes / 1024 ** 2} MiB record attachment limit. An administrator can change it in Administration → Deployment → Upload limits.`; continue; }
       if (queued.some((item) => item.name === file.name && item.size === file.size && item.lastModified === file.lastModified)) continue;
-      if (maximum > 0 && storedCount + queued.length >= maximum) { error = `${field.label} allows at most ${maximum} file${maximum === 1 ? '' : 's'}.`; break; }
+      if (maximum > 0 && storedCount + queued.length >= maximum) { attachmentProblem = `${field.label} allows at most ${maximum} file${maximum === 1 ? '' : 's'}.`; break; }
       queued.push(file);
       fileProgress[fileKey(file)] = { percent: 0, label: 'Ready — uploads when you save' };
     }
@@ -349,10 +378,13 @@
     const field = driveAttachmentField;
     if (!item || !field || !canWrite || busy) return;
     driveAttachmentField = null;
-    if (item.size > MAX_ATTACHMENT_SIZE) { error = 'This file exceeds the record attachment limit of 50 MiB.'; return; }
     driveCopying = true;
-    try { const file = await driveFile(item); if (canWrite && !busy && !deletedRemotely) queueFiles(field, [file]); }
-    catch (reason) { error = reason instanceof Error ? reason.message : 'Could not copy this Drive file.'; }
+    try {
+      const maximum = await refreshAttachmentLimit();
+      if (maximum > 0 && item.size > maximum) { attachmentProblem = `This Drive file exceeds the current ${maximum / 1024 ** 2} MiB record attachment limit. An administrator can change it in Administration → Deployment → Upload limits.`; return; }
+      const file = await driveFile(item); if (canWrite && !busy && !deletedRemotely) await queueFiles(field, [file]);
+    }
+    catch (reason) { attachmentProblem = reason instanceof Error ? reason.message : 'Could not copy this Drive file.'; }
     finally { driveCopying = false; }
   }
   function fileKey(file: File) { return `${file.name}\u0000${file.size}\u0000${file.lastModified}`; }
@@ -377,7 +409,7 @@
 
   async function submit(event: SubmitEvent) {
     event.preventDefault();
-    if (!canWrite || deletedRemotely || busy) return;
+    if (!canWrite || deletedRemotely || busy || attachmentPolicyBusy) return;
     if(relationshipPending||relationshipFailed){error='Wait for linked fields to load, or retry the failed selection before saving.';return;}
     if (driveCopying) { error = 'Wait for the Drive file to finish copying before saving.'; return; }
     if (conflicts.length) { error = 'Resolve the live field conflicts before saving.'; return; }
@@ -448,6 +480,7 @@
             if (uploaded.record_revision > 0) workingRevision = uploaded.record_revision;
           } catch (reason) {
             fileProgress[key] = { percent: fileProgress[key]?.percent || 0, label: 'Upload failed — save again to retry' };
+            attachmentProblem = reason instanceof Error ? reason.message : 'This attachment could not be uploaded.';
             throw reason;
           }
           completedBytes += file.size;
@@ -622,6 +655,7 @@
         <div class="personal-record-field" class:personal-field-bold={fieldIsBold($readingPreferences,moduleUid,field.uid)} data-field-uid={field.uid}>
         {#if field.field_type === 'attachments'}
           <fieldset class="field-block full attachment-drop attachment-section"><legend>{field.label}{#if field.required}<b class="required-mark"> *</b>{/if}</legend>
+            {#if canWrite && attachmentProblem}<div class="notice error" role="alert">{attachmentProblem}<button class="button small" type="button" onclick={() => { attachmentProblem = ''; void refreshAttachmentLimit().catch(reason => attachmentProblem = reason instanceof Error ? reason.message : 'Could not refresh the upload limit.'); }}>Refresh upload limit</button></div>{/if}
             {#if field.config.description}<p class="muted small">{String(field.config.description)}</p>{/if}
             <p class="muted attachment-field-meta">N1: <code>records/&lt;configured folders&gt;/{String(field.config.storage_name || field.label)}/file.ext</code>{#if attachmentLimit(field) > 0} · maximum {attachmentLimit(field)} file{attachmentLimit(field) === 1 ? '' : 's'}{/if}</p>
             {#if canWrite}<button class="button small icon-label" type="button" disabled={busy || driveCopying} onclick={() => driveAttachmentField = field}><HardDrive size={15} />{driveCopying ? 'Copying Drive file…' : 'Choose from MX Drive'}</button>{/if}
@@ -634,7 +668,7 @@
               </div></div>
             {/each}
             {#each pending[field.uid] || [] as file, index}{@const progress = fileProgress[fileKey(file)] || { percent: 0, label: 'Ready — uploads when you save' }}<div class="file-row pending-file"><span>{file.name} <small>{file.type || 'application/octet-stream'} · {bytes(file.size)}</small><span class="file-progress"><i><b style={`width:${progress.percent}%`}></b></i><em>{progress.label}</em></span></span><div class="inline-actions"><button class="file-action-icon" type="button" onclick={() => showPending(file)} aria-label={`Preview ${file.name}`} title="Preview"><Eye size={15} /></button><button class="file-action-icon danger-text" type="button" disabled={busy} onclick={() => removePending(field.uid, index)} aria-label={`Remove ${file.name}`} title="Remove"><X size={15} /></button></div></div>{/each}
-            {#if canWrite}<label class:drag-active={dragAttachmentField === field.uid} class="file-picker" ondragenter={(event) => { event.preventDefault(); dragAttachmentField = field.uid; }} ondragover={(event) => { event.preventDefault(); dragAttachmentField = field.uid; }} ondragleave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) dragAttachmentField = ''; }} ondrop={(event) => { event.preventDefault(); dragAttachmentField = ''; if (event.dataTransfer?.files) queueFiles(field, event.dataTransfer.files); }}><span class="file-picker-icon" aria-hidden="true"><Upload size={19} /></span><span class="file-picker-copy"><strong>Drop {field.config.multiple === false ? 'a file' : 'files'} here or browse</strong><small>Up to 50 MiB per file{attachmentLimit(field) > 0 ? ` · ${attachmentLimit(field)} maximum` : ''}</small></span><input type="file" multiple={field.config.multiple !== false} onchange={(event) => { if (event.currentTarget.files) queueFiles(field, event.currentTarget.files); event.currentTarget.value = ''; }} /></label>{/if}
+            {#if canWrite}<label class:drag-active={dragAttachmentField === field.uid} class="file-picker" ondragenter={(event) => { event.preventDefault(); dragAttachmentField = field.uid; }} ondragover={(event) => { event.preventDefault(); dragAttachmentField = field.uid; }} ondragleave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) dragAttachmentField = ''; }} ondrop={(event) => { event.preventDefault(); dragAttachmentField = ''; if (event.dataTransfer?.files) queueFiles(field, event.dataTransfer.files); }}><span class="file-picker-icon" aria-hidden="true"><Upload size={19} /></span><span class="file-picker-copy"><strong>Drop {field.config.multiple === false ? 'a file' : 'files'} here or browse</strong><small>{attachmentLimitLabel}{attachmentLimit(field) > 0 ? ` · ${attachmentLimit(field)} maximum` : ''}</small></span><input type="file" disabled={busy || attachmentPolicyBusy} multiple={field.config.multiple !== false} onchange={(event) => { if (event.currentTarget.files) queueFiles(field, event.currentTarget.files); event.currentTarget.value = ''; }} /></label>{/if}
           </fieldset>
         {:else if field.field_type === 'auto_number'}
           <label>{field.label}<input value={autoNumberValue(field)} disabled placeholder="Assigned automatically when saved" /></label>

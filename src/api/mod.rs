@@ -20,4 +20,5 @@ pub mod query_handler;
 pub mod reports;
 pub mod route;
 pub mod search;
+pub mod upload_limits;
 pub mod user;

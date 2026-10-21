@@ -188,7 +188,7 @@
       ]);
       if (channelResult.status === 'rejected') throw channelResult.reason;
       channels = channelResult.value.channels;
-      sharedFileMaxBytes = channelResult.value.file_max_size_bytes || FALLBACK_SHARED_FILE_MAX_BYTES;
+      sharedFileMaxBytes = channelResult.value.file_max_size_bytes ?? FALLBACK_SHARED_FILE_MAX_BYTES;
       if (peopleResult.status === 'fulfilled') users = peopleResult.value.people;
       else peopleError = peopleResult.reason instanceof Error ? peopleResult.reason.message : 'The coworker directory is temporarily unavailable.';
       if (presenceResult.status === 'fulfilled') onlineUserUids = presenceResult.value.accounts.map((account) => account.uid);
@@ -212,7 +212,7 @@
       const stayAtEnd = isNearEnd();
       const [channelData, presenceData] = await Promise.all([listChannels(), loadPresence().catch(() => null)]);
       channels = channelData.channels;
-      sharedFileMaxBytes = channelData.file_max_size_bytes || FALLBACK_SHARED_FILE_MAX_BYTES;
+      sharedFileMaxBytes = channelData.file_max_size_bytes ?? FALLBACK_SHARED_FILE_MAX_BYTES;
       if (presenceData) onlineUserUids = presenceData.accounts.map((account) => account.uid);
       if (selected) {
         const channelUid = selected.uid;
@@ -395,10 +395,10 @@
   function releasePendingPreviews() { for (const url of pendingPreviewUrls.values()) URL.revokeObjectURL(url); pendingPreviewUrls.clear(); }
   function removePendingFile(index: number) { if (sending) return; const file = pendingFiles[index]; if (file) releasePendingPreview(file); pendingFiles = pendingFiles.filter((_, item) => item !== index); }
   function clearPendingFiles() { releasePendingPreviews(); pendingFiles = []; }
-  function sharedFileLimitLabel() { const mib = sharedFileMaxBytes / 1024 ** 2; return `${Number.isInteger(mib) ? mib : mib.toFixed(1)} MiB`; }
+  function sharedFileLimitLabel() { if (sharedFileMaxBytes === 0) return 'No file-size limit'; const mib = sharedFileMaxBytes / 1024 ** 2; return `${Number.isInteger(mib) ? mib : mib.toFixed(1)} MiB`; }
   async function attachDriveFile(item: DriveItem | null) {
     if (!item || !selected || sending || pendingSend) return;
-    if (item.size > sharedFileMaxBytes) { error = `This Drive file exceeds the ${sharedFileLimitLabel()} chat attachment limit.`; drivePickerOpen = false; return; }
+    if (sharedFileMaxBytes > 0 && item.size > sharedFileMaxBytes) { error = `This Drive file exceeds the ${sharedFileLimitLabel()} chat attachment limit.`; drivePickerOpen = false; return; }
     const channelUid = selected.uid; drivePickerOpen = false; driveCopying = true;
     try { const file = await driveFile(item); if (selected?.uid === channelUid && !sending && !pendingSend) queueSharedFiles([file]); else error = 'The conversation changed while copying. Choose the Drive file again in the intended conversation.'; }
     catch (reason) { error = reason instanceof Error ? reason.message : 'Could not copy this Drive file.'; }
@@ -407,8 +407,8 @@
   function queueSharedFiles(files: FileList | File[]) {
     if (sending || pendingSend) { attachmentNotice = 'Finish or retry this send before attaching more files.'; return; }
     const incoming = Array.from(files);
-    const oversized = incoming.filter((file) => file.size > sharedFileMaxBytes);
-    const accepted = uniqueFiles(incoming.filter((file) => file.size <= sharedFileMaxBytes), pendingFiles);
+    const oversized = incoming.filter((file) => sharedFileMaxBytes > 0 && file.size > sharedFileMaxBytes);
+    const accepted = uniqueFiles(incoming.filter((file) => sharedFileMaxBytes === 0 || file.size <= sharedFileMaxBytes), pendingFiles);
     if (accepted.length) pendingFiles = [...pendingFiles, ...accepted];
     attachmentNotice = oversized.length
       ? `${oversized.map((file) => file.name).join(', ')} ${oversized.length === 1 ? 'is' : 'are'} larger than the ${sharedFileLimitLabel()} chat file limit.`
@@ -647,7 +647,7 @@
   }
   async function submit(event: SubmitEvent) {
     event.preventDefault(); if (driveCopying) { error = 'Wait for the Drive file to finish copying before sending.'; return; } if (sending || !selected || (!pendingSend && !body.trim() && !pendingFiles.length && !pendingRecordUids.length)) return;
-    const oversized = pendingFiles.find((file) => file.size > sharedFileMaxBytes);
+    const oversized = pendingFiles.find((file) => sharedFileMaxBytes > 0 && file.size > sharedFileMaxBytes);
     if (oversized) { error = `${oversized.name} is larger than the ${sharedFileLimitLabel()} chat file limit.`; return; }
     sending = true; error = '';
     let acknowledged = false;

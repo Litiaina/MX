@@ -1,5 +1,66 @@
 # MX validation
 
+## 1.0.0-rc.7 — runtime upload limits
+
+RC.7 packages the tested upload-limit fix with maintainer authorization on
+2026-10-21. Published RC.6 is unchanged. Publication does not update production
+or the populated test deployment. All new builds, fixtures, temporary files
+and screenshots for this work remain on the 1-TB HDD.
+
+- Native: **192 passed, two opt-in ignored**. Frontend: **353 passed / 57 files**.
+  Production frontend compilation passes with zero Svelte errors/warnings; the
+  existing Vite large-chunk advisory remains.
+- `test:uploads:limits` sends a real **66 MiB (69,206,016-byte)** file through the
+  actual module and Collaboration forms with No file-size limit in Chromium,
+  Brave, Firefox and Linux WebKit, storing it
+  through the N1 HTTP contract fixture. An API upload/download has identical
+  SHA-256. This is not a production/live-N1 or maximum-scale throughput claim.
+- The browser displays the configured policy rather than a hard-coded 50 MiB.
+  An open form refreshes changed limits when selecting a file; oversized files
+  receive feedback beside attachments. The administrator editor validates inputs,
+  saves without restart and fits 320/390-pixel viewports. Its unsaved selection
+  survives live reconnect/global refresh without remounting the policy editor.
+- Direct API tests reject non-administrator changes, negative/fractional/
+  string/unknown settings, stale saves and seven of eight competing writes.
+  Saving an old branding form cannot remove newer upload settings. Record/chat
+  overrides are independent and persist after restart; Server default restores
+  the configured fallback. Editing `mx.config` does not pretend to apply live:
+  a restart demonstrably loads the new value without altering existing files.
+- No file-size limit (`0`) persists across restart for each upload context.
+  Actual **101 MiB** module and chat API uploads exceed both shipped defaults;
+  the recipient's download SHA-256 matches. Both startup settings also accept
+  `0`. Restoring a finite Collaboration cap rejects the next oversized file.
+- Uploads stage on private temporary disk, not whole-file server RAM. Native
+  tests read back exact spooled bytes, check Unix anonymous-spool cleanup, and
+  verify a staged-reader failure cancels N1 without finalizing an object.
+  An unavailable temporary directory returns actionable JSON **507** with no
+  N1 object or record mutation.
+- Exact per-file boundaries are accepted; the next byte, oversized request
+  bodies and chunked multipart bypass attempts return actionable JSON **413**.
+  Rejected files reach neither N1 nor record metadata. Reads stay bounded while
+  receiving, not after accumulating the complete oversized file.
+- Chromium Collaboration transfer/Office and record Office regressions pass
+  against this backend, with byte-exact downloads and access checks intact.
+- The optimized RC.7 build passes eight native CLI checks and eleven isolated
+  RC.6 → RC.7 independent-systemd checks, including staging, maintenance-window
+  deferral, activation, final backup, paired rollback, interrupted-worker recovery
+  and the Chromium Updates UI. All 29 signed runtime files and paired release
+  identities verify with the existing publisher key.
+
+Repeat from `frontend`, using an isolated binary and matching fixed frontend:
+
+```sh
+export TMPDIR='/mnt/ST1000LM049/build/tmp'
+export MX_TEST_ARTIFACTS='/mnt/ST1000LM049/tests'
+export MX_TEST_BINARY='/mnt/ST1000LM049/build/target/debug/litiaina-mx'
+export MX_TEST_STATIC_SITE_PATH='/mnt/ST1000LM049/build/mx-rc7-unlimited-dist'
+export MX_TEST_BROWSERS='chromium,brave,firefox,webkit'
+npm run test:uploads:limits
+```
+
+The runner refuses live N1 and non-HDD artifact/temp roots. It never edits the
+deployment's `mx.config`, existing data, reverse proxy or service settings.
+
 ## 1.0.0-rc.6 — Collaboration and record Office recovery
 
 RC.6 packages the locally tested fixes after RC.5 as a newly numbered candidate,

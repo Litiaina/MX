@@ -6,7 +6,7 @@ use std::{
 };
 
 use axum::{
-    Json,
+    Extension, Json,
     body::Body,
     extract::{Multipart, Path, Query},
     http::{
@@ -449,14 +449,6 @@ fn n1_secret() -> Result<String, MxOperationError> {
                 Ok(value)
             }
         })
-}
-
-fn max_attachment_size_bytes() -> usize {
-    CONFIG
-        .n1
-        .attachment_max_size_mb
-        .max(1)
-        .saturating_mul(1024 * 1024)
 }
 
 fn n1_client() -> Result<&'static Client, MxOperationError> {
@@ -2012,9 +2004,10 @@ pub async fn execute_upload_mx_attachment(
     attachment_field_uid: String,
     file_name: String,
     mime_type: String,
-    bytes: Vec<u8>,
+    mut bytes: crate::api::upload_limits::UploadFile,
     base_revision: i64,
     actor_uid: String,
+    max_size: usize,
 ) -> Result<(FileAttachment, i64), MxOperationError> {
     if bytes.is_empty() {
         return Err(MxOperationError::InvalidRequest(
@@ -2022,11 +2015,10 @@ pub async fn execute_upload_mx_attachment(
         ));
     }
 
-    let max_size = max_attachment_size_bytes();
-    if bytes.len() > max_size {
+    if max_size > 0 && bytes.len() > max_size {
         return Err(MxOperationError::InvalidRequest(format!(
             "Attachment exceeds the configured {} MiB MX limit.",
-            CONFIG.n1.attachment_max_size_mb.max(1)
+            max_size / (1024 * 1024)
         )));
     }
 
@@ -2154,7 +2146,9 @@ pub async fn execute_upload_mx_attachment(
 
     let size = bytes.len() as u64;
     let token = n1_access_token().await?;
-    n1_upload(&object_key, &mime_type, bytes, &token).await?;
+    n1_storage(&token)?
+        .upload_reader(&object_key, &mime_type, &mut bytes.file, size as usize)
+        .await?;
 
     let attachment = FileAttachment {
         uid: Uuid::new_v4().to_string(),
@@ -2402,6 +2396,7 @@ async fn upload_mx_attachments_inner(
     attachment_field_uid: String,
     actor_uid: String,
     module_uid: String,
+    limit: crate::api::upload_limits::UploadLimit,
     mut multipart: Multipart,
 ) -> Response {
     let mut uploaded: Vec<FileAttachment> = Vec::new();
@@ -2414,22 +2409,34 @@ async fn upload_mx_attachments_inner(
             Ok(None) => break,
             Err(error) => {
                 return api_json(
-                    StatusCode::BAD_REQUEST,
+                    error.status(),
                     json!({"response": format!("Invalid multipart upload: {error}")}),
                 );
             }
         };
 
         if field.name() == Some("base_revision") {
-            base_revision = field
-                .text()
-                .await
+            let mut field = field;
+            let mut value = Vec::new();
+            while let Ok(Some(chunk)) = field.chunk().await {
+                if value.len() + chunk.len() > 32 {
+                    return api_json(
+                        StatusCode::BAD_REQUEST,
+                        json!({"response":"The record revision is invalid."}),
+                    );
+                }
+                value.extend_from_slice(&chunk);
+            }
+            base_revision = std::str::from_utf8(&value)
                 .ok()
                 .and_then(|value| value.parse::<i64>().ok());
             continue;
         }
         if field.name() != Some("files") {
-            continue;
+            return api_json(
+                StatusCode::BAD_REQUEST,
+                json!({"response":"Use base_revision followed by files in the attachment request."}),
+            );
         }
         let Some(upload_base_revision) = base_revision else {
             return api_json(
@@ -2446,14 +2453,9 @@ async fn upload_mx_attachments_inner(
             .content_type()
             .map(str::to_string)
             .unwrap_or_else(|| "application/octet-stream".to_string());
-        let bytes = match field.bytes().await {
-            Ok(bytes) => bytes.to_vec(),
-            Err(error) => {
-                return api_json(
-                    StatusCode::BAD_REQUEST,
-                    json!({"response": format!("Failed to read attachment '{file_name}': {error}")}),
-                );
-            }
+        let bytes = match crate::api::upload_limits::read_file(field, Extension(limit)).await {
+            Ok(bytes) => bytes,
+            Err(response) => return response,
         };
 
         match execute_upload_mx_attachment(
@@ -2464,6 +2466,7 @@ async fn upload_mx_attachments_inner(
             bytes,
             upload_base_revision,
             actor_uid.clone(),
+            limit.bytes,
         )
         .await
         {
@@ -2520,6 +2523,7 @@ async fn upload_mx_attachments_inner(
 pub async fn upload_mx_attachment_field(
     claims: Claims,
     Path((entry_uid, attachment_field_uid)): Path<(String, String)>,
+    Extension(limit): Extension<crate::api::upload_limits::UploadLimit>,
     multipart: Multipart,
 ) -> Response {
     if !claims.can_write_records() {
@@ -2557,6 +2561,7 @@ pub async fn upload_mx_attachment_field(
         attachment_field_uid,
         claims.uid,
         module_uid,
+        limit,
         multipart,
     )
     .await

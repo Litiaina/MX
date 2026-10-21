@@ -128,6 +128,13 @@ impl Default for CollaborationConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default, deny_unknown_fields)]
+pub struct UploadSettings {
+    pub record_max_size_mb: Option<usize>,
+    pub collaboration_max_size_mb: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct DeploymentConfig {
     pub branding: BrandingConfig,
@@ -135,6 +142,7 @@ pub struct DeploymentConfig {
     pub terminology: TerminologyConfig,
     pub navigation: NavigationConfig,
     pub collaboration: CollaborationConfig,
+    pub uploads: UploadSettings,
 }
 
 #[derive(Debug, Deserialize)]
@@ -530,7 +538,9 @@ fn normalize_config(mut config: DeploymentConfig) -> DeploymentConfig {
     config
 }
 
-fn read_config(connection: &Connection) -> rusqlite::Result<(i64, DeploymentConfig, i64)> {
+pub(crate) fn read_config(
+    connection: &Connection,
+) -> rusqlite::Result<(i64, DeploymentConfig, i64)> {
     ensure_deployment_schema(connection)?;
 
     let (revision, text, updated_at): (i64, String, i64) = connection.query_row(
@@ -590,7 +600,7 @@ pub async fn save_deployment_config(
         );
     }
 
-    let parsed = match serde_json::from_value::<DeploymentConfig>(request.config) {
+    let mut parsed = match serde_json::from_value::<DeploymentConfig>(request.config) {
         Ok(config) => normalize_config(config),
         Err(_) => {
             return api_json(
@@ -600,41 +610,43 @@ pub async fn save_deployment_config(
         }
     };
 
-    let config_text = match serde_json::to_string(&parsed) {
-        Ok(value) => value,
-        Err(_) => {
-            return api_json(
-                StatusCode::BAD_REQUEST,
-                json!({"response":"invalid deployment configuration"}),
-            );
-        }
-    };
-
-    let result = tokio::task::spawn_blocking(move || -> Result<i64, SqliteDatabaseError> {
-        with_sql_connection(|connection| {
-            ensure_deployment_schema(connection)?;
-            connection.execute(
-                r#"
+    let result = tokio::task::spawn_blocking(
+        move || -> Result<(i64, DeploymentConfig), SqliteDatabaseError> {
+            with_sql_connection(|connection| {
+                ensure_deployment_schema(connection)?;
+                let transaction = rusqlite::Transaction::new_unchecked(
+                    connection,
+                    rusqlite::TransactionBehavior::Immediate,
+                )?;
+                // Upload policy has its own revision-checked editor. A stale branding
+                // form (including older clients) must not erase the current limits.
+                parsed.uploads = read_config(&transaction)?.1.uploads;
+                let config_text = serde_json::to_string(&parsed).unwrap();
+                transaction.execute(
+                    r#"
                     UPDATE mx_deployment_config
                     SET revision = revision + 1,
                         config_json = ?1,
                         updated_at = CAST(STRFTIME('%s','now') AS INTEGER) * 1000
                     WHERE id = 1
                     "#,
-                params![config_text],
-            )?;
+                    params![config_text],
+                )?;
 
-            connection.query_row(
-                "SELECT revision FROM mx_deployment_config WHERE id = 1",
-                [],
-                |row| row.get(0),
-            )
-        })
-    })
+                let revision = transaction.query_row(
+                    "SELECT revision FROM mx_deployment_config WHERE id = 1",
+                    [],
+                    |row| row.get(0),
+                )?;
+                transaction.commit()?;
+                Ok((revision, parsed))
+            })
+        },
+    )
     .await;
 
     match result {
-        Ok(Ok(revision)) => {
+        Ok(Ok((revision, parsed))) => {
             publish_live_event(
                 "deployment.updated",
                 Some(&claims.uid),

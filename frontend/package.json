@@ -1,7 +1,7 @@
 {
   "name": "litiaina-mx-frontend",
   "private": true,
-  "version": "1.0.0-rc.6",
+  "version": "1.0.0-rc.7",
   "type": "module",
   "engines": {
     "node": ">=24.0.0"
@@ -46,6 +46,7 @@
     "test:collaboration:people": "node --no-warnings tests/collaboration-people.browser.mjs",
     "test:collaboration:files": "node --no-warnings tests/collaboration-files.browser.mjs",
     "test:records:office": "node --no-warnings tests/record-office.browser.mjs",
+    "test:uploads:limits": "node --no-warnings tests/upload-limits.browser.mjs",
     "test:records:privacy": "node --no-warnings tests/record-privacy.browser.mjs",
     "test:upgrade:existing": "node --no-warnings tests/upgrade-existing.integration.mjs",
     "test:records:import": "node tests/import-records.browser.mjs",
