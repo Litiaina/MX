@@ -1,7 +1,7 @@
 {
   "name": "litiaina-mx-frontend",
   "private": true,
-  "version": "1.0.0-rc.7",
+  "version": "1.0.0-rc.8",
   "type": "module",
   "engines": {
     "node": ">=24.0.0"
@@ -9,7 +9,8 @@
   "packageManager": "npm@11.19.0",
   "scripts": {
     "dev": "vite",
-    "build": "node scripts/check-release.mjs && node scripts/verify-office.mjs && svelte-check --tsconfig ./tsconfig.app.json && vite build",
+    "build": "node scripts/check-release.mjs && node scripts/verify-office.mjs && svelte-check --tsconfig ./tsconfig.app.json && vite build && node scripts/check-built-assets.mjs",
+    "check:assets": "node scripts/check-built-assets.mjs",
     "check:release": "node scripts/check-release.mjs",
     "check": "svelte-check --tsconfig ./tsconfig.app.json",
     "test": "vitest run",
@@ -31,6 +32,7 @@
     "test:forms:rules": "node tests/form-rules.browser.mjs",
     "test:ui:cascade": "node tests/ui-cascade.browser.mjs",
     "test:ui:sidebar": "node tests/sidebar-layout.browser.mjs",
+    "test:modules:navigation": "node --no-warnings tests/module-navigation.browser.mjs",
     "test:backups:browser": "node tests/backups.browser.mjs",
     "test:updates": "node --no-warnings tests/updates.integration.mjs",
     "test:updates:cli": "node tests/update-cli.integration.mjs",
@@ -53,6 +55,7 @@
     "test:records:import-menu": "node tests/module-import-menu.browser.mjs",
     "test:records:import-layout": "node tests/import-layout.browser.mjs",
     "test:office:browser": "node tests/office.browser.mjs",
+    "test:office:assets": "node --no-warnings tests/office-assets.browser.mjs",
     "test:office:loading": "node tests/office-loading.browser.mjs",
     "test:office:recovery": "node tests/office-recovery.browser.mjs",
     "test:office:durable": "node tests/office-durable.browser.mjs",

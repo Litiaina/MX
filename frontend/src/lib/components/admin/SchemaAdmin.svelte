@@ -258,7 +258,7 @@
         <label>Navigation icon<select bind:value={moduleIcon}>{#each MODULE_ICON_OPTIONS as option}<option value={option.value}>{option.label}</option>{/each}</select></label>
         <label>Color<input bind:value={moduleColor} type="color" /></label>
         <label>Navigation group<input bind:value={moduleNavigationGroup} maxlength="80" placeholder="e.g. Human Resources" /></label>
-        <label>Navigation order<input bind:value={modulePosition} type="number" /></label>
+        <label>Navigation order<input bind:value={modulePosition} type="number" step="1" aria-label="Navigation order" aria-describedby="module-navigation-order-help" /><small id="module-navigation-order-help">Lower numbers appear first in the Modules menu and library. Use 10, 20, 30 to leave room between modules.</small></label>
         <label class="module-description">Description<input bind:value={moduleDescription} /></label>
         <label class="checkbox"><input type="checkbox" bind:checked={moduleActive} disabled={selectedModuleUid === 'mx-default-records'} /> Module is active</label>
         <div class="module-editor-actions">

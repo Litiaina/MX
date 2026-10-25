@@ -2,7 +2,17 @@
 
 [Documentation index](README.md) · [Project overview](../README.md)
 
-## Current candidate: MX 1.0.0-rc.7
+## Current candidate: MX 1.0.0-rc.8
+
+RC.8 fixes duplicate clipboard attachments, replaces the long module sidebar with
+a searchable grouped Modules menu/library and retains administrator-configured
+navigation order. It also repairs stale Office offline-manifest references and
+checks final packaged assets. Existing modules, fields, account grants, records,
+files, histories, upload settings and publisher trust remain unchanged. No new
+database schema or N1 format migration is introduced. Follow the normal signed
+update procedure; see [RC.8 instructions](releases/1.0.0-rc.8.md).
+
+## Previous candidate: MX 1.0.0-rc.7
 
 RC.7 removes the module form's hard-coded 50 MiB attachment ceiling and adds
 revision-checked administrator upload settings for records and Collaboration.

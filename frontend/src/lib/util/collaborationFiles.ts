@@ -5,6 +5,12 @@ export function transferHasFiles(transfer: DataTransfer | null): boolean {
 
 export function transferredFiles(transfer: DataTransfer): { files: File[]; directories: boolean } {
   const files: File[] = [];
+  const itemCopies = new Map<string, number>();
+  // items/files are two views of the same transfer, not two selections. Some
+  // browsers recreate File wrappers with different lastModified timestamps.
+  // Match occurrences only ACROSS these views; do not weaken pending-file
+  // identity or discard distinct selections globally by ignoring timestamps.
+  const transferKey = (file: File) => JSON.stringify([file.name, file.size, file.type]);
   let directories = false;
   const directoryNames = new Set<string>();
   for (const item of Array.from(transfer.items || [])) {
@@ -12,10 +18,19 @@ export function transferredFiles(transfer: DataTransfer): { files: File[]; direc
     const entry = item.webkitGetAsEntry?.();
     if (entry?.isDirectory) { directories = true; directoryNames.add(entry.name); continue; }
     const file = item.getAsFile();
-    if (file) files.push(file);
+    if (file) {
+      files.push(file);
+      const key = transferKey(file);
+      itemCopies.set(key, (itemCopies.get(key) || 0) + 1);
+    }
   }
   // Some browsers expose files but no DataTransferItems on paste.
-  for (const file of Array.from(transfer.files || [])) if (!directoryNames.has(file.name)) files.push(file);
+  for (const file of Array.from(transfer.files || [])) {
+    if (directoryNames.has(file.name)) continue;
+    const key = transferKey(file), copies = itemCopies.get(key) || 0;
+    if (copies) itemCopies.set(key, copies - 1);
+    else files.push(file);
+  }
   return { files: uniqueFiles(files), directories };
 }
 

@@ -14,7 +14,7 @@ system no longer describes the full product; that is one capability within the
 broader workplace platform. MX is not a predefined ERP suite or a claim of Google
 Drive/Discord feature parity.
 
-A fresh MX deployment starts with a default Records module but **no mandatory business fields and no predefined dashboard statistics**. Administrators can add more modules, give each module its own fields and permissions, and build the information model through the application itself. Forms, record tables, search, attachment handling, N1 storage paths, dashboard widgets, statistics, and exports adapt to that configuration.
+A fresh MX deployment starts with **no starter module, mandatory business fields or predefined dashboard statistics**. Administrators create modules, give each module its own fields and permissions, and build the information model through the application itself. Existing legacy Records modules are preserved during upgrades. Forms, record tables, search, attachment handling, N1 storage paths, dashboard widgets, statistics, and exports adapt to that configuration.
 
 MX is therefore not a hard-coded document tracker, correspondence registry, inventory system, ticketing system, or workflow application.
 

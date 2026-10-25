@@ -12,29 +12,34 @@ export default defineConfig(({ mode }) => {
     cacheDir: process.env.MX_TEST_CACHE_DIR || 'node_modules/.vite',
     plugins: [svelte(), {
       name: 'mx-office-offline-manifest',
-      async generateBundle(_options, bundle) {
-        const code = Object.values(bundle).filter(asset => /\.(?:js|css)$/.test(asset.fileName));
-        // Adapter, worker and shell changes must invalidate offline caches too.
-        const adapters = await Promise.all(['office-thread.js','offline-worker.js'].map(name => readFile(new URL(`./public/office/${name}`, import.meta.url), 'utf8')));
-        const fingerprint = JSON.stringify(officeManifest) + adapters.join('') + Object.values(bundle).map(asset => asset.type === 'chunk' ? asset.code : String(asset.source)).join('');
-        const digest = [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(fingerprint)))].map(byte => byte.toString(16).padStart(2,'0')).join('');
-        const generation = `mx-office-assets-${digest.slice(0,16)}`;
-        // Browsers check worker SCRIPT bytes for updates, not precache.json.
-        // A changed shell/adapter must install a new worker even when its
-        // lifecycle source code and registration URL did not change.
-        this.emitFile({type:'asset',fileName:'office/offline-worker.js',source:`${adapters[1]}\n// MX build generation: ${generation}\n`});
-        this.emitFile({ type: 'asset', fileName: 'office/precache.json', source: JSON.stringify({
-          cache: generation,
-          assets: ['/office/index.html', ...code.map(asset => `/${asset.fileName}`), '/office/office-thread.js',
-            '/office/vendor/soffice.js', '/office/vendor/soffice.wasm', '/office/vendor/soffice.data',
-            '/office/vendor/soffice.data.js.metadata', '/office/vendor/zeta.js']
-        }) });
-        // WebKit does not advertise Brotli on some LAN/loopback connections.
-        // Bundle a gzip alternative rather than needing a runtime decompressor
-        // or shipping 250 MiB of uncompressed engine files.
-        for (const name of ['soffice.wasm','soffice.data']) {
-          const compressed=await readFile(new URL(`./public/office/vendor/${name}.br`,import.meta.url));
-          this.emitFile({type:'asset',fileName:`office/vendor/${name}.gz`,source:gzipSync(brotliDecompressSync(compressed))});
+      generateBundle: {
+        // Vite's HTML hook removes inlined entry chunks. Collect assets after
+        // that cleanup, otherwise the worker tries to cache deleted scripts.
+        order: 'post',
+        async handler(_options, bundle) {
+          const code = Object.values(bundle).filter(asset => /\.(?:js|css)$/.test(asset.fileName));
+          // Adapter, worker and shell changes must invalidate offline caches too.
+          const adapters = await Promise.all(['office-thread.js','offline-worker.js'].map(name => readFile(new URL(`./public/office/${name}`, import.meta.url), 'utf8')));
+          const fingerprint = JSON.stringify(officeManifest) + adapters.join('') + Object.values(bundle).map(asset => asset.type === 'chunk' ? asset.code : String(asset.source)).join('');
+          const digest = [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(fingerprint)))].map(byte => byte.toString(16).padStart(2,'0')).join('');
+          const generation = `mx-office-assets-${digest.slice(0,16)}`;
+          // Browsers check worker SCRIPT bytes for updates, not precache.json.
+          // A changed shell/adapter must install a new worker even when its
+          // lifecycle source code and registration URL did not change.
+          this.emitFile({type:'asset',fileName:'office/offline-worker.js',source:`${adapters[1]}\n// MX build generation: ${generation}\n`});
+          this.emitFile({ type: 'asset', fileName: 'office/precache.json', source: JSON.stringify({
+            cache: generation,
+            assets: ['/office/index.html', '/office/attachment.html', ...code.map(asset => `/${asset.fileName}`), '/office/office-thread.js',
+              '/office/vendor/soffice.js', '/office/vendor/soffice.wasm', '/office/vendor/soffice.data',
+              '/office/vendor/soffice.data.js.metadata', '/office/vendor/zeta.js']
+          }) });
+          // WebKit does not advertise Brotli on some LAN/loopback connections.
+          // Bundle a gzip alternative rather than needing a runtime decompressor
+          // or shipping 250 MiB of uncompressed engine files.
+          for (const name of ['soffice.wasm','soffice.data']) {
+            const compressed=await readFile(new URL(`./public/office/vendor/${name}.br`,import.meta.url));
+            this.emitFile({type:'asset',fileName:`office/vendor/${name}.gz`,source:gzipSync(brotliDecompressSync(compressed))});
+          }
         }
       }
     }],

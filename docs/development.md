@@ -36,6 +36,18 @@ visibility. Use an explicit external `MX_TEST_ARTIFACTS` directory and matching
 `MX_TEST_BINARY` / `MX_TEST_STATIC_SITE_PATH` when running on this workstation.
 It uses disposable data and disconnected browser audio.
 
+`npm --prefix frontend run test:modules:navigation` seeds 100 disposable modules
+and checks bounded sidebar shortcuts and library pages, search/group filtering,
+administrator-saved navigation order, account access, keyboard focus and mobile
+layout with a real saved 24px text preference. On this workstation, set both
+`TMPDIR` and `MX_TEST_ARTIFACTS` under `/mnt/PROJECT-DISK-1TB/`; point
+`MX_TEST_BINARY` and `MX_TEST_STATIC_SITE_PATH` to matching isolated builds.
+
+The Collaboration file suite tests independent clipboard item/file-list wrappers
+with differing timestamps. Chromium and Brave also exercise native Ctrl+V image
+paste and ordinary Ctrl+C/Ctrl+V text in a fresh headless browser. These do not
+replace manual acceptance with the organization's physical Windows clipboard.
+
 `npm --prefix frontend run test:records:navigation` checks blank-installation
 onboarding, deleting the last test module, Pages as the default, stable columns
 and horizontal position, schema reuse and cancellation during rapid view changes.
@@ -51,6 +63,16 @@ fixture. Both disconnect browser processes from workstation audio. Browser
 executable paths in the scripts may need adjustment on another machine.
 
 ### Office preparation and recovery
+
+The production build also runs `check:assets` against the final output. It checks
+that every public offline-cache and Office-shell dependency exists (including
+compressed-only engine resources), and that the worker/cache generations match.
+For an explicit external build directory, run
+`node frontend/scripts/check-built-assets.mjs /absolute/build/dist`.
+`test:office:assets` installs the real service worker in Chromium and Firefox,
+checks its complete public-only cache and opens both public shells offline. It
+does not claim to recover an unsynchronized private document. Set the explicit
+HDD artifact, short `TMPDIR`, binary and frontend environment described above.
 
 Run `npm --prefix frontend run test:office:idle` against the production-built
 frontend and a matching native executable. Use the same explicit external

@@ -5,6 +5,26 @@ deployment maintainer's local date.
 
 ## [Unreleased]
 
+## [1.0.0-rc.8] - 2026-10-25
+
+### Collaboration and module navigation
+
+- Match clipboard item/file-list representations before naming screenshot
+  attachments, including browser-generated copies with differing timestamps.
+  Preserve distinct selections, document names, ordinary text paste and drops.
+- Replace an always-expanded module sidebar with one Modules entry, a bounded
+  expandable shortcut list and a searchable, grouped module library. Reuse the
+  existing administrator navigation order; paginate library results instead of
+  rendering every module into the left rail. Keep existing module permissions.
+
+- Build Office's offline manifest after Vite removes inlined HTML-entry chunks,
+  and include both public Office shells. Reject missing final cache/shell assets
+  or mismatched worker generations during the production build. No document,
+  credential or API response is added to the public asset cache.
+
+No new database schema or N1 storage-format migration. Published RC.7 and earlier
+assets remain unchanged. Release publication does not update production services.
+
 ## [1.0.0-rc.7] - 2026-10-21
 
 ### Upload-limit consistency

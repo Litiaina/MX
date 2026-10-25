@@ -1,5 +1,108 @@
 # MX validation
 
+## 1.0.0-rc.8 — clipboard, navigation and packaged Office assets
+
+Qualified on **2026-10-25 (Asia/Manila)** before commit/signing/publication.
+All new builds, test databases, browser profiles, update fixtures and reports
+stay on the 1-TB HDD. No existing production or populated test service was
+updated or restarted. Published RC.7 and earlier assets remain unchanged.
+
+- Native RC.8: **192 passed, two opt-in ignored**. Frontend: **364 passed / 59
+  files**. Svelte checking reports zero errors/warnings; the existing Vite
+  large-chunk advisory remains. Cargo/npm lockfile dependency versions are
+  unchanged; only the MX package version advances. No native runtime behavior,
+  database schema or N1 source/format changes are introduced.
+- All **nine final release-build suites** pass: module navigation, sidebar,
+  Collaboration files, record Office attachments, Drive file manager, upload
+  limits, Office public-asset cache, native CLI and independent-systemd updater.
+- The 100-module navigation suite passes Chromium, Firefox and Linux WebKit:
+  bounded 12-shortcut/40-card rendering, search/group filters, saved order,
+  keyboard focus, Escape, account-grant filtering, light/dark themes and saved
+  24px text at 1440/390/320px. The sidebar suite passes all 24 geometry cases.
+- Collaboration passes Chromium, Brave, Firefox and Linux WebKit: independent
+  clipboard wrappers with different timestamps, recipient byte-exact downloads,
+  file drops, text paste, scoped drafts and permission checks. Chromium/Brave
+  additionally pass native headless Ctrl+C/Ctrl+V tests. These are not physical
+  Windows clipboard certification.
+- Actual Word/Excel rendering for chat and module attachments passes Chromium,
+  Brave and Firefox. Linux WebKit retains its documented worker-WebGL limit;
+  the explicit unsupported-graphics UI and unchanged original download pass.
+  Tests do not mock graphics or count that fallback as successful rendering.
+- Drive file-manager regressions pass Chromium/Firefox/WebKit. RC.7's upload
+  policy suite passes again in Chromium/Brave/Firefox/WebKit, including actual
+  **66 MiB** form uploads, **101 MiB** API uploads, byte-exact downloads, live
+  policy changes, invalid/stale saves and temporary-disk failure handling.
+- The new final-output guard first rejects RC.7's two missing entry scripts.
+  The corrected build runs its manifest hook after Vite's HTML-entry cleanup.
+  All 14 public cache URLs exist, both Office shells reference actual cached
+  dependencies, and the worker generation matches. Four new unit regressions
+  cover removed entries, omitted shell dependencies and generation mismatch.
+- The real service worker passes Chromium and Firefox installation, complete
+  **15-entry public cache** verification (14 assets plus its manifest), and
+  reopening both public shells offline. No private documents, API responses or
+  tokens are cached by this test. This is not certification of unsynchronized
+  document recovery or every browser's persistent-storage behavior.
+- The RC.7 → RC.8 updater rehearsal passes **11 checks**: administrator-only
+  controls, bad signatures/feed failures, interrupted downloads, configurable
+  maintenance deferral, activation/final backup, preservation of acknowledged
+  records/history and N1-backed Drive bytes, offline packages, competing installs,
+  paired rollback after failed readiness, SIGKILL recovery and the Chromium UI.
+  Native CLI checks pass without initializing deployment state.
+- A second build from the final frontend source matches the tested output
+  byte-for-byte across all 26 files. Signed package/archive checks verify the
+  existing publisher key, paired native/frontend identity, runtime hashes,
+  bundled Office notices, README branding/logo and exclusion of runtime secrets.
+
+Preflight diagnostics are retained, not counted as clean first-attempt passes:
+an initially overlong Chromium temporary socket path was corrected by using a
+short HDD `TMPDIR`. An initial WebKit run expected rendering and timed out on
+the already documented graphics fallback. The final run explicitly asserts that
+real fallback with `MX_TEST_OFFICE_FALLBACK_BROWSERS=webkit`; no engine capability
+was bypassed. The earlier 2026-10-22 Firefox load-stall observation below remains
+a historical qualification caveat, not a claim that RC.8 fixes Office startup.
+
+Use the explicit disposable build paths described in
+[development checks](docs/development.md). The new commands are
+`test:modules:navigation`, `test:office:assets` and `check:assets`; never point
+updater fault tests at production. Release candidate status does not certify
+target-OS notification banners, hardware power cuts or every Office document.
+
+## Local patch qualification — 2026-10-22 (not RC.8)
+
+- **360 frontend tests / 58 files** pass. The production frontend builds with
+  zero Svelte errors/warnings; the existing Vite large-chunk advisory remains.
+  No native application or N1 source changes are part of this patch.
+- The clipboard regression first fails on RC.7: a five-file paste queues ten
+  attachments when clipboard item/file-list wrappers have different timestamps.
+  Unit regressions likewise fail before the fix and pass afterwards. Matching
+  transfer occurrences across the two representations fixes duplication before
+  screenshot naming, without reading/hashing the whole file or weakening the
+  existing pending-selection identity check.
+- Chromium and Brave pass real headless-browser Ctrl+V image paste, one queued
+  image/one recipient attachment, byte-exact download, and ordinary text
+  Ctrl+C/Ctrl+V. Constructed independent-wrapper paste/drop regressions pass in
+  Chromium, Brave, Firefox and WebKit, including multi-format documents, nearby
+  errors, scoped drafts and recipient/access checks. These are not physical
+  Windows clipboard certification.
+- Chat DOCX/XLSX and shared Drive Office viewing pass in Chromium/Brave, and
+  in an isolated Firefox rerun. A concurrent-suite run stalled at Firefox's
+  XLSX engine startup for 180 seconds: **not considered fixed by this patch**.
+  Office code/resources are unchanged. Track this observation for further
+  load qualification before RC.8; do not silently count that attempt as passing.
+  WebKit retains its explicit worker-WebGL limitation and original download.
+- The module-navigation suite seeds **100 modules**, verifies a single collapsed
+  Modules entry, at most 12 inline shortcuts and 40 library cards per page,
+  search/group filtering, persisted administrator order, keyboard/Escape focus
+  and two-module-only operator access. Chromium, Firefox and WebKit pass mobile
+  320/390px, desktop 1440px, light/dark and a saved **24px** text preference.
+- The sidebar regression passes 24 collapsed/expanded/mobile geometry cases
+  across Chromium, Firefox and WebKit at 85%, 100% and 160% interface scale.
+
+All new artifacts stay on `/mnt/PROJECT-DISK-1TB/`. Tests use disposable databases
+and the isolated N1 contract, not existing organizational data. No commit,
+production deployment, release tag, signing operation or RC.8 publication is
+performed for this local patch. See [development checks](docs/development.md).
+
 ## 1.0.0-rc.7 — runtime upload limits
 
 RC.7 packages the tested upload-limit fix with maintainer authorization on

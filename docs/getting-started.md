@@ -52,7 +52,8 @@ relationship steps apply; the labels are your choice.
 
 ## 4. Enter a test employee
 
-1. Open **Employees** from the navigation.
+1. Open **Modules**, search for **Employees** and open it. In expanded navigation,
+   expand **Modules** and use its shortcuts or **Browse all modules**.
 2. Click **+ New employee**.
 3. Enter a fictional test name and choose a classification.
 4. Click **Save Employee**.
@@ -87,6 +88,27 @@ Administrator just to make a missing module appear.
 
 See [Accounts and module permissions](administration-and-security.md#access-levels)
 and [module isolation](modules-and-fields.md#account-module-isolation).
+
+### Organize navigation when you have many modules
+
+The collapsed navigation rail has one **Modules** button, not one icon for every
+module. It opens a searchable library. The expanded sidebar offers an expandable
+Modules menu with up to 12 matching shortcuts; use **Browse all modules** to see
+the library. Search matches module names, descriptions and groups. The library
+shows at most 40 modules per page and offers a group filter and Previous/Next.
+
+Administrators control placement through **Administration → Modules & fields →
+Configure [module name] → Module details**:
+
+- **Navigation order:** lower numbers appear first. Use 10, 20, 30 so another
+  module can be inserted between them later. Equal positions sort by name.
+- **Navigation group:** use a name such as Human Resources or Finance. Operators
+  can filter the library by this group.
+- Choose **Save changes**. Ordering and groups are saved in MX; they do not
+  rename modules, move records, or grant additional access.
+
+The library only offers modules supplied by the signed-in account's access
+checks. Creating an account does not automatically grant it every module.
 
 ## 7. Verify before using real records
 

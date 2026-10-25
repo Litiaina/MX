@@ -10,6 +10,29 @@ describe('Collaboration file input', () => {
     expect(transferHasFiles(data)).toBe(true);
     expect(transferredFiles(data)).toEqual({ files, directories: false });
   });
+  it('queues one image when clipboard items/files create wrappers with different timestamps', () => {
+    const itemFile = new File(['image bytes'], 'image.png', { type: 'image/png', lastModified: 1 });
+    const listFile = new File(['image bytes'], 'image.png', { type: 'image/png', lastModified: 2 });
+    const data = transfer([listFile], [{ kind: 'file', getAsFile: () => itemFile }]);
+    const extracted = transferredFiles(data);
+    expect(extracted.files).toEqual([itemFile]);
+    expect(clipboardFiles(extracted.files, 'one-paste')).toHaveLength(1);
+  });
+  it('matches clipboard representations one-to-one without discarding additional files', () => {
+    const first = new File(['first'], 'image.png', { type: 'image/png', lastModified: 1 });
+    const second = new File(['other'], 'image.png', { type: 'image/png', lastModified: 2 });
+    const wrapper = new File(['first'], 'image.png', { type: 'image/png', lastModified: 3 });
+    const extra = file('Report.pdf', 'application/pdf');
+    const data = transfer([wrapper, second, extra], [{ kind: 'file', getAsFile: () => first }]);
+    expect(transferredFiles(data).files).toEqual([first, second, extra]);
+    const complete = transfer([wrapper, new File(['other'], 'image.png', { type: 'image/png', lastModified: 4 })], [first, second].map(value => ({ kind: 'file', getAsFile: () => value })));
+    expect(transferredFiles(complete).files).toEqual([first, second]);
+  });
+  it('keeps different selections distinct instead of ignoring their timestamps globally', () => {
+    const first = new File(['first'], 'same.txt', { type: 'text/plain', lastModified: 1 });
+    const changed = new File(['other'], 'same.txt', { type: 'text/plain', lastModified: 2 });
+    expect(uniqueFiles([changed], [first])).toEqual([changed]);
+  });
   it('supports files-only clipboard data and protected dragover data', () => {
     expect(transferredFiles(transfer([file('Report.pdf')])).files).toHaveLength(1);
     expect(transferHasFiles({ types: ['Files'], files: [], items: [] } as unknown as DataTransfer)).toBe(true);

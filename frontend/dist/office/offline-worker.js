@@ -69,4 +69,4 @@ self.addEventListener('fetch', event => {
   })());
 });
 
-// MX build generation: mx-office-assets-cbb3b950e4b0dfa0
+// MX build generation: mx-office-assets-068de78440ebf580

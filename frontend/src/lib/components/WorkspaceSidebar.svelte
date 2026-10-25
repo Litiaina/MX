@@ -8,11 +8,16 @@
   import PanelLeftOpen from '@lucide/svelte/icons/panel-left-open';
   import Search from '@lucide/svelte/icons/search';
   import ShieldCheck from '@lucide/svelte/icons/shield-check';
+  import Blocks from '@lucide/svelte/icons/blocks';
+  import ChevronDown from '@lucide/svelte/icons/chevron-down';
+  import ChevronRight from '@lucide/svelte/icons/chevron-right';
   import type { DeploymentConfig, ModuleDefinition } from '../api/domain';
   import type { Session } from '../api/types';
   import GlobalSearch from './GlobalSearch.svelte';
   import ModuleIcon from './ModuleIcon.svelte';
   import ProfileAvatar from './ProfileAvatar.svelte';
+  import ModuleBrowser from './ModuleBrowser.svelte';
+  import { matchingModules, orderedModules } from '../util/moduleNavigation';
 
   type View = 'dashboard' | 'records' | 'collaboration' | 'drive' | 'admin' | 'account';
 
@@ -45,6 +50,12 @@
   } = $props();
 
   let searchRegion: HTMLDivElement;
+  let moduleBrowserOpen = $state(false), modulesExpanded = $state(false), moduleQuery = $state('');
+  const availableModules = $derived(orderedModules(modules));
+  const shortcutMatches = $derived(matchingModules(availableModules, moduleQuery));
+  const shortcuts = $derived(shortcutMatches.slice(0, 12));
+
+  function chooseModule(uid: string) { moduleBrowserOpen = false; onNavigateModule(uid); }
 
   function openSearch() {
     if (!open) onToggle();
@@ -53,10 +64,6 @@
 
   function initials(name: string) {
     return name.split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toUpperCase();
-  }
-
-  function moduleGroup(module: ModuleDefinition) {
-    return typeof module.config.navigation_group === 'string' ? module.config.navigation_group.trim() : '';
   }
 </script>
 
@@ -87,19 +94,20 @@
         <span><LayoutDashboard size={18} /></span><b>{deployment.terminology.dashboard_label}</b>
       </button>
     {/if}
-    {#if modules.length}
-      {#each modules as module, index}
-        {#if moduleGroup(module) && (index === 0 || moduleGroup(modules[index - 1]) !== moduleGroup(module))}
-          <span class="nav-group-label">{moduleGroup(module)}</span>
-        {/if}
-        <button class:active={view === 'records' && selectedModuleUid === module.uid} title={module.name} onclick={() => onNavigateModule(module.uid)}>
-          <span style={`color:${module.color}`}><ModuleIcon name={module.icon} size={18} /></span><b>{module.name}</b>
-        </button>
-      {/each}
-    {:else if deployment.navigation.show_records}
-      <button class:active={view === 'records'} title={deployment.terminology.record_plural} onclick={() => onNavigate('records')}>
-        <span><FileText size={18} /></span><b>{deployment.terminology.record_plural}</b>
+    {#if availableModules.length || deployment.navigation.show_records}
+      <button class:active={view === 'records'} class:expanded-trigger={open} title="Modules" aria-label="Modules" aria-expanded={open ? modulesExpanded : undefined} aria-haspopup={!open ? 'dialog' : undefined} aria-controls={open && modulesExpanded ? 'workspace-module-shortcuts' : undefined} onclick={() => { if (open) modulesExpanded = !modulesExpanded; else moduleBrowserOpen = true; }}>
+        <span><Blocks size={18} /></span><b>Modules</b>{#if open}{#if modulesExpanded}<ChevronDown size={15}/>{:else}<ChevronRight size={15}/>{/if}{/if}
       </button>
+      {#if open && modulesExpanded}
+        <section id="workspace-module-shortcuts" class="module-shortcuts" aria-label="Module shortcuts">
+          <button type="button" class="browse-modules" onclick={() => moduleBrowserOpen = true}><span><Search size={16}/></span><b>Browse all modules ({availableModules.length})</b></button>
+          {#if availableModules.length}<input type="search" aria-label="Filter module shortcuts" placeholder="Find a module…" bind:value={moduleQuery}/>{/if}
+          <div class="module-shortcut-list">
+            {#each shortcuts as module (module.uid)}<button class:active={view === 'records' && selectedModuleUid === module.uid} title={module.name} onclick={() => chooseModule(module.uid)}><span style={`color:${module.color}`}><ModuleIcon name={module.icon} size={17}/></span><b>{module.name}</b></button>{/each}
+          </div>
+          {#if !shortcutMatches.length}<p>{availableModules.length ? 'No matching modules.' : 'No modules available yet.'}</p>{:else if shortcutMatches.length > shortcuts.length}<p>Showing {shortcuts.length} of {shortcutMatches.length}. Browse all to see more.</p>{/if}
+        </section>
+      {/if}
     {/if}
     <button class:active={view === 'collaboration'} title="Collaboration" onclick={() => onNavigate('collaboration')}>
       <span><MessagesSquare size={18} /></span><b>Collaboration</b>
@@ -133,3 +141,12 @@
     </button>
   </footer>
 </aside>
+
+{#if moduleBrowserOpen}<ModuleBrowser modules={availableModules} selectedModuleUid={view === 'records' ? selectedModuleUid : ''} onChoose={chooseModule} onClose={() => moduleBrowserOpen = false}/>{/if}
+
+<style>
+  .main-nav .expanded-trigger{grid-template-columns:2.35rem minmax(0,1fr) 1.25rem;padding-right:.35rem;}
+  .module-shortcuts{min-width:0;border-left:1px solid color-mix(in srgb,var(--on-sidebar) 18%,transparent);margin:.2rem .25rem .5rem .7rem;padding-left:.35rem;}
+  .module-shortcuts input{width:100%;min-width:0;box-sizing:border-box;font-size:.8rem;margin:.3rem 0;background:color-mix(in srgb,var(--on-sidebar) 6%,transparent);color:var(--on-sidebar);border:1px solid color-mix(in srgb,var(--on-sidebar) 22%,transparent);}
+  .module-shortcuts input::placeholder{color:color-mix(in srgb,var(--on-sidebar) 60%,transparent);}.module-shortcut-list{max-height:30dvh;min-height:0;overflow:auto;overscroll-behavior:contain;}.module-shortcuts p{font-size:.75rem;line-height:1.4;color:color-mix(in srgb,var(--on-sidebar) 65%,transparent);margin:.5rem .3rem;}
+</style>

@@ -20,7 +20,7 @@ const proxy = createServer((incoming, outgoing) => {
   upstream.on('error', () => { outgoing.writeHead(502); outgoing.end(); }); incoming.pipe(upstream);
 });
 await new Promise(resolve => proxy.listen(0, '127.0.0.1', resolve));
-const origin = `http://127.0.0.1:${proxy.address().port}`, browsers = [], results = { browsers: {}, limitations: 'Clipboard and drop use browser DataTransfer events, not a physical Windows clipboard. Office uses the actual bundled engine, not a mocked renderer.' };
+const origin = `http://127.0.0.1:${proxy.address().port}`, browsers = [], results = { browsers: {}, limitations: 'Cross-engine clipboard/drop coverage uses browser DataTransfer events with independent File wrappers. Chromium/Brave additionally use their isolated headless clipboard and native Ctrl+V/Ctrl+C; this is not physical Windows clipboard certification. Office uses the actual bundled engine, not a mocked renderer.' };
 let inspected;
 const call = async (path, user, method = 'GET', data, expected = [200]) => (await mx.call(path, user?.access_token, method, data, expected)).body;
 const until = async (check, label, timeout = 30000) => { const end = Date.now() + timeout; while (Date.now() < end) { if (await check()) return; await new Promise(resolve => setTimeout(resolve, 100)); } throw Error(label); };
@@ -70,13 +70,21 @@ try {
       { name: 'image.png', type: 'image/png', bytes: [...Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j1ioAAAAASUVORK5CYII=', 'base64')] }
     ];
     const paste = async (target, values) => page.evaluate(({ target, values }) => {
-      const transfer = new DataTransfer(); for (const item of values) transfer.items.add(new File([new Uint8Array(item.bytes)], item.name, { type: item.type, lastModified: 1 }));
+      const transfer = new DataTransfer(), list = new DataTransfer();
+      for (const item of values) {
+        transfer.items.add(new File([new Uint8Array(item.bytes)], item.name, { type: item.type, lastModified: 1 }));
+        list.items.add(new File([new Uint8Array(item.bytes)], item.name, { type: item.type, lastModified: 2 }));
+      }
+      // Real clipboard getters may manufacture separate File wrappers. Reusing
+      // one File object/mtime for both surfaces hid the single-paste duplication.
+      Object.defineProperty(transfer, 'files', { value: list.files });
       const event = new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: transfer });
       if (event.clipboardData?.files.length !== transfer.files.length) Object.defineProperty(event, 'clipboardData', { value: transfer });
       document.querySelector(target).dispatchEvent(event); return event.defaultPrevented;
     }, { target, values });
     assert.equal(await paste('.message-composer textarea[aria-label="Message"]', payloads), true);
-    await until(async () => await page.locator('.pending-shares button[aria-label^="Remove "]').count() === 5, 'Five clipboard attachments queued');
+    await until(async () => await page.locator('.pending-shares button[aria-label^="Remove "]').count() > 0, 'Clipboard attachments queued');
+    assert.equal(await page.locator('.pending-shares button[aria-label^="Remove "]').count(), 5, 'One paste queues each original once even when items/files timestamps differ');
     assert.equal(await paste('.message-composer', payloads.slice(0, 4)), true);
     assert.equal(await page.locator('.pending-shares button').count(), 5, 'Items/files and repeated paste do not duplicate files');
     assert.ok((await page.locator('.pending-shares').innerText()).includes('Screenshot-'), 'Generic clipboard image receives a meaningful filename');
@@ -126,11 +134,38 @@ try {
     await until(async () => await page.locator('.pending-shares').count() === 0, 'Successful send clears attachments');
     const recipientMessage = (await call(`/mx/v1/collaboration/channels/${channel.uid}/messages`, recipient)).messages.find(message => message.uid === posted.uid);
     assert.equal(recipientMessage.files.length, 6);
-    for (const expected of [...payloads.slice(0, 4), dropped]) {
-      const file = posted.files.find(file => file.file_name === expected.name); assert.ok(file);
+    assert.equal(recipientMessage.files.filter(file => file.mime_type === 'image/png').length, 1, 'The recipient receives exactly one pasted screenshot');
+    for (const expected of [...payloads, dropped]) {
+      const file = posted.files.find(file => expected.name === 'image.png' ? file.mime_type === 'image/png' : file.file_name === expected.name); assert.ok(file);
       const response = await mx.api.get(`/mx/v1/collaboration/files/${file.uid}/download`, { headers: { Authorization: `Bearer ${recipient.access_token}` } });
       assert.equal(response.status(), 200); assert.deepEqual([...await response.body()], expected.bytes);
       await call(`/mx/v1/collaboration/files/${file.uid}/preview-ticket`, outsider, 'POST', undefined, [404]);
+    }
+    if (['chromium', 'brave'].includes(engine)) {
+      // Exercise a genuine paste event, not only a constructed DataTransfer.
+      // This is a fresh headless browser, not the operator's desktop session.
+      await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin });
+      await page.evaluate(async () => {
+        const canvas = document.createElement('canvas'); canvas.width = 3; canvas.height = 3;
+        const paint = canvas.getContext('2d'); paint.fillStyle = '#1d4ed8'; paint.fillRect(0, 0, 3, 3);
+        const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+        await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+      });
+      await composer.focus(); await page.keyboard.press('Control+v');
+      await until(async () => await page.locator('.pending-shares button').count() > 0, 'Native Ctrl+V queues a clipboard image');
+      assert.equal(await page.locator('.pending-shares button').count(), 1, 'One native Ctrl+V queues exactly one screenshot');
+      const pastedBytes = await page.locator('.pending-image-share img').evaluate(async image => [...new Uint8Array(await (await fetch(image.src)).arrayBuffer())]);
+      const nativeText = `Native keyboard screenshot ${engine}`; await composer.fill(nativeText);
+      await page.getByRole('button', { name: 'Send', exact: true }).click();
+      let nativeMessage;
+      await until(async () => { nativeMessage = (await call(`/mx/v1/collaboration/channels/${channel.uid}/messages`, recipient)).messages.find(message => message.body === nativeText); return nativeMessage?.files.length > 0; }, 'Recipient receives the native clipboard image');
+      assert.equal(nativeMessage.files.length, 1);
+      const nativeDownload = await mx.api.get(`/mx/v1/collaboration/files/${nativeMessage.files[0].uid}/download`, { headers: { Authorization: `Bearer ${recipient.access_token}` } });
+      assert.equal(nativeDownload.status(), 200); assert.deepEqual([...await nativeDownload.body()], pastedBytes);
+      await until(async () => await page.locator('.pending-shares').count() === 0, 'Native image send clears the queue');
+      const copiedText = `Ordinary Ctrl+C text ${engine}`; await composer.fill(copiedText); await composer.press('Control+a'); await composer.press('Control+c'); await composer.fill(''); await composer.press('Control+v');
+      await until(async () => await composer.inputValue() === copiedText, 'Native text Ctrl+C/Ctrl+V remains unchanged');
+      assert.equal(await page.locator('.pending-shares').count(), 0); await composer.fill('');
     }
     for (const extension of ['.docx', '.xlsx']) {
       const file = posted.files.find(file => file.file_name.endsWith(extension));
@@ -204,7 +239,7 @@ try {
     await sharedEditor.close(); await receiverContext.close(); inspected = page;
     assert.deepEqual(external, []); assert.deepEqual(unsafe, []); assert.deepEqual(legacyConversions, []); assert.deepEqual(errors, []);
     if (fallbackGraphics) assert.deepEqual(engineResources, [], 'Unsupported worker graphics must be detected before downloading the large runtime');
-    results.browsers[engine] = { passed: true, office_rendering: fallbackGraphics ? 'Known host limitation: no worker WebGL; explicit fallback and byte-exact original downloads, not rendering qualification' : 'Actual DOCX/XLSX rendering and Drive read-only viewer', checks: ['Multi-format clipboard files and image naming', 'Deduplication/text paste and text drag preserved', 'Conversation file drop/no navigation', 'Local rejection feedback and conversation-specific drafts', 'Real N1 upload/recipient download byte equality', 'Outsider ticket denied', 'Office source/read-only boundary and unchanged download', 'Blocked popup Open/Download fallback', 'Text preview and conversation-switch dismissal', 'Drive share opens directly with viewer permission intact', 'No internet or legacy server conversion'] };
+    results.browsers[engine] = { passed: true, native_keyboard_clipboard: ['chromium', 'brave'].includes(engine), office_rendering: fallbackGraphics ? 'Known host limitation: no worker WebGL; explicit fallback and byte-exact original downloads, not rendering qualification' : 'Actual DOCX/XLSX rendering and Drive read-only viewer', checks: ['Multi-format clipboard files and image naming', 'Single paste with different item/file-list timestamps queues and sends each file once', 'Deduplication/text paste and text drag preserved', 'Conversation file drop/no navigation', 'Local rejection feedback and conversation-specific drafts', 'Real N1 upload/recipient download byte equality', 'Outsider ticket denied', 'Office source/read-only boundary and unchanged download', 'Blocked popup Open/Download fallback', 'Text preview and conversation-switch dismissal', 'Drive share opens directly with viewer permission intact', 'No internet or legacy server conversion'] };
     console.log(`${engine}: collaboration files passed; ${fallbackGraphics ? 'known graphics fallback/download verified, not rendering' : 'actual Office rendering passed'}`);
     await context.close(); await browser.close();
   }
