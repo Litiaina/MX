@@ -18,6 +18,9 @@ implementation details and advanced configuration.
 | Understand “Allow multiple linked records” | [Single versus multiple selection](relationships.md#what-allow-multiple-linked-records-means) |
 | Choose between Lookup and editable auto-fill | [Which method to use](relationships.md#choose-the-result-you-need) |
 | Show different fields for different choices | [Conditional forms](conditional-forms.md) |
+| Configure CRM pipelines, ERP or expense approvals | [Module processes](module-processes.md) |
+| Design a module’s CRM, operations, document or accounting interface | [Module views and layouts](module-workspaces.md) |
+| Post balanced journals or receive, reserve and issue stock | [Operational books](operational-books.md) |
 | Show an OFF attachment, dates and status | [OFF/LEAVE worked example](conditional-forms.md#your-off-fields-attachment-dates-and-status) |
 | Configure totals beneath numeric columns | [Column summaries](modules-and-fields.md#record-column-summaries) |
 | Understand a field archive dependency | [Archiving fields](modules-and-fields.md#understand-why-a-field-cannot-be-archived) |
@@ -28,7 +31,8 @@ implementation details and advanced configuration.
 
 ## Deployment administrators
 
-- [Current candidate: MX 1.0.0-rc.8](releases/1.0.0-rc.8.md)
+- [Current candidate: MX 1.0.0-rc.9](releases/1.0.0-rc.9.md)
+- [Published candidate: MX 1.0.0-rc.8](releases/1.0.0-rc.8.md)
 - [Published candidate: MX 1.0.0-rc.7](releases/1.0.0-rc.7.md)
 - [Published candidate: MX 1.0.0-rc.6](releases/1.0.0-rc.6.md)
 - [Published candidate: MX 1.0.0-rc.5](releases/1.0.0-rc.5.md)

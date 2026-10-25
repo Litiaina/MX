@@ -1,7 +1,7 @@
 {
   "name": "litiaina-mx-frontend",
   "private": true,
-  "version": "1.0.0-rc.8",
+  "version": "1.0.0-rc.9",
   "type": "module",
   "engines": {
     "node": ">=24.0.0"
@@ -33,6 +33,12 @@
     "test:ui:cascade": "node tests/ui-cascade.browser.mjs",
     "test:ui:sidebar": "node tests/sidebar-layout.browser.mjs",
     "test:modules:navigation": "node --no-warnings tests/module-navigation.browser.mjs",
+    "test:modules:processes": "node --no-warnings tests/module-processes.browser.mjs",
+    "test:modules:views": "node --no-warnings tests/module-views.browser.mjs",
+    "test:modules:books": "node --no-warnings tests/module-books.browser.mjs",
+    "test:modules:books-scale": "node --no-warnings tests/module-books.scale.mjs",
+    "test:modules:processes-scale": "node --no-warnings tests/module-processes.scale.mjs",
+    "test:modules:processes-upgrade": "node --no-warnings tests/module-processes-upgrade.integration.mjs",
     "test:backups:browser": "node tests/backups.browser.mjs",
     "test:updates": "node --no-warnings tests/updates.integration.mjs",
     "test:updates:cli": "node tests/update-cli.integration.mjs",

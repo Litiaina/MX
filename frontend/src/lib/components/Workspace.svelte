@@ -32,7 +32,7 @@
   import DashboardView from './DashboardView.svelte';
   import DisplaySettingsDialog from './DisplaySettingsDialog.svelte';
   import NotificationKindIcon from './NotificationKindIcon.svelte';
-  import RecordsView from './RecordsView.svelte';
+  import ModuleWorkspace from './ModuleWorkspace.svelte';
   import WorkspaceSidebar from './WorkspaceSidebar.svelte';
   import WorkspaceTopbar from './WorkspaceTopbar.svelte';
   import UpdateNotice from './UpdateNotice.svelte';
@@ -115,7 +115,7 @@
       if (connected) resynchronize();
     });
     client.start();
-    const handleHash = () => { const next = hashView(); if (next) { selectModuleFromHash(); view = next; mobileOpen = false; } };
+    const handleHash = () => { const next = hashView(); if (next) { selectModuleFromHash(); if(linkedRecordUid)linkedRecordRequestRevision++;view = next; mobileOpen = false; } };
     const handleResize = () => { if (autoScale) applyScale(); };
     const unlockAudio = () => void unlockNotificationAudio().catch(() => undefined);
     window.addEventListener('hashchange', handleHash);
@@ -146,6 +146,7 @@
   });
 
   async function loadWorkspaceModules() {
+    if(disposed||pageLeaving)return;
     try {
       const result = await loadModules();
       modules = result.modules.filter((module) => module.active);
@@ -197,6 +198,7 @@
   }
   function hashView(): View | null { if (/^#\/?module\//.test(location.hash)) return allowed('records') ? 'records' : null; const candidate = location.hash.replace(/^#\/?/, '').split('?')[0] as View; return ['dashboard', 'records', 'collaboration', 'drive', 'admin', 'account'].includes(candidate) && allowed(candidate) ? candidate : null; }
   function handleLive(message: LiveMessage) {
+    if(disposed||pageLeaving)return;
     if (message.type === 'notification.created' || message.type.startsWith('notification.')) {
       notificationRevision += 1;
       if (message.type === 'notification.created') announceNotification(message);
@@ -224,6 +226,7 @@
     if (message.type === 'deployment.updated') void onDeploymentChanged();
   }
   function resynchronize() {
+    if(disposed||pageLeaving)return;
     void catchUpNotifications();
     recordRevision += 1; dashboardRevision += 1; adminRevision += 1;
     notificationRevision += 1; collaborationRevision += 1;
@@ -245,6 +248,7 @@
     dismissedCallUids = dismissedCallUids.filter((uid) => uid !== channel.uid);
   }
   async function refreshOngoingCalls() {
+    if(disposed||pageLeaving)return;
     try {
       ongoingCalls = (await listActiveCalls()).calls;
       if (ringingDirectCallKey && !ongoingCalls.some((call) => callAlertKey(call) === ringingDirectCallKey)) stopIncomingCallAlert();
@@ -476,6 +480,7 @@
     else if (item.module_uid) location.hash = `module/${encodeURIComponent(item.module_uid)}`;
   }
   async function refreshUnreadCount() {
+    if(disposed||pageLeaving)return;
     try { unreadNotifications = (await loadNotifications(true)).unread; }
     catch { /* Preserve the last known count while connectivity recovers. */ }
   }
@@ -572,6 +577,7 @@
     return { browser_enabled: false, sound_enabled: true, sound_source: 'default', sound_volume: 70, messages: null, mentions: null, channel_activity: null, record_created: null, record_updated: null, record_assigned: null, attachment_received: null, workflow_changes: null, task_activity: null, digest: null, quiet_hours_start: null, quiet_hours_end: null };
   }
   async function loadAccountPreferences() {
+    if(disposed||pageLeaving)return;
     const generation=++preferenceLoad;
     try {
       const [response, inbox] = await Promise.all([loadPreferences(), loadNotifications(false)]);
@@ -636,7 +642,7 @@
     <WorkspaceTopbar productName={deployment.branding.display_name} {viewTitle} {live} navigationOpen={mobileOpen} {notificationRevision} {unreadNotifications} onToggleNavigation={() => mobileOpen = !mobileOpen} onRefresh={refreshCurrent} onOpenSettings={openDisplaySettings} onToggleTheme={toggleTheme} onOpenAccount={() => go('account')} onSignOut={() => onSessionEnded('Signed out.')} onUnread={(count) => unreadNotifications = count} onOpenNotification={openNotification} />
     <UpdateNotice isAdmin={session.access_level===0} onOpenUpdates={()=>{localStorage.setItem('mx_admin_tab','updates');window.dispatchEvent(new Event('mx:open-updates'));go('admin');}} />
     {#if view === 'dashboard'}<DashboardView isAdmin={session.access_level === 0} revision={dashboardRevision} dashboardLabel={deployment.terminology.dashboard_label} recordSingular={deployment.terminology.record_singular} recordPlural={deployment.terminology.record_plural} />
-    {:else if view === 'records' && selectedModule}{#key selectedModuleUid}<RecordsView {session} accessLevel={session.access_level} moduleUid={selectedModule.uid} modulePermission={selectedModulePermission} openRecordUid={linkedRecordUid} openRequestRevision={linkedRecordRequestRevision} focusLinkedAttachments={linkedRecordFocusAttachments} revision={recordRevision} liveMessage={lastRecordEvent} recordSingular={selectedModule.singular_name} recordPlural={selectedModule.name} />{/key}
+    {:else if view === 'records' && selectedModule}{#key selectedModuleUid}<ModuleWorkspace {session} module={selectedModule} modulePermission={selectedModulePermission} openRecordUid={linkedRecordUid} openRequestRevision={linkedRecordRequestRevision} focusLinkedAttachments={linkedRecordFocusAttachments} revision={recordRevision} liveMessage={lastRecordEvent}/>{/key}
     {:else if view === 'records'}<section class="panel module-access-empty">
       {#if session.access_level === 0}
         <h2>Create your first module</h2><p>This workspace starts empty. Define your own modules and fields before entering records.</p>

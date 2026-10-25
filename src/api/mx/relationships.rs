@@ -121,6 +121,7 @@ pub(crate) fn config(kind: &str, value: &Value) -> Result<Value, String> {
 /// total lives in a DIFFERENT module, so validating only the edited module can
 /// leave a broken reference even when it contains no records yet.
 pub(crate) fn validate_dependents(c: &Connection, changed_module: &str) -> rusqlite::Result<()> {
+    crate::api::workflows::validate_module_fields(c, changed_module)?;
     let definitions=c.prepare("SELECT f.module_uid,COALESCE(f.module_key,f.field_key),f.label,f.field_type,f.config_json,m.name FROM mx_fields f JOIN mx_modules m ON m.uid=f.module_uid WHERE f.active=1 AND m.active=1 AND f.field_type IN ('relationship','lookup','rollup')")?
         .query_map([],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?,r.get::<_,String>(3)?,r.get::<_,String>(4)?,r.get::<_,String>(5)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
     for (module, key, label, kind, raw, module_name) in definitions {

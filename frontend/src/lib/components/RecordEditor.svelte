@@ -5,6 +5,8 @@
   import type { ModuleReadingMap } from '../api/domain';
   import Send from '@lucide/svelte/icons/send';
   import SendRecordDialog from './SendRecordDialog.svelte';
+  import RecordWorkflow from './RecordWorkflow.svelte';
+  import ModuleBooks from './ModuleBooks.svelte';
   import ArrowLeft from '@lucide/svelte/icons/arrow-left';
   import DownloadIcon from '@lucide/svelte/icons/download';
   import Eye from '@lucide/svelte/icons/eye';
@@ -34,9 +36,11 @@
   import {applyRelationshipPreview} from '../util/relationshipAutofill';
   import SelectFieldInput from './SelectFieldInput.svelte';
   import {fieldState,fieldRules,optionDetails,prepareForm,writable as ruleWritable} from '../util/formRules';
+  import type {RecordSection} from '../api/moduleViews';
+  import {orderedRecordFields,sectionHeading} from '../util/moduleViews';
 
-  let { schema, moduleUid = '', record, canWrite, canDelete, canAttachments = true, allowEdit = false, liveMessage = null, focusAttachments = false, recordLabel = 'Record', initialChanges = null, submitCreate, draftScope = '', onEdit = () => undefined, onClose, onSaved }:
-    { schema: SchemaResponse; moduleUid?: string; record: MxRecord | null; canWrite: boolean; canDelete: boolean; canAttachments?: boolean; allowEdit?: boolean; liveMessage?: LiveMessage | null; focusAttachments?: boolean; recordLabel?: string; initialChanges?:Record<string,JsonValue>|null; submitCreate?: (values: Record<string, JsonValue>) => Promise<MxRecord>; draftScope?: string; onEdit?: () => void; onClose: () => void; onSaved: () => Promise<void> } = $props();
+  let { schema, moduleUid = '', record, canWrite, canDelete, canAttachments = true, allowEdit = false, liveMessage = null, focusAttachments = false, recordLabel = 'Record', initialChanges = null, submitCreate, draftScope = '', recordSections=[], onEdit = () => undefined, onClose, onSaved }:
+    { schema: SchemaResponse; moduleUid?: string; record: MxRecord | null; canWrite: boolean; canDelete: boolean; canAttachments?: boolean; allowEdit?: boolean; liveMessage?: LiveMessage | null; focusAttachments?: boolean; recordLabel?: string; initialChanges?:Record<string,JsonValue>|null; submitCreate?: (values: Record<string, JsonValue>) => Promise<MxRecord>; draftScope?: string; recordSections?:RecordSection[]; onEdit?: () => void; onClose: () => void; onSaved: () => Promise<void> } = $props();
 
   type PreviewEntry = { key: string; name: string; mimeType: string; detail: string; storedUid?: string; pendingFile?: File };
 
@@ -63,6 +67,7 @@
   let liveNotice = $state('');
   let deletedRemotely = $state(false);
   let handledSequence = $state(0);
+  let workflowSignal = $state(0);
   let uploadProgress = $state(0);
   let uploadLabel = $state('');
   let fileProgress = $state<Record<string, { percent: number; label: string }>>({});
@@ -177,7 +182,7 @@
     void applyLiveMessage(message);
   });
 
-  const fields = $derived(schema.fields.filter((field) => field.active && !current?.restricted_fields?.includes(field.key) && (schema.viewer_access_level===0||field.config.access_scope!=='administrators') && (canAttachments || field.field_type !== 'attachments')).sort((a, b) => a.position - b.position));
+  const fields = $derived(orderedRecordFields(schema.fields.filter((field) => field.active && !current?.restricted_fields?.includes(field.key) && (schema.viewer_access_level===0||field.config.access_scope!=='administrators') && (canAttachments || field.field_type !== 'attachments')).sort((a, b) => a.position - b.position),recordSections));
   const states=$derived(Object.fromEntries(fields.map(field=>[field.key,fieldState(field,values)])));
   const unassignedFiles = $derived(current?.attached_files.filter((file) => !file.attachment_field_uid) || []);
 
@@ -290,13 +295,15 @@
   function upsertConflict(conflict: FieldConflict) { conflicts = [...conflicts.filter((item) => item.field_key !== conflict.field_key), conflict]; }
   async function applyLiveMessage(message: LiveMessage) {
     if (!current) return;
-    if (message.type === 'sync.required') { await refreshOpenRecord('This record was resynchronized after the live connection recovered.'); return; }
+    if (message.type === 'sync.required') { workflowSignal++;await refreshOpenRecord('This record was resynchronized after the live connection recovered.'); return; }
     if (!message.payload || typeof message.payload !== 'object') return;
     const payload = message.payload as Record<string, unknown>;
     if ((message.type.startsWith('schema.')||message.type.startsWith('module.'))&&(!payload.module_uid||payload.module_uid===moduleUid)) {
+      workflowSignal++;
       await refreshOpenRecord('Record access and field configuration were refreshed.');return;
     }
     if (payload.record_uid !== current.uid) return;
+    workflowSignal++;
     if (message.type === 'record.deleted') { deletedRemotely = true; onClose(); return; }
     if (message.type === 'attachment.created' || message.type === 'attachment.deleted') {
       await refreshOpenRecord('The attachment list was refreshed after another user changed it.');
@@ -645,6 +652,8 @@
     </header>
     {#if error}<div class="notice error">{error}</div>{/if}
     {#if liveNotice}<div class="notice live-notice">{liveNotice}</div>{/if}
+    {#if current && moduleUid && !canWrite}{#key current.uid}<RecordWorkflow {moduleUid} recordUid={current.uid} recordRevision={workingRevision} liveRevision={workflowSignal} onReload={()=>refreshOpenRecord('Latest record values loaded. Review them before taking action.')} onChanged={onSaved} onSnapshot={async uid=>{await openHistory();try{selectedVersion=await getRecordVersion(current!.uid,uid,moduleUid);}catch(reason){historyError=reason instanceof Error?reason.message:String(reason);}}}/>{/key}{/if}
+    {#if current && moduleUid && !canWrite}{#key current.uid}<ModuleBooks {moduleUid} moduleName={recordLabel} revision={workflowSignal} source={{record_uid:current.uid,record_revision:workingRevision}}/>{/key}{/if}
     {#if conflicts.length}<section class="conflict-panel"><strong>Resolve concurrent changes</strong><p>Another user saved these fields after you opened the record.</p>{#each conflicts as conflict}<div class="conflict-row"><div><strong>{conflict.label}</strong><small>Latest: {String(conflict.current_value ?? 'Empty')} · Yours: {String(conflict.your_value ?? 'Empty')}</small></div><div class="inline-actions"><button class="button small" type="button" onclick={() => useLatest(conflict)}>Use latest</button><button class="button primary small" type="button" onclick={() => keepMine(conflict)}>Keep mine</button></div></div>{/each}</section>{/if}
     <form class="record-form" novalidate onsubmit={submit}>
       {#if !fields.length}<div class="empty-state compact full"><strong>This deployment has no record fields yet.</strong><p>Open Administration → Record structure and add the first field.</p></div>{/if}
@@ -652,6 +661,8 @@
         {@const availability=states[definition.key]}
         {@const field={...definition,required:availability.required}}
         {#if availability.visible}
+        {@const heading=sectionHeading(definition,fields.filter(f=>states[f.key]?.visible),recordSections)}
+        {#if heading}<h3 class="record-section-heading full">{heading}</h3>{/if}
         <div class="personal-record-field" class:personal-field-bold={fieldIsBold($readingPreferences,moduleUid,field.uid)} data-field-uid={field.uid}>
         {#if field.field_type === 'attachments'}
           <fieldset class="field-block full attachment-drop attachment-section"><legend>{field.label}{#if field.required}<b class="required-mark"> *</b>{/if}</legend>
@@ -741,6 +752,7 @@
 {/if}
 
 <style>
+  .record-section-heading{grid-column:1/-1;margin:1rem 0 .2rem;padding:.65rem 0;border-bottom:1px solid var(--line);font-size:1.05rem;color:var(--text)}
   .personal-record-field{display:contents;}
   .personal-field-bold{font-weight:750;}
   .personal-field-bold :global(input),.personal-field-bold :global(textarea),.personal-field-bold :global(select),.personal-field-bold :global(label>span),.personal-field-bold :global(legend),.personal-field-bold :global(.relationship-input button){font-weight:750;}

@@ -1,0 +1,47 @@
+// Upgrade a disposable database made by the immutable published RC.8 binary.
+import assert from 'node:assert/strict';
+import {randomUUID} from 'node:crypto';
+import {fileURLToPath} from 'node:url';
+import {join} from 'node:path';
+import {writeFile} from 'node:fs/promises';
+import {startIsolatedMx} from './isolated-mx.mjs';
+assert.ok(process.env.MX_TEST_ARTIFACTS?.startsWith('/mnt/PROJECT-DISK-1TB/'));
+assert.ok(process.env.TMPDIR?.startsWith('/mnt/PROJECT-DISK-1TB/'));
+assert.ok(process.env.MX_TEST_LEGACY_BINARY?.startsWith('/mnt/PROJECT-DISK-1TB/'));
+assert.ok(!process.env.MX_TEST_N1_URL);
+const currentBinary=process.env.MX_TEST_BINARY,root=fileURLToPath(new URL('../',import.meta.url));
+let legacy,current;const results={passed:false};
+try{
+  process.env.MX_TEST_BINARY=process.env.MX_TEST_LEGACY_BINARY;
+  legacy=await startIsolatedMx(root);
+  process.env.MX_TEST_BINARY=currentBinary;
+  const password=`Disposable!${randomUUID()}`;
+  await legacy.call('/mx/v1/auth/create',legacy.signupKey,'POST',{email:'owner@upgrade-process.test',name:'Existing owner',password},[201]);
+  const original=(await legacy.call('/mx/v1/auth/authenticate',null,'POST',{email:'owner@upgrade-process.test',password})).body;
+  const callLegacy=async(path,method='GET',data,expected=[200])=>(await legacy.call(path,original.access_token,method,data,expected)).body;
+  const m=(await callLegacy('/mx/v1/admin/modules','POST',{name:'Existing business module',singular_name:'Entry',config:{navigation_group:'Operations',record_visibility:'creator'}},[201])).module;
+  await callLegacy(`/mx/v1/admin/modules/${m.uid}/fields`,'POST',{key:'name',label:'Name',field_type:'text'},[201]);
+  const r=await callLegacy(`/mx/v1/modules/${m.uid}/records`,'POST',{operation_uid:randomUUID(),values:{name:'Preserved existing record'}},[201]);
+  const modules=await callLegacy('/mx/v1/modules'),schema=await callLegacy(`/mx/v1/modules/${m.uid}/schema`),history=await callLegacy(`/mx/v1/modules/${m.uid}/records/${r.uid}/versions`),preferences=await callLegacy('/mx/v1/account/preferences');
+  const source=join(legacy.directory,'test.db');await legacy.close();legacy=null;
+  current=await startIsolatedMx(root,{seedDatabase:source});console.log(`Module process RC.8 upgrade artifacts: ${current.directory}`);
+  const owner=(await current.call('/mx/v1/auth/authenticate',null,'POST',{email:'owner@upgrade-process.test',password})).body;
+  const call=async(path)=>(await current.call(path,owner.access_token)).body;
+  assert.deepEqual(await call('/mx/v1/modules'),modules,'Module identities, positions, grants and business configuration are unchanged');
+  assert.deepEqual(await call(`/mx/v1/modules/${m.uid}/schema`),schema,'Existing schema is not rewritten');
+  assert.deepEqual(await call(`/mx/v1/modules/${m.uid}/records/${r.uid}`),r,'Record values, revision, ownership and files are unchanged');
+  assert.deepEqual(await call(`/mx/v1/modules/${m.uid}/records/${r.uid}/versions`),history,'Record history is preserved');
+  assert.deepEqual(await call('/mx/v1/account/preferences'),preferences,'User preferences are preserved');
+  assert.equal((await call(`/mx/v1/modules/${m.uid}/records/${r.uid}/workflow`)).enabled,false,'No workflow is enabled implicitly');
+  assert.equal((await call(`/mx/v1/modules/${m.uid}/work-queue`)).enabled,false);
+  const workspace=await call(`/mx/v1/modules/${m.uid}/workspace`);
+  assert.equal(workspace.revision,0,'Existing modules are not silently given a workspace layout');
+  assert.deepEqual(workspace.layout.views,[],'Records remains the existing default view');
+  const books=await call(`/mx/v1/modules/${m.uid}/books`);
+  assert.equal(books.revision,0,'No book configuration is created during upgrade');
+  assert.equal(books.settings.accounting,false);assert.equal(books.settings.inventory,false);
+  assert.deepEqual((await call(`/mx/v1/modules/${m.uid}/books/list/journals`)).items,[]);
+  assert.deepEqual((await call(`/mx/v1/modules/${m.uid}/books/list/items`)).items,[]);
+  await current.restart();assert.deepEqual(await call(`/mx/v1/modules/${m.uid}/records/${r.uid}`),r);
+  results.passed=true;results.checks=['Published RC.8 database upgrade','Same module/schema/record/history/preferences','Creator-only configuration preserved','No implicit process, book, account, stock or data creation','Repeated restart'];console.log(JSON.stringify(results));
+}finally{process.env.MX_TEST_BINARY=currentBinary;if(legacy)await legacy.close();if(current){await writeFile(join(current.directory,'module-processes-upgrade-results.json'),JSON.stringify(results,null,2));await current.close();}}

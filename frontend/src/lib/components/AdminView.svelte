@@ -18,7 +18,7 @@
   import UploadLimitsSettings from './admin/UploadLimitsSettings.svelte';
   let { session, revision = 0, administrationLabel = 'Administration', dashboardLabel = 'Dashboard' }: { session: Session; revision?: number; administrationLabel?: string; dashboardLabel?: string } = $props();
   let tab = $state<'accounts' | 'schema' | 'dashboard' | 'trash' | 'deployment' | 'backups' | 'updates' | 'audit'>('accounts');
-  onMount(() => { const stored = localStorage.getItem('mx_admin_tab'); if (stored === 'operations') tab = 'deployment'; else if (stored === 'accounts' || stored === 'schema' || stored === 'dashboard' || stored === 'trash' || stored === 'deployment' || stored === 'backups' || stored === 'updates' || stored === 'audit') tab = stored; });
+  onMount(() => { if(new URLSearchParams(location.hash.split('?')[1]||'').has('module')){tab='schema';return;}const stored = localStorage.getItem('mx_admin_tab'); if (stored === 'operations') tab = 'deployment'; else if (stored === 'accounts' || stored === 'schema' || stored === 'dashboard' || stored === 'trash' || stored === 'deployment' || stored === 'backups' || stored === 'updates' || stored === 'audit') tab = stored; });
   function setTab(next: typeof tab) { tab = next; localStorage.setItem('mx_admin_tab', next); }
   onMount(()=>{const open=()=>setTab('updates');window.addEventListener('mx:open-updates',open);return()=>window.removeEventListener('mx:open-updates',open);});
 </script>

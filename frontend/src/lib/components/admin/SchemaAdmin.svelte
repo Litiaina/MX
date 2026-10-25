@@ -19,6 +19,9 @@
   import RelationshipConfig from './RelationshipConfig.svelte';
   import ColumnSummariesAdmin from './ColumnSummariesAdmin.svelte';
   import FormRulesAdmin from './FormRulesAdmin.svelte';
+  import WorkflowAdmin from './WorkflowAdmin.svelte';
+  import BooksSettings from './BooksSettings.svelte';
+  import ModuleViewsAdmin from './ModuleViewsAdmin.svelte';
   import FormulaConfig from './FormulaConfig.svelte';
   import FieldRulesDialog from './FieldRulesDialog.svelte';
   import FieldArchiveDialog from './FieldArchiveDialog.svelte';
@@ -48,13 +51,19 @@
   let savedFolders = $state<string[]>([]); let savedPrefix = $state('');
   let modules = $state<ModuleDefinition[]>([]); let selectedModuleUid = $state('');
   let moduleSearch = $state('');
-  type Section = 'fields' | 'details' | 'access' | 'rules' | 'summaries' | 'storage';
+  type Section = 'fields' | 'details' | 'access' | 'rules' | 'summaries' | 'storage' | 'workflow' | 'books' | 'views';
+  let viewsDirty = $state(false);
+  let workflowDirty = $state(false);
+  let booksDirty = $state(false);
   let section = $state<Section>('fields');
   const sections: {id:Section;name:string;description:string}[] = [
     {id:'fields',name:'Fields',description:'Add and configure the information your records store.'},
     {id:'details',name:'Module details',description:'Name, navigation, description and appearance for this module.'},
+    {id:'views',name:'Views & layout',description:'Design this module’s main screen: pipeline, operations, directory, documents, accounting, stock or records.'},
     {id:'access',name:'Permissions',description:'Choose what each account level may do in this module.'},
     {id:'rules',name:'Form rules',description:'Show, require or fill fields based on a person’s choices.'},
+    {id:'workflow',name:'Process & actions',description:'Configure CRM pipelines, ERP or expense approvals, or your own staged process.'},
+    {id:'books',name:'Accounting & stock',description:'Opt in to exact journals, stock balances, reservations and posting controls.'},
     {id:'summaries',name:'Column totals',description:'Summarize numeric values across matching records.'},
     {id:'storage',name:'File storage',description:'Configure this module’s independent N1 attachment layout.'}
   ];
@@ -90,10 +99,11 @@
   const storageDirty = $derived(JSON.stringify(folders) !== JSON.stringify(savedFolders) || prefix !== savedPrefix);
   const fieldsDirty=$derived(!!schema&&JSON.stringify(schema.fields)!==savedFieldSchema);
   const newFieldDirty = $derived(!!(label || key || options || type !== 'text' || formulaExpression || attachmentStorage || attachmentDescription || required || unique || !searchable || !sortable || !visible || priority !== 50));
-  const moduleWorkspaceDirty = $derived(moduleDirty || storageDirty || fieldsDirty || newFieldDirty);
+  const moduleWorkspaceDirty = $derived(moduleDirty || storageDirty || fieldsDirty || newFieldDirty || workflowDirty || booksDirty || viewsDirty);
+  async function switchSection(next:Section){if(next===section)return;if((workflowDirty||booksDirty||viewsDirty)&&!await requestConfirmation({title:'Discard unsaved module configuration?',description:'Save your workspace, process or book configuration before leaving, or discard its unsaved changes.',confirmLabel:'Discard and switch',tone:'danger'}))return;workflowDirty=false;booksDirty=false;viewsDirty=false;section=next;}
 
   onMount(() => void initialise());
-  async function initialise() { try { const response=await loadModules(); if(destroyed)return; modules=response.modules; } catch (reason) { if(!destroyed)fail(reason,'Could not load modules'); } finally { if(!destroyed)loading=false; } }
+  async function initialise() { try { const response=await loadModules(); if(destroyed)return; modules=response.modules;const params=new URLSearchParams(location.hash.split('?')[1]||'');const uid=params.get('module');if(uid&&modules.some(m=>m.uid===uid)){selectedModuleUid=uid;syncModuleEditor();section=params.get('section')==='views'?'views':'fields';await refresh();} } catch (reason) { if(!destroyed)fail(reason,'Could not load modules'); } finally { if(!destroyed)loading=false; } }
   function resetFieldDraft(){label='';key='';type='text';options='';required=false;unique=false;searchable=true;sortable=true;visible=true;priority=50;autoScope='global';autoPrefix='';autoPadding=0;relationshipConfig={};formulaExpression='';formulaDecimals=2;formulaConfig={expression:'',decimals:2};attachmentStorage='';attachmentDescription='';attachmentMultiple=true;attachmentMaxFiles=undefined;createError='';createKeyInvalid=false;}
   function syncModuleEditor() { const module = modules.find((item) => item.uid === selectedModuleUid); if (!module) return; moduleName = module.name; moduleSingular = module.singular_name; moduleDescription = module.description; moduleIcon = normaliseModuleIcon(module.icon); moduleColor = module.color; modulePosition = module.position; moduleActive = module.active; moduleNavigationGroup = typeof module.config.navigation_group === 'string' ? module.config.navigation_group : ''; modulePermissions = cloneJson(module.permissions);moduleRecordVisibility=String(module.config.record_visibility||'module'); }
   async function switchModule(nextUid: string, control?: HTMLSelectElement) {
@@ -110,6 +120,7 @@
     selectedModuleUid = nextUid;
     schema=null;
     resetFieldDraft(); section='fields';
+    workflowDirty=false;booksDirty=false;viewsDirty=false;
     syncModuleEditor();
     notice = '';
     await refresh();
@@ -154,6 +165,7 @@
     if (moduleDirty) syncModuleEditor();
     if (storageDirty) { folders = [...savedFolders]; prefix = savedPrefix; }
     if(fieldsDirty&&schema){schema={...schema,fields:JSON.parse(savedFieldSchema)};}
+    if(workflowDirty||booksDirty){workflowDirty=false;booksDirty=false;section='fields';}
     resetFieldDraft();
     resetNewModule();
     moduleCreateOpen = true;
@@ -201,7 +213,8 @@
     }
     await switchModule(blocker.module_uid);
     if(selectedModuleUid!==blocker.module_uid)return;
-    section=blocker.section==='storage'?'storage':'fields';
+    section=blocker.section==='storage'?'storage':blocker.section==='workflow'?'workflow':blocker.section==='views'?'views':'fields';
+    if(blocker.section==='workflow'||blocker.section==='views')return;
     if(blocker.kind==='form_rule'){const target=schema?.fields.find(f=>f.uid===blocker.field_uid);if(target)await configureRules(target);return;}
     fieldFocusUid=blocker.field_uid||'';await tick();
     const target=blocker.section==='storage'?document.querySelector<HTMLElement>('.storage-layout-panel'):document.querySelector<HTMLElement>(`[data-schema-field="${CSS.escape(fieldFocusUid)}"]`);
@@ -234,7 +247,7 @@
 
 {#if selectedModule}
 <section class="module-workbench-scope" aria-label="Current module configuration scope"><button class="button small" type="button" disabled={loading} onclick={()=>void switchModule('')}><ArrowLeft size={16}/>All modules</button><span class="module-library-icon" style={`--module-accent:${selectedModule.color}`}><ModuleIcon name={selectedModule.icon} size={22}/></span><div><small>You are configuring</small><h2>{selectedModule.name}</h2></div><span class="scope-status">{moduleWorkspaceDirty?'Unsaved changes':'Existing module'}</span><button class="button" type="button" disabled={loading} onclick={()=>void openModuleCreate()}><Plus size={16}/>New module</button></section>
-<nav class="module-section-nav" aria-label="Module configuration sections">{#each sections as item}<button type="button" class:active={section===item.id} aria-current={section===item.id?'page':undefined} onclick={()=>section=item.id}>{item.name}</button>{/each}</nav>
+<nav class="module-section-nav" aria-label="Module configuration sections">{#each sections as item}<button type="button" class:active={section===item.id} aria-current={section===item.id?'page':undefined} onclick={()=>void switchSection(item.id)}>{item.name}</button>{/each}</nav>
 <p class="module-section-description">{sections.find(item=>item.id===section)?.description}</p>
 {#if loading}<p role="status">Loading {selectedModule.name} settings…</p>{/if}
 <div class="module-section-content" inert={loading} aria-busy={loading}>
@@ -291,6 +304,9 @@
 {/if}
 {#if schema&&section==='summaries'}<ColumnSummariesAdmin fields={schema.fields} moduleName={selectedModule?.name || 'Module'} onSaved={refresh} />{/if}
 {#if schema&&section==='rules'}<FormRulesAdmin fields={schema.fields} moduleName={selectedModule?.name||'Module'} onConfigure={field=>void configureRules(field)}/>{/if}
+{#if schema&&section==='workflow'}{#key selectedModuleUid}<WorkflowAdmin moduleUid={selectedModuleUid} moduleName={selectedModule.name} fields={schema.fields} bind:dirty={workflowDirty}/>{/key}{/if}
+{#if schema&&section==='books'}{#key selectedModuleUid}<BooksSettings moduleUid={selectedModuleUid} moduleName={selectedModule.name} bind:dirty={booksDirty}/>{/key}{/if}
+{#if schema&&section==='views'}{#key selectedModuleUid}<ModuleViewsAdmin moduleUid={selectedModuleUid} moduleName={selectedModule.name} fields={schema.fields} bind:dirty={viewsDirty}/>{/key}{/if}
 <div class="admin-grid module-fields-grid">
 {#if section==='fields'&&schema}
   <section class="panel module-section-panel"><div class="module-local-heading"><span>Module · {selectedModule?.name || 'Module'}</span><h2>Add a {selectedModule?.singular_name.toLowerCase() || 'record'} field</h2><p class="muted">The new field will exist only in {selectedModule?.name || 'this module'}.</p></div><form class="form-stack" onsubmit={add} aria-label="Add field" id="new-field-form" tabindex="-1"><label>Label<input bind:value={label} required oninput={()=>{createError='';createKeyInvalid=false;}} /></label><label>Field key (optional)<input id="new-field-key" bind:value={key} maxlength="64" pattern="[a-z_][a-z0-9_]*" placeholder={`Generated: ${generatedFieldKey(label)}`} aria-describedby="new-field-key-help" aria-invalid={createKeyInvalid} oninput={()=>{createError='';createKeyInvalid=false;}} /></label><p id="new-field-key-help" class="muted small">Stable identifier used by relationships and imports. Leave blank to generate it from the label. Active and archived fields must have different keys.</p>{#if (label.trim()||key.trim())&&keyOwner}<p class="field-key-warning" role="status">Key <code>{proposedKey}</code> is already reserved by <strong>{keyOwner.label}</strong> ({keyOwner.field_type}, {keyOwner.active?'active':'archived'}). Archiving keeps its key and history. Choose a different key for a new field.</p>{/if}{#if createError}<div class="notice error field-create-error" role="alert">{createError}</div>{/if}<label>Type<select bind:value={type} onchange={syncType}><option value="text">Text</option><option value="long_text">Long text</option><option value="integer">Integer</option><option value="decimal">Decimal</option><option value="formula">Formula / calculated</option><option value="relationship">Relationship / linked record</option><option value="lookup">Lookup from linked records</option><option value="rollup">Rollup / aggregate linked records</option><option value="date">Date</option><option value="boolean">Boolean</option><option value="select">Select</option><option value="auto_number">Auto number</option><option value="attachments">File attachments</option></select></label>{#if ['relationship','lookup','rollup'].includes(type)}<RelationshipConfig kind={type} bind:config={relationshipConfig} {modules} fields={activeFields} moduleUid={selectedModuleUid} />{:else if type === 'select'}<label>Options (comma separated)<input bind:value={options} required /></label>{:else if type === 'auto_number'}<label>Sequence scope<select bind:value={autoScope}><option value="global">Global</option><option value="yearly">Reset yearly</option></select></label><label>Prefix<input bind:value={autoPrefix} /></label><label>Zero padding<input type="number" min="0" max="12" bind:value={autoPadding} /></label>{:else if type === 'formula'}<FormulaConfig bind:config={formulaConfig} fields={activeFields}/>{:else if type === 'attachments'}<label>Storage name<input bind:value={attachmentStorage} placeholder="Defaults to field label" /></label><label>Description<input bind:value={attachmentDescription} /></label><label class="checkbox"><input type="checkbox" bind:checked={attachmentMultiple} /> Allow multiple files</label><label>Maximum files<input type="number" min="1" max="10000" bind:value={attachmentMaxFiles} disabled={!attachmentMultiple} placeholder="Unlimited" /></label>{/if}<label>Table priority<input type="number" bind:value={priority} /></label><label class="checkbox"><input type="checkbox" bind:checked={required} disabled={['auto_number', 'formula', 'lookup', 'rollup'].includes(type)} /> Required</label><label class="checkbox"><input type="checkbox" bind:checked={unique} disabled={['attachments', 'auto_number', 'formula', 'relationship', 'lookup', 'rollup'].includes(type)} /> No duplicate record values</label><label class="checkbox"><input type="checkbox" bind:checked={searchable} disabled={['relationship', 'lookup', 'rollup'].includes(type)} /> Searchable</label><label class="checkbox"><input type="checkbox" bind:checked={sortable} disabled={['long_text', 'attachments', 'relationship', 'lookup', 'rollup'].includes(type)} /> Sortable</label><label class="checkbox"><input type="checkbox" bind:checked={visible} /> Default table column</label><button class="button primary" disabled={loading}>Add field to {selectedModule?.name || 'module'}</button></form></section>

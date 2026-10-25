@@ -132,6 +132,7 @@ try {
     let posted;
     await until(async () => { const messages = (await call(`/mx/v1/collaboration/channels/${channel.uid}/messages`, owner)).messages; posted = messages.find(message => message.body === messageText); return posted?.files.length === 6; }, 'Files uploaded through MX and N1');
     await until(async () => await page.locator('.pending-shares').count() === 0, 'Successful send clears attachments');
+    await until(async () => await composer.evaluate(input => !input.readOnly), 'Composer becomes available after send acknowledgement and conversation refresh');
     const recipientMessage = (await call(`/mx/v1/collaboration/channels/${channel.uid}/messages`, recipient)).messages.find(message => message.uid === posted.uid);
     assert.equal(recipientMessage.files.length, 6);
     assert.equal(recipientMessage.files.filter(file => file.mime_type === 'image/png').length, 1, 'The recipient receives exactly one pasted screenshot');
@@ -163,6 +164,7 @@ try {
       const nativeDownload = await mx.api.get(`/mx/v1/collaboration/files/${nativeMessage.files[0].uid}/download`, { headers: { Authorization: `Bearer ${recipient.access_token}` } });
       assert.equal(nativeDownload.status(), 200); assert.deepEqual([...await nativeDownload.body()], pastedBytes);
       await until(async () => await page.locator('.pending-shares').count() === 0, 'Native image send clears the queue');
+      await until(async () => await composer.evaluate(input => !input.readOnly), 'Native image send finishes before testing the next paste');
       const copiedText = `Ordinary Ctrl+C text ${engine}`; await composer.fill(copiedText); await composer.press('Control+a'); await composer.press('Control+c'); await composer.fill(''); await composer.press('Control+v');
       await until(async () => await composer.inputValue() === copiedText, 'Native text Ctrl+C/Ctrl+V remains unchanged');
       assert.equal(await page.locator('.pending-shares').count(), 0); await composer.fill('');

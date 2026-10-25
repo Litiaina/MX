@@ -49,6 +49,7 @@ try {
       await dialog.getByLabel('Singular name', {exact: true}).fill('Entry');
       await dialog.getByRole('button', {name: 'Create new module', exact: true}).click();
       await dialog.waitFor({state: 'hidden'});
+      await page.getByRole('button', {name: 'Module details', exact: true}).click();
       await page.locator('.module-builder').getByRole('button', {name: 'Delete', exact: true}).click();
       const deletion = page.getByRole('alertdialog');
       await deletion.getByLabel('Type Temporary setup to confirm').fill('Temporary setup');

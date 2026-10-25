@@ -1,5 +1,27 @@
 # HTTP API reference
 
+## Module workspace presentation (RC.9)
+
+`GET /mx/v1/modules/{module}/workspace` requires module Read and returns
+`{revision,layout:{default_view,views,sections}}`. Revision zero and no views means
+the existing Records interface; reads never create a layout or business data.
+
+`PUT` on the same path requires Configure and accepts the exact current revision
+and complete layout. Each view has `id`, `name`, `kind`, `title_field`, `fields`,
+`summary_fields`, `description`. Kinds: `records`, `board`, `cards`, `overview`,
+`documents`, `ledger`, `inventory`. Sections have `name` and `fields` (field keys).
+Limits: 12 views, 8 card fields, 4 summaries, 16 record sections. Shared titles,
+card information and summaries must reference active module-visible fields.
+Pipeline/document/book prerequisites are validated. Conflicting revisions return
+409; permission failures return 403; invalid layouts return 400 with operator
+instructions. Save and configuration history commit in one transaction.
+
+Work-queue reads optionally accept `q` (title substring, max 200 characters),
+`counts_only=true` and `include_total=true`. Count-only responses contain `total`
+and `stage_totals:[{state,total}]`, respecting module, creator, title-field and
+action permissions before aggregation. Count-only reads return no record cards.
+Normal queue pages remain bounded to 40; totals are computed only when requested.
+
 [Documentation index](README.md) · [Project overview](../README.md)
 
 ## HTTP API
@@ -38,6 +60,120 @@ counts, maintenance state and the planned restart time—never user/file data,
 tokens, trust keys, database paths or job history. During activation, normal APIs
 return `503` with `Retry-After: 5`; administrator update status and readiness are
 still allowed. See [update lifecycle and operator setup](updates.md).
+
+### Operational books — RC.9
+
+Unreleased, authenticated and opt-in. `GET /books` requires module Read and
+returns settings plus `can_configure` / `can_operate`. Saving settings requires
+Configure and an exact `revision`. Reading book contents or submitting commands
+requires an explicitly allowed operator level **and** module Read, Edit and
+Reports grants. That is whole-book access, not creator-only record access.
+Creating account/item definitions additionally requires Configure.
+
+```http
+GET  /mx/v1/modules/{module}/books
+PUT  /mx/v1/modules/{module}/books
+POST /mx/v1/modules/{module}/books/commands
+GET  /mx/v1/modules/{module}/books/list/{kind}?after={sequence}
+GET  /mx/v1/modules/{module}/books/journals/{uid}
+```
+
+List kinds are `accounts`, `journals`, `items`, `reservations`, `stock-events`.
+Pages contain at most 40 items, `has_next` and `next_cursor`; cursors are ascending
+sequence numbers scoped to the module. They are live pages, not frozen exports.
+
+Settings contain `accounting`, `inventory`, `currency`, `money_decimals`,
+`stock_decimals`, `operator_levels`, `closed_through` and `required_stage`.
+Precision is 0–6; currency is three uppercase ASCII letters. Administrator must
+remain an allowed operator; Viewer cannot be an operator. Period cutoffs cannot
+move backwards. Currency/precision freeze after relevant first use.
+
+Every command includes a UUID `operation_uid`, `configuration_revision` and
+discriminator `kind`:
+
+- `account`: `code`, `name`, `category` (asset/liability/equity/income/expense).
+- `item`: `code`, `name`, `unit`.
+- `journal`: `date`, `description`, optional `source`, and 2–100 `lines` with
+  `account_uid`, `debit`, `credit`. Amounts are **decimal strings**, one side
+  positive and the other the empty string; repeated accounts are rejected.
+- `reverse`: `journal_uid`, `date`, `reason`. Creates opposite lines once.
+- `stock`: `item_uid`, `movement` (receive/issue/reserve), positive decimal-string
+  `quantity`, `note`, optional `source`.
+- `reservation`: `reservation_uid`, `action` (release/consume), `note`.
+
+A source is `{record_uid,record_revision}`. Posting verifies its current module,
+row access, exact revision and, if configured, completed unchanged process stage.
+Its stored values/file references are snapshotted in the posting transaction.
+Journal detail hides source links when current row visibility denies access.
+
+Commands return `{uid,replayed}` only after committing. The UUID is bound to the
+actor, module and exact submitted payload; matching retries return the same UID,
+different payloads conflict. An authenticated actor can reconcile their own exact
+already-committed receipt after book permissions change; this returns only the
+original UID, not book contents or permission to post a fresh entry.
+Monetary/quantity outputs are exact decimal strings,
+never JSON floats. Accounts report debit-minus-credit net balances. Journal lines,
+movements, audit evidence and retry receipts commit atomically. Evidence cannot
+be updated/deleted; modules with book audit history must be archived, not purged.
+There are no automatic record-to-journal mappings or tax/valuation guarantees.
+See [operator instructions and limits](operational-books.md).
+
+### Module processes — RC.9
+
+These endpoints are **unreleased**; published RC.8 does not provide them.
+All require authentication and current module permissions. Record endpoints
+also enforce row visibility. Configuration writes require Configure permission;
+actions additionally require module Edit and the action's account/creator policy.
+
+```http
+GET  /mx/v1/modules/{module}/workflow
+PUT  /mx/v1/modules/{module}/workflow
+GET  /mx/v1/modules/{module}/work-queue?state={stage_key}&actionable=true&after={record_uid}
+GET  /mx/v1/modules/{module}/records/{record}/workflow
+GET  /mx/v1/modules/{module}/records/{record}/workflow/history?before={sequence}
+POST /mx/v1/modules/{module}/records/{record}/workflow/actions
+```
+
+Configuration is separate from ordinary module `config`. PUT takes
+`{revision, definition, confirm_existing_records}`. `definition` contains
+`enabled`, `name`, `kind` (`custom`, `crm`, `erp`, `accounting`), `initial_state`,
+`title_field`, `restart_on_edit`, `states: [{key,name}]` and `actions`.
+Each action contains `key`, `name`, `from`, `to`, `access_levels` (0–3),
+`creator_policy` (`any`, `creator`, `not_creator`), `required_fields` (field keys)
+and `note_required`. Unknown properties are rejected. No business data is seeded.
+
+GET configuration includes a revision and an administration-only `existing_records`
+impact count (null for readers without Configure). Record status includes the
+current stage, all three loaded revision numbers and permitted-account-level
+actions. `missing_fields` and `blocked_reason` explain why a listed action is
+disabled; clients must not interpret its presence as permission to execute it.
+
+POST action body:
+
+```json
+{
+  "operation_uid": "a22a97a7-3b7e-47ac-a8f3-d30775dd3620",
+  "action": "submit",
+  "configuration_revision": 1,
+  "workflow_revision": 0,
+  "record_revision": 1,
+  "note": "Ready for review"
+}
+```
+
+All revision numbers come from the record workflow GET; do not hard-code them.
+Success returns `{event_uid, replayed, status}`. Same-actor, same-record replay
+of the same operation/payload returns the original event. A changed payload or
+stale revision returns 409. Missing requirements return 400, denied actions 403,
+and inaccessible/missing records 404. Decisions, saved snapshots, state and
+preference-aware notifications are committed together. Normal record APIs cannot
+set the process stage. History remains readable after disabling a process.
+
+Queue/history responses have `items`, `has_next`, `next_cursor`, with at most
+40 entries. Queue cursors are ordered record UIDs; history cursors are descending
+event sequences. No arbitrary scripts or SQL predicates are accepted. Read-only
+endpoints do not create process instances or initialize schemas on request.
+See [operator setup and capability limits](module-processes.md).
 
 ### Module spreadsheet imports
 

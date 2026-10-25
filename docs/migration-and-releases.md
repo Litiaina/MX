@@ -2,7 +2,22 @@
 
 [Documentation index](README.md) · [Project overview](../README.md)
 
-## Current candidate: MX 1.0.0-rc.8
+## Current candidate: MX 1.0.0-rc.9
+
+RC.9 adds opt-in module workspaces, controlled processes and accounting/stock
+books. Administrators choose the opening view and configure pipelines,
+directories, operations overviews, document libraries, full-page books and
+record-detail sections. Existing modules keep Records; new installations remain
+blank. No business workflow or opening balance is created automatically.
+
+The application adds process, workspace-layout, journal, stock and audit tables
+at startup before accepting requests. Preserve the verified final pre-update
+SQLite snapshot. Rollback must restore both the previous application and that
+snapshot, not run an older binary alone against an upgraded database. Publisher
+trust, package/worker protocol and N1 encoding are unchanged. See
+[RC.9 instructions](releases/1.0.0-rc.9.md) and the [workspace guide](module-workspaces.md).
+
+## Previous candidate: MX 1.0.0-rc.8
 
 RC.8 fixes duplicate clipboard attachments, replaces the long module sidebar with
 a searchable grouped Modules menu/library and retains administrator-configured

@@ -131,7 +131,7 @@ pub struct DynamicPage {
     pub window: Option<windows::WindowMetadata>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 enum NormalizedValue {
     Text(String),
     Integer(i64),
@@ -673,16 +673,24 @@ pub(crate) fn recalculate_module_formulas(
     let transaction = owned.as_ref().map(|tx| &**tx).unwrap_or(connection);
     for record_uid in record_uids {
         let mut values = load_normalized_record_values(&transaction, &record_uid, &fields)?;
+        let previous = values.clone();
         apply_formula_values(&fields, &mut values)
             .map_err(|error| rusqlite::Error::InvalidParameterName(format!("MX_CONFIG:{error}")))?;
-        for field in fields.iter().filter(|field| field.field_type == "formula") {
-            let Some(value) = values.get(&field.key) else {
-                continue;
-            };
-            write_single_dynamic_value(&transaction, &record_uid, field, Some(value))?;
-            let revision =
-                current_field_revision(&transaction, &record_uid, &field.uid)?.saturating_add(1);
-            set_field_revision(&transaction, &record_uid, &field.uid, revision, actor_uid)?;
+        let changed: Vec<_> = fields.iter().filter(|field| {
+            field.field_type == "formula" && previous.get(&field.key) != values.get(&field.key)
+        }).collect();
+        if !changed.is_empty() {
+            // A recalculation changes saved data too. Advance the record and
+            // field revisions together so stale edits and process decisions
+            // cannot silently retain their previous meaning.
+            let revision: i64 = transaction.query_row(
+                "UPDATE mx_records SET revision=revision+1 WHERE uid=?1 RETURNING revision",
+                [&record_uid], |row| row.get(0),
+            )?;
+            for field in changed {
+                write_single_dynamic_value(&transaction, &record_uid, field, values.get(&field.key))?;
+                set_field_revision(&transaction, &record_uid, &field.uid, revision, actor_uid)?;
+            }
         }
     }
     if let Some(tx) = owned {

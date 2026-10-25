@@ -1,5 +1,248 @@
 # MX validation
 
+## RC.9 release qualification — 2026-10-26
+
+The versioned **1.0.0-rc.9** release executable and matching production frontend
+were checked separately from the populated local preview. Source remains in the
+original repository; build outputs, disposable databases, profiles, release
+packages and signing operations use the 1-TB HDD. Published RC.8 assets, N1
+sources, README branding and existing deployments were not replaced.
+
+| Check | Result |
+| --- | --- |
+| Native / frontend | 225 native tests passed, 2 existing opt-in tests ignored; 385 frontend tests passed in 62 files |
+| Build | Optimized release executable; matching Cargo/npm/README versions; 0 Svelte errors or warnings; final packaged assets verified |
+| Workspace / process / books | Configurable pipelines, directories, overview, documents, full-page journals/stock, record sections, revision checks, approvals, snapshots and permission boundaries passed |
+| Existing records | Record navigation, paged/continuous window restoration, horizontal position, administrator configuration, restricted values/files, creator isolation, relationships, totals and import regression passed |
+| Navigation / files | 100-module navigation, sidebar layouts, Drive file manager, actual 66 MiB uploads, Collaboration paste/drop deduplication, recipient byte equality and Office attachment permissions passed |
+| Notifications | Four-engine instrumented focus routing, cross-tab duplicate prevention, failed-inbox initialization and reconnect recovery passed; physical OS banners are not certified |
+| Scale / restart | 100,000-record workflow fixture; 100,000 journals, 200,000 lines and over 100,000 stock events; bounded reads behind a held WAL writer, concurrent decisions/reservations, integrity and restart checks passed |
+| Upgrade | Published RC.8 database preserved modules, fields, values, ownership, history, preferences and privacy settings; no implicit process/book/layout/data creation |
+| Signed updater | Real RC.8-to-RC.9 activation in disposable systemd services; invalid signatures/outage, interrupted download, maintenance window, final backup, retained writes, offline upload, one-winner install, paired rollback and killed-worker recovery passed |
+
+The final release gate comprises **19 browser/integration suites**, in addition
+to the native/frontend tests. Workspaces, books, clipboard/file permissions,
+upload policy and notification routing include Chromium, Brave, Firefox and
+Linux WebKit; individual suites list their exact engines in the evidence.
+Actual bundled DOCX/XLSX rendering was exercised in Chromium, Brave and Firefox.
+Linux WebKit lacks worker WebGL on this host: its explicit fallback and unchanged
+original download passed, not Office rendering.
+
+Release qualification caught a page-exit race: delayed record/schema refreshes
+and live-event callbacks could start requests during document teardown. The
+guards were corrected, the production bundle rebuilt and the final suites rerun;
+two additional WebKit navigation repetitions passed. Test synchronization was
+also corrected to select the administrator's Module details panel and to wait
+for the chat composer to finish its previous send before another native paste.
+Diagnostic failed attempts are retained, not counted as passing evidence.
+
+Final private evidence:
+`/mnt/PROJECT-DISK-1TB/tests/mx-rc9-release-20261026/qualified/qualification.json`.
+Release executable SHA-256:
+`7bc1f1d532fe6dcdb18592c7c08c9331d8c8ca6bce997517528650d4c75f86af`.
+Public release assets include sanitized build provenance, signed metadata,
+publisher public key and checksums; fixture databases, credentials and TLS/private
+signing keys must not be published.
+
+This is release-candidate qualification, not a sustained performance SLA,
+physical power-cut/Windows clipboard/OS-banner certification or a complete
+ERP/tax/payroll/accounting approval. The large-main-chunk advisory remains.
+Organization-specific policies and target client environments still require
+acceptance testing. The dated preparation sections below are historical reports,
+not descriptions of the published version or the final release gate.
+
+## Local RC.9 preparation — configurable module workspaces
+
+Verified **2026-10-25 (Asia/Manila)**. Source edits are in the original repository
+`/home/altear/Development/mx`; generated builds, browser profiles, fixtures,
+backups and the populated local preview are on `/mnt/PROJECT-DISK-1TB`.
+No commit, push, release, version bump or production deployment was performed.
+README branding, N1 sources and published RC.8 assets remain unchanged.
+
+| Check | Result |
+| --- | --- |
+| Native tests | 225 passed; 2 existing opt-in tests ignored |
+| Frontend tests | 385 passed in 62 files |
+| Svelte / production bundle | 0 errors, 0 warnings; packaged-asset verification passed; large-main-chunk advisory remains |
+| Configurable views | Chromium, Brave, Firefox and WebKit: pipeline is the main view, bounded stage paging/search, directory paging, document preview, full-page accounting/inventory, overview totals, record sections and administrator layout saving |
+| Permissions / preservation | Configure denial, restricted title rejection, named archive dependencies, exact permission-filtered counts, unchanged record revisions/values, restricted fields and whole-book access |
+| Existing workflows | Chromium, Firefox and WebKit: CRM/ERP/expense decisions, snapshots, stale-revision protection, disabled history, same-record reopen and obsolete response handling |
+| Existing accounting / stock | Chromium, Firefox and WebKit: exact journal preview, dropped acknowledgements after commit, receipt recovery/reconciliation, reversal, receive/reserve/consume, source snapshots and enlarged-text dialogs |
+| Scale / WAL | 100,000 records; eight bounded queue reads plus process reads behind a held writer completed in 157 ms; four grouped stage-total reads completed in 286 ms in this synthetic run; restart and competing decisions passed |
+| Populated preview | Chromium, Firefox and WebKit: nine configured demo modules, real CRM stages, purchasing overview, document library, exact existing ledger/stock balances, directory labels and two creator-only attendance cards; no record mutations during browser QA |
+| Narrow / enlarged text | 390 px / 24 px root text; workspace remains within viewport, pipeline retains a usable horizontally scrollable area; screenshots wait for sidebar transition completion |
+
+Regression testing caught and corrected duplicate record dialogs on legacy deep
+links, loading skipped by stale live events, and a Configure link selecting
+Accounts instead of the intended module. Directory rendering uses authorized
+relationship labels rather than raw linked-record UUIDs.
+
+Passing reports (fixture directories with failed attempts are diagnostic, not passes):
+
+- `/mnt/PROJECT-DISK-1TB/tests/mx-workspace-views-20261025/mx-eight-user-idlm2p/module-views-results.json`
+- `/mnt/PROJECT-DISK-1TB/tests/mx-workspace-views-20261025/mx-eight-user-0kvzk6/module-books-results.json`
+- `/mnt/PROJECT-DISK-1TB/tests/mx-workspace-views-20261025/mx-eight-user-Oiugiy/module-processes-results.json`
+- `/mnt/PROJECT-DISK-1TB/tests/mx-workspace-views-20261025/mx-eight-user-cI9IaO/module-processes-scale-results.json`
+- `/mnt/PROJECT-DISK-1TB/tests/workspace-demo-20261025.c2l84R/workspace-layout-results.json`
+- `/mnt/PROJECT-DISK-1TB/tests/workspace-demo-20261025.c2l84R/workspace-browser-results.json`
+
+The optimized preview binary is in
+`/mnt/PROJECT-DISK-1TB/mx-updates/slots/local-rc9-workspaces-20261025.y8D9xC/`.
+SHA-256: `6bbdb72097b8c6ec7f170a81b9205dcf5e3684590186851abf5f425129e8284f`.
+It retains the unreleased baseline version string `1.0.0-rc.8`. Only the local
+preview service was replaced, after a verified 10,623-record SQLite backup at
+`/mnt/PROJECT-DISK-1TB/mx/backups/before-workspace-views-20261025.d5QM8E/mx.db`.
+The original update configuration and published managed slot remain untouched.
+Applying layouts only to the nine demo modules preserved the fingerprint of
+business records, schema, module grants, workflow decisions and book balances.
+
+These are configurable presentation views over the existing security/process/book
+foundation, not a certification of a complete tax/payroll/ERP product. See
+[Module views and layouts](docs/module-workspaces.md) for setup and limits.
+
+## Local RC.9 preparation — accounting and stock books
+
+Verified on **2026-10-25 (Asia/Manila)**, without a commit, release, version bump,
+remote push or replacement of any deployed/populated test service. Published
+RC.8, its tracked `frontend/dist`, the root configuration/environment, README
+branding and N1 sources remain unchanged. All generated files are on the 1-TB HDD.
+
+Latest external frontend:
+`/mnt/PROJECT-DISK-1TB/tests/mx-books-local-20261025/dist`.
+Native executable: `/mnt/PROJECT-DISK-1TB/build/target/debug/litiaina-mx`.
+
+| Check | Result |
+|---|---|
+| Native tests | **220 passed**, 2 existing opt-in tests ignored; includes 15 operational-book tests |
+| Frontend tests | **373 passed**, 61 files |
+| Svelte diagnostics | **0 errors, 0 warnings** |
+| Production frontend / asset integrity | Passed; existing large-main-chunk advisory remains |
+| Real books UI | Settings, journal preview/error, confirmation, reversal, item creation, receipt/reserve/consume passed in Chromium, Brave, Firefox and WebKit |
+| Lost acknowledgements | In every engine, two responses dropped after server processing; one journal committed, receipt recovered after tab reload, same-operation retry confirmed it without duplication |
+| Approval/source UI | All four engines opened Books inside a viewed record and posted a journal with its approved current revision and saved snapshot |
+| Narrow/enlarged text | 390 px / 24 px root text in all four engines; contents retain at least 45% viewport height, not just an outer dialog that fits |
+| Concurrent stock writes | Eight HTTP reservation attempts against five available units: five commits, three conflicts; no overselling or double consumption |
+| Large book reads | 100,000 journals / 200,000 lines and 100,000 stock events; eight concurrent 40-entry history reads plus settings/balances/detail completed behind a held WAL writer in **71 ms** in this synthetic run |
+| Restart and integrity | Balances/reservations preserved; SQLite integrity and foreign-key checks passed after a new reservation against large history |
+| Published RC.8 upgrade | Original module/grants, schema, record/revision/ownership, preferences and history preserved; no automatic workflow, books, accounts, items or balances |
+| Existing advanced-record integration | Combined names, numeric choices, totals/balances, restricted fields/files, creator isolation, import and restart passed |
+| Existing workflow browser regression | CRM/ERP/expense approval, queue/history, snapshots, revision conflicts, dropped acknowledgements and record-open races passed in Chromium, Firefox and WebKit |
+
+Native tests also cover decimal syntax/overflow and values beyond JavaScript's
+safe integer; unbalanced/cross-book lines; exact account balance updates;
+period/currency/precision locks; duplicate reversals; disabled-inventory hold
+release; settings/grant checks; read-only pagination; eight real SQLite writers;
+reopening the database; immutable evidence triggers; and full rollback when audit
+or retry-receipt insertion fails. An actor can reconcile only their exact own
+committed receipt after permissions change, without reading book contents,
+posting anew or obtaining another actor's receipt.
+
+Evidence root: `/mnt/PROJECT-DISK-1TB/tests/mx-books-local-20261025/`.
+
+- Four-browser book report: `mx-eight-user-8FyHnA/module-books-results.json`.
+- Large-book read report: `mx-eight-user-w2JCmM/module-books-scale-results.json`.
+- Published RC.8 upgrade: `mx-eight-user-EAI7LL/module-processes-upgrade-results.json`.
+- Workflow regression: `mx-eight-user-nMzUwC/module-processes-results.json`.
+- Advanced records: `mx-eight-user-t6fBDY/advanced-records-results.json`.
+
+Earlier diagnostic failures remain as evidence, not passes. Screenshot review
+caught a narrow/enlarged-text layout that technically fit but gave the contents
+too little height; the final layout and stronger reading-area assertion passed.
+A separate early failure came from using a label selector for a native select;
+tests now use the actual combobox role/name. Older suites' HDD guard accepts the
+`/mnt/ST1000LM049/` symlink to the same physical HDD, not the newer mount spelling.
+
+Run from `frontend/`, with the matching external native/frontend builds,
+`MX_TEST_ARTIFACTS` on the HDD, a short HDD `TMPDIR`, and browser cache/config
+directories on the HDD:
+
+```bash
+node --no-warnings tests/module-books.browser.mjs
+node --no-warnings tests/module-books.scale.mjs
+# Set MX_TEST_LEGACY_BINARY to the preserved published RC.8 executable:
+node --no-warnings tests/module-processes-upgrade.integration.mjs
+```
+
+Use `MX_TEST_BROWSERS=chromium,brave,firefox,webkit` for all four engines. These
+scripts refuse live N1 and non-HDD artifact roots. Do not publish full fixture
+directories: they contain disposable credentials and TLS private keys.
+
+This proves exercised operational controls, not regulatory accounting approval,
+complete ERP functionality, a sustained posting SLA, physical power-loss recovery,
+or Safari/iOS certification. No automatic field-to-journal mappings, inventory
+valuation, bank reconciliation, tax/payroll or browser-durable offline posting
+is claimed. Session-storage receipts may be lost if the profile/tab is not
+restored. See [setup and limits](docs/operational-books.md).
+
+## Local RC.9 preparation — module processes
+
+Verified on **2026-10-25 (Asia/Manila)**. This is local, uncommitted preparation,
+not a published RC.9 or a complete ERP/accounting certification. Package versions
+remain RC.8; the tracked shipping `frontend/dist`, published artifacts, production
+services and populated test deployment were not replaced.
+
+Builds, disposable databases, fixture storage, browser profiles and reports use
+the 1-TB HDD. The latest frontend was built and asset-checked at
+`/mnt/PROJECT-DISK-1TB/tests/mx-rc9-local-20261025/dist` with the local native
+debug executable `/mnt/PROJECT-DISK-1TB/build/target/debug/litiaina-mx`.
+
+| Check | Result |
+|---|---|
+| Native unit tests | **205 passed**, 2 existing opt-in tests ignored; includes 13 new workflow tests |
+| Frontend unit tests | **369 passed**, 60 files |
+| Svelte diagnostics | **0 errors, 0 warnings** |
+| Production frontend build and packaged-asset check | Passed; existing large-JavaScript-chunk advisory remains |
+| CRM, ERP purchase approval and expense approval | All three real configuration/action/history flows passed in Chromium, Brave, Firefox and WebKit |
+| Narrow/enlarged-text workflow queue | Passed at 390 px width / 24 px root text in all four engines |
+| Uncertain action acknowledgement | Two responses dropped after server processing; automatic/manual retries reuse the operation and create only one decision |
+| Record-open race | Same record can reopen after queue review; a delayed old response cannot replace a new-record form |
+| Workflow scale/SQLite contention | 100,000 records; eight concurrent 40-entry queues plus other workflow reads completed behind a held WAL writer in **115 ms** in this synthetic run |
+| Concurrent distinct actions | Eight attempts from one loaded state commit only one decision; the others conflict |
+| Published RC.8 database upgrade | Module definitions/grants, schema, record values/revision/ownership, history and preferences preserved; no process enabled automatically; restart passed |
+| Existing advanced-record integration | Combined names, numeric choices, linked balances, creator/field privacy, import and restart cases passed |
+| Existing record workspace, archive dialog and record Office | Chromium regression checks passed, including real bundled Office rendering |
+| Existing 100-module navigation | Chromium, Firefox and WebKit passed |
+
+The new native cases cover opt-in enablement, configuration conflicts and stable
+stage identity; permission/creator/separate-reviewer enforcement; required scalar
+and attachment fields; archive dependency explanations; record-edit and saved
+formula-result invalidation; bounded queue/history pagination; preserved decision
+labels; disabled-process history; same-operation/payload-bound retries; and atomic
+rollback when decision or notification persistence fails. Notifications target
+creators/eligible next reviewers and honor the Workflow changes preference.
+
+The browser checks caught a same-record reopen edge case before handoff. Record
+link intent is now separate from in-flight open requests, and actual hash-link
+navigation issues a fresh request intent. The final checks above passed after
+that correction; abandoned diagnostic fixtures are not counted as passes.
+
+Evidence root: `/mnt/PROJECT-DISK-1TB/tests/mx-rc9-local-20261025/`.
+Final workflow report: `mx-eight-user-rmCt7H/module-processes-results.json`;
+scale report: `mx-eight-user-KNlGz3/module-processes-scale-results.json`;
+RC.8 upgrade: `mx-eight-user-tCJo6m/module-processes-upgrade-results.json`.
+Final record-workspace/Office/navigation reports are under `mx-eight-user-8a3sV0`,
+`mx-eight-user-FE18DP` and `mx-eight-user-xMGNsK`, respectively.
+
+Run the new browser/integration checks from `frontend/`, with `MX_TEST_BINARY`,
+`MX_TEST_STATIC_SITE_PATH`, `MX_TEST_ARTIFACTS` and a short `TMPDIR` pointing to
+the matching local build and disposable directories on the HDD:
+
+```bash
+node --no-warnings tests/module-processes.browser.mjs
+node --no-warnings tests/module-processes.scale.mjs
+# Also set MX_TEST_LEGACY_BINARY to the preserved published RC.8 executable:
+node --no-warnings tests/module-processes-upgrade.integration.mjs
+```
+
+The new scripts refuse live N1 and non-HDD artifact roots. They default to
+Chromium/Firefox/WebKit; add Brave with `MX_TEST_BROWSERS=chromium,brave,firefox,webkit`.
+The synthetic timing is not a production SLA. This earlier process-only pass did
+not qualify financial posting or stock reservations; the newer book checks are
+above. No real power-cut, financial certification, per-action user/group assignment
+or automatic linked-record posting is claimed. Decision snapshots freeze stored values/file
+references, not independently changing live lookups/rollups. See the
+[operator guide and explicit limits](docs/module-processes.md).
+
 ## 1.0.0-rc.8 — clipboard, navigation and packaged Office assets
 
 Qualified on **2026-10-25 (Asia/Manila)** before commit/signing/publication.

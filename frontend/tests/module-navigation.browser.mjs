@@ -35,7 +35,14 @@ try {
     const browser=await(engine==='brave'?chromium:{chromium,firefox,webkit}[engine]).launch({headless:true,executablePath,env:disconnectedBrowserAudio(mx.directory),...(['chromium','brave'].includes(engine)?{args:['--no-sandbox','--mute-audio']}: {})});browsers.push(browser);
     const context=await browser.newContext({ignoreHTTPSErrors:true,viewport:{width:1440,height:950}});
     await context.addInitScript(tokens=>{sessionStorage.setItem('mx_access_token',tokens.access_token);sessionStorage.setItem('mx_refresh_token',tokens.refresh_token);},owner);
-    const page=await context.newPage();inspected=page;const errors=[];page.on('pageerror',error=>errors.push(error.message));
+    await context.addInitScript(()=>{
+      let leaving=false;window.addEventListener('beforeunload',()=>{leaving=true;});window.addEventListener('pagehide',()=>{leaving=true;});window.addEventListener('pageshow',()=>{leaving=false;});
+      const nativeFetch=window.fetch.bind(window);window.fetch=(input,init)=>{
+        if(leaving&&/\/mx\/v1\/(?:modules\/[^/]+\/records(?:\?|$)|account\/preferences|notifications)/.test(String(input)))sessionStorage.setItem('mx_test_record_fetch_after_exit',String(Number(sessionStorage.getItem('mx_test_record_fetch_after_exit')||0)+1));
+        return nativeFetch(input,init);
+      };
+    });
+    const page=await context.newPage();inspected=page;const errors=[];page.on('pageerror',error=>{errors.push(error.message);console.error(JSON.stringify({event:'pageerror',url:page.url(),stack:error.stack}));});
     await page.goto(`https://127.0.0.1:${mx.port}/#drive`);
     const sidebar=page.getByRole('complementary',{name:'Workspace navigation'}), trigger=sidebar.getByRole('button',{name:'Modules',exact:true});
     await trigger.waitFor();assert.ok(await sidebar.locator('.main-nav button').count()<=5,'100 modules do not become 100 sidebar icons');
@@ -101,7 +108,7 @@ try {
     const reader=await limited.newPage();inspected=reader;await reader.goto(`https://127.0.0.1:${mx.port}/#drive`);await reader.getByRole('button',{name:'Modules',exact:true}).click();
     const restricted=reader.getByRole('dialog',{name:'Browse modules',exact:true});await restricted.waitFor();assert.equal(await restricted.locator('.module-browser-results > button').count(),2);
     await restricted.getByRole('searchbox',{name:'Search modules',exact:true}).fill('Department 099');await restricted.getByRole('heading',{name:'No matching modules',exact:true}).waitFor();
-    await limited.close();assert.deepEqual(errors,[]);
+    await limited.close();assert.equal(await page.evaluate(()=>Number(sessionStorage.getItem('mx_test_record_fetch_after_exit')||0)),0,'Record, preference and notification refreshes do not start requests while leaving/reloading the document');assert.deepEqual(errors,[]);
     results.browsers[engine]={passed:true,checks:['100 modules, bounded rail/menu/library','Search, group filter, paging, empty recovery','Administrator order persisted and reflected in navigation','Keyboard focus/Escape','Light/dark, enlarged text, 1440/390/320 widths','Only account-authorized modules visible']};
     console.log(`${engine}: 100-module navigation passed`);await context.close();await browser.close();
   }

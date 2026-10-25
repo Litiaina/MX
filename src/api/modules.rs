@@ -1083,6 +1083,7 @@ pub async fn delete_module(
         with_sql_connection(|connection| {
             ensure_module_schema(connection)?;
             let transaction = connection.unchecked_transaction()?;
+            if table_exists(&transaction,"mx_book_audit")? { crate::api::books::prevent_delete(&transaction,&preflight_uid)?; }
             if table_exists(&transaction, "mx_fields")? {
                 let dependencies=transaction.prepare("SELECT m.name || ' → ' || f.label FROM mx_fields f JOIN mx_modules m ON m.uid=f.module_uid WHERE f.module_uid!=?1 AND f.active=1 AND ((f.field_type='relationship' AND json_extract(f.config_json,'$.target_module_uid')=?1) OR (f.field_type='rollup' AND json_extract(f.config_json,'$.direction')='incoming' AND json_extract(f.config_json,'$.source_module_uid')=?1)) ORDER BY m.name,f.label")?.query_map([&preflight_uid],|r|r.get::<_,String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
                 if !dependencies.is_empty() {return Err(rusqlite::Error::InvalidParameterName(format!("Remove relationships and incoming totals before deleting this module. Still used by: {}.",dependencies.join("; "))));}
@@ -1174,7 +1175,7 @@ pub async fn delete_module(
             );
         }
         Ok(Err(SqliteDatabaseError::Sqlite(rusqlite::Error::InvalidParameterName(message))))
-            if message.starts_with("Remove relationships") =>
+            if message.starts_with("Remove relationships") || message.starts_with("Operational books") =>
         {
             return api_json(StatusCode::CONFLICT, json!({"response":message}));
         }
@@ -1211,6 +1212,7 @@ pub async fn delete_module(
     let deletion = tokio::task::spawn_blocking(move || -> Result<bool, SqliteDatabaseError> {
         with_sql_connection(|connection| {
             let transaction = rusqlite::Transaction::new_unchecked(connection,rusqlite::TransactionBehavior::Immediate)?;
+            if table_exists(&transaction,"mx_book_audit")? { crate::api::books::prevent_delete(&transaction,&delete_uid)?; }
             if table_exists(&transaction, "mx_notifications")? {
                 transaction.execute("DELETE FROM mx_notifications WHERE module_uid = ?1", params![&delete_uid])?;
             }
@@ -1296,6 +1298,10 @@ pub async fn delete_module(
                 StatusCode::NOT_FOUND,
                 json!({"response":"module was not found"}),
             )
+        }
+        Ok(Err(SqliteDatabaseError::Sqlite(rusqlite::Error::InvalidParameterName(message)))) if message.starts_with("Operational books") => {
+            let recovered=recover_module_objects(&moved_objects).await;
+            api_json(StatusCode::CONFLICT,json!({"response":if recovered{message}else{format!("{message} Some attachment objects need recovery in N1.")}}))
         }
         Ok(Err(error)) => {
             let recovered = recover_module_objects(&moved_objects).await;

@@ -98,6 +98,12 @@ pub(crate) fn check(c: &Connection, uid: &str) -> rusqlite::Result<ArchiveCheck>
         })
         .collect::<BTreeMap<_, _>>();
     let mut blockers = Vec::new();
+    for reason in crate::api::workspace_views::field_dependencies(c,&module_uid,&field.key)? {
+        blockers.push(ArchiveBlocker{kind:"workspace".into(),module_uid:module_uid.clone(),module_name:module_name.clone(),field_uid:None,field_label:Some("Views & layout".into()),field_key:None,field_type:None,reason,resolution:"Open Views & layout in this module. Replace or remove the field from its views and record sections, then save.".into(),section:"views".into(),count:None});
+    }
+    for reason in crate::api::workflows::field_dependencies(c,&module_uid,&field.key)? {
+        blockers.push(ArchiveBlocker{kind:"workflow".into(),module_uid:module_uid.clone(),module_name:module_name.clone(),field_uid:None,field_label:Some("Process & actions".into()),field_key:None,field_type:None,reason,resolution:"Open Process & actions in this module. Remove or replace this requirement or queue title, then save the process. Disabling a process preserves its dependencies and history.".into(),section:"workflow".into(),count:None});
+    }
     for d in &dependencies {
         if d.uid == uid {
             continue;

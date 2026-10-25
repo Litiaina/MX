@@ -11,18 +11,18 @@
 
 </div>
 
-Self-hosted, modular digital workplace platform. **Current candidate: 1.0.0-rc.8.**
+Self-hosted, modular digital workplace platform. **Current candidate: 1.0.0-rc.9.**
 
-RC.8 fixes duplicated clipboard attachments and adds a searchable, grouped
-Modules menu with bounded shortcuts and paginated results. It also corrects
-Office offline-cache asset references and verifies final built assets before
-packaging. Existing records, permissions and upload-limit settings are unchanged.
+RC.9 adds configurable module workspaces: pipelines, directories, operations
+overviews, document libraries, accounting and inventory views. Optional processes
+control approvals; exact-money journals and stock reservations preserve posting
+history. Existing modules keep their current Records view until configured.
 It remains a release candidate, not a stable-release certification.
 Publication does not force an immediate restart.
 
 This is a candidate for the new 1.0 release line, not the final stable release.
 The earlier 4.x labels remain development history. Read the
-[current candidate notes](docs/releases/1.0.0-rc.8.md) and, for a 4.x deployment,
+[current candidate notes](docs/releases/1.0.0-rc.9.md) and, for a 4.x deployment,
 the [one-time version-reset instructions](docs/releases/1.0.0-rc.1.md#upgrading-a-4x-development-installation)
 before upgrading an existing installation.
 
@@ -38,6 +38,7 @@ an inventory, attendance or registration schema.
   [Relationship setup, step by step](docs/relationships.md).
 - **Show different fields for different choices:**
   [Conditional forms, step by step](docs/conditional-forms.md).
+- **Design a module’s workspace:** [Views, layouts and starting points](docs/module-workspaces.md).
 - **Import spreadsheet rows:** [Import, inspect failures and resume](docs/importing-records.md).
 - **Install or upgrade MX:** [Deployment guide](docs/deployment.md).
 - **Manage signed updates:** [Maintenance windows, offline packages and rollback](docs/updates.md).

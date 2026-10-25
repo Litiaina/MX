@@ -34,7 +34,13 @@
       <p id="field-archive-description">{check?.blockers.length?'Other settings still use this field. Resolve the dependencies below, then check again. No field or record has been changed.':'Archiving hides the field from new entries. Historical values remain stored; no records or files are deleted.'}</p>
       {#if error}<div class="notice error" role="alert">{error}</div>{/if}
       {#if checking}<div class="archive-loading" role="status"><span class="loader"></span>Checking relationships, calculations, record links, files and storage settings…</div>
-      {:else if check?.blockers.length}<h3>Used by {check.blockers.length} {check.blockers.length===1?'dependency':'dependencies'}</h3><ul class="archive-blockers">{#each check.blockers as blocker}<li><div class="blocker-title"><strong>{blocker.module_name} → {blocker.field_label|| (blocker.section==='storage'?'N1 storage layout':'Stored records')}</strong>{#if blocker.field_type}<span>{names[blocker.field_type]||blocker.field_type}</span>{/if}</div><p>{blocker.reason}</p><p class="resolution"><strong>How to fix:</strong> {blocker.resolution}</p><button class="button small" type="button" onclick={()=>onOpen(blocker)}>{blocker.section==='field'?'Open field settings':blocker.section==='storage'?'Open storage layout':'Open module records'}</button></li>{/each}</ul>
+      {:else if check?.blockers.length}
+        <h3>Used by {check.blockers.length} {check.blockers.length===1?'dependency':'dependencies'}</h3>
+        <ul class="archive-blockers">{#each check.blockers as blocker}<li>
+          <div class="blocker-title"><strong>{blocker.module_name} → {blocker.field_label|| (blocker.section==='storage'?'N1 storage layout':'Stored records')}</strong>{#if blocker.field_type}<span>{names[blocker.field_type]||blocker.field_type}</span>{/if}</div>
+          <p>{blocker.reason}</p><p class="resolution"><strong>How to fix:</strong> {blocker.resolution}</p>
+          <button class="button small" type="button" onclick={()=>onOpen(blocker)}>{blocker.section==='views'?'Open Views & layout':blocker.section==='workflow'?'Open Process & actions':blocker.section==='field'?'Open field settings':blocker.section==='storage'?'Open storage layout':'Open module records'}</button>
+        </li>{/each}</ul>
       {:else if check&&!check.field.active}<p role="status">This field is already archived. Close this dialog to return to its settings.</p>
       {:else if check}<p class="archive-ready" role="status">No blocking dependencies found. The server will check again when you archive.</p>{/if}
     </div>

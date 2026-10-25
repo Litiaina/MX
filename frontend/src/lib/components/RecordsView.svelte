@@ -24,6 +24,9 @@
   import type { Session } from '../api/types';
   import { deleteRecord, getRecord, listRecords, loadModuleSchema, loadSchema } from '../api/workspace';
   import RecordEditor from './RecordEditor.svelte';
+  import type {RecordSection} from '../api/moduleViews';
+  import ModuleWorkQueue from './ModuleWorkQueue.svelte';
+  import ModuleBooks from './ModuleBooks.svelte';
   import ImportRecords from './ImportRecords.svelte';
   import {fieldState,optionLabel} from '../util/formRules';
   import TableScrollbar from './TableScrollbar.svelte';
@@ -31,7 +34,7 @@
   import { windowPieces, mergeWindow, windowAnchor, type RecordViewPosition } from '../util/recordWindow';
   import { recordColumnWidths, snapshotRecordColumns, validColumnSnapshot, type RecordColumnSnapshot } from '../util/recordColumns';
 
-  let { session, accessLevel, moduleUid = '', modulePermission = null, openRecordUid = '', openRequestRevision = 0, focusLinkedAttachments = false, revision = 0, liveMessage = null, recordSingular = 'Record', recordPlural = 'Records' }: { session: Session; accessLevel: number; moduleUid?: string; modulePermission?: ModulePermission | null; openRecordUid?: string; openRequestRevision?: number; focusLinkedAttachments?: boolean; revision?: number; liveMessage?: LiveMessage | null; recordSingular?: string; recordPlural?: string } = $props();
+  let { session, accessLevel, moduleUid = '', modulePermission = null, openRecordUid = '', openRequestRevision = 0, focusLinkedAttachments = false, revision = 0, liveMessage = null, recordSingular = 'Record', recordPlural = 'Records',recordSections=[] }: { session: Session; accessLevel: number; moduleUid?: string; modulePermission?: ModulePermission | null; openRecordUid?: string; openRequestRevision?: number; focusLinkedAttachments?: boolean; revision?: number; liveMessage?: LiveMessage | null; recordSingular?: string; recordPlural?: string;recordSections?:RecordSection[] } = $props();
   let schema = $state<SchemaResponse | null>(null);
   const readingPreferences = getContext<Writable<ModuleReadingMap>>(moduleReadingContext) || writable<ModuleReadingMap>({});
   let readingOpen = $state(false);
@@ -78,7 +81,9 @@
   let editorAnchor:RecordViewPosition|undefined;
   let editorChanges=$state<Record<string,JsonValue>|null>(null);
   let editorWritable = $state(false);
-  onDestroy(()=>{ rememberPosition(); requestController?.abort(); edgeController?.abort(); cancelAnimationFrame(importFocusFrame); cancelAnimationFrame(scrollFrame);cancelAnimationFrame(measureFrame); clearTimeout(positionTimer); });
+  let recordOpenSequence=0;
+  let destroyed=false;let pageLeaving=false;
+  onDestroy(()=>{ destroyed=true;refreshSequence++;recordOpenSequence++;rememberPosition(); requestController?.abort(); edgeController?.abort(); cancelAnimationFrame(importFocusFrame); cancelAnimationFrame(scrollFrame);cancelAnimationFrame(measureFrame); clearTimeout(positionTimer);window.clearTimeout(searchTimer); });
   let focusAttachments = $state(false);
   let lastRevision = $state(0);
   let columnOverrides = $state<{ shown: string[]; hidden: string[] }>({ shown: [], hidden: [] });
@@ -127,8 +132,13 @@
     document.addEventListener('keydown', closeRowMenuWithKeyboard);
     document.addEventListener('focusin', closeImportMenuOnFocus);
     window.addEventListener('pagehide',rememberPosition);
+    const leaving=(event:Event)=>{pageLeaving=true;requestController?.abort();edgeController?.abort();window.clearTimeout(searchTimer);
+      if(event.type==='beforeunload')queueMicrotask(()=>{if(!destroyed&&event.defaultPrevented)pageLeaving=false;});
+    };
+    const restored=()=>{if(!pageLeaving||destroyed)return;pageLeaving=false;void refresh();};
+    window.addEventListener('beforeunload',leaving);window.addEventListener('pagehide',leaving);window.addEventListener('pageshow',restored);
     void refresh(true);
-    return () => { window.clearTimeout(searchTimer);window.removeEventListener('pagehide',rememberPosition); document.removeEventListener('pointerdown', closeRowMenu); document.removeEventListener('keydown', closeRowMenuWithKeyboard); document.removeEventListener('focusin', closeImportMenuOnFocus); };
+    return () => { window.clearTimeout(searchTimer);window.removeEventListener('pagehide',rememberPosition);window.removeEventListener('beforeunload',leaving);window.removeEventListener('pagehide',leaving);window.removeEventListener('pageshow',restored); document.removeEventListener('pointerdown', closeRowMenu); document.removeEventListener('keydown', closeRowMenuWithKeyboard); document.removeEventListener('focusin', closeImportMenuOnFocus); };
   });
   $effect(() => {
     const message = liveMessage; const selected = moduleUid || 'mx-default-records';
@@ -152,7 +162,13 @@
     });
   });
   $effect(() => { if (revision !== lastRevision && schema) { lastRevision = revision; const accessOrSchema=liveMessage?.type.startsWith('schema.')||liveMessage?.type.startsWith('module.');if(continuous&&!accessOrSchema)updatesAvailable=true;else void refresh(!!accessOrSchema); } });
-  $effect(() => { if (schema && openRecordUid && (openRecordUid !== openedDeepLink || openRequestRevision !== openedRequestRevision)) void openLinkedRecord(openRecordUid); });
+  $effect(() => {
+    if(!openRecordUid){openedDeepLink='';openedRequestRevision=-1;return;}
+    if(schema&&(openRecordUid!==openedDeepLink||openRequestRevision!==openedRequestRevision)){
+      openedDeepLink=openRecordUid;openedRequestRevision=openRequestRevision;
+      void openLinkedRecord(openRecordUid);
+    }
+  });
 
   function closeRowMenuAndFocus() { rowMenuUid = ''; rowMenuAnchor?.focus({ preventScroll: true }); }
   function toggleRowMenu(event: MouseEvent, uid: string) {
@@ -224,10 +240,11 @@
   function openImporter(mode: 'new' | 'history') { importMenuOpen = false; importer = mode; }
 
   async function openLinkedRecord(uid: string) {
+    const sequence=++recordOpenSequence;
     editorAnchor=currentAnchor();
-    rowMenuUid = ''; openedDeepLink = uid; openedRequestRevision = openRequestRevision; error = '';
-    try { const record = await getRecord(uid, moduleUid || undefined); if (deletedRecordUids.has(uid) || openedDeepLink !== uid) return; editor = record; editorWritable = false; focusAttachments = focusLinkedAttachments; }
-    catch (reason) { error = reason instanceof Error ? reason.message : `The linked ${recordSingular.toLowerCase()} could not be opened.`; }
+    rowMenuUid = ''; error = '';
+    try { const record = await getRecord(uid, moduleUid || undefined); if (deletedRecordUids.has(uid) || sequence!==recordOpenSequence) return; editor = record; editorWritable = false; focusAttachments = focusLinkedAttachments; }
+    catch (reason) { if(sequence===recordOpenSequence)error = reason instanceof Error ? reason.message : `The linked ${recordSingular.toLowerCase()} could not be opened.`; }
   }
 
   function queryOptions() { return { page, limit:pageSize, q:search.trim(), match:matchMode,
@@ -320,7 +337,7 @@
     });
   }
   async function loadEdge(direction: 'before'|'after') {
-    if(edgeLoading||loading||!continuous||!rows.length)return;
+    if(destroyed||pageLeaving||edgeLoading||loading||!continuous||!rows.length)return;
     edgeDirection=direction;edgeError='';edgeLoading=true;
     const request=refreshSequence;edgeController?.abort();const controller=edgeController=new AbortController();
     const boundary=direction==='before'?rows[0]:rows.at(-1)!;
@@ -366,6 +383,7 @@
   }
   function rowNumber(index:number){return (continuous?baseIndex:(page-1)*pageSize)+index+1;}
   async function refresh(withSchema = false) {
+    if(destroyed||pageLeaving)return;
     const request = ++refreshSequence;
     requestController?.abort();edgeController?.abort();edgeLoading=false;edgeError='';
     const controller=requestController=new AbortController();
@@ -374,7 +392,7 @@
     try {
       if (withSchema || !schema) {
         const nextSchema = moduleUid ? await loadModuleSchema(moduleUid,controller.signal) : await loadSchema(false,controller.signal);
-        if (request !== refreshSequence) return;
+        if (destroyed||pageLeaving||controller.signal.aborted||request !== refreshSequence) return;
         schema = nextSchema;
         if (sortBy && !nextSchema.fields.some(field => field.key === sortBy && field.active && field.sortable)
           && !nextSchema.system_fields.some(field => field.key === sortBy)) sortBy = '';
@@ -389,8 +407,9 @@
         selectedKeys = [...defaults.filter((key) => !columnOverrides.hidden.includes(key)), ...columnOverrides.shown.filter((key) => !defaults.includes(key))];
       }
       const sameQuery=anchor && JSON.stringify([anchor.search,anchor.sortBy,anchor.sortDir,anchor.match,anchor.filters,anchor.attachments])===JSON.stringify([search,sortBy,sortDir,matchMode,$state.snapshot(filters),attachmentMode]);
+      if(destroyed||pageLeaving||controller.signal.aborted)return;
       const result = await listRecords({...queryOptions(),...(continuous?{window:sameQuery?'anchor' as const:'start' as const,anchor_uid:sameQuery?anchor.uid:undefined,cursor:sameQuery?anchor.cursor:undefined}: {})},moduleUid || undefined,controller.signal);
-      if (request !== refreshSequence) return;
+      if (destroyed||pageLeaving||controller.signal.aborted||request !== refreshSequence) return;
       rows = result.data.filter((row) => !deletedRecordUids.has(row.uid)); page = result.page; pageInput = result.page; pages = result.total_pages; total = Math.max(0, result.total - (result.data.length - rows.length));
       summaries = result.summaries || {};
       appliedQuery={search,sortBy,sortDir,match:matchMode,filters:$state.snapshot(filters),attachments:attachmentMode};
@@ -398,7 +417,7 @@
       rowHeights={};updatesAvailable=false;
       if(sameQuery)await restoreAnchor(anchor);else if(tableViewport){layoutAnchor=false;tableViewport.scrollTop=0;viewportTop=0;}
     } catch (reason) { if (request === refreshSequence && !controller.signal.aborted){error = reason instanceof Error ? reason.message : 'Records could not be loaded.';if(reason instanceof ApiError&&[401,403].includes(reason.status)){rows=[];cursors.clear();rowHeights={};}} }
-    finally { if (request === refreshSequence){loading=false;scrolled();} }
+    finally { if (!destroyed&&request === refreshSequence){loading=false;if(!pageLeaving)scrolled();} }
   }
 
   function forgetDeletedRecord(uid: string) {
@@ -471,8 +490,8 @@
   function resetColumns() { columnOverrides = { shown: [], hidden: [] }; selectedKeys = eligibleFields.filter((field) => field.table_visible).map((field) => field.key); saveColumnOverrides(); }
   async function changePageSize() { page = 1; await refresh(); }
   async function clearFilters() { filters = {}; search = ''; attachmentMode = ''; sortBy = ''; sortDir = 'asc'; page = 1; await refresh(); }
-  function openRecord(row: MxRecord, attachments = false, edit = false) { if (deletedRecordUids.has(row.uid)) return;editorAnchor=currentAnchor();rememberPosition(); editorChanges=null;rowMenuUid = ''; focusAttachments = attachments; editorWritable = edit && canUpdate; editor = row; }
-  function closeEditor() { const anchor=editorAnchor;editorChanges=null;focusAttachments = false; editorWritable = false; editor = undefined; if (openRecordUid) location.hash = `module/${encodeURIComponent(moduleUid || 'mx-default-records')}`;void tick().then(()=>restoreAnchor(anchor)); }
+  function openRecord(row: MxRecord, attachments = false, edit = false) { if (deletedRecordUids.has(row.uid)) return;recordOpenSequence++;editorAnchor=currentAnchor();rememberPosition(); editorChanges=null;rowMenuUid = ''; focusAttachments = attachments; editorWritable = edit && canUpdate; editor = row; }
+  function closeEditor() { recordOpenSequence++;const anchor=editorAnchor;editorChanges=null;focusAttachments = false; editorWritable = false; editor = undefined; if (openRecordUid) location.hash = `module/${encodeURIComponent(moduleUid || 'mx-default-records')}`;void tick().then(()=>restoreAnchor(anchor)); }
   async function removeRecord(row: MxRecord, event: MouseEvent) {
     event.stopPropagation();
     closeRowMenuAndFocus();
@@ -490,11 +509,13 @@
 
 <section class="workspace-page records-page" class:continuous-page={continuous}>
   <div class="toolbar records-toolbar">
-    {#if canCreate}<button class="button primary records-new-button" onclick={() => { editorChanges=null;focusAttachments = false; editorWritable = true; editor = null; }}>+ New {recordSingular.toLowerCase()}</button>{/if}
+    {#if canCreate}<button class="button primary records-new-button" onclick={() => { recordOpenSequence++;editorChanges=null;focusAttachments = false; editorWritable = true; editor = null; }}>+ New {recordSingular.toLowerCase()}</button>{/if}
     <form class="search-form" onsubmit={searchSubmit}><label class="records-search-input"><Search size={16} aria-hidden="true" /><input bind:value={search} oninput={scheduleSearch} type="search" placeholder={canAttachments ? 'Search configured fields and attachment filenames…' : 'Search configured fields…'} aria-label={`Search ${recordPlural.toLowerCase()}`} /></label><select bind:value={matchMode} onchange={() => { page = 1; void refresh(); }} aria-label="Search matching"><option value="contains">Contains</option><option value="prefix">Starts with</option><option value="exact">Exact</option></select><button class="button" type="submit">Search</button></form>
     <details class="toolbar-menu"><summary class="button">Columns</summary><div class="toolbar-popover">{#each eligibleFields as field}<label class="checkbox"><input type="checkbox" checked={selectedKeys.includes(field.key)} onchange={(event) => toggleColumn(field.key, event.currentTarget.checked)} /> {field.label}</label>{/each}<button class="button small" type="button" onclick={resetColumns}>Use administrator defaults</button><small>Only your overrides are saved, so new fields can follow the deployment defaults.</small></div></details>
     <button class="button reading-settings-button" type="button" onclick={() => readingOpen = true} disabled={!schema}><Bold size={15} aria-hidden="true"/>Reading settings</button>
     <button class="button records-refresh-button" onclick={() => refresh(true)}>Refresh</button>
+    {#if moduleUid}<ModuleWorkQueue {moduleUid} moduleName={recordPlural} {revision} onOpen={uid=>void openLinkedRecord(uid)}/>{/if}
+    {#if moduleUid}{#key moduleUid}<ModuleBooks {moduleUid} moduleName={recordPlural} {revision}/>{/key}{/if}
     {#if canCreate && schema}<button class="button module-import-trigger" type="button" data-module-import-actions aria-label="Module actions" title="Module actions" aria-haspopup="menu" aria-expanded={importMenuOpen} aria-controls={importMenuOpen ? 'module-import-menu' : undefined} onclick={toggleImportMenu} onkeydown={importTriggerKeydown}><Ellipsis size={18} aria-hidden="true" /></button>{/if}
   </div>
     <details class="advanced-search"><summary>Advanced filters and sorting</summary><form class="filter-grid" onsubmit={searchSubmit}>{#each searchableFields as field}<label>{field.label}{#if field.field_type === 'select'}<select value={filters[field.key] || ''} onchange={(event) => filters[field.key] = event.currentTarget.value}><option value="">Any value</option>{#each (field.config.options as (string | number | boolean)[] || []) as option}<option value={String(option)}>{String(option)}</option>{/each}</select>{:else if field.field_type === 'boolean'}<select value={filters[field.key] || ''} onchange={(event) => filters[field.key] = event.currentTarget.value}><option value="">Either</option><option value="true">Yes</option><option value="false">No</option></select>{:else}<input type={field.field_type === 'date' ? 'date' : ['integer', 'decimal', 'formula'].includes(field.field_type) ? 'number' : 'text'} value={filters[field.key] || ''} oninput={(event) => filters[field.key] = event.currentTarget.value} placeholder={field.field_type === 'date' ? undefined : 'Field contains…'} />{/if}</label>{/each}{#if canAttachments}<label>Attachments<select bind:value={attachmentMode}><option value="">With or without files</option><option value="with">With attachments</option><option value="without">Without attachments</option></select></label>{/if}<label>Sort field<select bind:value={sortBy}><option value="">Default order</option>{#each eligibleFields.filter((field) => field.sortable) as field}<option value={field.key}>{field.label}</option>{/each}</select></label><label>Sort direction<select bind:value={sortDir}><option value="asc">Ascending</option><option value="desc">Descending</option></select></label><div class="button-row"><button class="button primary">Apply filters</button><button class="button" type="button" onclick={clearFilters}>Clear all</button></div></form></details>
@@ -579,7 +600,7 @@
   </div>
 {/if}
 
-{#if editor !== undefined && schema}<RecordEditor {schema} {moduleUid} record={editor} initialChanges={editorChanges} canWrite={editor === null ? canCreate : editorWritable && canUpdate} canDelete={editorWritable && canDelete} {canAttachments} allowEdit={editor !== null && canUpdate} {liveMessage} {focusAttachments} recordLabel={recordSingular} onEdit={() => editorWritable = true} onClose={closeEditor} onSaved={() => refresh(true)} />{/if}
+{#if editor !== undefined && schema}<RecordEditor {schema} {moduleUid} {recordSections} record={editor} initialChanges={editorChanges} canWrite={editor === null ? canCreate : editorWritable && canUpdate} canDelete={editorWritable && canDelete} {canAttachments} allowEdit={editor !== null && canUpdate} {liveMessage} {focusAttachments} recordLabel={recordSingular} onEdit={() => editorWritable = true} onClose={closeEditor} onSaved={() => refresh(true)} />{/if}
 
 {#if readingOpen && schema}<ModuleReadingDialog {moduleUid} moduleName={recordPlural} fields={eligibleFields} onSaved={preferences => $readingPreferences = preferences} onClose={() => readingOpen = false}/>{/if}
 {#if sendRecord}<SendRecordDialog recordUid={sendRecord.uid} recordLabel={recordTitle(sendRecord)} onClose={() => sendRecord = null}/>{/if}

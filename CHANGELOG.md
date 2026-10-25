@@ -5,6 +5,78 @@ deployment maintainer's local date.
 
 ## [Unreleased]
 
+## [1.0.0-rc.9] - 2026-10-26
+
+### Configurable module workspaces
+
+- Add administrator-configured opening views and ordered, named module tabs:
+  process pipeline boards, card directories, operations overviews, document
+  libraries, full-page accounting/inventory and the existing Records view.
+- Offer editable starting layouts for CRM, operations, accounting, stock,
+  document management and information systems. Do not seed business policy,
+  modules or records; existing modules keep Records until explicitly configured.
+- Add configurable card fields, overview summary tiles and named record-detail
+  sections. Keep unassigned fields visible and preserve conditional form rules.
+- Bound pipeline stage pages to 40 cards and directories/document registers to
+  24 records. Read permission-filtered stage totals with one grouped query;
+  limit stage loading to two concurrent requests and flag live board changes.
+- Save layouts with optimistic revisions, administrator history and named
+  field-archive dependencies. Preserve business records, process decisions,
+  posted balances and existing server-enforced access restrictions.
+- Open module configuration from its workspace with that exact module selected.
+  Preserve the existing searchable module library and navigation order.
+- Cancel record reads on page exit and component destruction; reject delayed
+  schema responses before they can start another fetch during navigation/reload.
+
+### Opt-in module processes
+
+- Add a configurable process layer above records: stable stages, permitted
+  transitions, creator/separate-reviewer policies, required fields/files and
+  action notes. CRM pipelines, ERP purchase approvals and accounting expense
+  approvals are editable configuration drafts, not preinstalled business modules.
+- Add Administration → Modules & fields → Process & actions, module Work queues,
+  record actions and paginated decision history with exact saved snapshots.
+  Explain missing requirements and creator-policy restrictions beside actions.
+- Separate record-link intent from in-flight record opens: allow reopening a
+  record after queue review and ignore stale responses after closing/navigating.
+- Apply actions with record/process/configuration revision checks and durable,
+  payload-bound operation deduplication in one SQLite transaction. Save creator
+  and eligible-next-reviewer notifications in that same transaction; respect
+  module/row permissions and Workflow changes notification preferences.
+- Optionally restart a process when record values, files or restored versions
+  advance the record revision. Old decisions retain their snapshot and labels;
+  they do not silently approve new values. Enabled approval drafts use this policy.
+- Advance saved record revisions when formula recalculation actually changes
+  stored values (including clearing them); unchanged calculations are no-ops.
+  This prevents stale decisions from approving recalculated data accidentally.
+- Preserve blank installations and existing modules; explicitly confirm enabling
+  a process for existing records. Initialize new tables/indexes at startup,
+  never on workflow reads; bound queues/history to 40 entries per page.
+
+### Operational books
+
+- Add optional per-module accounting and stock books with their own explicit
+  operator policy. Keep fresh installations blank and existing records unchanged.
+- Add exact decimal-string/scaled-integer journal posting, account balances,
+  preserved line evidence, one-time reversing journals and irreversible period
+  cutoffs. Reject unbalanced, overflowing or over-precision amounts atomically.
+- Add explicit stock receipts/issues, reservations, release and consumption.
+  Prevent negative available stock and concurrent overselling in one transaction.
+- Add book settings, catalog definitions, confirmation forms, 40-entry paginated
+  histories and inline failures. Retain payload-bound retry receipts in the tab;
+  distinguish committed, rejected and unconfirmed operations honestly.
+- Optionally require an unchanged source record and completed process stage for
+  posting; capture its stored-value/file snapshot in the same transaction.
+- Protect operational evidence against update/delete, including permanent module
+  deletion. Book operators need explicit module Read/Edit/Reports grants and see
+  the entire book; ordinary creator-only viewers do not gain book access.
+
+These are configurable workspace foundations, not a complete ERP, certified
+accounting/tax/payroll suite or automatic field-to-posting engine. Additive schema
+migrations run before serving requests. Signed-update publisher trust, paired
+application/database rollback and N1 storage encoding remain unchanged. Publishing
+the candidate does not activate it on an existing deployment.
+
 ## [1.0.0-rc.8] - 2026-10-25
 
 ### Collaboration and module navigation
