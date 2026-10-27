@@ -31,6 +31,8 @@
     "test:fields:datatype": "node tests/field-type-change.browser.mjs",
     "test:forms:rules": "node tests/form-rules.browser.mjs",
     "test:ui:cascade": "node tests/ui-cascade.browser.mjs",
+    "test:ui:product-theme": "node --no-warnings tests/product-theme.browser.mjs",
+    "test:ui:column-appearance": "node --no-warnings tests/column-appearance.browser.mjs",
     "test:ui:sidebar": "node tests/sidebar-layout.browser.mjs",
     "test:modules:navigation": "node --no-warnings tests/module-navigation.browser.mjs",
     "test:modules:processes": "node --no-warnings tests/module-processes.browser.mjs",

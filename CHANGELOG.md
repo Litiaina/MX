@@ -5,6 +5,35 @@ deployment maintainer's local date.
 
 ## [Unreleased]
 
+### Product theme and compact workspaces — unreleased
+
+- Rework records as console-style tables with sentence-case headers, quiet row
+  separators, aligned numeric values, readable type and personal color/badge
+  settings. Save settings per account with stale-save protection; preserve
+  restricted-field boundaries and complete long text.
+- Replace green-tinted dark surfaces with neutral charcoal and an adaptive blue
+  default accent. Retain the product-page light palette and explicit custom colors.
+- Add reduced-motion-aware view/dialog fades and module-browser outside dismissal.
+  Guard unsaved module/appearance drafts and keep failed-save focus in the dialog.
+- Preserve personal appearance across deployment-refresh/reconnect races. Reflow
+  column settings at enlarged text sizes without clipping fields or save controls.
+- Align MX with its product preview: warm white/sage surfaces, restrained
+  terracotta accent, readable typography and consistent navigation/form chrome.
+  Add the MX Sage deployment preset while preserving saved organization colors,
+  existing presets, personal overrides and the original logo assets.
+- Replace tall module banners with a compact title/action row and slim view tabs.
+  Keep complete module/view instructions behind the Info control. Refine real
+  pipeline cards, directories, operations summaries and inline book headings.
+- Apply coordinated light/dark/system palettes to the shell, records, Drive,
+  Collaboration, notifications, forms and administration; retain enlarged text,
+  personal bold fields, configured layouts and existing permission boundaries.
+- Anchor record dialogs while asynchronous process information arrives; retain
+  keyboard focus and guarded Escape closing. Do not change record-save, upload,
+  workflow-decision or posted-balance semantics.
+- Keep this work unreleased for acceptance testing. Source-only commits do not
+  publish RC.11, change the 1.0.0-rc.10 version, replace signed release assets or
+  deploy the design to production.
+
 ## [1.0.0-rc.10] - 2026-10-27
 
 ### Concurrent saves and truthful conflicts

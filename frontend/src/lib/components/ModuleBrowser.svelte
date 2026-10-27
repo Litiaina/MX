@@ -3,6 +3,7 @@
   import X from '@lucide/svelte/icons/x';
   import type { ModuleDefinition } from '../api/domain';
   import { focusDialog } from '../util/focusDialog';
+  import { dismissBackdrop } from '../util/dismissBackdrop';
   import { matchingModules, moduleGroup, orderedModules } from '../util/moduleNavigation';
   import ModuleIcon from './ModuleIcon.svelte';
 
@@ -23,7 +24,7 @@
   function changePage(next: number) { page = next; list?.scrollTo({top: 0}); }
 </script>
 
-<div class="module-browser-backdrop">
+<div class="module-browser-backdrop" use:dismissBackdrop={onClose}>
   <div class="module-browser" role="dialog" aria-modal="true" aria-label="Browse modules" tabindex="-1" use:focusDialog onkeydown={event => { if (event.key === 'Escape') { event.stopPropagation(); onClose(); } }}>
     <header><div><h2>Modules</h2><p>Find a workspace by name, description or group.</p></div><button class="button icon-only" type="button" aria-label="Close module browser" onclick={onClose}><X size={18}/></button></header>
     <div class="module-browser-filters">

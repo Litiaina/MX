@@ -16,7 +16,7 @@
     justify-content: space-between;
     gap: 1rem;
     margin: 0;
-    padding: 2.2rem 0 1.9rem;
+    padding: .8rem 0 1rem;
     border: 0;
     border-bottom: 0;
     border-radius: 0;
@@ -25,9 +25,9 @@
     overflow: visible;
   }
   .dashboard-hero > div:first-child { min-width: 0; }
-  .dashboard-hero h1 { margin-bottom: .45rem; color: var(--text); font-size: clamp(calc(2rem * var(--font-scale)), calc(3.3vw * var(--font-scale)), calc(3rem * var(--font-scale))); }
+  .dashboard-hero h1 { margin-bottom: .3rem; color: var(--text); font-size: clamp(calc(1.4rem * var(--font-scale)), calc(2vw * var(--font-scale)), calc(1.9rem * var(--font-scale))); }
   .dashboard-hero p { max-width: 48rem; margin: 0; color: var(--text-2); font-size: calc(.82rem * var(--font-scale)); line-height: 1.5; }
-  .dashboard-hero .hero-kicker { margin-bottom: .2rem; color: var(--chart-1) !important; font-size: calc(.58rem * var(--font-scale)); font-weight: 780; letter-spacing: .055em; }
+  .dashboard-hero .hero-kicker { margin-bottom: .2rem; color: var(--muted); font-size: calc(.6875rem * var(--font-scale)); font-weight: 650; letter-spacing: .055em; }
   .hero-summary { min-width: 9.5rem; display: grid; grid-template-columns: auto auto; align-items: baseline; justify-content: end; gap: .08rem .5rem; padding: .55rem .7rem; border: 1px solid var(--line); border-radius: .5rem; background: var(--surface); color: var(--text); }
   .hero-summary span { grid-column: 1 / -1; color: var(--muted); font-size: calc(.55rem * var(--font-scale)); }
   .hero-summary strong { font-size: calc(1.15rem * var(--font-scale)); }
@@ -90,10 +90,29 @@
   .records-result-summary { min-height: 1.8rem; justify-content: flex-start; padding: .15rem 0 .35rem; }
   .records-table { border-color: var(--line); border-radius: .45rem; box-shadow: none; }
   .records-table th, .records-table td { border-color: var(--line); }
-  .records-table th, .records-table th.row-index-column, .records-table th.record-actions-column { background: var(--surface-2); color: var(--muted); }
+  .records-table th, .records-table th.row-index-column, .records-table th.record-actions-column { background: var(--chrome); color: var(--text-2); }
   .records-table tbody td, .records-table tbody tr:nth-child(even) td { background: var(--surface); color: var(--text-2); }
   .records-table tbody tr:hover td { background: color-mix(in srgb, var(--primary) 4.5%, var(--surface)); }
   .records-table .button { box-shadow: none; }
+  /* Console-style records: quiet horizontal rules, aligned values, no dense grid. */
+  .records-table table { font-size: .8125rem; line-height: 1.5; }
+  .records-table th { position: relative; font-size: .75rem; font-weight: 600; letter-spacing: 0; text-transform: none; padding: .65rem .85rem; }
+  .records-table th, .records-table td { border-right: 0; }
+  .records-table th:not(:last-child)::after { content: ''; position: absolute; right: 0; top: 28%; bottom: 28%; width: 1px; background: var(--line); pointer-events: none; }
+  .records-table td { padding: .7rem .85rem; vertical-align: middle; }
+  .records-table .table-sort { gap: .45rem; font-weight: inherit; }
+  .records-table .table-sort.sortable { color: inherit; }
+  .records-table .table-sort.sortable:hover { color: var(--primary-text); }
+  .records-table th[aria-sort] { color: var(--text); }
+  .records-table tbody tr:focus-within td { background: color-mix(in srgb, var(--primary) 5%, var(--surface)); }
+  .records-table tbody .row-index-column { font-size: .75rem; }
+  .records-table .record-actions-column .button { font-size: .75rem; }
+  .records-table .record-primary-action > span { font-size: .75rem; font-weight: 550; }
+  @media(min-width:821px) {
+    .records-table td[data-field-type='integer'], .records-table td[data-field-type='decimal'], .records-table td[data-field-type='formula'], .records-table td[data-field-type='rollup'] { text-align: right; font-variant-numeric: tabular-nums; }
+    .records-table td[data-field-type='date'], .records-table td[data-field-type='auto_number'] { font-variant-numeric: tabular-nums; }
+    .records-table td:nth-child(2):not(.personal-field-bold):not(.record-actions-column) { font-weight: 550; color: var(--text); }
+  }
   .records-table tfoot th,.records-table tfoot td { background:var(--surface-2); border-top:2px solid var(--line); vertical-align:top;overflow:visible;white-space:normal; }
   .column-summary { display:grid;gap:.2rem;min-width:6rem;font-variant-numeric:tabular-nums; }
   .column-summary small { color:var(--muted);font-size:.68rem; }.column-summary strong { color:var(--text);font-size:.82rem;overflow-wrap:anywhere; }.summary-caption { color:var(--muted); }
@@ -129,7 +148,7 @@
   .admin-page > .admin-content { min-width: 0; grid-column: 2; }
   .admin-subnav button { width: 100%; min-height: 2.35rem; justify-content: flex-start; gap: .55rem; padding: .42rem .6rem; border-radius: .38rem; color: var(--muted); font-size: calc(.7rem * var(--font-scale)); }
   .admin-subnav button:hover { background: var(--surface-2); color: var(--text); }
-  .admin-subnav button.active { background: var(--surface-2); color: var(--text); box-shadow: inset 2px 0 var(--primary); }
+  .admin-subnav button.active { background: color-mix(in srgb, var(--primary) 7%, var(--surface)); color: var(--primary-text); box-shadow: inset 2px 0 var(--primary); }
   .admin-grid { gap: .7rem; }
   .admin-section-heading { min-height: 3.7rem; padding: .65rem .8rem; }
   .admin-section-title > span, .admin-dialog-title > span:not(.account-avatar) { width: 2rem; height: 2rem; border-radius: .5rem; }
@@ -611,7 +630,7 @@
   .records-table .record-actions-column:has(.record-actions-trigger[aria-expanded='true']) { z-index: 30; }
   .record-row-actions { position: relative; gap: .22rem; }
   .records-table .record-primary-action { min-height: 1.9rem; display: inline-flex; align-items: center; justify-content: center; gap: .3rem; padding: .25rem .45rem; }
-  .records-table .record-primary-action > span { font-size: calc(.64rem * var(--font-scale)); font-weight: 720; }
+  .records-table .record-primary-action > span { font-size: .75rem; font-weight: 550; }
   .record-actions-trigger {
     width: 1.9rem;
     height: 1.9rem;

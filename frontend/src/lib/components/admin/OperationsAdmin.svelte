@@ -9,6 +9,7 @@
   import { ApiError, ConnectionError } from '../../api/client';
   import type { AuditPage, BackupEntry, DeploymentConfig } from '../../api/domain';
   import { requestConfirmation } from '../../confirmation';
+  import { APPEARANCE_PRESETS, DEFAULT_APPEARANCE } from '../../util/appearance';
   import { createBackup, downloadBackup, listBackups, loadAudit, loadDeployment, saveDeployment, uploadDeploymentLogo, verifyBackup } from '../../api/workspace';
 
   let { section = 'deployment' }: { section?: 'deployment' | 'backups' | 'audit' } = $props();
@@ -116,7 +117,7 @@
     if (!config || !await requestConfirmation({ title: 'Restore MX identity defaults?', description: 'Only this form will be reset. Nothing changes for users until you save the deployment identity.', confirmLabel: 'Restore defaults', tone: 'primary' })) return;
     config = {
       branding: { display_name: 'MX', subtitle: "Litiaina's Digital Workplace Platform", organization_name: '', logo_url: 'images/system-icon.png' },
-      appearance: { preset: 'blue', primary_color: '#1d4ed8', sidebar_color: '#0f172a', radius: 'rounded', density: 'normal', default_theme: 'light', content_width: 'wide' },
+      appearance: { ...DEFAULT_APPEARANCE },
       terminology: { record_singular: 'Record', record_plural: 'Records', dashboard_label: 'Dashboard', administration_label: 'Administration' },
       navigation: { show_dashboard: true, show_records: true, show_quick_actions: true, default_workspace: 'dashboard' },
       collaboration: { message_page_size: 256 }
@@ -125,8 +126,7 @@
   }
   function applyPreset() {
     if (!config) return;
-    const colors: Record<string, [string, string]> = { blue: ['#1d4ed8', '#0f172a'], emerald: ['#047857', '#064e3b'], violet: ['#6d28d9', '#2e1065'], amber: ['#b45309', '#451a03'], rose: ['#be123c', '#4c0519'], slate: ['#475569', '#0f172a'] };
-    const selected = colors[config.appearance.preset];
+    const selected = APPEARANCE_PRESETS[config.appearance.preset];
     if (selected) [config.appearance.primary_color, config.appearance.sidebar_color] = selected;
   }
 </script>
@@ -143,7 +143,7 @@
         <fieldset><legend>Navigation</legend><label class="checkbox"><input type="checkbox" bind:checked={config.navigation.show_dashboard} /> Show dashboard</label><label class="checkbox"><input type="checkbox" bind:checked={config.navigation.show_records} /> Show records</label><label class="checkbox"><input type="checkbox" bind:checked={config.navigation.show_quick_actions} /> Show quick actions</label><label>Default workspace<select bind:value={config.navigation.default_workspace}><option value="dashboard">Dashboard</option><option value="records">Records</option></select></label></fieldset>
       </div>
       <div class="settings-column">
-        <fieldset><legend>Appearance</legend><label>Preset<select bind:value={config.appearance.preset} onchange={applyPreset}><option value="blue">Blue</option><option value="emerald">Emerald</option><option value="violet">Violet</option><option value="amber">Amber</option><option value="rose">Rose</option><option value="slate">Slate</option><option value="custom">Custom</option></select></label><label>Primary color<input bind:value={config.appearance.primary_color} type="color" disabled={config.appearance.preset !== 'custom'} /></label><label>Sidebar color<input bind:value={config.appearance.sidebar_color} type="color" disabled={config.appearance.preset !== 'custom'} /></label><label>Corner style<select bind:value={config.appearance.radius}><option value="square">Square</option><option value="subtle">Subtle</option><option value="rounded">Rounded</option><option value="soft">Soft</option></select></label><label>Density<select bind:value={config.appearance.density}><option value="compact">Compact</option><option value="normal">Normal</option><option value="comfortable">Comfortable</option></select></label><label>Content width<select bind:value={config.appearance.content_width}><option value="standard">Standard</option><option value="wide">Wide</option><option value="full">Full</option></select></label><label>Default theme<select bind:value={config.appearance.default_theme}><option value="light">Light</option><option value="dark">Dark</option><option value="system">System</option></select></label></fieldset>
+        <fieldset><legend>Appearance</legend><label>Preset<select bind:value={config.appearance.preset} onchange={applyPreset}><option value="sage">MX Sage · product theme</option><option value="blue">Blue</option><option value="emerald">Emerald</option><option value="violet">Violet</option><option value="amber">Amber</option><option value="rose">Rose</option><option value="slate">Slate</option><option value="custom">Custom</option></select></label><label>Primary color<input bind:value={config.appearance.primary_color} type="color" disabled={config.appearance.preset !== 'custom'} /></label><label>Sidebar color<input bind:value={config.appearance.sidebar_color} type="color" disabled={config.appearance.preset !== 'custom'} /></label><label>Corner style<select bind:value={config.appearance.radius}><option value="square">Square</option><option value="subtle">Subtle</option><option value="rounded">Rounded</option><option value="soft">Soft</option></select></label><label>Density<select bind:value={config.appearance.density}><option value="compact">Compact</option><option value="normal">Normal</option><option value="comfortable">Comfortable</option></select></label><label>Content width<select bind:value={config.appearance.content_width}><option value="standard">Standard</option><option value="wide">Wide</option><option value="full">Full</option></select></label><label>Default theme<select bind:value={config.appearance.default_theme}><option value="light">Light</option><option value="dark">Dark</option><option value="system">System</option></select></label></fieldset>
         <fieldset><legend>Collaboration</legend><label>Messages per page<input bind:value={config.collaboration.message_page_size} type="number" min="32" max="512" step="32" /></label><p class="muted">MX loads this many recent messages, then automatically fetches older pages as people scroll upward. Default: 256.</p></fieldset>
       </div>
     </div>

@@ -2,7 +2,7 @@
 export function focusDialog(node: HTMLElement) {
   const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   const controls = () => [...node.querySelectorAll<HTMLElement>('button:not([disabled]),a[href],input:not([disabled]):not([type="hidden"]),select:not([disabled]),textarea:not([disabled]),[tabindex="0"]')].filter((item) => item.getClientRects().length);
-  queueMicrotask(() => (node.querySelector<HTMLElement>('input:not([readonly])') || controls()[0] || node).focus());
+  queueMicrotask(() => { if (node.isConnected) { const items = controls(); (items.find(item => item.matches('input:not([readonly])')) || items[0] || node).focus(); } });
   const handler = (event: KeyboardEvent) => {
     if (event.key !== 'Tab' || !node.contains(document.activeElement)) return;
     const items = controls(); const first = items[0]; const last = items.at(-1);

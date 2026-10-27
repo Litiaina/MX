@@ -21,7 +21,7 @@ describe('stateless record editing', () => {
     expect(records).toContain('class="button record-primary-action"');
     expect(records).toContain("openRecord(row, false, canUpdate)");
     expect(records).toContain("<span>Edit</span>");
-    expect(records).toContain('<th class="record-actions-column">Actions</th>');
+    expect(records).toContain('<th scope="col" class="record-actions-column">Actions</th>');
   });
 
   it('submits only changed fields and supports field-level conflict decisions', () => {

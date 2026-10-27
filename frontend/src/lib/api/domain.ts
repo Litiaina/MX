@@ -255,7 +255,9 @@ export interface NotificationSoundInfo {
   url?: string;
 }
 
-export interface ModuleReadingPreferences { bold_fields: string[] }
+export type ColumnTone = 'auto' | 'slate' | 'blue' | 'green' | 'amber' | 'violet' | 'rose';
+export interface ColumnPresentation { style: 'text' | 'badge'; tone: ColumnTone }
+export interface ModuleReadingPreferences { bold_fields: string[]; columns?: Record<string, ColumnPresentation> }
 export type ModuleReadingMap = Record<string, ModuleReadingPreferences>;
 
 export interface UserPreferences {

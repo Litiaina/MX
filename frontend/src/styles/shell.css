@@ -20,7 +20,7 @@
     overflow: hidden;
     border-right: 1px solid var(--line);
     background: color-mix(in srgb, var(--brand-sidebar) 2%, var(--sidebar));
-    color: color-mix(in srgb, var(--on-sidebar) 76%, transparent);
+    color: var(--muted);
     transform: none;
     transition: width .18s ease, box-shadow .18s ease;
   }
@@ -53,7 +53,7 @@
   .sidebar.open .sidebar-brand div { opacity: 1; }
   .sidebar-brand strong, .sidebar-brand small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .sidebar-brand strong { color: var(--on-sidebar); font-size: calc(.74rem * var(--font-scale)); }
-  .sidebar-brand small { color: color-mix(in srgb, var(--on-sidebar) 58%, transparent); font-size: calc(.57rem * var(--font-scale)); }
+  .sidebar-brand small { color: var(--muted); font-size: calc(.6875rem * var(--font-scale)); }
   .sidebar-toggle {
     width: 2rem;
     height: 2rem;
@@ -96,7 +96,7 @@
     background: color-mix(in srgb, var(--on-sidebar) 5%, transparent);
     color: var(--on-sidebar);
   }
-  .sidebar-search-field .global-search > input::placeholder { color: color-mix(in srgb, var(--on-sidebar) 48%, transparent); }
+  .sidebar-search-field .global-search > input::placeholder { color: var(--muted); }
   .sidebar-search-field .global-search > input:hover,
   .sidebar-search-field .global-search.open > input { border-color: color-mix(in srgb, var(--on-sidebar) 25%, transparent); background: color-mix(in srgb, var(--on-sidebar) 8%, transparent); }
   .sidebar-search-field .global-search-results {
@@ -121,15 +121,15 @@
     border: 0;
     border-radius: .4rem;
     background: transparent;
-    color: color-mix(in srgb, var(--on-sidebar) 66%, transparent);
+    color: var(--muted);
     text-align: left;
   }
   .main-nav button:hover { background: color-mix(in srgb, var(--on-sidebar) 8%, transparent); color: var(--on-sidebar); }
-  .main-nav button.active { background: color-mix(in srgb, var(--on-sidebar) 8%, transparent); color: var(--on-sidebar); box-shadow: none; }
+  .main-nav button.active { background: color-mix(in srgb, var(--primary) 9%, var(--sidebar)); color: var(--primary-text); box-shadow: inset 2px 0 var(--primary); }
   .main-nav button.active > span { color: var(--primary-text) !important; }
   .main-nav button span { width: 2.35rem; height: 2.35rem; display: grid; place-items: center; }
-  .main-nav button b { overflow: hidden; font-size: calc(.75rem * var(--font-scale)); font-weight: 570; text-overflow: ellipsis; white-space: nowrap; }
-  .main-nav .nav-group-label { min-width: 0; margin: .7rem .55rem .15rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: color-mix(in srgb, var(--on-sidebar) 48%, transparent); font-size: calc(.53rem * var(--font-scale)); font-weight: 720; letter-spacing: .06em; text-transform: uppercase; opacity: 0; }
+  .main-nav button b { overflow: hidden; font-size: calc(.8125rem * var(--font-scale)); font-weight: 570; text-overflow: ellipsis; white-space: nowrap; }
+  .main-nav .nav-group-label { min-width: 0; margin: .7rem .55rem .15rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: calc(.625rem * var(--font-scale)); font-weight: 650; letter-spacing: .06em; text-transform: uppercase; opacity: 0; }
   .sidebar.open .main-nav .nav-group-label { opacity: 1; }
   .main-nav button b, .profile-button div, .live-state span { opacity: 0; transition: opacity .1s; }
   .sidebar.open .main-nav button b, .sidebar.open .profile-button div, .sidebar.open .live-state span { opacity: 1; }
@@ -196,14 +196,13 @@
     gap: .75rem;
     padding: .4rem var(--shell-gutter);
     border-bottom: 1px solid var(--line);
-    background: color-mix(in srgb, var(--surface) 97%, transparent);
-    backdrop-filter: blur(16px);
+    background: var(--chrome);
   }
   .topbar-context { min-width: 0; display: flex; align-items: center; gap: .55rem; }
   .workspace-identity { min-width: 0; display: grid; gap: .02rem; }
   .workspace-identity small, .workspace-identity strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .workspace-identity small { color: var(--muted); font-size: calc(.52rem * var(--font-scale)); font-weight: 680; letter-spacing: .045em; text-transform: uppercase; }
-  .workspace-identity strong { color: var(--text); font-size: calc(.78rem * var(--font-scale)); font-weight: 620; }
+  .workspace-identity strong { color: var(--text); font-size: calc(.8125rem * var(--font-scale)); font-weight: 600; }
   .desktop-actions { position: static; min-width: 0; display: flex; align-items: center; gap: .24rem; }
   .topbar-tool { min-width: 2.15rem; height: 2.15rem; display: inline-grid; grid-auto-flow: column; place-items: center; gap: .25rem; padding: 0 .48rem; border: 1px solid transparent; border-radius: .4rem; background: transparent; color: var(--muted); }
   .topbar-tool:hover { border-color: var(--line); background: var(--surface-2); color: var(--text); }

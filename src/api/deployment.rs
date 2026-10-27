@@ -19,8 +19,8 @@ use crate::{
     middleware::auth::Claims,
 };
 
-const DEFAULT_PRIMARY: &str = "#1d4ed8";
-const DEFAULT_SIDEBAR: &str = "#0f172a";
+const DEFAULT_PRIMARY: &str = "#c94128";
+const DEFAULT_SIDEBAR: &str = "#253429";
 const DEFAULT_DISPLAY_NAME: &str = "MX";
 const DEFAULT_SUBTITLE: &str = "Litiaina's Digital Workplace Platform";
 const DEFAULT_LOGO_URL: &str = "images/system-icon.png";
@@ -62,10 +62,10 @@ pub struct AppearanceConfig {
 impl Default for AppearanceConfig {
     fn default() -> Self {
         Self {
-            preset: "blue".to_string(),
+            preset: "sage".to_string(),
             primary_color: DEFAULT_PRIMARY.to_string(),
             sidebar_color: DEFAULT_SIDEBAR.to_string(),
-            radius: "rounded".to_string(),
+            radius: "subtle".to_string(),
             density: "normal".to_string(),
             default_theme: "light".to_string(),
             content_width: "wide".to_string(),
@@ -477,10 +477,10 @@ fn normalize_config(mut config: DeploymentConfig) -> DeploymentConfig {
     config.branding.logo_url = clean_logo_url(config.branding.logo_url);
 
     config.appearance.preset = match config.appearance.preset.as_str() {
-        "blue" | "emerald" | "violet" | "amber" | "rose" | "slate" | "custom" => {
+        "sage" | "blue" | "emerald" | "violet" | "amber" | "rose" | "slate" | "custom" => {
             config.appearance.preset
         }
-        _ => "blue".to_string(),
+        _ => "sage".to_string(),
     };
 
     config.appearance.primary_color =
@@ -671,6 +671,38 @@ pub async fn save_deployment_config(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn product_theme_defaults_do_not_replace_saved_organization_appearance() {
+        let defaults = DeploymentConfig::default();
+        assert_eq!(defaults.appearance.preset, "sage");
+        assert_eq!(defaults.appearance.primary_color, "#c94128");
+        assert_eq!(defaults.appearance.sidebar_color, "#253429");
+        let connection = Connection::open_in_memory().unwrap();
+        ensure_deployment_schema(&connection).unwrap();
+        for (preset, primary, sidebar) in [
+            ("blue", "#1d4ed8", "#0f172a"),
+            ("custom", "#123456", "#654321"),
+            ("sage", "#c94128", "#253429"),
+        ] {
+            let mut saved = DeploymentConfig::default();
+            saved.appearance.preset = preset.into();
+            saved.appearance.primary_color = primary.into();
+            saved.appearance.sidebar_color = sidebar.into();
+            saved.appearance.radius = "rounded".into();
+            connection.execute(
+                "UPDATE mx_deployment_config SET revision=7,config_json=?1 WHERE id=1",
+                [serde_json::to_string(&saved).unwrap()],
+            ).unwrap();
+            ensure_deployment_schema(&connection).unwrap();
+            let (revision, actual, _) = read_config(&connection).unwrap();
+            assert_eq!(revision, 7);
+            assert_eq!(actual.appearance.preset, preset);
+            assert_eq!(actual.appearance.primary_color, primary);
+            assert_eq!(actual.appearance.sidebar_color, sidebar);
+            assert_eq!(actual.appearance.radius, "rounded");
+        }
+    }
 
     #[test]
     fn legacy_dgs_identity_is_migrated_only_once() {

@@ -12,6 +12,7 @@
   import ArrowLeft from '@lucide/svelte/icons/arrow-left';
   import ModuleIcon from '../ModuleIcon.svelte';
   import { focusDialog } from '../../util/focusDialog';
+  import { dismissBackdrop } from '../../util/dismissBackdrop';
   import type { FieldDefinition, JsonValue, ModuleDefinition, ModulePermission, SchemaResponse } from '../../api/domain';
   import type { Session } from '../../api/types';
   import { createField, createModule, deleteModule, loadModules, loadModuleSchema, loadSchema, loadStorageLayout, saveStorageLayout, updateField, updateModule, updateSchemaOrder, updateSystemField } from '../../api/workspace';
@@ -170,7 +171,17 @@
     resetNewModule();
     moduleCreateOpen = true;
   }
-  function closeModuleCreate() { if (moduleCreateBusy) return; moduleCreateOpen = false; resetNewModule(); }
+  let confirmingModuleClose = false;
+  async function closeModuleCreate() {
+    if (moduleCreateBusy || confirmingModuleClose) return;
+    if (newModuleName || newModuleSingular || newModuleDescription || newModuleNavigationGroup || newModuleIcon !== 'file-text' || newModuleColor !== '#3768a6') {
+      confirmingModuleClose = true;
+      const discard = await requestConfirmation({ title: 'Discard this new module?', description: 'Your unsaved module details will be lost. No existing module will be changed.', confirmLabel: 'Discard draft', tone: 'danger' });
+      confirmingModuleClose = false;
+      if (!discard) return;
+    }
+    moduleCreateOpen = false; resetNewModule();
+  }
   async function addModule(event: SubmitEvent) {
     event.preventDefault(); moduleCreateBusy = true; moduleCreateError = '';
     try {
@@ -332,8 +343,8 @@
 {#if rulesTarget&&schema}{#key rulesTarget.uid}<FieldRulesDialog field={rulesTarget} fields={schema.fields} moduleName={selectedModule?.name||'Module'} onClose={()=>rulesTarget=null} onSaved={rulesSaved}/>{/key}{/if}
 
 {#if moduleCreateOpen}
-  <div class="overlay" role="presentation" onclick={(event) => { if (event.target === event.currentTarget) closeModuleCreate(); }}>
-    <div class="dialog module-create-dialog" role="dialog" aria-modal="true" aria-labelledby="create-module-title" tabindex="-1" use:focusDialog>
+  <div class="overlay" use:dismissBackdrop={()=>void closeModuleCreate()}>
+    <div class="dialog module-create-dialog" role="dialog" aria-modal="true" aria-labelledby="create-module-title" tabindex="-1" use:focusDialog onkeydown={event=>{if(event.key==='Escape'){event.preventDefault();event.stopPropagation();void closeModuleCreate();}}}>
       <header class="dialog-head">
         <div class="admin-dialog-title">
           <span><Plus size={19} /></span>

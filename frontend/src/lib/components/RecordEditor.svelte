@@ -38,6 +38,7 @@
   import {fieldState,fieldRules,optionDetails,prepareForm,writable as ruleWritable} from '../util/formRules';
   import type {RecordSection} from '../api/moduleViews';
   import {orderedRecordFields,sectionHeading} from '../util/moduleViews';
+  import {focusDialog} from '../util/focusDialog';
 
   let { schema, moduleUid = '', record, canWrite, canDelete, canAttachments = true, allowEdit = false, liveMessage = null, focusAttachments = false, recordLabel = 'Record', initialChanges = null, submitCreate, draftScope = '', recordSections=[], onEdit = () => undefined, onClose, onSaved }:
     { schema: SchemaResponse; moduleUid?: string; record: MxRecord | null; canWrite: boolean; canDelete: boolean; canAttachments?: boolean; allowEdit?: boolean; liveMessage?: LiveMessage | null; focusAttachments?: boolean; recordLabel?: string; initialChanges?:Record<string,JsonValue>|null; submitCreate?: (values: Record<string, JsonValue>) => Promise<MxRecord>; draftScope?: string; recordSections?:RecordSection[]; onEdit?: () => void; onClose: () => void; onSaved: () => Promise<void> } = $props();
@@ -645,7 +646,7 @@
 <svelte:window onkeydown={handleDialogKeydown} />
 
 <div class="overlay record-editor-overlay" class:subdialog-open={historyOpen || previewOpen || sendOpen} role="presentation" aria-hidden={historyOpen || previewOpen || sendOpen ? 'true' : undefined} inert={historyOpen || previewOpen || sendOpen} onclick={(event) => event.target === event.currentTarget && attemptClose()}>
-  <div bind:this={dialogElement} class="dialog record-dialog" role="dialog" aria-modal="true" aria-labelledby="record-title">
+  <div bind:this={dialogElement} class="dialog record-dialog" role="dialog" aria-modal="true" aria-labelledby="record-title" tabindex="-1" use:focusDialog onkeydown={event=>{if(event.key==='Escape'&&!event.defaultPrevented&&!historyOpen&&!previewOpen&&!sendOpen&&!driveAttachmentField){event.preventDefault();event.stopPropagation();attemptClose();}}}>
     <header class="dialog-head">
       <div><p class="eyebrow">{current ? (canWrite ? 'Edit existing' : 'View existing') : 'Create new'}</p><h2 id="record-title">{current ? `${canWrite ? 'Edit' : 'View'} ${recordLabel}` : `New ${recordLabel}`}</h2>{#if current}<p class="muted record-dialog-context">{canWrite ? 'Editing' : 'Viewing'} {recordIdentity(current)}</p>{/if}</div>
       <div class="inline-actions">{#if current && allowEdit && !canWrite}<button class="button primary small icon-label" type="button" onclick={onEdit}><Pencil size={14} />Edit {recordLabel.toLowerCase()}</button>{/if}{#if current}<button class="button small icon-label" type="button" disabled={busy || deletedRemotely} onclick={() => sendOpen = true}><Send size={15}/>Send record</button><button class="button small" type="button" onclick={copyRecordLink}>Copy link</button><button bind:this={historyButtonElement} class="button small icon-label" type="button" onclick={openHistory}><HistoryIcon size={15} />History</button>{/if}{#if fields.some((field) => field.field_type === 'attachments') || unassignedFiles.length}<button class="button small attachment-shortcut" type="button" onclick={jumpToAttachments}>Attachments{current ? ` · ${attachmentCount}` : ''}</button>{/if}<button class="icon-button" type="button" onclick={attemptClose} aria-label="Close"><X size={18} /></button></div>

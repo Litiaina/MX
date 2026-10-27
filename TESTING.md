@@ -1,5 +1,116 @@
 # MX validation
 
+## Console-style records and neutral dark mode — local acceptance, 2026-10-27
+
+This iteration supersedes the earlier design preview below. It remains an
+**unreleased development build of 1.0.0-rc.10**, not RC.11. Qualification was
+performed locally before committing or pushing. The 2026-10-28 source-only
+review checkpoint does not create a release/tag, replace published assets or
+deploy production. The original source repository is used; all new build,
+browser and runtime data stays on the HDD.
+
+| Check | Final result |
+| --- | --- |
+| Native | 239 passed, zero failed, 2 existing opt-in tests ignored; optimized release executable |
+| Frontend | 400 passed in 64 files; Svelte zero errors/warnings; release metadata, bundled Office checksums and packaged assets verified |
+| Column appearance | Chromium, Brave, Firefox, WebKit: persisted personal plain text/badges/colors/bold, reload, account isolation, stale-save rejection, complete long text and numeric alignment |
+| Appearance ownership | Custom accents and personal theme survive live deployment refresh/reconnect; default light product accent and neutral dark/blue palette remain distinct |
+| Dialogs / access | Escape/outside dismissal, canceled discard preserves draft and focus, failed-save focus retained, module creation never changes an existing module, drag-out does not dismiss |
+| Readability / motion | Light/dark contrast tests including all badge colors; enlarged text and narrow 320/390 px layouts; settings controls reflow with text size; OS and MX reduced motion respected |
+| Final browser regression | All 11 suites passed against the same immutable native executable and frontend manifest: column appearance, record workspace, product theme, 100-module navigation, record navigation, module views, CSS cascade, sidebar layout, operational books, Collaboration files and record Office |
+| Populated test | All four browser engines: real configured CRM, ERP/operations, directory, documents, accounting/inventory, 9,688-record module, Drive, Collaboration, Administration and creator-only access |
+| Preservation | Exact before/after fingerprints match across 32 business/configuration tables, including all 10,623 records, field values/history, file references, permissions, relationships, books, branding and personal preferences |
+
+Evidence root:
+`/mnt/PROJECT-DISK-1TB/tests/mx-console-design-20261027.RbugrK`.
+
+- Authoritative frozen-build result: `qualification-acceptance.json`; logs are
+  `acceptance-*.log`. Earlier failed attempts are retained and not counted as passes.
+- Native/frontend/Svelte logs: `native-tests.log`, `frontend-tests.log`,
+  `svelte-check.log`.
+- Populated read-only checks: `populated-review-results.json` and screenshots.
+- Preservation: `preservation-results.json`. The private online SQLite snapshot
+  `before-console-design.db` passed full integrity and foreign-key checks.
+- Previous preview executable/configuration are retained separately. The test
+  service uses its existing runtime configuration and the new `acceptance-dist`.
+
+Native SHA-256:
+`c215d74e343a38c30c3d8009c21b12c4b15aeda00092b4b4116c7fcff175763a`.
+Frontend cache generation: `mx-office-assets-f7a21c894ee03cec`.
+
+The local populated preview is `https://localhost:21001`; use
+`/mnt/PROJECT-DISK-1TB/run-local-preview.sh` to restart it after mounting the
+existing test pool. Its updater remains isolated from published slots. No business
+records, organization branding, or saved personal settings were changed to stage
+the design. Column display choices are personal; see [appearance](docs/appearance.md).
+
+Limits: this is functional/UI qualification, not another 100-user load run or
+physical Windows/device certification. Office rendering passed in Chromium and
+Firefox. This Linux WebKit host lacks worker WebGL; its explicit error/fallback
+and byte-exact original downloads passed, not rendering. The existing Vite main
+chunk size advisory remains. `git diff --check` passes; repository-wide
+`cargo fmt --check` is not clean, and no unrelated formatting rewrite was made.
+
+Failures found during this iteration prompted real corrections: failed-save
+focus loss, clipped enlarged settings, backdrop cancellation focus loss and the
+deployment-refresh/personal-appearance race. The final suites include these paths.
+
+## Earlier local design iteration — 2026-10-27
+
+This is local acceptance work on top of **1.0.0-rc.10**, not RC.11. No commit,
+push, version bump, signed-release replacement or production deployment was made.
+Canonical source remains in the original repository; the published tracked
+`frontend/dist`, release assets, N1 source and README/logo images are unchanged.
+
+| Check | Result |
+| --- | --- |
+| Native / frontend | 238 native tests passed, 2 existing opt-in tests ignored; 391 frontend tests passed in 63 files |
+| Build | Optimized native executable; zero Svelte errors/warnings; bundled Office checksums and final packaged-asset validation passed |
+| Product theme | Chromium, Brave, Firefox and WebKit: sage/terracotta preset, light/dark views, explicit existing Blue preset, administrator save, real pipeline/detail/directory/overview/record views |
+| Compactness / readability | Approximately 38 px module title/action row and 36 px tabs at normal text; 320/390/1024/1440 px layouts and up to 200% text; full descriptions behind Info, no document-wide horizontal overflow |
+| Dialog stability | Controlled delayed process response reproduced a 74 px Close-button shift; anchored dialogs now retain control position, keyboard focus/Tab and guarded Escape closing in all four engines |
+| Existing UI regression | Eight final suites passed: product theme, module views, Drive/deployment CSS cascade, sidebar geometry, record navigation, operational books, Collaboration files and record Office |
+| Populated preview | Chromium, Firefox and WebKit: existing CRM, operations, document library, directories, real accounting/stock balances, record dialogs, Drive, Collaboration, Administration and creator-only cards |
+| Data preservation | Exact before/after fingerprints match across 32 business/configuration tables, including all 10,623 records, values/history, permissions, relationships, file references, workflows, books, branding assets and personal preferences |
+
+The fixture suites use isolated SQLite and fixture N1. The separate populated
+preview uses the existing mounted local N1 test pool. Office actually renders in
+Chromium and Firefox in the file regressions; Linux WebKit verifies its existing
+graphics fallback and original download, not Office rendering. The Vite
+large-main-chunk advisory remains. These are UI/functional tests, not a new
+100-user capacity run, Windows/physical-device certification or accessibility
+certification of every possible configured module.
+
+Private local evidence root:
+`/mnt/PROJECT-DISK-1TB/tests/mx-design-local-20261027.1gu4NB`.
+
+- Final eight-suite result: `qualified/qualification.json`.
+- Additional final four-engine product test: `mx-eight-user-jcj1Xu/product-theme-results.json`.
+- Populated read-only review: `populated-review-results.json`.
+- Original-data fingerprints: `preservation-results.json`.
+- Before-change online SQLite backup: `before-design.db` (private, not a release asset).
+
+Native preview SHA-256:
+`6e9646f6178a058edb43ab8da00327e2662a4bbc997b572e0c869b8684a01385`.
+Final frontend cache generation: `mx-office-assets-0da303a01ee350b0`.
+
+Earlier failed attempts are retained as diagnostics, not counted as passes:
+the initial compactness assertion prompted tighter spacing; an implicit-select
+test locator was corrected to its actual combobox role; the intermittent Close
+interaction prompted the controlled layout-shift reproduction and anchored-dialog
+fix. The final suites ran against an unchanged frontend manifest.
+
+The populated preview runs at `https://localhost:21001` with the existing test
+accounts/database. Only its deployment appearance was explicitly set to MX Sage;
+organization branding and personal preferences were preserved. The local restart
+helper is `/mnt/PROJECT-DISK-1TB/run-local-preview.sh`. Its updater stays isolated
+from published slots while this unreleased design is reviewed.
+
+The separate product website's real screenshots were refreshed from synthetic
+local modules and explicitly labeled unreleased. This does not announce the new
+interface as part of the published RC.10 download. See [appearance setup and
+review boundaries](docs/appearance.md).
+
 ## RC.10 release qualification — 2026-10-27
 
 The exact versioned release executable passed its final 100-user run: **33,123

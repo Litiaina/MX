@@ -61,9 +61,24 @@ try {
     await dialog.getByRole('combobox',{name:'Filter modules by group',exact:true}).selectOption({label:'Finance'});
     assert.equal(await dialog.locator('.module-browser-results > button').count(),20);
     await page.keyboard.press('Escape');await dialog.waitFor({state:'hidden'});assert.ok(await trigger.evaluate(node=>document.activeElement===node),'Escape returns focus to the opener');
+    await trigger.click();await dialog.waitFor();
+    await page.locator('.module-browser-backdrop').click({position:{x:3,y:3}});
+    await dialog.waitFor({state:'hidden'});assert.ok(await trigger.evaluate(node=>document.activeElement===node),'Outside click closes the module browser and restores focus');
 
     // Existing administrator position/group settings control both menu and library.
     await page.goto(`https://127.0.0.1:${mx.port}/#admin`);await page.getByRole('button',{name:'Modules & fields',exact:true}).click();
+    const create=page.getByRole('dialog',{name:'Create a separate module',exact:true});
+    await page.getByRole('button',{name:'New module',exact:true}).click();await create.waitFor();
+    await page.keyboard.press('Escape');await create.waitFor({state:'hidden'});
+    await page.getByRole('button',{name:'New module',exact:true}).click();await create.waitFor();
+    await create.getByRole('textbox',{name:'Module name',exact:true}).fill('Unsaved draft');
+    await create.locator('..').click({position:{x:3,y:3}});
+    const discard=page.getByRole('alertdialog',{name:'Discard this new module?',exact:true});await discard.waitFor();
+    await discard.getByRole('button',{name:'Cancel',exact:true}).click();
+    assert.equal(await create.getByRole('textbox',{name:'Module name',exact:true}).inputValue(),'Unsaved draft');
+    await page.keyboard.press('Escape');await discard.waitFor();
+    await discard.getByRole('button',{name:'Discard draft',exact:true}).click();await create.waitFor({state:'hidden'});
+    assert.equal((await call('/mx/v1/modules',owner)).modules.length,100,'Dismissing a draft never creates or changes a module');
     await page.getByRole('searchbox',{name:'Find a module',exact:true}).fill('Department 099');
     await page.getByRole('button',{name:'Configure Department 099',exact:true}).click();
     await page.getByRole('button',{name:'Module details',exact:true}).click();

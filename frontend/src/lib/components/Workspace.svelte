@@ -15,7 +15,7 @@
   import { MxLiveClient, type LiveMessage } from '../live/client';
   import { callDisplayName, callFromStartedPayload, mergeCallParticipant, removeCallParticipant } from '../call/activity';
   import { callAlertStrategy, startCallAlertCadence } from '../call/alerts';
-  import { appearanceScale, primaryForeground, validAccentColor } from '../util/appearance';
+  import { appearanceScale, applyPrimaryAccent, usesProductAccent, validAccentColor } from '../util/appearance';
   import { decodeNotificationSound, playNotificationSound, unlockNotificationAudio } from '../util/notificationAudio';
   import { notificationPresentation } from '../util/notificationKinds';
   import { DesktopNotifications } from '../util/desktopNotifications';
@@ -94,7 +94,7 @@
   const callBrowserNotifications = new Map<string, Notification>();
   let ringingDirectCallKey = '';
   let stopDirectCallRingtone: (() => void) | null = null;
-  const accentPresets = ['#1d4ed8', '#047857', '#6d28d9', '#b45309', '#be123c', '#0e7490'];
+  const accentPresets = ['#c94128', '#397653', '#1d4ed8', '#047857', '#6d28d9', '#b45309', '#be123c', '#0e7490'];
   const selectedModule = $derived(modules.find((module) => module.uid === selectedModuleUid) || null);
   const selectedModulePermission = $derived(selectedModule?.effective_permission || selectedModule?.permissions.find((permission) => permission.access_level === session.access_level) || null);
   const viewTitle = $derived(view === 'dashboard' ? deployment.terminology.dashboard_label : view === 'records' ? (selectedModule?.name || deployment.terminology.record_plural) : view === 'collaboration' ? 'Collaboration' : view === 'drive' ? 'MX Drive' : view === 'admin' ? deployment.terminology.administration_label : 'My account');
@@ -184,6 +184,10 @@
     const timer = window.setInterval(() => refreshCurrent(false), Math.max(10, autoRefresh) * 1000);
     return () => window.clearInterval(timer);
   });
+
+  // Re-derive after deployment refreshes as well as personal setting changes.
+  // This is the only signed-in owner of the effective theme and accent.
+  $effect(() => { applyPersonalAppearance(); });
 
   function defaultView(): View {
     if (deployment.navigation.default_workspace === 'records' && deployment.navigation.show_records) return 'records';
@@ -550,8 +554,7 @@
   function applyPersonalAppearance() {
     setTheme(theme);
     const accent = validAccentColor(accentColor) ? accentColor : deployment.appearance.primary_color;
-    document.documentElement.style.setProperty('--primary', accent);
-    document.documentElement.style.setProperty('--on-primary', primaryForeground(accent));
+    applyPrimaryAccent(accent, usesProductAccent(deployment.appearance.preset, deployment.appearance.primary_color, accentColor));
     document.documentElement.dataset.density = density || deployment.appearance.density;
     const width = contentWidth || deployment.appearance.content_width;
     document.documentElement.style.setProperty('--content-max', ({ standard: '76rem', wide: '92rem', full: '120rem' } as Record<string, string>)[width] || '92rem');
@@ -570,8 +573,7 @@
     document.documentElement.dataset.theme = deployment.appearance.default_theme;
     document.documentElement.dataset.density = deployment.appearance.density;
     document.documentElement.dataset.reducedMotion = 'false';
-    document.documentElement.style.setProperty('--primary', deployment.appearance.primary_color);
-    document.documentElement.style.setProperty('--on-primary', primaryForeground(deployment.appearance.primary_color));
+    applyPrimaryAccent(deployment.appearance.primary_color, usesProductAccent(deployment.appearance.preset, deployment.appearance.primary_color));
     document.documentElement.style.setProperty('--content-max', ({ standard: '76rem', wide: '92rem', full: '120rem' } as Record<string, string>)[deployment.appearance.content_width] || '92rem');
   }
   function defaultNotificationPreferences(): UserPreferences['notifications'] {

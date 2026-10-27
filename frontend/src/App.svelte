@@ -8,7 +8,7 @@
   import type { DeploymentConfig } from './lib/api/domain';
   import { loadDeployment } from './lib/api/workspace';
   import { currentSession, endSession, reloadSession, restoreSession } from './lib/auth/session';
-  import { primaryForeground } from './lib/util/appearance';
+  import { DEFAULT_APPEARANCE, applyPrimaryAccent, primaryForeground, usesProductAccent } from './lib/util/appearance';
 
   let loading = $state(true);
   let authMessage = $state('');
@@ -16,7 +16,7 @@
   let guestToken = $state(location.hash.match(/^#\/?drive-share\/([a-f0-9]{64})$/i)?.[1] || '');
   const defaults: DeploymentConfig = {
     branding: { display_name: 'MX', subtitle: "Litiaina's Digital Workplace Platform", organization_name: '', logo_url: 'images/system-icon.png' },
-    appearance: { preset: 'blue', primary_color: '#1d4ed8', sidebar_color: '#0f172a', radius: 'rounded', density: 'normal', default_theme: 'light', content_width: 'wide' },
+    appearance: { ...DEFAULT_APPEARANCE },
     terminology: { record_singular: 'Record', record_plural: 'Records', dashboard_label: 'Dashboard', administration_label: 'Administration' },
     navigation: { show_dashboard: true, show_records: true, show_quick_actions: true, default_workspace: 'dashboard' },
     collaboration: { message_page_size: 256 }
@@ -40,13 +40,17 @@
   });
 
   $effect(() => {
-    document.documentElement.style.setProperty('--primary', deployment.appearance.primary_color);
-    document.documentElement.style.setProperty('--on-primary', primaryForeground(deployment.appearance.primary_color));
+    // The signed-in Workspace owns effective appearance. A deployment refresh
+    // on live reconnect must not race and overwrite personal theme/accent/size.
+    if (!$currentSession) {
+      applyPrimaryAccent(deployment.appearance.primary_color, usesProductAccent(deployment.appearance.preset, deployment.appearance.primary_color));
+      document.documentElement.dataset.theme = deployment.appearance.default_theme;
+      document.documentElement.dataset.density = deployment.appearance.density;
+      document.documentElement.style.setProperty('--content-max', ({ standard: '76rem', wide: '92rem', full: '120rem' } as Record<string, string>)[deployment.appearance.content_width] || '92rem');
+    }
     document.documentElement.style.setProperty('--brand-sidebar', deployment.appearance.sidebar_color);
-    document.documentElement.dataset.theme = deployment.appearance.default_theme;
-    document.documentElement.dataset.density = deployment.appearance.density;
+    document.documentElement.style.setProperty('--on-brand', primaryForeground(deployment.appearance.sidebar_color));
     document.documentElement.style.setProperty('--corner-radius', ({ square: '3px', subtle: '7px', rounded: '12px', soft: '18px' } as Record<string, string>)[deployment.appearance.radius] || '12px');
-    document.documentElement.style.setProperty('--content-max', ({ standard: '76rem', wide: '92rem', full: '120rem' } as Record<string, string>)[deployment.appearance.content_width] || '92rem');
     document.title = deployment.branding.display_name.trim() || 'MX';
     const favicon = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
     const fallbackIcon = '/images/system-icon.png';

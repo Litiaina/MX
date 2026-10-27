@@ -5,7 +5,7 @@
   import Send from '@lucide/svelte/icons/send';
   import SendRecordDialog from './SendRecordDialog.svelte';
   import type { ModuleReadingMap } from '../api/domain';
-  import { fieldIsBold, moduleReadingContext } from '../util/readingPreferences';
+  import { columnPresentation, columnTone, fieldIsBold, moduleReadingContext } from '../util/readingPreferences';
   import ModuleReadingDialog from './ModuleReadingDialog.svelte';
   import ChevronDown from '@lucide/svelte/icons/chevron-down';
   import ChevronUp from '@lucide/svelte/icons/chevron-up';
@@ -452,6 +452,7 @@
   }
 
   function display(row: MxRecord, key: string) {
+    if (row.restricted_fields?.includes(key)) return 'Restricted';
     const field = schema?.fields.find((item) => item.key === key);
     if(field&&!fieldState(field,row.values).visible)return 'Not applicable';
     if (field?.field_type === 'attachments') {
@@ -536,7 +537,7 @@
   <div class="table-wrap records-table" class:continuous-records={continuous} aria-busy={loading} id={`records-table-${moduleUid || 'default'}`} bind:this={tableViewport} use:observeViewport onscroll={scrolled} onfocusin={event=>focusedRow=(event.target as Element)?.closest<HTMLElement>('[data-record-uid]')?.dataset.recordUid||''} onfocusout={event=>focusedRow=(event.relatedTarget as Element)?.closest?.<HTMLElement>('[data-record-uid]')?.dataset.recordUid||''}>
     <table aria-label={recordPlural} aria-rowcount={continuous?-1:undefined} style:table-layout={fixedColumns?'fixed':undefined} style:width={fixedColumns?`${tableWidth}px`:undefined}>
       {#if fixedColumns}<colgroup>{#each columnWidths as width}<col style:width={`${width}px`}/>{/each}</colgroup>{/if}
-      <thead><tr aria-rowindex={continuous?1:undefined}><th class="row-index-column">#</th>{#each visibleFields as field}<th data-field-uid={field.uid} class:personal-field-bold={fieldIsBold($readingPreferences,moduleUid,field.uid)}><button class="table-sort" class:sortable={field.sortable} onclick={() => field.sortable && sort(field.key)}>{field.label}{#if sortBy === field.key}{#if sortDir === 'asc'}<ChevronUp size={14} />{:else}<ChevronDown size={14} />{/if}{/if}</button></th>{/each}<th class="record-actions-column">Actions</th></tr></thead>
+      <thead><tr aria-rowindex={continuous?1:undefined}><th scope="col" class="row-index-column">#</th>{#each visibleFields as field}<th scope="col" aria-sort={sortBy===field.key?(sortDir==='asc'?'ascending':'descending'):undefined} data-field-uid={field.uid} class:personal-field-bold={fieldIsBold($readingPreferences,moduleUid,field.uid)}><button class="table-sort" class:sortable={field.sortable} onclick={() => field.sortable && sort(field.key)}>{field.label}{#if sortBy === field.key}{#if sortDir === 'asc'}<ChevronUp size={14} />{:else}<ChevronDown size={14} />{/if}{/if}</button></th>{/each}<th scope="col" class="record-actions-column">Actions</th></tr></thead>
       <tbody>
         {#if loading && !rows.length}
           <tr class="records-state-row"><td class="table-message" colspan={visibleFields.length + 2}>Loading {recordPlural.toLowerCase()}…</td></tr>
@@ -558,7 +559,10 @@
                     {@const fieldFiles = row.attached_files.filter((file) => file.attachment_field_uid === field.uid)}
                     <button class="attachment-cell-button" class:empty={!fieldFiles.length} onclick={(event) => { event.stopPropagation(); openRecord(row, true); }}>{fieldFiles.length ? `${fieldFiles.length} file${fieldFiles.length === 1 ? '' : 's'}` : 'No files'}</button>
                   {:else}
-                    <span class="record-cell-value">{display(row, field.key)}</span>
+                    {@const presentation = columnPresentation($readingPreferences,moduleUid,field)}
+                    {@const value = row.values[field.key]}
+                    {@const hasValue = value != null && value !== '' && (!Array.isArray(value) || value.length > 0) && !(field.field_type==='relationship' && row.relationships?.[field.key]?.restricted)}
+                    <span class="record-cell-value column-value" class:column-badge={hasValue && presentation.style==='badge'} data-tone={hasValue?columnTone(presentation,row.values[field.key],field.field_type):'none'}>{display(row, field.key)}</span>
                   {/if}
                 </td>
               {/each}
@@ -609,7 +613,7 @@
 
 <style>
   .personal-field-bold,.personal-field-bold .table-sort,.personal-field-bold .attachment-cell-button{font-weight:750;}
-  .long-text-cell .record-cell-value{display:block;white-space:pre-wrap;overflow-wrap:anywhere;}
+  .long-text-cell .record-cell-value{white-space:pre-wrap;overflow-wrap:anywhere;}
   .reading-settings-button{order:3;}
   .records-page.continuous-page{display:flex;flex-direction:column;width:100%;max-width:none;min-width:0;height:calc(100dvh - var(--topbar-height));min-height:24rem;padding-bottom:max(.5rem,env(safe-area-inset-bottom));}
   .records-page.continuous-page>*{min-width:0;}

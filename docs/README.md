@@ -27,6 +27,7 @@ implementation details and advanced configuration.
 | Organize, upload and share files | [MX Drive](drive.md) |
 | Message, call and share screens | [Collaboration](collaboration.md) |
 | Enable background-only desktop alerts | [Desktop notifications](desktop-notifications.md) |
+| Choose the product theme, compact views and personal text size | [Appearance and compact workspaces](appearance.md) |
 | Open, edit, save or prepare an offline Office document | [Office editor](office.md) |
 
 ## Deployment administrators

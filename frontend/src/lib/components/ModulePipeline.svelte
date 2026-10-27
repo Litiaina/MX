@@ -23,7 +23,7 @@
 {#if changed}<div class="notice" role="status">This process changed. Your position is preserved.<button class="button small" onclick={()=>void initialize()}>Load latest</button></div>{/if}
 {#if !config&&loading}<p role="status">Loading process stages…</p>{:else if config&&!config.definition.enabled}<div class="empty-state"><h2>Pipeline unavailable</h2><p>An administrator must enable this module’s Process & actions. Records and their history have not been changed.</p></div>{:else}
 <div class="pipeline-board" aria-label={config?.definition.name||'Pipeline board'} role="region">
- {#each lanes as lane,index (lane.key)}<section class="pipeline-lane" aria-label={lane.name} style={`--lane-color:var(--module-color,var(--primary));--lane-opacity:${1-index*.035}`}>
+ {#each lanes as lane (lane.key)}<section class="pipeline-lane" aria-label={lane.name}>
   <header><h2>{lane.name}</h2><span class="stage-count" aria-label={`${lane.name} count`}>{lane.total}</span></header>
   <div class="lane-cards" aria-busy={lane.loading}>{#if lane.error}<p class="notice error" role="alert">{lane.error}<button class="button small" onclick={()=>void loadLane(lane)}>Retry stage</button></p>{/if}
    {#each lane.data?.items||[] as item (item.uid)}<article class="pipeline-card" data-record-uid={item.uid}><button class="card-title" onclick={()=>onOpen(item.uid)}>{item.title}</button>{#if item.restarted}<p class="review-badge">Changed · review required</p>{/if}
@@ -36,5 +36,22 @@
  </section>{/each}
 </div><p class="pipeline-hint">Open a card to review saved information and take a permitted action. Stage changes are verified by MX—not inferred from dragging a card.</p>{/if}
 <style>
- .pipeline-tools{display:flex;align-items:center;gap:.75rem;flex-wrap:wrap;margin-bottom:1rem}.pipeline-tools form{display:flex;gap:.5rem;flex:1;min-width:14rem;max-width:36rem}.pipeline-tools input[type=search]{width:100%;min-width:0}.checkbox{display:flex;align-items:center;gap:.5rem}.pipeline-board{display:flex;gap:1rem;overflow:auto;align-items:stretch;min-height:26rem;padding:.15rem .15rem .75rem;scrollbar-gutter:stable}.pipeline-lane{flex:1 0 18rem;min-width:18rem;max-width:25rem;background:var(--surface-2);border:1px solid var(--line);border-radius:.8rem;display:flex;flex-direction:column;max-height:calc(100dvh - 18rem)}.pipeline-lane>header{display:flex;align-items:center;justify-content:space-between;gap:.6rem;padding:.85rem 1rem;border-top:3px solid var(--lane-color);border-radius:.8rem .8rem 0 0}.pipeline-lane h2{font-size:1rem;margin:0;overflow-wrap:anywhere}.stage-count{border:1px solid var(--line);border-radius:2rem;padding:.1rem .5rem;font-size:.875rem;font-variant-numeric:tabular-nums;background:var(--surface)}.lane-cards{padding:.35rem .7rem .7rem;overflow:auto;flex:1}.pipeline-card{background:var(--surface);border:1px solid var(--line);border-radius:.65rem;padding:1rem;margin-bottom:.7rem;box-shadow:0 2px 4px #00000006}.card-title{display:block;font:inherit;font-weight:650;line-height:1.5;text-align:left;color:var(--text);background:none;border:0;padding:0;cursor:pointer;overflow-wrap:anywhere}.card-title:hover{text-decoration:underline}.card-process{display:grid;gap:.3rem;margin:.7rem 0;color:var(--muted);font-size:.875rem}.missing,.review-badge{color:var(--warning-text,var(--text));font-size:.875rem}.review-button{width:100%;justify-content:center}.lane-empty{padding:1rem .25rem;color:var(--muted);font-size:.9rem}.pipeline-hint{font-size:.875rem;color:var(--muted);margin:.5rem 0}footer{padding:.6rem;display:flex;align-items:center;justify-content:space-between;gap:.3rem;border-top:1px solid var(--line)}footer small{font-size:.75rem;color:var(--muted)}@media(max-width:600px){.pipeline-lane{max-height:70dvh;flex-basis:85vw;min-width:16rem}.pipeline-tools form{max-width:none}}
+ .pipeline-tools{display:flex;align-items:center;gap:.65rem;flex-wrap:wrap;margin-bottom:.65rem}
+ .pipeline-tools form{display:flex;gap:.4rem;flex:1;min-width:min(100%,14rem);max-width:36rem}.pipeline-tools input[type=search]{width:100%;min-width:0;font-size:.8125rem}
+ .checkbox{display:flex;align-items:center;gap:.4rem;font-size:.8125rem}
+ .pipeline-board{display:flex;gap:.65rem;overflow:auto;align-items:stretch;min-height:26rem;padding:.1rem .1rem .65rem;scrollbar-gutter:stable;scrollbar-width:thin;scrollbar-color:var(--line-strong) transparent}
+ .pipeline-lane{flex:1 0 18rem;min-width:18rem;max-width:27rem;background:var(--surface-2);border:1px solid var(--line);border-radius:var(--card-radius);display:flex;flex-direction:column;max-height:max(26rem,calc(100dvh - 14rem))}
+ .pipeline-lane>header{display:flex;align-items:center;justify-content:space-between;gap:.6rem;padding:.7rem .75rem}
+ .pipeline-lane h2{font-size:.8125rem;font-weight:650;margin:0;overflow-wrap:anywhere}
+ .stage-count{padding:0 .15rem;font-size:.75rem;font-weight:650;font-variant-numeric:tabular-nums;color:var(--muted)}
+ .lane-cards{padding:0 .5rem .5rem;overflow:auto;flex:1;scrollbar-width:thin}
+ .pipeline-card{background:var(--surface);border:1px solid var(--line);border-radius:var(--card-radius);padding:.85rem .9rem;margin-bottom:.5rem;box-shadow:0 1px 2px #00000003}
+ .pipeline-card:last-child{margin-bottom:0}.pipeline-card:focus-within{border-color:var(--line-strong)}
+ .card-title{display:block;font:inherit;font-size:.875rem;font-weight:650;line-height:1.45;text-align:left;color:var(--text);background:none;border:0;padding:0;cursor:pointer;overflow-wrap:anywhere}.card-title:hover{text-decoration:underline}
+ .card-process{display:grid;gap:.3rem;margin:.55rem 0;color:var(--muted);font-size:.8125rem;line-height:1.5}
+ .missing,.review-badge{color:var(--warning);font-size:.8125rem}
+ .review-button{min-height:1.8rem;justify-content:start;padding:.25rem 0;border-color:transparent;background:transparent;color:var(--primary-text);font-size:.75rem}.review-button:hover{background:var(--surface-2)}
+ .lane-empty{padding:1rem .25rem;color:var(--muted);font-size:.8125rem}.pipeline-hint{font-size:.75rem;color:var(--muted);margin:.25rem 0;line-height:1.5}
+ footer{padding:.5rem;display:flex;align-items:center;justify-content:space-between;gap:.3rem;border-top:1px solid var(--line)}footer small{font-size:.6875rem;color:var(--muted)}
+ @media(max-width:600px){.pipeline-lane{max-height:70dvh;flex-basis:85vw;min-width:min(16rem,85vw)}.pipeline-tools form{max-width:none}}
 </style>

@@ -74,6 +74,15 @@ impl Default for NotificationPreferences {
 #[serde(default, deny_unknown_fields)]
 pub struct ModuleReadingPreferences {
     pub bold_fields: Vec<String>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub columns: BTreeMap<String, ColumnPresentation>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ColumnPresentation {
+    pub style: String,
+    pub tone: String,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -244,7 +253,7 @@ fn validate(preferences: &UserPreferences) -> Result<(), &'static str> {
         || preferences
             .module_reading
             .values()
-            .map(|v| v.bold_fields.len())
+            .map(|v| v.bold_fields.len() + v.columns.len())
             .sum::<usize>()
             > 8192
         || preferences.module_reading.iter().any(|(module, reading)| {
@@ -253,10 +262,16 @@ fn validate(preferences: &UserPreferences) -> Result<(), &'static str> {
                 || reading.bold_fields.iter().any(|id| !valid_id(id))
                 || reading.bold_fields.iter().collect::<BTreeSet<_>>().len()
                     != reading.bold_fields.len()
+                || reading.columns.len() > 1024
+                || reading.columns.iter().any(|(id, column)| {
+                    !valid_id(id)
+                        || !matches!(column.style.as_str(), "text" | "badge")
+                        || !matches!(column.tone.as_str(), "auto" | "slate" | "blue" | "green" | "amber" | "violet" | "rose")
+                })
         })
     {
         return Err(
-            "Invalid personal field emphasis: use unique field IDs within the supported module/field limits.",
+            "Invalid column appearance: use supported text/badge styles, palette colors and unique field IDs within the module/field limits.",
         );
     }
     for value in [
@@ -754,6 +769,7 @@ mod tests {
             "module-1".into(),
             ModuleReadingPreferences {
                 bold_fields: vec!["field-1".into()],
+                ..Default::default()
             },
         );
         assert!(validate(&preferences).is_ok());
@@ -776,6 +792,24 @@ mod tests {
             .unwrap()
             .bold_fields = vec!["field/<script>".into()];
         assert!(validate(&preferences).is_err());
+    }
+
+    #[test]
+    fn column_appearance_is_bounded_safe_and_backwards_compatible() {
+        let mut preferences: UserPreferences = serde_json::from_str(r#"{"module_reading":{"module-1":{"bold_fields":["field-1"]}}}"#).unwrap();
+        assert!(preferences.module_reading["module-1"].columns.is_empty());
+        assert!(!serde_json::to_string(&preferences).unwrap().contains("columns"));
+        let reading = preferences.module_reading.get_mut("module-1").unwrap();
+        reading.columns.insert("field-1".into(), ColumnPresentation { style: "badge".into(), tone: "blue".into() });
+        assert!(validate(&preferences).is_ok());
+        let encoded = serde_json::to_string(&preferences).unwrap();
+        assert_eq!(serde_json::from_str::<UserPreferences>(&encoded).unwrap(), preferences);
+        for (style, tone) in [("html", "blue"), ("badge", "url(secret)"), ("text", "#ffffff")] {
+            preferences.module_reading.get_mut("module-1").unwrap().columns.get_mut("field-1").unwrap().style = style.into();
+            preferences.module_reading.get_mut("module-1").unwrap().columns.get_mut("field-1").unwrap().tone = tone.into();
+            assert!(validate(&preferences).is_err());
+        }
+        assert!(serde_json::from_str::<ColumnPresentation>(r#"{"style":"badge","tone":"blue","css":"injected"}"#).is_err());
     }
 
     #[test]

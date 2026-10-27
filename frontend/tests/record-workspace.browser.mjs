@@ -85,7 +85,7 @@ try {
     await editor.waitFor({state:'hidden'});
 
     await page.getByRole('button',{name:'Reading settings',exact:true}).click();
-    const reading=page.getByRole('dialog',{name:'Make Requests easier to read',exact:true});
+    const reading=page.getByRole('dialog',{name:'Reading settings',exact:true});
     await reading.getByRole('checkbox',{name:'Bold Name',exact:true}).check();
     await reading.getByRole('button',{name:'Save my reading settings',exact:true}).click();await reading.waitFor({state:'hidden'});
     await until(async()=>Number(await cell.evaluate(node=>getComputedStyle(node).fontWeight))>=700,'Personal emphasis applied');
@@ -142,7 +142,7 @@ try {
     assert.ok(await reading.evaluate(node=>node.scrollWidth<=node.clientWidth+1),'Reading dialog fits enlarged text');
     await reading.getByRole('checkbox',{name:'Bold Name',exact:true}).scrollIntoViewIfNeeded();
     assert.ok(await reading.getByRole('checkbox',{name:'Bold Name',exact:true}).isVisible(),'Field options remain reachable at 200%');
-    assert.ok(await reading.locator('.reading-field>span:first-of-type').first().evaluate(node=>node.clientWidth>=parseFloat(getComputedStyle(node).fontSize)*4),'Field names retain readable width, not one-letter columns');
+    assert.ok(await reading.locator('.reading-field-name>span').first().evaluate(node=>node.clientWidth>=parseFloat(getComputedStyle(node).fontSize)*4),'Field names retain readable width, not one-letter columns');
     await page.screenshot({path:join(mx.directory,`${engine}-reading-mobile-200.png`)});
     await reading.getByRole('button',{name:'Save my reading settings',exact:true}).scrollIntoViewIfNeeded();
     const saveBounds=await reading.getByRole('button',{name:'Save my reading settings',exact:true}).boundingBox();assert.ok(saveBounds.y>=0&&saveBounds.y+saveBounds.height<=951,'Save is fully reachable without clipping');
