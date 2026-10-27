@@ -16,8 +16,11 @@
   import TrashAdmin from './admin/TrashAdmin.svelte';
   import UpdatesAdmin from './admin/UpdatesAdmin.svelte';
   import UploadLimitsSettings from './admin/UploadLimitsSettings.svelte';
-  let { session, revision = 0, administrationLabel = 'Administration', dashboardLabel = 'Dashboard' }: { session: Session; revision?: number; administrationLabel?: string; dashboardLabel?: string } = $props();
+  let { session, revision = 0, refreshRevision = 0, administrationLabel = 'Administration', dashboardLabel = 'Dashboard' }: { session: Session; revision?: number; refreshRevision?: number; administrationLabel?: string; dashboardLabel?: string } = $props();
   let tab = $state<'accounts' | 'schema' | 'dashboard' | 'trash' | 'deployment' | 'backups' | 'updates' | 'audit'>('accounts');
+  // A live reconnect is not permission to discard a form. Read-only lists may
+  // reload in the background; editor panels remount only on explicit Refresh.
+  const panelRevision = $derived(tab === 'audit' || tab === 'trash' ? revision : refreshRevision);
   onMount(() => { if(new URLSearchParams(location.hash.split('?')[1]||'').has('module')){tab='schema';return;}const stored = localStorage.getItem('mx_admin_tab'); if (stored === 'operations') tab = 'deployment'; else if (stored === 'accounts' || stored === 'schema' || stored === 'dashboard' || stored === 'trash' || stored === 'deployment' || stored === 'backups' || stored === 'updates' || stored === 'audit') tab = stored; });
   function setTab(next: typeof tab) { tab = next; localStorage.setItem('mx_admin_tab', next); }
   onMount(()=>{const open=()=>setTab('updates');window.addEventListener('mx:open-updates',open);return()=>window.removeEventListener('mx:open-updates',open);});
@@ -28,7 +31,7 @@
   <div class="admin-content">
     {#if tab === 'deployment'}<UploadLimitsSettings />{/if}
     {#if tab === 'updates'}<UpdatesAdmin {revision} />{:else}
-      {#key revision}
+      {#key panelRevision}
         {#if tab === 'accounts'}<AccountsAdmin {session} />{:else if tab === 'schema'}<SchemaAdmin {session} />{:else if tab === 'dashboard'}<DashboardAdmin />{:else if tab === 'trash'}<TrashAdmin />{:else}<OperationsAdmin section={tab} />{/if}
       {/key}
     {/if}

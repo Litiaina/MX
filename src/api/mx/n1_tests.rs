@@ -1,5 +1,72 @@
 use super::*;
 
+#[tokio::test]
+async fn queued_upload_keeps_spooled_bytes_unread_and_cancellation_releases_waiter() {
+    let server = Mock::start(vec![Step::new("POST", "/noa/v1/upload/one-shot/queued.bin", StatusCode::CREATED, Vec::new())]).await;
+    let client = client();
+    let slots = Semaphore::new(1);
+    let storage = N1Storage::new(&client, &server.base, "test-fragment-token", 16).with_upload_slots(&slots);
+    let active = slots.acquire().await.unwrap();
+    let mut bytes = std::io::Cursor::new(vec![1, 2, 3]);
+    assert!(tokio::time::timeout(Duration::from_millis(20), storage.upload_reader("queued.bin", "application/octet-stream", &mut bytes, 3)).await.is_err());
+    assert_eq!(bytes.position(), 0, "Do not allocate/read a waiting upload's part");
+    assert_eq!(server.state.lock().unwrap().requests.len(), 0, "Do not start a queued upstream request");
+    drop(active);
+    assert_eq!(slots.available_permits(), 1, "Cancelling a waiter must not leak a permit");
+    storage.upload_reader("queued.bin", "application/octet-stream", &mut bytes, 3).await.unwrap();
+    assert_eq!(bytes.position(), 3);
+    assert_eq!(slots.available_permits(), 1);
+    assert_eq!(server.requests().requests.len(), 1);
+}
+
+#[tokio::test]
+async fn shared_upload_admission_bounds_active_requests_across_storage_handles() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let active = Arc::new(AtomicUsize::new(0));
+    let peak = Arc::new(AtomicUsize::new(0));
+    let app = Router::new().route("/noa/v1/upload/one-shot/bounded.bin", axum::routing::post({
+        let active = active.clone(); let peak = peak.clone();
+        move || { let active = active.clone(); let peak = peak.clone(); async move {
+            let count = active.fetch_add(1, Ordering::SeqCst) + 1;
+            peak.fetch_max(count, Ordering::SeqCst);
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            active.fetch_sub(1, Ordering::SeqCst);
+            StatusCode::CREATED
+        }}
+    }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap(); });
+    let client = client(); let slots = Semaphore::new(2);
+    let first = N1Storage::new(&client, &base, "test", 16).with_upload_slots(&slots);
+    let second = N1Storage::new(&client, &base, "test", 16).with_upload_slots(&slots);
+    let results = futures::future::join_all((0..20).map(|i| {
+        let storage = if i % 2 == 0 { &first } else { &second };
+        storage.upload("bounded.bin", "application/octet-stream", vec![1, 2, 3])
+    })).await;
+    server.abort(); let _ = server.await;
+    assert!(results.iter().all(Result::is_ok));
+    assert_eq!(peak.load(Ordering::SeqCst), 2);
+    assert_eq!(active.load(Ordering::SeqCst), 0);
+    assert_eq!(slots.available_permits(), 2);
+}
+
+#[tokio::test]
+async fn small_upload_preserves_upstream_busy_status_and_retry_header() {
+    for status in [StatusCode::TOO_MANY_REQUESTS,StatusCode::SERVICE_UNAVAILABLE,StatusCode::GATEWAY_TIMEOUT] {
+        let mut step=Step::new("POST","/noa/v1/upload/one-shot/small.bin",status,b"busy".to_vec());
+        step.headers.push(("retry-after","7".into()));
+        let server=Mock::start(vec![step]).await;
+        let client=client();let storage=N1Storage::new(&client,&server.base,"test-fragment-token",16);
+        let error=storage.upload_one_shot("small.bin","application/octet-stream",vec![1,2,3]).await.unwrap_err();
+        let response=super::super::handler::map_mx_error(error);
+        assert_eq!(response.status(),status);assert_eq!(response.headers()["retry-after"],"7");
+        let bytes=to_bytes(response.into_body(),4096).await.unwrap();
+        assert!(String::from_utf8_lossy(&bytes).contains("not confirmed"));
+        assert_eq!(server.requests().requests.len(),1,"Never blindly replay a one-shot upload");
+    }
+}
+
 #[test]
 fn raw_fragment_compatibility_is_exact_and_does_not_rehash_identifiers() {
     let raw = "test-only-fragment";

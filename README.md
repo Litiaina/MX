@@ -11,18 +11,18 @@
 
 </div>
 
-Self-hosted, modular digital workplace platform. **Current candidate: 1.0.0-rc.9.**
+Self-hosted, modular digital workplace platform. **Current candidate: 1.0.0-rc.10.**
 
-RC.9 adds configurable module workspaces: pipelines, directories, operations
-overviews, document libraries, accounting and inventory views. Optional processes
-control approvals; exact-money journals and stock reservations preserve posting
-history. Existing modules keep their current Records view until configured.
+RC.10 hardens concurrent record saves, durable notification delivery and file
+uploads. It fixes a legacy control-number conflict in modules without unique
+fields and preserves unsaved administration forms across background reconnects.
+Existing modules, records, numbering and file references remain intact.
 It remains a release candidate, not a stable-release certification.
 Publication does not force an immediate restart.
 
 This is a candidate for the new 1.0 release line, not the final stable release.
 The earlier 4.x labels remain development history. Read the
-[current candidate notes](docs/releases/1.0.0-rc.9.md) and, for a 4.x deployment,
+[current candidate notes](docs/releases/1.0.0-rc.10.md) and, for a 4.x deployment,
 the [one-time version-reset instructions](docs/releases/1.0.0-rc.1.md#upgrading-a-4x-development-installation)
 before upgrading an existing installation.
 

@@ -437,7 +437,7 @@ fn notifications_are_targeted_atomic_preference_aware_and_not_duplicated_by_repl
     enable(&c, "erp");
     let who = actor("author", 2);
     let r = request(&c, &who, "submit");
-    c.execute_batch("CREATE TRIGGER reject_notification BEFORE INSERT ON mx_notifications BEGIN SELECT RAISE(ABORT,'simulated notification persistence failure'); END;").unwrap();
+    c.execute_batch("CREATE TRIGGER reject_notification BEFORE INSERT ON mx_notification_outbox BEGIN SELECT RAISE(ABORT,'simulated notification persistence failure'); END;").unwrap();
     assert!(execute(&c, "process", "record", &who, &r).is_err());
     assert_eq!(
         c.query_row("SELECT COUNT(*) FROM mx_workflow_events", [], |r| r
@@ -449,6 +449,7 @@ fn notifications_are_targeted_atomic_preference_aware_and_not_duplicated_by_repl
         .unwrap();
     execute(&c, "process", "record", &who, &r).unwrap();
     execute(&c, "process", "record", &who, &r).unwrap();
+    crate::api::notifications::drain_notifications_for_test(&c).unwrap();
     let recipients = c
         .prepare("SELECT recipient_uid FROM mx_notifications ORDER BY recipient_uid")
         .unwrap()
@@ -471,6 +472,7 @@ fn notifications_are_targeted_atomic_preference_aware_and_not_duplicated_by_repl
     )
     .unwrap();
     execute(&c, "process", "record", &who, &request(&c, &who, "submit")).unwrap();
+    crate::api::notifications::drain_notifications_for_test(&c).unwrap();
     assert_eq!(
         c.query_row(
             "SELECT COUNT(*) FROM mx_notifications WHERE recipient_uid='reviewer'",
@@ -491,6 +493,7 @@ fn notifications_are_targeted_atomic_preference_aware_and_not_duplicated_by_repl
         &request(&c, &admin, "approve"),
     )
     .unwrap();
+    crate::api::notifications::drain_notifications_for_test(&c).unwrap();
     assert_eq!(
         c.query_row(
             "SELECT COUNT(*) FROM mx_notifications WHERE recipient_uid='author'",

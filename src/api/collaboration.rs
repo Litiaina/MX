@@ -36,10 +36,10 @@ use crate::{
             office_preview_supported,
         },
         mx::model::FileAttachment,
-        notifications::{NewNotification, ensure_notification_schema, notify_user},
+        notifications::{NewNotification, ensure_notification_schema, notify_user, queue_notifications},
         operations::{self, ClientOperation},
     },
-    db::connector::{SqliteDatabaseError, with_sql_connection},
+    db::connector::{SqliteDatabaseError, with_sql_connection, with_sql_write},
     middleware::auth::Claims,
 };
 
@@ -1731,7 +1731,7 @@ pub async fn send_message(
     let mention_uids = request.mention_uids;
     let record_uids = request.record_uids;
     let result = tokio::task::spawn_blocking(move || -> MessageInsertResult {
-        with_sql_connection(|connection| {
+        with_sql_write(|connection| {
             ensure_collaboration_schema(connection)?;
             operations::ensure_schema(connection)?;
             if member_role(connection, &channel_uid, &sender_uid)?.is_none() { return Err(rusqlite::Error::QueryReturnedNoRows); }
@@ -1772,13 +1772,28 @@ pub async fn send_message(
                 transaction.execute("INSERT OR IGNORE INTO mx_message_record_links(message_uid, record_uid) VALUES (?1, ?2)", params![message_uid, record_uid])?;
             }
             operations::complete(&transaction, &sender_uid, &scope, operation.as_ref(), &message_uid)?;
+            let message = load_message(&transaction, &message_uid, &sender_uid, access_level)?;
+            let mut deliveries = Vec::new();
+            for (member_uid, level) in &members {
+                let mentioned = mentions.contains(member_uid);
+                if *member_uid == sender_uid || level == "muted" || (level == "mentions" && !mentioned) { continue; }
+                deliveries.push(NewNotification {
+                    recipient_uid: member_uid.clone(),
+                    kind: if mentioned {"mention.created"} else {"message.created"}.into(),
+                    title: if mentioned {format!("{} mentioned you",message.sender_name)} else {format!("New message from {}",message.sender_name)},
+                    body: message.body.chars().take(240).collect(), actor_uid: Some(sender_uid.clone()),
+                    target_type: Some("channel".into()), target_uid: Some(message.channel_uid.clone()), module_uid: None,
+                    data: json!({"message_uid":message.uid,"channel_uid":message.channel_uid}),
+                    dedup_key: Some(format!("message:{}:{}",message.uid,mentioned)), mandatory: false,
+                });
+            }
+            queue_notifications(&transaction, deliveries)?;
             transaction.commit()?;
-            let message = load_message(connection, &message_uid, &sender_uid, access_level)?;
             Ok((message, members, mentions, true))
         })
     }).await;
     match result {
-        Ok(Ok((message, members, mentions, created))) => {
+        Ok(Ok((message, members, _mentions, created))) => {
             if !created {
                 return api_json(StatusCode::OK, json!({"uid":message.uid,"message":message}));
             }
@@ -1791,38 +1806,6 @@ pub async fn send_message(
                     message_json.clone(),
                 );
             }
-            let mut deliveries = Vec::new();
-            for (member_uid, level) in members {
-                if member_uid == actor_uid || level == "muted" {
-                    continue;
-                }
-                let mentioned = mentions.contains(&member_uid);
-                if level == "mentions" && !mentioned {
-                    continue;
-                }
-                deliveries.push(notify_user(NewNotification {
-                    recipient_uid: member_uid,
-                    kind: if mentioned {
-                        "mention.created".to_string()
-                    } else {
-                        "message.created".to_string()
-                    },
-                    title: if mentioned {
-                        format!("{} mentioned you", message.sender_name)
-                    } else {
-                        format!("New message from {}", message.sender_name)
-                    },
-                    body: message.body.chars().take(240).collect(),
-                    actor_uid: Some(actor_uid.clone()),
-                    target_type: Some("channel".to_string()),
-                    target_uid: Some(message.channel_uid.clone()),
-                    module_uid: None,
-                    data: json!({"message_uid":message.uid,"channel_uid":message.channel_uid}),
-                    dedup_key: Some(format!("message:{}:{}", message.uid, mentioned)),
-                    mandatory: false,
-                }));
-            }
-            let _ = join_all(deliveries).await;
             api_json(
                 StatusCode::CREATED,
                 json!({"message":message,"uid":event_message_uid}),
@@ -2359,22 +2342,18 @@ pub async fn upload_message_file(
             );
         }
     };
-    if storage
+    if let Err(error) = storage
         .upload_reader(&object_key, &mime_type, &mut bytes.file, file_size as usize)
         .await
-        .is_err()
     {
-        return api_json(
-            StatusCode::BAD_GATEWAY,
-            json!({"response":"N1 could not store the shared file"}),
-        );
+        return crate::api::mx::handler::map_mx_error(error);
     }
     let db_file_uid = file_uid.clone();
     let db_file_name = file_name.clone();
     let db_mime = mime_type.clone();
     let db_object_key = object_key.clone();
     let db_message_uid = message_uid.clone();
-    let inserted = tokio::task::spawn_blocking(move || with_sql_connection(|connection| {
+    let inserted = tokio::task::spawn_blocking(move || with_sql_write(|connection| {
         ensure_collaboration_schema(connection)?;
         let now = chrono::Utc::now().timestamp_millis();
         connection.execute("INSERT INTO mx_message_files(uid, message_uid, file_name, mime_type, size, object_key, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)", params![db_file_uid, db_message_uid, db_file_name, db_mime, file_size, db_object_key, now])?;

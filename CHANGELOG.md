@@ -5,6 +5,45 @@ deployment maintainer's local date.
 
 ## [Unreleased]
 
+## [1.0.0-rc.10] - 2026-10-27
+
+### Concurrent saves and truthful conflicts
+
+- Serialize supported record, workflow, book and notification writes through
+  fair writer admission while retaining independent read connections. Recheck
+  current record/module permission after waiting rather than trusting old grants.
+- Keep record/message/workflow notification work in a durable outbox instead of
+  performing recipient fan-out during foreground saves. Batch delivery, recheck
+  current privacy/preferences and recover pending work after process restart.
+- Preserve ordered public/private live events and route private deliveries only
+  to their account streams. Bound password-verification workers and queueing.
+- Fix hidden legacy control-number collisions on new records even when no field
+  is Unique. Permit repeated non-unique values within/across modules; reconcile
+  missing/stale internal sequence state without changing existing records.
+- Name an explicitly unique field when create or edit rejects a duplicate;
+  retain atomic rollback and log unexpected stored-data constraints privately.
+- Return committed import progress in bounded batches under interactive load;
+  keep invalid-row inspection and never silently skip infrastructure failures.
+
+### File and interface reliability
+
+- Give new record-attachment attempts independent immutable N1 object keys so a
+  losing same-name upload cannot delete or overwrite the winning file's bytes.
+- Admit N1 uploads before reading disk-spooled payloads or opening upstream
+  connections. Default to eight active transfers, configurable from 1 to 64;
+  do not change N1's own source, rate limits or storage encoding.
+- Preserve upstream busy/timeout status and Retry-After on supported upload
+  paths instead of misreporting them as generic 502 errors. Remove the conflicting
+  Linux TCP timer while retaining explicit application upload deadlines.
+- Preserve selected modules and unsaved administration drafts during automatic
+  refresh/live reconnect. Retain explicit Refresh and read-only status refreshes.
+
+Qualification uses real API/WebSocket traffic and N1 on a single project HDD;
+100-user passes are not a 1,000-user or physical power-loss claim. See
+[the exact evidence and limits](docs/concurrency-qualification.md) and
+[RC.10 upgrade instructions](docs/releases/1.0.0-rc.10.md). Existing records,
+relationships, file references and signed-update publisher trust are preserved.
+
 ## [1.0.0-rc.9] - 2026-10-26
 
 ### Configurable module workspaces

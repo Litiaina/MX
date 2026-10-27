@@ -1,5 +1,48 @@
 # MX validation
 
+## RC.10 release qualification — 2026-10-27
+
+The exact versioned release executable passed its final 100-user run: **33,123
+requests, zero unexpected failures**, 10,000 existing records, 1,000 imported
+rows with active editors, workflows/books/privacy, random file bytes and process
+crash recovery. Native tests: **237 passed, zero
+failed, two ignored**. Frontend: **385 passed in 62 files**; production build,
+bundled Office checksums and packaged asset validation passed with zero Svelte
+errors/warnings (the existing Vite large-chunk advisory remains).
+
+The reported new-record conflict was reproduced with no unique fields: the old
+global `(control_year, control_no)` mirror rejected the same value in another
+module. The final RC.10 executable passed repeated non-unique values within and
+across modules, twenty simultaneous matching values, operation replay, stale and
+missing hidden sequence recovery, restart preservation, and explicit unique-field
+rejection on create/PATCH/PUT with field-specific messages and atomic rollback.
+Existing records and their visible numbers were not changed.
+
+The immutable published RC.9 database preserved modules/schema/records/history,
+preferences and privacy after RC.10 startup/restart. Real RC.9-to-RC.10 signed
+activation, final SQLite backup, N1-backed file references, failed-migration
+paired rollback and killed-worker recovery passed in disposable systemd services.
+Chromium, Brave, Firefox and WebKit passed update policy/history UI and actual
+automatic refresh/live reconnect retaining unsaved administrator drafts.
+
+All build/cache/temporary/test/release artifacts stay on the project HDD;
+canonical source and its tracked distribution bundle are updated in the original
+repository. No production deployment or N1 source was changed.
+
+## Pre-versioning 100-user local qualification
+
+The 27 October 2026 investigation reproduced SQLite busy failures in published
+RC.9 with 100 distinct active accounts. After local hardening, two final-binary
+100-user runs passed with actual browser deadlines, real latest-selected N1,
+default N1 policy, file-byte checks and crash recovery. The 1,000-user overload
+attempt failed deadlines: it is not supported-capacity evidence. See the
+[exact workloads, results and limitations](docs/concurrency-qualification.md).
+Native (235 passed, two ignored), frontend (385 passed), four-engine workflow,
+notification, bookkeeping and draft-reconnect regressions passed. File/Office
+browser checks passed with the documented WebKit graphics fallback. These runs
+precede the final RC.10 version and legacy-control fix described above. This is not
+a universal bug-free claim or qualification of different production hardware.
+
 ## RC.9 release qualification — 2026-10-26
 
 The versioned **1.0.0-rc.9** release executable and matching production frontend

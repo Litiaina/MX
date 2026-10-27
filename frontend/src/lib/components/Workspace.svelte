@@ -57,6 +57,7 @@
   });
   let view = $state<View>('dashboard');
   let recordRevision = $state(0); let dashboardRevision = $state(0); let adminRevision = $state(0);
+  let adminRefreshRevision = $state(0);
   let live = $state(false); let mobileOpen = $state(false); let settingsOpen = $state(false);
   let notificationRevision = $state(0); let unreadNotifications = $state(0);
   let collaborationRevision = $state(0);
@@ -180,7 +181,7 @@
 
   $effect(() => {
     if (!autoRefresh) return;
-    const timer = window.setInterval(() => refreshCurrent(), Math.max(10, autoRefresh) * 1000);
+    const timer = window.setInterval(() => refreshCurrent(false), Math.max(10, autoRefresh) * 1000);
     return () => window.clearInterval(timer);
   });
 
@@ -513,11 +514,11 @@
     // reconnect/back-forward cannot resurrect an explicitly closed video.
     history.replaceState(null, '', `${route}${remaining ? `?${remaining}` : ''}`);
   }
-  function refreshCurrent() {
+  function refreshCurrent(explicit = true) {
     if (view === 'records') recordRevision += 1;
     else if (view === 'dashboard') dashboardRevision += 1;
     else if (view === 'drive') dashboardRevision += 1;
-    else if (view === 'admin') adminRevision += 1;
+    else if (view === 'admin') { adminRevision += 1; if (explicit) adminRefreshRevision += 1; }
   }
   function setTheme(value: string) { theme = value; document.documentElement.dataset.theme = value || deployment.appearance.default_theme; }
   function toggleTheme() {
@@ -639,7 +640,7 @@
 <div class="application">
   <WorkspaceSidebar {deployment} {session} {modules} {view} {selectedModuleUid} {selectedModule} {live} open={mobileOpen} onToggle={() => mobileOpen = !mobileOpen} onNavigate={go} onNavigateModule={goModule} onExport={() => exportReport('records', undefined, '', '', selectedModule?.uid || 'mx-default-records')} />
   <main class="main-stage">
-    <WorkspaceTopbar productName={deployment.branding.display_name} {viewTitle} {live} navigationOpen={mobileOpen} {notificationRevision} {unreadNotifications} onToggleNavigation={() => mobileOpen = !mobileOpen} onRefresh={refreshCurrent} onOpenSettings={openDisplaySettings} onToggleTheme={toggleTheme} onOpenAccount={() => go('account')} onSignOut={() => onSessionEnded('Signed out.')} onUnread={(count) => unreadNotifications = count} onOpenNotification={openNotification} />
+    <WorkspaceTopbar productName={deployment.branding.display_name} {viewTitle} {live} navigationOpen={mobileOpen} {notificationRevision} {unreadNotifications} onToggleNavigation={() => mobileOpen = !mobileOpen} onRefresh={() => refreshCurrent(true)} onOpenSettings={openDisplaySettings} onToggleTheme={toggleTheme} onOpenAccount={() => go('account')} onSignOut={() => onSessionEnded('Signed out.')} onUnread={(count) => unreadNotifications = count} onOpenNotification={openNotification} />
     <UpdateNotice isAdmin={session.access_level===0} onOpenUpdates={()=>{localStorage.setItem('mx_admin_tab','updates');window.dispatchEvent(new Event('mx:open-updates'));go('admin');}} />
     {#if view === 'dashboard'}<DashboardView isAdmin={session.access_level === 0} revision={dashboardRevision} dashboardLabel={deployment.terminology.dashboard_label} recordSingular={deployment.terminology.record_singular} recordPlural={deployment.terminology.record_plural} />
     {:else if view === 'records' && selectedModule}{#key selectedModuleUid}<ModuleWorkspace {session} module={selectedModule} modulePermission={selectedModulePermission} openRecordUid={linkedRecordUid} openRequestRevision={linkedRecordRequestRevision} focusLinkedAttachments={linkedRecordFocusAttachments} revision={recordRevision} liveMessage={lastRecordEvent}/>{/key}
@@ -654,7 +655,7 @@
     </section>
     {:else if view === 'collaboration'}<CollaborationView {session} openChannelUid={linkedChannelUid} revision={collaborationRevision} connected={live} liveEvent={lastCollaborationEvent} {callEvents} activeCalls={ongoingCalls} activeCallChannelUid={activeCall?.channelUid || ''} onStartCall={startCollaborationCall} onChannelChanged={setActiveCollaborationChannel} />
     {:else if view === 'drive'}<DriveView accountUid={session.uid} revision={dashboardRevision} uploads={driveUploads} itemUid={linkedDriveItemUid} onDismissLinkedItem={dismissLinkedDriveItem} />
-    {:else if view === 'admin' && session.access_level === 0}<AdminView {session} revision={adminRevision} administrationLabel={deployment.terminology.administration_label} dashboardLabel={deployment.terminology.dashboard_label} />
+    {:else if view === 'admin' && session.access_level === 0}<AdminView {session} revision={adminRevision} refreshRevision={adminRefreshRevision} administrationLabel={deployment.terminology.administration_label} dashboardLabel={deployment.terminology.dashboard_label} />
     {:else}<AccountSecurity {session} {onSessionChanged} {onSessionEnded} />{/if}
   </main>
   {#if mobileOpen}<button class="sidebar-scrim" aria-label="Close menu" onclick={() => mobileOpen = false}></button>{/if}

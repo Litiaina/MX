@@ -9,13 +9,21 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use uuid::Uuid;
 
+mod outbox;
+pub(crate) use outbox::{queue_notifications, queue_record_activity, start_delivery_worker};
+
+#[cfg(test)]
+pub(crate) fn drain_notifications_for_test(c: &rusqlite::Connection) -> rusqlite::Result<usize> {
+    outbox::drain(c).map(|notifications|notifications.len())
+}
+
 use crate::{
     api::{
         live::publish_user_event,
         modules::ensure_module_schema,
         preferences::{UserPreferences, ensure_preferences_schema},
     },
-    db::connector::with_sql_connection,
+    db::connector::{with_sql_connection, with_sql_write},
     middleware::auth::Claims,
 };
 
@@ -35,7 +43,7 @@ pub struct Notification {
     pub read_at: Option<i64>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NewNotification {
     pub recipient_uid: String,
     pub kind: String,
@@ -93,7 +101,8 @@ pub(crate) fn ensure_notification_schema(
             ON mx_notifications(recipient_uid, dedup_key)
             WHERE dedup_key IS NOT NULL;
         "#,
-    )
+    )?;
+    outbox::ensure(connection)
 }
 
 fn api_json(status: StatusCode, body: Value) -> Response {
@@ -175,49 +184,96 @@ pub(crate) fn insert_notification(
     connection: &rusqlite::Connection,
     request: &NewNotification,
 ) -> rusqlite::Result<Option<Notification>> {
-    ensure_notification_schema(connection)?;
-    if !request.mandatory
-        && !notifications_enabled(connection, &request.recipient_uid, &request.kind)?
-    {
-        return Ok(None);
-    }
+    NotificationBatch::default().insert(connection, request)
+}
 
-    let uid = Uuid::new_v4().to_string();
-    let created_at = chrono::Utc::now().timestamp_millis();
-    let data_json = serde_json::to_string(&request.data).unwrap_or_else(|_| "{}".to_string());
-    let inserted = connection.execute(
-        r#"
+/// Caches are confined to ONE transaction/snapshot. Never retain a batch across
+/// commits: changed user preferences and names must take effect on the next job.
+#[derive(Default)]
+struct NotificationBatch {
+    preferences: std::collections::HashMap<(String, String), bool>,
+    actors: std::collections::HashMap<String, Option<String>>,
+}
+
+impl NotificationBatch {
+    fn insert(
+        &mut self,
+        connection: &rusqlite::Connection,
+        request: &NewNotification,
+    ) -> rusqlite::Result<Option<Notification>> {
+        ensure_notification_schema(connection)?;
+        if !request.mandatory {
+            let key = (request.recipient_uid.clone(), request.kind.clone());
+            let enabled = if let Some(enabled) = self.preferences.get(&key) {
+                *enabled
+            } else {
+                let enabled =
+                    notifications_enabled(connection, &request.recipient_uid, &request.kind)?;
+                self.preferences.insert(key, enabled);
+                enabled
+            };
+            if !enabled {
+                return Ok(None);
+            }
+        }
+
+        let uid = Uuid::new_v4().to_string();
+        let created_at = chrono::Utc::now().timestamp_millis();
+        let data_json = serde_json::to_string(&request.data).unwrap_or_else(|_| "{}".to_string());
+        let inserted = connection.execute(
+            r#"
         INSERT OR IGNORE INTO mx_notifications(
             uid, recipient_uid, kind, title, body, actor_uid, target_type,
             target_uid, module_uid, data_json, dedup_key, created_at
         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
         "#,
-        params![
-            uid,
-            request.recipient_uid,
-            request.kind,
-            request.title,
-            request.body,
-            request.actor_uid,
-            request.target_type,
-            request.target_uid,
-            request.module_uid,
-            data_json,
-            request.dedup_key,
-            created_at,
-        ],
-    )?;
-    if inserted == 0 {
-        return Ok(None);
-    }
+            params![
+                uid,
+                request.recipient_uid,
+                request.kind,
+                request.title,
+                request.body,
+                request.actor_uid,
+                request.target_type,
+                request.target_uid,
+                request.module_uid,
+                data_json,
+                request.dedup_key,
+                created_at,
+            ],
+        )?;
+        if inserted == 0 {
+            return Ok(None);
+        }
 
-    let sql = format!(
-        "SELECT {} FROM mx_notifications n LEFT JOIN users u ON u.uid = n.actor_uid WHERE n.uid = ?1",
-        select_columns()
-    );
-    connection
-        .query_row(&sql, params![uid], notification_from_row)
-        .map(Some)
+        let actor_name = if let Some(actor) = &request.actor_uid {
+            if !self.actors.contains_key(actor) {
+                let name = connection
+                    .query_row("SELECT name FROM users WHERE uid=?1", [actor], |r| {
+                        r.get::<_, String>(0)
+                    })
+                    .optional()?;
+                self.actors.insert(actor.clone(), name);
+            }
+            self.actors.get(actor).cloned().flatten()
+        } else {
+            None
+        };
+        Ok(Some(Notification {
+            uid,
+            kind: request.kind.clone(),
+            title: request.title.clone(),
+            body: request.body.clone(),
+            actor_uid: request.actor_uid.clone(),
+            actor_name,
+            target_type: request.target_type.clone(),
+            target_uid: request.target_uid.clone(),
+            module_uid: request.module_uid.clone(),
+            data: request.data.clone(),
+            created_at,
+            read_at: None,
+        }))
+    }
 }
 
 /// Persist a notification before attempting real-time delivery. Callers do not
@@ -226,7 +282,7 @@ pub(crate) fn insert_notification(
 pub async fn notify_user(request: NewNotification) -> Result<Option<Notification>, String> {
     let request_for_db = request.clone();
     let result = tokio::task::spawn_blocking(move || {
-        with_sql_connection(|connection| insert_notification(connection, &request_for_db))
+        with_sql_write(|connection| insert_notification(connection, &request_for_db))
     })
     .await
     .map_err(|error| format!("notification task failed: {error}"))?
@@ -260,56 +316,6 @@ pub async fn notify_module_readers(
     target_uid: String,
     data: Value,
 ) {
-    let lookup_module = module_uid.clone();
-    let lookup_actor = actor_uid.clone();
-    let lookup_record = target_uid.clone();
-    let lookup_field = data
-        .get("attachment_field_uid")
-        .and_then(Value::as_str)
-        .map(str::to_owned);
-    let recipients = tokio::task::spawn_blocking(move || {
-        with_sql_connection(|connection| {
-            ensure_module_schema(connection)?;
-            let mut statement = connection.prepare(
-                r#"SELECT u.uid FROM users u
-                   JOIN mx_module_permissions role
-                     ON role.access_level=u.access_level AND role.module_uid=?1
-                   LEFT JOIN mx_module_account_permissions account
-                     ON account.module_uid=?1 AND account.user_uid=u.uid
-                   JOIN mx_modules module ON module.uid=?1 AND module.active=1
-                   WHERE role.can_read=1
-                     AND (u.access_level=0 OR account.can_read=1)
-                     AND u.uid<>?2"#,
-            )?;
-            let recipients = statement
-                .query_map(params![lookup_module, lookup_actor], |row| {
-                    row.get::<_, String>(0)
-                })?
-                .collect::<Result<Vec<_>, _>>()?;
-            recipients
-                .into_iter()
-                .filter_map(|uid| {
-                    match crate::api::mx::privacy::level(connection, &uid).and_then(|level| {
-                        crate::api::mx::privacy::field_record_allowed(
-                            connection,
-                            &lookup_record,
-                            lookup_field.as_deref().unwrap_or(""),
-                            &uid,
-                            level,
-                        )
-                    }) {
-                        Ok(true) => Some(Ok(uid)),
-                        Ok(false) => None,
-                        Err(e) => Some(Err(e)),
-                    }
-                })
-                .collect::<rusqlite::Result<Vec<_>>>()
-        })
-    })
-    .await;
-    let Ok(Ok(recipients)) = recipients else {
-        return;
-    };
     let dedup_key = if kind == "record.updated" || kind.starts_with("attachment.") {
         Some(format!(
             "record-activity:{kind}:{module_uid}:{target_uid}:{}:{actor_uid}:{}",
@@ -321,22 +327,123 @@ pub async fn notify_module_readers(
     } else {
         None
     };
-    for recipient_uid in recipients {
-        let _ = notify_user(NewNotification {
-            recipient_uid,
-            kind: kind.clone(),
-            title: title.clone(),
-            body: body.clone(),
-            actor_uid: Some(actor_uid.clone()),
-            target_type: Some("record".to_string()),
-            target_uid: Some(target_uid.clone()),
-            module_uid: Some(module_uid.clone()),
-            data: data.clone(),
-            dedup_key: dedup_key.clone(),
-            mandatory: false,
-        })
-        .await;
+    let request = NewNotification {
+        recipient_uid: String::new(),
+        kind,
+        title,
+        body,
+        actor_uid: Some(actor_uid),
+        target_type: Some("record".to_owned()),
+        target_uid: Some(target_uid),
+        module_uid: Some(module_uid),
+        data,
+        dedup_key,
+        mandatory: false,
+    };
+    let result = tokio::task::spawn_blocking(move || {
+        with_sql_write(|connection| outbox::enqueue_module(connection, request))
+    })
+    .await;
+    match result {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => tracing::error!(%error, "Module notification fan-out failed"),
+        Err(error) => tracing::error!(%error, "Module notification task failed"),
     }
+}
+
+// One activity is one atomic batch, not one pool checkout + autocommit per
+// recipient. At 100 active editors the previous fan-out could contend with
+// foreground saves through tens of thousands of individual write transactions.
+// Authorization and preferences are rechecked in the SAME write snapshot.
+// Publish only after the whole batch commits; never announce rolled-back rows.
+#[cfg(test)]
+fn insert_module_notifications(
+    connection: &rusqlite::Connection,
+    request: &NewNotification,
+) -> rusqlite::Result<Vec<(String, Notification)>> {
+    ensure_module_schema(connection)?;
+    ensure_notification_schema(connection)?;
+    ensure_preferences_schema(connection)?;
+    let transaction =
+        rusqlite::Transaction::new_unchecked(connection, rusqlite::TransactionBehavior::Immediate)?;
+    let notifications = insert_module_notifications_in_transaction(
+        &transaction,
+        request,
+        &mut NotificationBatch::default(),
+    )?;
+    transaction.commit()?;
+    Ok(notifications)
+}
+
+fn insert_module_notifications_in_transaction(
+    transaction: &rusqlite::Connection,
+    request: &NewNotification,
+    batch: &mut NotificationBatch,
+) -> rusqlite::Result<Vec<(String, Notification)>> {
+    let lookup_module = request.module_uid.as_deref().unwrap_or("");
+    let lookup_actor = request.actor_uid.as_deref().unwrap_or("");
+    let lookup_record = request.target_uid.as_deref().unwrap_or("");
+    let lookup_field = request
+        .data
+        .get("attachment_field_uid")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    // Load shared record/field policy once per activity, not once per account.
+    // The whole batch still uses the same current authorization snapshot.
+    let policy: Option<(String, Option<String>)> = transaction.query_row(
+        "SELECT COALESCE(json_extract(m.config_json,'$.record_visibility'),'module'),o.creator_uid FROM mx_records r JOIN mx_modules m ON m.uid=r.module_uid LEFT JOIN mx_record_owners o ON o.record_uid=r.uid WHERE r.uid=?1 AND m.uid=?2",
+        params![lookup_record,lookup_module],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
+    let Some((record_scope, creator)) = policy else {
+        return Ok(Vec::new());
+    };
+    let field_scope = if let Some(field) = lookup_field.as_deref().filter(|f| !f.is_empty()) {
+        let scope: Option<String> = transaction.query_row("SELECT COALESCE(json_extract(config_json,'$.access_scope'),'module') FROM mx_fields WHERE uid=?1 AND module_uid=?2",params![field,lookup_module],|r|r.get(0)).optional()?;
+        let Some(scope) = scope else {
+            return Ok(Vec::new());
+        };
+        scope
+    } else {
+        "module".to_owned()
+    };
+    let recipients = {
+        let mut statement = transaction.prepare(
+            r#"SELECT u.uid,u.access_level FROM users u
+                   JOIN mx_module_permissions role
+                     ON role.access_level=u.access_level AND role.module_uid=?1
+                   LEFT JOIN mx_module_account_permissions account
+                     ON account.module_uid=?1 AND account.user_uid=u.uid
+                   JOIN mx_modules module ON module.uid=?1 AND module.active=1
+                   WHERE role.can_read=1
+                     AND (u.access_level=0 OR account.can_read=1)
+                     AND u.uid<>?2
+                     AND (?3 IS NULL OR NOT EXISTS(
+                         SELECT 1 FROM mx_notifications existing
+                         WHERE existing.recipient_uid=u.uid AND existing.dedup_key=?3
+                     ))"#,
+        )?;
+        let recipients = statement
+            .query_map(params![lookup_module, lookup_actor, request.dedup_key], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        recipients
+    };
+    let mut notifications = Vec::new();
+    for (recipient_uid, level) in recipients {
+        let owns = creator.as_deref() == Some(recipient_uid.as_str());
+        if level != 0
+            && ((record_scope != "module" && !owns)
+                || (field_scope != "module" && !(field_scope == "creator" && owns)))
+        {
+            continue;
+        }
+        let mut request = request.clone();
+        request.recipient_uid = recipient_uid.clone();
+        if let Some(notification) = batch.insert(&transaction, &request)? {
+            notifications.push((recipient_uid, notification));
+        }
+    }
+    Ok(notifications)
 }
 
 pub async fn list_notifications(
@@ -513,6 +620,82 @@ pub async fn mark_all_notifications_read(claims: Claims) -> Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    pub(super) fn fanout_fixture() -> rusqlite::Connection {
+        let c = rusqlite::Connection::open_in_memory().unwrap();
+        c.execute_batch("PRAGMA foreign_keys=ON; CREATE TABLE users(uid TEXT PRIMARY KEY,access_level INTEGER NOT NULL,name TEXT NOT NULL,email TEXT NOT NULL);").unwrap();
+        crate::db::schema::initialize(&c).unwrap();
+        c.execute_batch("INSERT INTO mx_modules(uid,slug,name,singular_name,created_at,updated_at) VALUES('capacity','capacity','Capacity','Record',0,0);
+            INSERT INTO mx_module_permissions(module_uid,access_level,can_read) VALUES('capacity',0,1),('capacity',2,1);
+            INSERT INTO users VALUES('actor',2,'Actor','actor@test'),('admin',0,'Admin','admin@test'),('reader',2,'Reader','reader@test'),('muted',2,'Muted','muted@test'),('revoked',2,'Revoked','revoked@test');
+            INSERT INTO mx_module_account_permissions(module_uid,user_uid,can_read,updated_at) VALUES('capacity','reader',1,0),('capacity','muted',1,0),('capacity','revoked',0,0);
+            INSERT INTO mx_user_preferences(user_uid,preferences_json,updated_at) VALUES('muted','{\"notifications\":{\"record_created\":false}}',0);
+            INSERT INTO mx_records(uid,module_uid,control_year,control_no,date,office,requestor,subject,routed_to_div,remarks) VALUES('record','capacity',0,1,'','','','','','');
+            INSERT INTO mx_record_owners VALUES('record','reader','test');").unwrap();
+        c
+    }
+
+    fn activity() -> NewNotification {
+        NewNotification {
+            recipient_uid: String::new(),
+            kind: "record.created".into(),
+            title: "Created".into(),
+            body: "A record changed".into(),
+            actor_uid: Some("actor".into()),
+            target_type: Some("record".into()),
+            target_uid: Some("record".into()),
+            module_uid: Some("capacity".into()),
+            data: json!({}),
+            dedup_key: Some("test-event".into()),
+            mandatory: false,
+        }
+    }
+
+    #[test]
+    fn module_fanout_is_atomic_private_preference_aware_and_deduplicated() {
+        let c = fanout_fixture();
+        let sent = insert_module_notifications(&c, &activity()).unwrap();
+        let mut recipients = sent.iter().map(|(uid, _)| uid.as_str()).collect::<Vec<_>>();
+        recipients.sort_unstable();
+        assert_eq!(recipients, ["admin", "reader"]);
+        assert!(
+            insert_module_notifications(&c, &activity())
+                .unwrap()
+                .is_empty()
+        );
+        c.execute_batch(
+            "DELETE FROM mx_notifications;
+            UPDATE mx_modules SET config_json='{\"record_visibility\":\"creator\"}';
+            UPDATE mx_record_owners SET creator_uid='muted';",
+        )
+        .unwrap();
+        assert_eq!(
+            insert_module_notifications(&c, &activity())
+                .unwrap()
+                .iter()
+                .map(|(u, _)| u.as_str())
+                .collect::<Vec<_>>(),
+            ["admin"]
+        );
+    }
+
+    #[test]
+    fn failed_module_fanout_rolls_back_every_recipient() {
+        let c = fanout_fixture();
+        c.execute_batch("CREATE TRIGGER fail_notification BEFORE INSERT ON mx_notifications WHEN NEW.recipient_uid='reader' BEGIN SELECT RAISE(ABORT,'injected fanout failure'); END;").unwrap();
+        assert!(insert_module_notifications(&c, &activity()).is_err());
+        assert_eq!(
+            c.query_row("SELECT count(*) FROM mx_notifications", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+        c.execute_batch("DROP TRIGGER fail_notification;").unwrap();
+        assert_eq!(
+            insert_module_notifications(&c, &activity()).unwrap().len(),
+            2
+        );
+    }
 
     #[test]
     fn notification_preference_routes_known_events() {

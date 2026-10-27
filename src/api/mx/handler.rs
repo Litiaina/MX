@@ -22,7 +22,7 @@ use reqwest::Client;
 use rusqlite::{OptionalExtension, params, params_from_iter, types::Value as SqlValue};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value as JsonValue, json};
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, Semaphore};
 use uuid::Uuid;
 
 use crate::{
@@ -40,7 +40,7 @@ use crate::{
         notifications::notify_module_readers,
     },
     config::load_config::CONFIG,
-    db::connector::{SqliteDatabaseError, with_sql_connection},
+    db::connector::{SqliteDatabaseError, with_sql_connection, with_sql_write},
     middleware::auth::Claims,
 };
 
@@ -63,6 +63,7 @@ const DEFAULT_PAGE_LIMIT: usize = 256;
 const MAX_PAGE_LIMIT: usize = 256;
 
 static N1_CLIENT: OnceLock<Client> = OnceLock::new();
+static N1_UPLOAD_SLOTS: OnceLock<Semaphore> = OnceLock::new();
 static N1_TOKEN_CACHE: OnceLock<RwLock<Option<CachedN1Token>>> = OnceLock::new();
 
 const RECORD_MEDIA_TICKET_TTL: Duration = Duration::from_secs(5 * 60);
@@ -86,6 +87,10 @@ fn record_media_tickets() -> &'static Mutex<HashMap<String, RecordMediaTicket>> 
 pub enum MxOperationError {
     Sqlite(SqliteError),
     N1(String),
+    N1Write {
+        status: StatusCode,
+        retry_after: Option<HeaderValue>,
+    },
     N1Stream {
         status: StatusCode,
         retry_after: Option<HeaderValue>,
@@ -281,6 +286,17 @@ fn mx_access_denied() -> Response {
 
 pub(crate) fn map_mx_error(error: MxOperationError) -> Response {
     match error {
+        MxOperationError::N1Write { status, retry_after } => {
+            let message = if status == StatusCode::TOO_MANY_REQUESTS {
+                "Object storage is limiting requests. This upload is not confirmed; keep the file selected and retry shortly."
+            } else {
+                "Object storage is busy or temporarily unavailable. This upload is not confirmed; keep the file selected and retry shortly."
+            };
+            let mut response=api_json(status,json!({"response":message,"retryable":true}));
+            response.headers_mut().insert(CACHE_CONTROL,HeaderValue::from_static("no-store"));
+            if let Some(value)=retry_after {response.headers_mut().insert(axum::http::header::RETRY_AFTER,value);}
+            response
+        }
         MxOperationError::N1Stream {
             status,
             retry_after,
@@ -456,12 +472,21 @@ fn n1_client() -> Result<&'static Client, MxOperationError> {
         return Ok(client);
     }
 
-    let client = Client::builder()
+    let builder = Client::builder()
         .danger_accept_invalid_certs(CONFIG.n1.insecure_tls)
         .connect_timeout(Duration::from_secs(10))
         // Per-read, not a total download deadline: long range/media streams
         // may remain open as long as bytes keep arriving.
-        .read_timeout(Duration::from_secs(60))
+        .read_timeout(Duration::from_secs(60));
+    // reqwest defaults TCP_USER_TIMEOUT to 30s on Linux. N1 can deliberately
+    // stop reading a queued upload's body while waiting for disk admission.
+    // A closed TCP window is backpressure, not a failed durable write. Do not
+    // let the kernel discard that connection before our explicit request/read
+    // deadlines; retain the OS TCP policy instead. Never blindly replay a
+    // one-shot write whose outcome is uncertain.
+    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+    let builder = builder.tcp_user_timeout(None);
+    let client = builder
         .build()
         .map_err(|error| {
             MxOperationError::N1(format!("failed to build N1 HTTP client: {error}"))
@@ -625,13 +650,18 @@ fn configured_attachment_object_key(
     format!("{}/{}", directory_path.trim_end_matches('/'), visible_name)
 }
 
+fn isolated_attachment_object_key(logical_key: &str, upload_uid: &str) -> String {
+    let (directory,name)=logical_key.rsplit_once('/').unwrap_or(("attachments",logical_key));
+    format!("{directory}/.mx-objects/{upload_uid}/{name}")
+}
+
 pub(crate) fn n1_storage(token: &str) -> Result<super::n1::N1Storage<'_>, MxOperationError> {
     Ok(super::n1::N1Storage::new(
         n1_client()?,
         &n1_base_url()?,
         token,
         CONFIG.n1.multipart_part_size_mb,
-    ))
+    ).with_upload_slots(N1_UPLOAD_SLOTS.get_or_init(|| Semaphore::new(CONFIG.n1.max_concurrent_uploads))))
 }
 
 pub(crate) async fn n1_upload(
@@ -1785,7 +1815,7 @@ async fn execute_insert_attachment(
 ) -> Result<i64, MxOperationError> {
     let database_result =
         tokio::task::spawn_blocking(move || -> Result<i64, SqliteDatabaseError> {
-            with_sql_connection(|connection| {
+            with_sql_write(|connection| {
                 ensure_mx_record_schema(connection)?;
                 ensure_attachment_fields_schema(connection)?;
                 ensure_record_collaboration_schema(connection)?;
@@ -1806,6 +1836,8 @@ async fn execute_insert_attachment(
                     return Err(rusqlite::Error::InvalidParameterName("invalid attachment base revision".to_string()));
                 }
                 if let Some(field)=attachment.attachment_field_uid.as_deref(){super::form_rules::validate_attachment(&transaction,&entry_uid,field,Some(base_revision))?;}
+                let duplicate: bool = transaction.query_row("SELECT EXISTS(SELECT 1 FROM mx_attachments WHERE entry_uid=?1 AND attachment_field_uid=?2 AND file_name=?3 COLLATE NOCASE)",params![entry_uid,attachment.attachment_field_uid,attachment.file_name],|r|r.get(0))?;
+                if duplicate {return Err(rusqlite::Error::InvalidParameterName("Another upload already added an attachment with this filename. The saved file was kept unchanged.".into()));}
                 let revision: i64 = transaction.query_row(
                     "UPDATE mx_records SET revision=revision+1 WHERE uid=?1 AND deleted_at IS NULL RETURNING revision",
                     params![entry_uid],
@@ -1937,7 +1969,7 @@ async fn execute_delete_attachment_metadata(
 ) -> Result<i64, SqliteError> {
     let database_result =
         tokio::task::spawn_blocking(move || -> Result<i64, SqliteDatabaseError> {
-            with_sql_connection(|connection| {
+            with_sql_write(|connection| {
                 ensure_mx_record_schema(connection)?;
                 ensure_record_collaboration_schema(connection)?;
                 let transaction = rusqlite::Transaction::new_unchecked(
@@ -2137,7 +2169,12 @@ pub async fn execute_upload_mx_attachment(
         sanitize_namespace_component(&field.storage_name, "Attachments")
     );
 
-    let object_key = configured_attachment_object_key(&storage, &directory_path, &file_name);
+    let upload_uid = Uuid::new_v4().to_string();
+    let logical_key = configured_attachment_object_key(&storage, &directory_path, &file_name);
+    // Each attempt owns its bytes. A loser may clean up ONLY its own object,
+    // never a shared filename that another concurrent request just committed.
+    // Existing stored keys are untouched; configured folders/prefixes remain.
+    let object_key = isolated_attachment_object_key(&logical_key, &upload_uid);
     if execute_attachment_object_key_exists(object_key.clone()).await? {
         return Err(MxOperationError::InvalidRequest(format!(
             "N1 storage path collision for '{object_key}'. Add a unique filename prefix field, another folder field, or rename the file."
@@ -2151,7 +2188,7 @@ pub async fn execute_upload_mx_attachment(
         .await?;
 
     let attachment = FileAttachment {
-        uid: Uuid::new_v4().to_string(),
+        uid: upload_uid,
         file_name,
         mime_type,
         size,

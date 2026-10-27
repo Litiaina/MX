@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt};
+use tokio::sync::{Semaphore, SemaphorePermit};
 
 #[cfg(test)]
 #[path = "n1_tests.rs"]
@@ -45,6 +46,7 @@ pub(crate) struct N1Storage<'a> {
     base_url: String,
     token: &'a str,
     part_size_mb: usize,
+    upload_slots: Option<&'a Semaphore>,
 }
 
 fn multipart_plan(total_size: usize, configured_part_size_mb: usize) -> (usize, usize) {
@@ -56,11 +58,32 @@ fn multipart_plan(total_size: usize, configured_part_size_mb: usize) -> (usize, 
     (part_size, expected_parts)
 }
 
+fn transient_write_error(response: &reqwest::Response) -> Option<MxOperationError> {
+    matches!(response.status(),StatusCode::TOO_MANY_REQUESTS|StatusCode::SERVICE_UNAVAILABLE|StatusCode::GATEWAY_TIMEOUT)
+        .then(||MxOperationError::N1Write {status:response.status(),retry_after:response.headers().get(axum::http::header::RETRY_AFTER).cloned()})
+}
+
 impl<'a> N1Storage<'a> {
+    pub(super) fn with_upload_slots(mut self, slots: &'a Semaphore) -> Self {
+        self.upload_slots = Some(slots);
+        self
+    }
+
+    async fn admit_upload(&self) -> Result<Option<SemaphorePermit<'a>>, MxOperationError> {
+        let Some(slots) = self.upload_slots else { return Ok(None); };
+        tokio::time::timeout(Duration::from_secs(300), slots.acquire())
+            .await.ok().and_then(Result::ok).map(Some)
+            .ok_or_else(|| MxOperationError::N1Write {
+                status: StatusCode::SERVICE_UNAVAILABLE,
+                retry_after: Some(axum::http::HeaderValue::from_static("1")),
+            })
+    }
+
     pub(crate) async fn upload_batch(
         &self,
         objects: Vec<(String, String, Vec<u8>)>,
     ) -> Result<serde_json::Value, MxOperationError> {
+        let _slot = self.admit_upload().await?;
         let boundary = format!("mx-{}", uuid::Uuid::new_v4().simple());
         let mut body = Vec::new();
         for (key, mime, bytes) in objects {
@@ -118,6 +141,7 @@ impl<'a> N1Storage<'a> {
     async fn durable_json(
         response: reqwest::Response,
     ) -> Result<serde_json::Value, MxOperationError> {
+        if let Some(error)=transient_write_error(&response) {return Err(error);}
         if !response.status().is_success() {
             return Err(MxOperationError::N1(format!(
                 "Durable multipart returned HTTP {}",
@@ -141,6 +165,9 @@ impl<'a> N1Storage<'a> {
     ) -> Result<serde_json::Value, MxOperationError> {
         let deleting = method == reqwest::Method::DELETE;
         let uploading_part = method == reqwest::Method::PUT;
+        let _slot = if uploading_part || method == reqwest::Method::POST {
+            self.admit_upload().await?
+        } else { None };
         if version.is_empty()
             || !version
                 .bytes()
@@ -206,6 +233,7 @@ impl<'a> N1Storage<'a> {
             base_url: base_url.trim_end_matches('/').to_string(),
             token,
             part_size_mb,
+            upload_slots: None,
         }
     }
 
@@ -237,12 +265,13 @@ impl<'a> N1Storage<'a> {
             .send()
             .await
             .map_err(|error| {
-                MxOperationError::N1(format!("failed to upload '{object_key}' to N1: {error}"))
+                MxOperationError::N1(format!("failed to upload '{object_key}' to N1: {error:?}"))
             })?;
 
         let status = response.status();
 
         if !status.is_success() {
+            if let Some(error)=transient_write_error(&response) {return Err(error);}
             let text = response.text().await.unwrap_or_default();
 
             return Err(MxOperationError::N1(format!(
@@ -286,6 +315,9 @@ impl<'a> N1Storage<'a> {
         mut reader: R,
         size: usize,
     ) -> Result<(), MxOperationError> {
+        // Wait before reading/allocating a part: queued disk-spooled record and
+        // chat uploads must not occupy an upstream socket or a large RAM buffer.
+        let _slot = self.admit_upload().await?;
         let (part_size, _) = multipart_plan(size, self.part_size_mb);
         if size <= part_size {
             let mut bytes = vec![0; size];
@@ -331,6 +363,7 @@ impl<'a> N1Storage<'a> {
 
         let status = response.status();
         if !status.is_success() {
+            if let Some(error)=transient_write_error(&response) {return Err(error);}
             let text = response.text().await.unwrap_or_default();
             return Err(MxOperationError::N1(format!(
                 "N1 multipart initialization failed for '{object_key}' with HTTP {status}: {text}"
@@ -531,6 +564,7 @@ impl<'a> N1Storage<'a> {
         mime_type: &str,
         bytes: Vec<u8>,
     ) -> Result<(), MxOperationError> {
+        let _slot = self.admit_upload().await?;
         let (part_size, _) = multipart_plan(bytes.len(), self.part_size_mb);
         if bytes.len() > part_size {
             self.upload_multipart(object_key, mime_type, bytes).await

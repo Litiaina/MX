@@ -11,7 +11,7 @@ use serde_json::json;
 use uuid::Uuid;
 
 use crate::{
-    db::connector::{SqliteDatabaseError, with_sql_connection},
+    db::connector::{SqliteDatabaseError, with_sql_connection, with_sql_write},
     middleware::auth::Claims,
 };
 
@@ -355,7 +355,7 @@ pub async fn get_audit_log(claims: Claims, Query(query): Query<AuditQuery>) -> R
 async fn record_audit_event(write: AuditWrite) -> Result<(), String> {
     let database_result =
         tokio::task::spawn_blocking(move || -> Result<(), SqliteDatabaseError> {
-            with_sql_connection(|connection| {
+            with_sql_write(|connection| {
                 ensure_audit_schema(connection)?;
 
                 let actor_name: Option<String> = connection

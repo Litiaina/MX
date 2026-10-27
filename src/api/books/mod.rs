@@ -6,7 +6,7 @@ use crate::{
         mx::privacy,
         operations::{self, ClientOperation},
     },
-    db::connector::{SqliteDatabaseError, with_sql_connection},
+    db::connector::{SqliteDatabaseError, with_sql_connection, with_sql_write},
     middleware::auth::{Claims, auth},
 };
 use axum::{
@@ -525,8 +525,8 @@ pub(crate) fn prevent_delete(c: &Connection, m: &str) -> rusqlite::Result<()> {
     }
     Ok(())
 }
-async fn run(f: impl FnOnce(&Connection) -> rusqlite::Result<Value> + Send + 'static) -> Response {
-    match tokio::task::spawn_blocking(move || with_sql_connection(f)).await {
+async fn run(write: bool, f: impl FnOnce(&Connection) -> rusqlite::Result<Value> + Send + 'static) -> Response {
+    match tokio::task::spawn_blocking(move || if write { with_sql_write(f) } else { with_sql_connection(f) }).await {
         Ok(Ok(v)) => (StatusCode::OK, Json(v)).into_response(),
         Ok(Err(SqliteDatabaseError::Sqlite(rusqlite::Error::InvalidParameterName(e))))
             if e.starts_with("MX_BOOK_") || e.starts_with("MX_OPERATION:") =>
@@ -548,20 +548,20 @@ async fn run(f: impl FnOnce(&Connection) -> rusqlite::Result<Value> + Send + 'st
     }
 }
 async fn get_info(a: Claims, Path(m): Path<String>) -> Response {
-    run(move |c| info(c, &m, &a)).await
+    run(false, move |c| info(c, &m, &a)).await
 }
 async fn put_info(a: Claims, Path(m): Path<String>, Json(v): Json<Configuration>) -> Response {
-    run(move |c| save(c, &m, &a, v)).await
+    run(true, move |c| save(c, &m, &a, v)).await
 }
 async fn command(a: Claims, Path(m): Path<String>, Json(v): Json<Command>) -> Response {
-    run(move |c| execute(c, &m, &a, &v)).await
+    run(true, move |c| execute(c, &m, &a, &v)).await
 }
 async fn list(
     a: Claims,
     Path((m, kind)): Path<(String, String)>,
     Query(page): Query<Page>,
 ) -> Response {
-    run(move |c| {
+    run(false, move |c| {
         let tx = c.unchecked_transaction()?;
         let cfg = load(&tx, &m)?;
         operator(&tx, &m, &a, &cfg.settings)?;
@@ -587,7 +587,7 @@ async fn list(
     .await
 }
 async fn detail(a: Claims, Path((m, uid)): Path<(String, String)>) -> Response {
-    run(move |c| {
+    run(false, move |c| {
         let tx = c.unchecked_transaction()?;
         let cfg = load(&tx, &m)?;
         operator(&tx, &m, &a, &cfg.settings)?;

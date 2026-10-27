@@ -38,7 +38,8 @@ pub fn init_default_config<P: AsRef<Path>>(path: P) -> io::Result<()> {
         .set("insecure_tls", "true")
         .set("attachment_max_size_mb", "50")
         .set("collaboration_file_max_size_mb", "100")
-        .set("multipart_part_size_mb", "16");
+        .set("multipart_part_size_mb", "16")
+        .set("max_concurrent_uploads", "8");
 
     // Optional WebRTC traversal. Leave blank for directly reachable/LAN peers;
     // configure deployment-owned STUN/TURN endpoints for internet calls.

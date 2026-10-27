@@ -29,7 +29,7 @@ does not empty N1 trash, reset fragments or replace operator credentials.
 
 Administrators can select fields from each module to build that module's base N1 hierarchy. A field from one module cannot be reused accidentally by another module's layout.
 
-A File Attachment field automatically contributes its own final folder segment.
+A File Attachment field automatically contributes its own named folder segment.
 
 Example:
 
@@ -49,7 +49,7 @@ Base folder 1: Office
 Base folder 2: Year
 ```
 
-Result:
+Logical grouping (filenames displayed by MX):
 
 ```text
 records/
@@ -68,6 +68,22 @@ If no schema-derived base folders are configured, MX can use the record identity
 ```text
 records/<record-uid>/<File Attachment field>/filename.ext
 ```
+
+### Concurrent-upload safety (RC.10)
+
+New record attachments retain their configured base folders and filename prefix,
+but their physical object key includes a unique internal directory:
+
+```text
+<configured base>/<attachment field>/.mx-objects/<attachment-uid>/<configured filename.ext>
+```
+
+This isolates simultaneous attempts: a failed upload can clean up only its own
+object, never overwrite or delete another user's successful attachment. MX also
+rechecks same-field filename uniqueness in the final metadata transaction.
+Displayed/downloaded filenames are unchanged. Existing keys, file bytes and
+historical references are not moved; consumers should use MX attachment APIs
+rather than construct N1 object keys from labels.
 
 ### Frozen record namespace
 

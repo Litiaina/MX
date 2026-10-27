@@ -184,6 +184,7 @@ async fn server() {
     });
 
     initialize_sql_db().await;
+    api::notifications::start_delivery_worker();
     // Do not let background storage cleanup run against a candidate database
     // until the independent updater has accepted activation.
     tokio::spawn(async {

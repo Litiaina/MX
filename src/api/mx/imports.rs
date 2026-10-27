@@ -11,7 +11,7 @@ use crate::{
         modules::{ensure_module_schema, module_can_for_user_initialized},
         operations::ClientOperation,
     },
-    db::connector::{SqliteDatabaseError, with_sql_connection},
+    db::connector::{SqliteDatabaseError, with_sql_connection, with_sql_write},
     middleware::auth::{Claims, auth},
 };
 use axum::{
@@ -516,7 +516,12 @@ fn run(
         })?
         .collect::<rusqlite::Result<Vec<_>>>()
     })?;
-    for (sheet, row, values, mut errors, operation) in pending {
+    let started = std::time::Instant::now();
+    for (index, (sheet, row, values, mut errors, operation)) in pending.into_iter().enumerate() {
+        // Under concurrent interactive writes, twenty individually admitted
+        // rows can exceed the client's request deadline. Always make progress,
+        // then return committed counters promptly; remaining rows stay pending.
+        if index > 0 && started.elapsed() >= std::time::Duration::from_secs(1) { break; }
         if errors.is_empty() {
             let operation =
                 ClientOperation::parse(Some(operation), &json!(values)).map_err(invalid)?;
@@ -528,12 +533,12 @@ fn run(
                 Err(error)=>return Err(error), // infrastructure failures pause, never skip data
             }
         }
-        with_sql_connection(|c| {
+        with_sql_write(|c| {
             c.execute("UPDATE mx_import_rows SET state='failed',errors_json=?1 WHERE job_uid=?2 AND sheet=?3 AND source_row=?4 AND state='pending'",params![json!(errors).to_string(),uid,sheet,row])?;
             Ok(())
         })?;
     }
-    with_sql_connection(|c| {
+    with_sql_write(|c| {
         let j = job(c, uid)?;
         c.execute(
             "UPDATE mx_import_jobs SET state=?1 WHERE uid=?2",

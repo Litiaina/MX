@@ -25,10 +25,10 @@ use crate::{
                 load_module_fields_initialized_db,
             },
         },
-        notifications::notify_module_readers,
+        notifications::queue_record_activity,
         operations::{self, ClientOperation},
     },
-    db::connector::{SqliteDatabaseError, with_sql_connection},
+    db::connector::{SqliteDatabaseError, with_sql_connection, with_sql_write},
     middleware::auth::Claims,
 };
 
@@ -761,6 +761,7 @@ fn write_dynamic_values(
             let normalized = value.normalized_unique();
 
             if !normalized.is_empty() {
+                require_unique_field_value(transaction, record_uid, field, &normalized)?;
                 transaction.execute(
                     r#"
                     INSERT INTO mx_unique_values (
@@ -775,6 +776,26 @@ fn write_dynamic_values(
         }
     }
 
+    Ok(())
+}
+
+fn require_unique_field_value(
+    connection: &rusqlite::Connection,
+    record_uid: &str,
+    field: &FieldDefinition,
+    normalized: &str,
+) -> rusqlite::Result<()> {
+    let exists: bool = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM mx_unique_values WHERE field_uid=?1 AND normalized_value=?2 AND record_uid<>?3)",
+        params![field.uid, normalized, record_uid],
+        |row| row.get(0),
+    )?;
+    if exists {
+        return Err(rusqlite::Error::InvalidParameterName(format!(
+            "MX_UNIQUE:{} must be unique. This value is already used by another record. Change it or ask an administrator to review this field's Unique setting. Your changes were not saved.",
+            field.label
+        )));
+    }
     Ok(())
 }
 
@@ -1020,6 +1041,7 @@ fn write_single_dynamic_value(
     if field.unique_value && field.field_type != "auto_number" {
         let normalized = value.normalized_unique();
         if !normalized.is_empty() {
+            require_unique_field_value(transaction, record_uid, field, &normalized)?;
             transaction.execute(
                 r#"
                 INSERT INTO mx_unique_values (
@@ -1177,6 +1199,16 @@ fn rule_restore_values(
     Ok(restored)
 }
 
+// Admission can wait behind another commit. Permission checks before that
+// wait are not sufficient: use the current role and grant in the write snapshot.
+fn require_current_write_permission(c: &rusqlite::Connection, module: &str, actor: &str, capability: &str) -> rusqlite::Result<()> {
+    let level = super::privacy::level(c, actor)?;
+    if level > 2 || !crate::api::modules::module_can_for_user_initialized(c, module, actor, level, capability)? {
+        return Err(rusqlite::Error::InvalidParameterName("MX_FORBIDDEN:Your record permissions changed while this save was waiting. No changes were saved.".into()));
+    }
+    Ok(())
+}
+
 fn patch_record_db(
     module_uid: String,
     uid: String,
@@ -1184,7 +1216,7 @@ fn patch_record_db(
     base_revision: i64,
     actor_uid: String,
 ) -> Result<PatchDbResult, SqliteDatabaseError> {
-    with_sql_connection(|connection| {
+    with_sql_write(|connection| {
         ensure_dynamic_schema(connection)?;
         ensure_record_collaboration_schema(connection)?;
         ensure_record_lifecycle_schema(connection)?;
@@ -1194,6 +1226,7 @@ fn patch_record_db(
                 connection,
                 rusqlite::TransactionBehavior::Immediate,
             )?;
+            require_current_write_permission(&transaction, &module_uid, &actor_uid, "update")?;
             let current_record_revision = transaction.query_row(
                 "SELECT revision FROM mx_records WHERE uid=?1 AND module_uid=?2 AND deleted_at IS NULL",
                 params![uid,module_uid],
@@ -1419,6 +1452,7 @@ fn patch_record_db(
                 changed_values.insert(field.key.clone(), next);
             }
             capture_record_version(&transaction, &uid, &module_uid, "updated", &actor_uid)?;
+            queue_record_activity(&transaction, &module_uid, &actor_uid, &uid, "record.updated")?;
             transaction.commit()?;
             return Ok(PatchDbResult::Applied(PatchOutcome {
                 changed_values,
@@ -1477,7 +1511,9 @@ fn next_hidden_legacy_number(transaction: &rusqlite::Transaction<'_>) -> rusqlit
     transaction.execute(
         r#"
         UPDATE mx_control_sequence
-        SET last_value = last_value + 1
+        SET last_value = MAX(last_value, (
+            SELECT COALESCE(MAX(control_no), 0) FROM mx_records WHERE control_year = 0
+        )) + 1
         WHERE year = 0
         "#,
         [],
@@ -1488,6 +1524,30 @@ fn next_hidden_legacy_number(transaction: &rusqlite::Transaction<'_>) -> rusqlit
         [],
         |row| row.get::<_, i64>(0),
     )
+}
+
+fn record_control_number(
+    transaction: &rusqlite::Transaction<'_>,
+    configured: Option<i64>,
+    date: &str,
+) -> rusqlite::Result<(i32, i64)> {
+    if let Some(value) = configured.filter(|value| *value > 0) {
+        let year = year_from_date(date).unwrap_or(current_year(transaction)?);
+        let occupied: bool = transaction.query_row(
+            "SELECT EXISTS(SELECT 1 FROM mx_records WHERE control_year=?1 AND control_no=?2)",
+            params![year, value],
+            |row| row.get(0),
+        )?;
+        if !occupied {
+            return Ok((year, value));
+        }
+    }
+    // The old global UNIQUE(control_year,control_no) is an internal compatibility
+    // constraint, NOT an administrator-configured module-field rule. Repeated
+    // user values (within or across modules) must not collide with that mirror.
+    // Keep the submitted field in mx_record_values and allocate hidden metadata
+    // only; explicit field uniqueness remains enforced in write_dynamic_values.
+    Ok((0, next_hidden_legacy_number(transaction)?))
 }
 
 fn create_record_db(
@@ -1530,7 +1590,7 @@ pub(super) fn create_record_commit(
     operation: Option<ClientOperation>,
     import: Option<super::imports::Commit>,
 ) -> Result<(String, bool), SqliteDatabaseError> {
-    with_sql_connection(|connection| {
+    with_sql_write(|connection| {
         ensure_dynamic_schema(connection)?;
         ensure_record_collaboration_schema(connection)?;
         ensure_record_lifecycle_schema(connection)?;
@@ -1539,6 +1599,9 @@ pub(super) fn create_record_commit(
             connection,
             rusqlite::TransactionBehavior::Immediate,
         )?;
+        if import.is_none() {
+            require_current_write_permission(&transaction, &module_uid, &actor_uid, "create")?;
+        }
         let scope = format!("record:create:{module_uid}");
         if let Some(import) = &import {
             super::imports::admit(
@@ -1607,15 +1670,8 @@ pub(super) fn create_record_commit(
 
         let configured_control = value_as_i64(&values, "control_no");
 
-        let (control_year, control_no) = match configured_control {
-            Some(value) if value > 0 => {
-                let year = year_from_date(&date).unwrap_or(current_year(&transaction)?);
-
-                (year, value)
-            }
-
-            _ => (0, next_hidden_legacy_number(&transaction)?),
-        };
+        let (control_year, control_no) =
+            record_control_number(&transaction, configured_control, &date)?;
 
         transaction.execute(
             r#"
@@ -1665,6 +1721,8 @@ pub(super) fn create_record_commit(
         operations::complete(&transaction, &actor_uid, &scope, operation.as_ref(), &uid)?;
         if let Some(import) = &import {
             super::imports::complete(&transaction, import, &uid)?;
+        } else {
+            queue_record_activity(&transaction, &module_uid, &actor_uid, &uid, "record.created")?;
         }
         transaction.commit()?;
 
@@ -1679,7 +1737,7 @@ fn update_record_db(
     actor_uid: String,
     base_revision: Option<i64>,
 ) -> Result<(), SqliteDatabaseError> {
-    with_sql_connection(|connection| {
+    with_sql_write(|connection| {
         ensure_dynamic_schema(connection)?;
         ensure_record_collaboration_schema(connection)?;
         ensure_record_lifecycle_schema(connection)?;
@@ -1687,6 +1745,7 @@ fn update_record_db(
             connection,
             rusqlite::TransactionBehavior::Immediate,
         )?;
+        require_current_write_permission(&transaction, &module_uid, &actor_uid, "update")?;
         let fields = load_module_fields_initialized_db(&transaction, &module_uid, false)?;
         super::privacy::check_record(&transaction, &uid, &actor_uid)?;
         super::privacy::check_values(
@@ -1834,6 +1893,7 @@ fn update_record_db(
         write_dynamic_values(&transaction, &uid, &fields, &values)?;
         bump_all_field_revisions(&transaction, &uid, &fields, next_revision, &actor_uid)?;
         capture_record_version(&transaction, &uid, &module_uid, "updated", &actor_uid)?;
+        queue_record_activity(&transaction, &module_uid, &actor_uid, &uid, "record.updated")?;
         transaction.commit()?;
 
         Ok(())
@@ -2452,6 +2512,8 @@ fn database_error_response(error: SqliteDatabaseError) -> Response {
                 (StatusCode::CONFLICT, "MX_REVISION:")
             } else if message.starts_with("MX_FORBIDDEN:") {
                 (StatusCode::FORBIDDEN, "MX_FORBIDDEN:")
+            } else if message.starts_with("MX_UNIQUE:") {
+                (StatusCode::CONFLICT, "MX_UNIQUE:")
             } else {
                 (StatusCode::BAD_REQUEST, "MX_FORMULA:")
             };
@@ -2461,13 +2523,15 @@ fn database_error_response(error: SqliteDatabaseError) -> Response {
             )
         }
 
-        SqliteDatabaseError::Sqlite(rusqlite::Error::SqliteFailure(error, _))
+        SqliteDatabaseError::Sqlite(rusqlite::Error::SqliteFailure(error, detail))
             if error.code == rusqlite::ErrorCode::ConstraintViolation =>
         {
+            tracing::error!(extended_code=error.extended_code, detail=?detail,
+                "Record save rejected by a stored-data constraint");
             api_json(
                 StatusCode::CONFLICT,
                 json!({
-                    "response": "A unique field or record relationship conflicts with the current stored data."
+                    "response": "MX could not save this record because a stored-data constraint was not satisfied. Your changes were not saved. Ask an administrator to check the server log."
                 }),
             )
         }
@@ -2595,15 +2659,6 @@ async fn create_record_for_module(
                 Some(&claims.uid),
                 json!({"record_uid":record.uid,"module_uid":module_uid}),
             );
-            tokio::spawn(notify_module_readers(
-                module_uid.clone(),
-                claims.uid.clone(),
-                "record.created".to_string(),
-                "Record created".to_string(),
-                "A record was added to a module you can access.".to_string(),
-                record.uid.clone(),
-                json!({"record_uid":record.uid,"module_uid":module_uid}),
-            ));
             present_response(StatusCode::CREATED, &claims, json!(record)).await
         }
         Ok(Err(error)) => database_error_response(error),
@@ -2680,15 +2735,6 @@ async fn update_record_for_module(
                 Some(&claims.uid),
                 json!({"record_uid":record.uid,"module_uid":module_uid}),
             );
-            tokio::spawn(notify_module_readers(
-                module_uid.clone(),
-                claims.uid.clone(),
-                "record.updated".to_string(),
-                "Record updated".to_string(),
-                "A record in a module you can access was updated.".to_string(),
-                record.uid.clone(),
-                json!({"record_uid":record.uid,"module_uid":module_uid}),
-            ));
             present_response(StatusCode::OK, &claims, json!(record)).await
         }
         Ok(Err(error)) => database_error_response(error),
@@ -2795,15 +2841,6 @@ async fn patch_record_for_module(
         Some(&claims.uid),
         json!({"record_uid":uid,"module_uid":module_uid,"changes":outcome.changed_values.iter().filter(|(key,_)|!schema.fields.iter().any(|f|f.key==**key && f.field_type=="relationship")).collect::<BTreeMap<_,_>>(),"record_revision":outcome.revision}),
     );
-    tokio::spawn(notify_module_readers(
-        module_uid.clone(),
-        claims.uid.clone(),
-        "record.updated".to_string(),
-        "Record updated".to_string(),
-        "Fields changed on a record in a module you can access.".to_string(),
-        uid.clone(),
-        json!({"record_uid":uid,"module_uid":module_uid}),
-    ));
     match tokio::task::spawn_blocking(move || get_record_db(module_uid, uid, include_attachments))
         .await
     {
@@ -2907,8 +2944,35 @@ pub async fn list_module_records(
 
 #[cfg(test)]
 mod concurrency_tests {
-    use super::{field_changed_after_base, validate_replacement_revision};
+    use super::{field_changed_after_base, next_hidden_legacy_number, record_control_number, validate_replacement_revision};
     use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
+
+    #[test]
+    fn repeated_module_control_values_do_not_inherit_legacy_uniqueness() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch("CREATE TABLE mx_records(control_year INTEGER,control_no INTEGER,UNIQUE(control_year,control_no)); CREATE TABLE mx_control_sequence(year INTEGER PRIMARY KEY,last_value INTEGER NOT NULL);").unwrap();
+        let transaction = connection.transaction().unwrap();
+        assert_eq!(record_control_number(&transaction, Some(17), "2026-10-27").unwrap(), (2026,17));
+        transaction.execute("INSERT INTO mx_records VALUES(2026,17)", []).unwrap();
+        assert_eq!(record_control_number(&transaction, Some(17), "2026-10-27").unwrap(), (0,1));
+        transaction.execute("INSERT INTO mx_records VALUES(0,1)", []).unwrap();
+        assert_eq!(record_control_number(&transaction, Some(17), "2026-10-27").unwrap(), (0,2));
+        assert_eq!(record_control_number(&transaction, Some(17), "2027-01-01").unwrap(), (2027,17));
+        transaction.commit().unwrap();
+    }
+
+    #[test]
+    fn hidden_sequence_recovers_from_missing_or_regressed_state_without_renumbering() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch("CREATE TABLE mx_records(control_year INTEGER,control_no INTEGER,UNIQUE(control_year,control_no)); CREATE TABLE mx_control_sequence(year INTEGER PRIMARY KEY,last_value INTEGER NOT NULL); INSERT INTO mx_records VALUES(0,99),(2026,2000);").unwrap();
+        let transaction = connection.transaction().unwrap();
+        assert_eq!(next_hidden_legacy_number(&transaction).unwrap(),100);
+        transaction.execute("INSERT INTO mx_records VALUES(0,100)", []).unwrap();
+        transaction.execute("UPDATE mx_control_sequence SET last_value=0 WHERE year=0", []).unwrap();
+        assert_eq!(next_hidden_legacy_number(&transaction).unwrap(),101);
+        assert_eq!(transaction.query_row("SELECT COUNT(*) FROM mx_records WHERE (control_year=0 AND control_no IN(99,100)) OR (control_year=2026 AND control_no=2000)",[],|row|row.get::<_,i64>(0)).unwrap(),3);
+        transaction.commit().unwrap();
+    }
 
     #[test]
     fn full_replacement_requires_the_exact_loaded_revision() {

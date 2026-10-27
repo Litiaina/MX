@@ -18,13 +18,13 @@ async function freePort() {
   return port;
 }
 
-export async function startIsolatedMx(root,{seedDatabase,beforeStart}={}) {
+export async function startIsolatedMx(root,{seedDatabase,beforeStart,storage,loginTokenExpiration=900,binary}={}) {
   const directory = await mkdtemp(join(process.env.MX_TEST_ARTIFACTS || tmpdir(), 'mx-eight-user-'));
   if(seedDatabase){const source=new DatabaseSync(resolve(seedDatabase),{readOnly:true});try{await backup(source,join(directory,'test.db'));}finally{source.close();}}
   if(beforeStart)await beforeStart(join(directory,'test.db'));
   const port = await freePort(); const redirectPort = await freePort();
   const signupKey = randomUUID();
-  const n1 = process.env.MX_TEST_N1_URL ? await startLiveN1(directory) : await startN1Fixture();
+  const n1 = storage || (process.env.MX_TEST_N1_URL ? await startLiveN1(directory) : await startN1Fixture());
   const n1Secret = n1.live ? n1.secret : 'unused-isolated-test';
   await writeFile(join(directory, 'mx.env'), `JWT_SECRET=${randomUUID()}${randomUUID()}\nAUTH_KEYS=${signupKey}\nN1_MX_SECRET=${n1Secret}\n`, { mode: 0o600 });
   await writeFile(join(directory, 'mx.config'), `[server]
@@ -40,13 +40,13 @@ pool_min_idle=4
 pool_connection_timeout_seconds=10
 busy_timeout_milliseconds=10000
 [jwt_token_config]
-login_token_expiration=900
+login_token_expiration=${loginTokenExpiration}
 refresh_token_expiration=2592000
 [static_site_hosting]
 static_site_path=${process.env.MX_TEST_STATIC_SITE_PATH || resolve(root, 'dist')}
 [n1]
 base_url=${n1.url}
-fragment=${n1.live ? (process.env.MX_TEST_N1_RAW_FRAGMENT ? n1Secret : n1.fragment) : 'isolated-no-external-storage'}
+fragment=${storage ? n1.fragment : (n1.live ? (process.env.MX_TEST_N1_RAW_FRAGMENT ? n1Secret : n1.fragment) : 'isolated-no-external-storage')}
 insecure_tls=true
 attachment_max_size_mb=100
 collaboration_file_max_size_mb=100
@@ -58,7 +58,11 @@ max_participants=12
   const log = await open(join(directory, 'server.log'), 'w');
   // Explicitly replace secrets inherited from a developer's shell.
   const childEnvironment = { ...process.env, JWT_SECRET: randomUUID() + randomUUID(), AUTH_KEYS: signupKey, N1_MX_SECRET: n1Secret, RUST_LOG: 'warn' };
-  const launch = () => spawn(process.env.MX_TEST_BINARY || resolve(root, '../target/debug/litiaina-mx'), [], { cwd: directory, env: childEnvironment, stdio: ['ignore', log.fd, log.fd] });
+  // A developer's updater must never manage a disposable test process.
+  delete childEnvironment.MX_UPDATE_CONFIG;
+  delete childEnvironment.MX_UPDATE_GITHUB_TOKEN;
+  const executable = binary || process.env.MX_TEST_BINARY || resolve(root, '../target/debug/litiaina-mx');
+  const launch = () => spawn(executable, [], { cwd: directory, env: childEnvironment, stdio: ['ignore', log.fd, log.fd] });
   let child = launch();
   const api = await request.newContext({ baseURL: `https://127.0.0.1:${port}`, ignoreHTTPSErrors: true, timeout: 30000 });
   const deadline = Date.now() + 30000;
@@ -75,8 +79,8 @@ max_participants=12
     if (!expected.includes(response.status())) throw new Error(`${method} ${path}: ${response.status()} ${JSON.stringify(body)}`);
     return { body, status: response.status(), milliseconds: Math.round(performance.now() - start) };
   }
-  return { directory, port, api, call, signupKey, n1, async restart({temporaryDirectory}={}) {
-    if (child.exitCode === null) { const exit = new Promise((resolve) => child.once('exit', resolve)); child.kill('SIGTERM'); await exit; }
+  return { directory, port, api, call, signupKey, n1, get pid() { return child.pid; }, async restart({temporaryDirectory,signal='SIGTERM'}={}) {
+    if (child.exitCode === null && child.signalCode === null) { const exit = new Promise((resolve) => child.once('exit', resolve)); child.kill(signal); await exit; }
     if (temporaryDirectory) childEnvironment.TMPDIR = temporaryDirectory;
     child = launch(); const deadline = Date.now() + 30000;
     while (true) { try { if ((await api.get('/ping', { timeout: 1000 })).ok()) break; } catch {} if (child.exitCode !== null || Date.now() > deadline) throw new Error('Isolated MX restart failed'); await new Promise((resolve) => setTimeout(resolve, 100)); }

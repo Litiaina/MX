@@ -18,7 +18,7 @@ use crate::{
         mx::{records::ensure_record_collaboration_schema, schema::ensure_dynamic_schema},
         notifications::notify_module_readers,
     },
-    db::connector::{SqliteDatabaseError, with_sql_connection},
+    db::connector::{SqliteDatabaseError, with_sql_connection, with_sql_write},
     middleware::auth::Claims,
 };
 
@@ -245,7 +245,7 @@ pub(crate) async fn capture_record_lifecycle_event(
     event: &'static str,
 ) {
     let _ = tokio::task::spawn_blocking(move || {
-        with_sql_connection(|connection| {
+        with_sql_write(|connection| {
             ensure_record_lifecycle_schema(connection)?;
             let transaction = connection.unchecked_transaction()?;
             let module_uid = transaction.query_row(

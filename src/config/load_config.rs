@@ -41,6 +41,7 @@ pub struct N1Config {
     pub attachment_max_size_mb: usize,
     pub collaboration_file_max_size_mb: usize,
     pub multipart_part_size_mb: usize,
+    pub max_concurrent_uploads: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -501,6 +502,10 @@ pub static CONFIG: LazyLock<Config> = LazyLock::new(|| {
             )
         });
 
+    let max_concurrent_uploads = upload_concurrency(n1_section.get("max_concurrent_uploads"))
+        .unwrap_or_else(|| crate::fatal_error!(
+            "'[n1] max_concurrent_uploads' must be an integer between 1 and 64",
+            "static", "CONFIG"));
     let multipart_part_size_mb_value = n1_section.get("multipart_part_size_mb").unwrap_or("16");
 
     let multipart_part_size_mb = multipart_part_size_mb_value
@@ -606,6 +611,7 @@ pub static CONFIG: LazyLock<Config> = LazyLock::new(|| {
             attachment_max_size_mb,
             collaboration_file_max_size_mb,
             multipart_part_size_mb,
+            max_concurrent_uploads,
         },
 
         webrtc: WebRtcConfig {
@@ -631,3 +637,21 @@ pub static CONFIG: LazyLock<Config> = LazyLock::new(|| {
         },
     }
 });
+
+fn upload_concurrency(value: Option<&str>) -> Option<usize> {
+    value.unwrap_or("8").parse::<usize>().ok().filter(|v| (1..=64).contains(v))
+}
+
+#[cfg(test)]
+mod upload_concurrency_tests {
+    use super::*;
+    #[test]
+    fn upload_admission_has_a_bounded_backwards_compatible_default() {
+        assert_eq!(upload_concurrency(None), Some(8));
+        assert_eq!(upload_concurrency(Some("1")), Some(1));
+        assert_eq!(upload_concurrency(Some("64")), Some(64));
+        for invalid in ["0", "65", "-1", "1.5", "invalid"] {
+            assert_eq!(upload_concurrency(Some(invalid)), None);
+        }
+    }
+}

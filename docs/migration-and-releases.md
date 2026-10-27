@@ -2,7 +2,23 @@
 
 [Documentation index](README.md) · [Project overview](../README.md)
 
-## Current candidate: MX 1.0.0-rc.9
+## Current candidate: MX 1.0.0-rc.10
+
+RC.10 hardens concurrent saves, notification delivery and uploads. A legacy
+global control-number mirror no longer rejects repeated values in independent
+modules or in a field that is not configured as Unique. A missing or stale
+internal sequence reconciles against stored identifiers inside the save
+transaction; existing records and visible field values are not renumbered.
+Explicit unique fields still reject duplicates and identify the field.
+
+Startup adds a durable notification-outbox table before serving requests.
+Current access and notification preferences are rechecked before delivery.
+Existing data, publisher trust, worker/package protocol and N1 format remain
+unchanged. No database reset, re-import or N1 upgrade is required. Use the normal
+signed updater, retain its verified final SQLite snapshot and the previous
+application pair, and follow the [RC.10 instructions](releases/1.0.0-rc.10.md).
+
+## Previous candidate: MX 1.0.0-rc.9
 
 RC.9 adds opt-in module workspaces, controlled processes and accounting/stock
 books. Administrators choose the opening view and configure pipelines,

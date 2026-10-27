@@ -7,7 +7,7 @@ use crate::{
         mx::{privacy, schema::load_module_fields_initialized_db},
         operations::{self, ClientOperation},
     },
-    db::connector::{SqliteDatabaseError, with_sql_connection},
+    db::connector::{SqliteDatabaseError, with_sql_connection, with_sql_write},
     middleware::auth::{Claims, auth},
 };
 use axum::{
@@ -674,15 +674,13 @@ fn execute(
     tx.execute("INSERT INTO mx_workflow_events(uid,record_uid,sequence,configuration_revision,action_key,action_name,from_state,from_name,to_state,to_name,actor_uid,note,record_revision,snapshot_uid,created_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15)",params![event,record,next,configuration.revision,a.key,a.name,p.state,state_name(d,&p.state),a.to,state_name(d,&a.to),actor.uid,request.note.trim(),revision,snapshot,chrono::Utc::now().timestamp_millis()])?;
     let notifications =
         decision_notifications(&tx, module, record, actor, d, a, creator.as_deref(), &event)?;
+    crate::api::notifications::queue_notifications(&tx, notifications)?;
     operations::complete(&tx, &actor.uid, &scope, operation.as_ref(), &event)?;
     let result =
         json!({"event_uid":event,"replayed":false,"status":status(&tx,module,record,actor)?});
     tx.commit()?;
-    // The durable notification and decision committed together. A missed live
-    // delivery is recovered through the existing notification centre/reconnect.
-    for (recipient, notification) in notifications {
-        crate::api::notifications::deliver_notification(&recipient, &notification);
-    }
+    // The delivery job and decision committed together. Recipient fan-out is
+    // recovered on restart without keeping this foreground transaction open.
     Ok(result)
 }
 fn decision_notifications(
@@ -694,8 +692,8 @@ fn decision_notifications(
     action: &Action,
     creator: Option<&str>,
     event: &str,
-) -> rusqlite::Result<Vec<(String, crate::api::notifications::Notification)>> {
-    use crate::api::notifications::{NewNotification, insert_notification};
+) -> rusqlite::Result<Vec<crate::api::notifications::NewNotification>> {
+    use crate::api::notifications::NewNotification;
     let levels: BTreeSet<i64> = d
         .actions
         .iter()
@@ -742,9 +740,7 @@ fn decision_notifications(
             dedup_key: Some(format!("workflow:{event}")),
             mandatory: false,
         };
-        if let Some(notification) = insert_notification(c, &request)? {
-            notifications.push((uid, notification));
-        }
+        notifications.push(request);
     }
     Ok(notifications)
 }
@@ -916,9 +912,10 @@ fn response(result: Result<Value, SqliteDatabaseError>) -> Response {
     }
 }
 async fn run(
+    write: bool,
     task: impl FnOnce(&Connection) -> rusqlite::Result<Value> + Send + 'static,
 ) -> Response {
-    match tokio::task::spawn_blocking(move || with_sql_connection(task)).await {
+    match tokio::task::spawn_blocking(move || if write { with_sql_write(task) } else { with_sql_connection(task) }).await {
         Ok(r) => response(r),
         Err(e) => {
             tracing::error!("Module process task failed: {e}");
@@ -927,7 +924,7 @@ async fn run(
     }
 }
 async fn get_config(actor: Claims, Path(module): Path<String>) -> Response {
-    run(move |c| read_configuration(c, &module, &actor)).await
+    run(false, move |c| read_configuration(c, &module, &actor)).await
 }
 async fn put_config(
     actor: Claims,
@@ -936,7 +933,7 @@ async fn put_config(
 ) -> Response {
     let module_event = module.clone();
     let actor_event = actor.uid.clone();
-    let result = run(move |c| save(c, &module, &actor, request)).await;
+    let result = run(true, move |c| save(c, &module, &actor, request)).await;
     if result.status().is_success() {
         crate::api::live::publish_live_event(
             "module.workflow.updated",
@@ -947,7 +944,7 @@ async fn put_config(
     result
 }
 async fn get_status(actor: Claims, Path((module, record)): Path<(String, String)>) -> Response {
-    run(move |c| {
+    run(false, move |c| {
         let tx = c.unchecked_transaction()?;
         let result = status(&tx, &module, &record, &actor)?;
         tx.commit()?;
@@ -960,7 +957,7 @@ async fn get_queue(
     Path(module): Path<String>,
     Query(query): Query<QueueQuery>,
 ) -> Response {
-    run(move |c| {
+    run(false, move |c| {
         let tx = c.unchecked_transaction()?;
         let result = queue(&tx, &module, &actor, query)?;
         tx.commit()?;
@@ -973,7 +970,7 @@ async fn get_history(
     Path((module, record)): Path<(String, String)>,
     Query(query): Query<HistoryQuery>,
 ) -> Response {
-    run(move |c| {
+    run(false, move |c| {
         let tx = c.unchecked_transaction()?;
         let result = history(
             &tx,
@@ -995,7 +992,7 @@ async fn take_action(
     let module_event = module.clone();
     let record_event = record.clone();
     let actor_event = actor.uid.clone();
-    let result = run(move |c| execute(c, &module, &record, &actor, &request)).await;
+    let result = run(true, move |c| execute(c, &module, &record, &actor, &request)).await;
     if result.status().is_success() {
         crate::api::live::publish_live_event(
             "record.workflow.updated",

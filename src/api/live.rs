@@ -1,7 +1,7 @@
 use std::{
     collections::HashMap,
     sync::{
-        Mutex, OnceLock,
+        Arc, Mutex, OnceLock,
         atomic::{AtomicU64, Ordering},
     },
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -55,7 +55,8 @@ struct PresenceState {
 struct LiveHub {
     tickets: Mutex<HashMap<String, LiveTicket>>,
     presence: Mutex<HashMap<String, PresenceState>>,
-    events: broadcast::Sender<LiveEnvelope>,
+    publication: Mutex<()>,
+    private_events: Mutex<HashMap<String, broadcast::Sender<Arc<LiveEnvelope>>>>,
     sequence: AtomicU64,
 }
 
@@ -131,12 +132,36 @@ async fn event_visible(text: &str, actor: &str) -> bool {
 
 impl LiveHub {
     fn new() -> Self {
-        let (events, _) = broadcast::channel(EVENT_BUFFER_CAPACITY);
         Self {
             tickets: Mutex::new(HashMap::new()),
             presence: Mutex::new(HashMap::new()),
-            events,
+            publication: Mutex::new(()),
+            private_events: Mutex::new(HashMap::new()),
             sequence: AtomicU64::new(0),
+        }
+    }
+
+    fn subscribe_private(&self, uid: &str) -> broadcast::Receiver<Arc<LiveEnvelope>> {
+        self.private_events.lock().unwrap_or_else(|e|e.into_inner())
+            .entry(uid.to_owned()).or_insert_with(||broadcast::channel(EVENT_BUFFER_CAPACITY).0).subscribe()
+    }
+
+    fn prune_private(&self, uid: &str) {
+        let mut channels = self.private_events.lock().unwrap_or_else(|e|e.into_inner());
+        if channels.get(uid).is_some_and(|sender|sender.receiver_count()==0) {channels.remove(uid);}
+    }
+
+    fn dispatch(&self, envelope: LiveEnvelope) {
+        let channels = self.private_events.lock().unwrap_or_else(|e|e.into_inner());
+        if let Some(recipient) = envelope.recipient_uid.as_deref() {
+            if let Some(sender) = channels.get(recipient) {let _=sender.send(Arc::new(envelope));}
+        } else {
+            let envelope = Arc::new(envelope);
+            // One ordered stream per account contains public invalidations AND
+            // its private messages. Selecting two independent receiver queues
+            // can reorder events, letting a newer private event overtake an
+            // older record change. Share the payload; do not duplicate JSON.
+            for sender in channels.values() {let _=sender.send(envelope.clone());}
         }
     }
 }
@@ -176,8 +201,8 @@ pub fn publish_live_event(event_type: &str, actor_uid: Option<&str>, payload: Va
     publish_event(None, event_type, actor_uid, payload);
 }
 
-/// Publish a private real-time event. The broadcast channel is only the local
-/// transport: each WebSocket filters the envelope before any JSON is written
+/// Publish a private real-time event. Only the recipient's local channel gets
+/// this envelope; each WebSocket also checks it before any JSON is written
 /// to the client, so private notification/message payloads are never exposed
 /// to other signed-in users.
 pub fn publish_user_event(
@@ -209,6 +234,9 @@ fn publish_event(
     } else if event_type == "attachment.created" || event_type == "attachment.deleted" {
         payload = json!({"record_uid":payload["record_uid"],"attachment_field_uid":payload["attachment_field_uid"]});
     }
+    // Allocate sequence numbers and enqueue in the same publication order.
+    // No database/network work is performed while this short lock is held.
+    let _publication = hub().publication.lock().unwrap_or_else(|e|e.into_inner());
     let sequence = hub().sequence.fetch_add(1, Ordering::Relaxed) + 1;
     let body = json!({
         "type": event_type,
@@ -220,7 +248,7 @@ fn publish_event(
 
     if let Ok(text) = serde_json::to_string(&body) {
         // It is valid for there to be no connected receivers.
-        let _ = hub().events.send(LiveEnvelope {
+        hub().dispatch(LiveEnvelope {
             recipient_uid,
             text,
         });
@@ -497,7 +525,7 @@ async fn run_live_socket(socket: WebSocket, ticket: LiveTicket) {
     mark_presence_connected(&ticket);
 
     let (mut sender, mut receiver) = socket.split();
-    let mut events = hub().events.subscribe();
+    let mut private_events = hub().subscribe_private(&ticket.uid);
     let last_activity = std::sync::Arc::new(AtomicU64::new(now_millis().max(0) as u64));
 
     let hello = json!({
@@ -517,6 +545,8 @@ async fn run_live_socket(socket: WebSocket, ticket: LiveTicket) {
     .to_string();
 
     if sender.send(Message::Text(hello.into())).await.is_err() {
+        drop(private_events);
+        hub().prune_private(&ticket.uid);
         mark_presence_disconnected(ticket, false);
         return;
     }
@@ -525,20 +555,22 @@ async fn run_live_socket(socket: WebSocket, ticket: LiveTicket) {
     let credential_uid = ticket.uid.clone();
     let credential_auth_version = ticket.auth_version;
     let event_recipient_uid = ticket.uid.clone();
+    // Private notifications/messages must not be cloned and scanned by every
+    // unrelated account. Multiple tabs still share their account's stream.
     let mut outbound = tokio::spawn(async move {
         let mut heartbeat = tokio::time::interval(Duration::from_millis(SOCKET_HEARTBEAT_MS));
         heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
         loop {
             tokio::select! {
-                event = events.recv() => {
+                event = private_events.recv() => {
                     match event {
                         Ok(envelope) => {
                             if envelope.recipient_uid.as_deref().is_some_and(|uid| uid != event_recipient_uid) {
                                 continue;
                             }
                             if !event_visible(&envelope.text,&event_recipient_uid).await {continue;}
-                            if sender.send(Message::Text(envelope.text.into())).await.is_err() {
+                            if sender.send(Message::Text(envelope.text.clone().into())).await.is_err() {
                                 break;
                             }
                         }
@@ -622,10 +654,11 @@ async fn run_live_socket(socket: WebSocket, ticket: LiveTicket) {
     });
 
     let allow_reconnect_grace = tokio::select! {
-        _ = &mut outbound => { inbound.abort(); true },
-        outcome = &mut inbound => { outbound.abort(); !matches!(outcome, Ok(true)) },
+        _ = &mut outbound => { inbound.abort(); let _=inbound.await; true },
+        outcome = &mut inbound => { outbound.abort(); let _=outbound.await; !matches!(outcome, Ok(true)) },
     };
 
+    hub().prune_private(&ticket.uid);
     mark_presence_disconnected(ticket, allow_reconnect_grace);
 }
 
@@ -651,6 +684,28 @@ pub async fn get_presence(claims: Claims) -> Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn private_delivery_does_not_visit_other_accounts_or_duplicate_payloads() {
+        let h=LiveHub::new();
+        let mut a=h.subscribe_private("a");let mut a_tab=h.subscribe_private("a");let mut b=h.subscribe_private("b");
+        h.dispatch(LiveEnvelope{recipient_uid:Some("a".into()),text:"private payload".into()});
+        let first=a.try_recv().unwrap();let second=a_tab.try_recv().unwrap();assert!(Arc::ptr_eq(&first,&second));
+        assert!(b.try_recv().is_err());
+        for i in 0..100 {
+            h.dispatch(LiveEnvelope{recipient_uid:None,text:format!("public-{i}")});
+            h.dispatch(LiveEnvelope{recipient_uid:Some("a".into()),text:format!("private-{i}")});
+        }
+        for i in 0..100 {
+            assert_eq!(a.try_recv().unwrap().text,format!("public-{i}"));
+            assert_eq!(a.try_recv().unwrap().text,format!("private-{i}"));
+            assert_eq!(b.try_recv().unwrap().text,format!("public-{i}"));
+        }
+        assert!(b.try_recv().is_err());
+        drop(a);drop(a_tab);h.prune_private("a");
+        assert!(!h.private_events.lock().unwrap().contains_key("a"));
+        assert!(h.private_events.lock().unwrap().contains_key("b"));
+    }
 
     #[test]
     fn presence_response_contains_only_online_accounts() {

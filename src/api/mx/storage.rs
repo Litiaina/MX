@@ -12,7 +12,7 @@ use crate::{
     api::live::publish_live_event,
     api::modules::{DEFAULT_MODULE_UID, ensure_module_schema},
     api::mx::schema::ensure_dynamic_schema,
-    db::connector::{SqliteDatabaseError, with_sql_connection},
+    db::connector::{SqliteDatabaseError, with_sql_connection, with_sql_write},
     middleware::auth::Claims,
 };
 
@@ -974,7 +974,7 @@ pub(crate) async fn resolve_record_storage(
 ) -> Result<ResolvedRecordStorage, StorageResolutionError> {
     let database_result = tokio::task::spawn_blocking(
         move || -> Result<StorageResolutionOutcome, SqliteDatabaseError> {
-            with_sql_connection(|connection| resolve_record_storage_db(connection, &record_uid))
+            with_sql_write(|connection| resolve_record_storage_db(connection, &record_uid))
         },
     )
     .await;

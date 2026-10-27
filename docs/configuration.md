@@ -21,6 +21,7 @@ insecure_tls=true
 attachment_max_size_mb=50
 collaboration_file_max_size_mb=100
 multipart_part_size_mb=16
+max_concurrent_uploads=8
 ```
 
 `attachment_max_size_mb` and `collaboration_file_max_size_mb` set the default
@@ -32,6 +33,18 @@ each part sent from MX to N1 and
 must be between 5 and 100 MiB; it defaults to 16 MiB when omitted. The N1 server
 must allow a part at least this large. Increasing an upload limit does not
 require sending the complete object as one N1 part.
+
+RC.10 adds `max_concurrent_uploads` (default **8**, allowed
+**1–64**). This is a shared active-transfer budget for module/chat uploads, Drive
+batches and durable Drive part/finalize requests—not a per-user rate or bandwidth
+limit. Record/chat files waiting for a slot remain disk-spooled and are not read
+into N1 part buffers or sent on upstream sockets yet. Waiting is asynchronous;
+cancelled waits release their place. A wait exceeding five minutes returns 503
+with retry guidance, rather than claiming that a file was saved. Restart MX after
+changing the value. Keep it within the actual N1/disk/RAM capacity; increasing it
+is not automatically faster. This setting does not change the per-file limits
+above or disable N1's own configured admission/rate policy. See the bounded-workload results and limitations in
+[Concurrent-user qualification](concurrency-qualification.md).
 
 ### Administrator upload settings (RC.7 onward)
 

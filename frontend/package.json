@@ -1,7 +1,7 @@
 {
   "name": "litiaina-mx-frontend",
   "private": true,
-  "version": "1.0.0-rc.9",
+  "version": "1.0.0-rc.10",
   "type": "module",
   "engines": {
     "node": ">=24.0.0"
@@ -48,6 +48,9 @@
     "test:records:summaries": "node tests/record-summaries.browser.mjs",
     "test:records:workspace": "node --no-warnings tests/record-workspace.browser.mjs",
     "test:records:advanced": "node --no-warnings tests/advanced-records.integration.mjs",
+    "test:records:concurrency": "node --no-warnings tests/concurrency.integration.mjs",
+    "test:records:constraints": "node --no-warnings tests/record-create-constraints.integration.mjs",
+    "test:admin:reconnect": "node --no-warnings tests/admin-draft-reconnect.browser.mjs",
     "test:records:advanced-ui": "node --no-warnings tests/advanced-records.browser.mjs",
     "test:records:advanced-scale": "node --no-warnings tests/advanced-records.scale.mjs",
     "test:notifications:focus": "node --no-warnings tests/notifications-focus.browser.mjs",

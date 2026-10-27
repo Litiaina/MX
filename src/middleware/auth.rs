@@ -313,6 +313,9 @@ pub async fn authorize(
     if payload.email.trim().is_empty() || payload.password.is_empty() {
         return Err(AuthError::MissingCredentials);
     }
+    if payload.password.len() > crate::util::password::MAX_PASSWORD_LENGTH {
+        return Err(AuthError::WrongCredentials);
+    }
 
     let email = payload.email.trim().to_string();
 
@@ -320,7 +323,7 @@ pub async fn authorize(
 
     let otp = payload.otp;
 
-    let database_result = tokio::task::spawn_blocking(move || {
+    let database_result = crate::util::credential_worker::run(move || {
         with_sql_connection(|connection| {
             let data = connection.query_row(AUTH_ACCOUNT_QUERY, params![email], |row| {
                 Ok(RetrievedAuthData {
