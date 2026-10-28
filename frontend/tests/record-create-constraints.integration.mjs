@@ -7,9 +7,10 @@ import {join} from 'node:path';
 import {writeFile} from 'node:fs/promises';
 import {DatabaseSync} from 'node:sqlite';
 import {startIsolatedMx} from './isolated-mx.mjs';
+import {onTestDisk} from './concurrency-fixture.mjs';
 
-assert.ok(process.env.MX_TEST_ARTIFACTS?.startsWith('/mnt/PROJECT-DISK-1TB/'));
-assert.ok(process.env.TMPDIR?.startsWith('/mnt/PROJECT-DISK-1TB/'));
+assert.ok(onTestDisk(process.env.MX_TEST_ARTIFACTS));
+assert.ok(onTestDisk(process.env.TMPDIR));
 assert.ok(!process.env.MX_TEST_N1_URL);
 const mx=await startIsolatedMx(fileURLToPath(new URL('../',import.meta.url)));
 const evidence={passed:false,checks:[]};
@@ -49,6 +50,10 @@ try {
     const original=await create(c,{name:'Existing record before sequence rewind'});
     const db=new DatabaseSync(join(mx.directory,'test.db'));
     try {
+      // This independent fixture connection deliberately corrupts metadata to
+      // simulate a restored sequence. Cooperate with the live durable outbox
+      // using MX's existing busy budget, not SQLite's default zero-wait failure.
+      db.exec('PRAGMA busy_timeout=10000');
       const old=db.prepare('SELECT last_value FROM mx_control_sequence WHERE year=0').get().last_value;
       db.prepare('UPDATE mx_control_sequence SET last_value=0 WHERE year=0').run();
       await create(c,{name:'Saved after stale sequence'});

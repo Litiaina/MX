@@ -2,6 +2,7 @@
 use super::{
     Error, database, error, store,
     uploads::{Upload, commit, release, reserve},
+    write_database,
 };
 use crate::{
     api::mx::handler::{n1_access_token, n1_download, n1_storage},
@@ -86,7 +87,7 @@ pub(super) async fn upload(claims: Claims, mut multipart: Multipart) -> Result<J
         let size = bytes.len() as i64;
         let sum = checksum.clone();
         let operation = request.clone();
-        match database(move |c| {
+        match write_database(move |c| {
             reserve(
                 c,
                 &actor,
@@ -157,7 +158,7 @@ pub(super) async fn upload(claims: Claims, mut multipart: Multipart) -> Result<J
                 .unwrap_or(false);
         if stored {
             let copy = r.clone();
-            match database(move |c| commit(c, &copy)).await {
+            match write_database(move |c| commit(c, &copy)).await {
                 Ok(item) => {
                     results.push(json!({"operation_uid":r.operation,"status":200,"item":item}))
                 }

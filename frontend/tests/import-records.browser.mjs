@@ -4,12 +4,13 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { join, resolve } from 'node:path';
 import { readFile, writeFile } from 'node:fs/promises';
-import { execFileSync } from 'node:child_process';
 import { chromium, firefox, webkit } from 'playwright';
 import { startIsolatedMx } from './isolated-mx.mjs';
 import { disconnectedBrowserAudio } from './silent-audio.mjs';
+import { onTestDisk } from './concurrency-fixture.mjs';
+import { DatabaseSync } from 'node:sqlite';
 const artifactRoot = resolve(process.env.MX_TEST_ARTIFACTS || '');
-assert.ok(artifactRoot.startsWith('/home/altear/Temp Environment/') || artifactRoot === '/mnt/ST1000LM049/tests' || artifactRoot.startsWith('/mnt/ST1000LM049/tests/'), 'Tests require MX_TEST_ARTIFACTS inside the operator-designated temporary environment or external-drive tests directory');
+assert.ok(onTestDisk(artifactRoot) && onTestDisk(process.env.TMPDIR), 'Generated import test data must stay on the authorized test volume');
 assert.ok(!process.env.MX_TEST_N1_URL, 'Never use live N1 for import tests');
 const mx = await startIsolatedMx(fileURLToPath(new URL('../', import.meta.url))), browsers = [], evidence = { api: [], browsers: [], workbook: null };
 let activePage, owner;
@@ -63,7 +64,7 @@ try {
   // success marker cannot commit, neither record nor version may survive.
   let atomic = await upload(module.uid,'atomic.csv',Buffer.from('Name,Start date,Amount,Status\nAtomic-row,1.5.26,1,Open\n'));
   atomic=await call(`${base}/${atomic.uid}/configure`,'PUT',{sheets:[config()]});
-  const sql = statement => execFileSync('python3',['-c','import sqlite3,sys; c=sqlite3.connect(sys.argv[1]);c.executescript(sys.argv[2]);c.close()',join(mx.directory,'test.db'),statement]);
+  const sql = statement => {const db=new DatabaseSync(join(mx.directory,'test.db'));try{db.exec(statement);}finally{db.close();}};
   const countBefore=(await call(`/mx/v1/modules/${module.uid}/records?limit=1`)).total;
   sql(`CREATE TRIGGER import_marker_fault BEFORE UPDATE OF state ON mx_import_rows WHEN NEW.state='imported' AND NEW.job_uid='${atomic.uid}' BEGIN SELECT RAISE(FAIL,'Injected import marker fault'); END;`);
   await call(`${base}/${atomic.uid}/process`,'POST',undefined,[503]);assert.equal((await call(`/mx/v1/modules/${module.uid}/records?limit=1`)).total,countBefore);

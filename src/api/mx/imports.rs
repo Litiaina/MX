@@ -492,7 +492,22 @@ fn run(
     uid: &str,
     only: Option<(u32, u32)>,
 ) -> Result<Value, SqliteDatabaseError> {
-    let pending = with_sql_connection(|c| {
+    with_sql_write(|c| run_on_connection(c, claims, module, uid, only))
+}
+
+fn run_on_connection(
+    c: &Connection,
+    claims: &Claims,
+    module: &str,
+    uid: &str,
+    only: Option<(u32, u32)>,
+) -> rusqlite::Result<Value> {
+    records::ensure_create_schema(c)?;
+    ensure(c)?;
+    let transaction =
+        rusqlite::Transaction::new_unchecked(c, rusqlite::TransactionBehavior::Immediate)?;
+    let c = &transaction;
+    let pending = {
         own(c, claims, module, uid)?;
         let state: String = c.query_row(
             "SELECT state FROM mx_import_jobs WHERE uid=?1",
@@ -515,44 +530,67 @@ fn run(
             ))
         })?
         .collect::<rusqlite::Result<Vec<_>>>()
-    })?;
+    }?;
     let started = std::time::Instant::now();
     for (index, (sheet, row, values, mut errors, operation)) in pending.into_iter().enumerate() {
-        // Under concurrent interactive writes, twenty individually admitted
-        // rows can exceed the client's request deadline. Always make progress,
-        // then return committed counters promptly; remaining rows stay pending.
-        if index > 0 && started.elapsed() >= std::time::Duration::from_secs(1) { break; }
+        // One bounded writer turn and durable commit, not multiple FIFO waits
+        // and fsyncs per row. Count execution time AFTER admission. Savepoints
+        // isolate invalid rows; infrastructure failures roll back this batch.
+        if index > 0 && started.elapsed() >= std::time::Duration::from_secs(1) {
+            break;
+        }
         if errors.is_empty() {
             let operation =
                 ClientOperation::parse(Some(operation), &json!(values)).map_err(invalid)?;
-            match records::create_record_commit(module.into(),values,claims.uid.clone(),operation,Some(Commit{job:uid.into(),sheet,row,auth_version:claims.auth_version})) {
-                Ok(_)=>continue,
-                Err(SqliteDatabaseError::Sqlite(rusqlite::Error::InvalidParameterName(s))) if s.starts_with("IMPORT_FORBIDDEN:")||s.starts_with("IMPORT_CHANGED:")=>return Err(invalid(s).into()),
-                Err(SqliteDatabaseError::Sqlite(rusqlite::Error::InvalidParameterName(s)))=>errors.push(json!({"field":"Record validation","message":s})),
-                Err(SqliteDatabaseError::Sqlite(rusqlite::Error::SqliteFailure(e,_))) if matches!(e.extended_code,rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE|rusqlite::ffi::SQLITE_CONSTRAINT_PRIMARYKEY|rusqlite::ffi::SQLITE_CONSTRAINT_FOREIGNKEY)=>errors.push(json!({"field":"Unique field / relationship","message":"This row conflicts with an existing unique value, control number or linked record. Inspect its fields and correct it; no partial record was created."})),
-                Err(error)=>return Err(error), // infrastructure failures pause, never skip data
+            c.execute_batch("SAVEPOINT mx_import_row")?;
+            match records::create_record_in_transaction(
+                &transaction,
+                module.into(),
+                values,
+                claims.uid.clone(),
+                operation,
+                Some(Commit {
+                    job: uid.into(),
+                    sheet,
+                    row,
+                    auth_version: claims.auth_version,
+                }),
+            ) {
+                Ok(_) => {
+                    c.execute_batch("RELEASE mx_import_row")?;
+                    continue;
+                }
+                Err(error) => {
+                    if c.is_autocommit() {
+                        return Err(error);
+                    }
+                    c.execute_batch("ROLLBACK TO mx_import_row; RELEASE mx_import_row")?;
+                    match error {
+                        rusqlite::Error::InvalidParameterName(s) if s.starts_with("IMPORT_FORBIDDEN:")||s.starts_with("IMPORT_CHANGED:")=>return Err(invalid(s)),
+                        rusqlite::Error::InvalidParameterName(s)=>errors.push(json!({"field":"Record validation","message":s})),
+                        rusqlite::Error::SqliteFailure(e,_) if matches!(e.extended_code,rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE|rusqlite::ffi::SQLITE_CONSTRAINT_PRIMARYKEY|rusqlite::ffi::SQLITE_CONSTRAINT_FOREIGNKEY)=>errors.push(json!({"field":"Unique field / relationship","message":"This row conflicts with an existing unique value, control number or linked record. Inspect its fields and correct it; no partial record was created."})),
+                        error=>return Err(error), // infrastructure failures pause, never skip data
+                    }
+                }
             }
         }
-        with_sql_write(|c| {
-            c.execute("UPDATE mx_import_rows SET state='failed',errors_json=?1 WHERE job_uid=?2 AND sheet=?3 AND source_row=?4 AND state='pending'",params![json!(errors).to_string(),uid,sheet,row])?;
-            Ok(())
-        })?;
+        c.execute("UPDATE mx_import_rows SET state='failed',errors_json=?1 WHERE job_uid=?2 AND sheet=?3 AND source_row=?4 AND state='pending'",params![json!(errors).to_string(),uid,sheet,row])?;
     }
-    with_sql_write(|c| {
-        let j = job(c, uid)?;
-        c.execute(
-            "UPDATE mx_import_jobs SET state=?1 WHERE uid=?2",
-            params![
-                if j["pending"] == 0 {
-                    "completed"
-                } else {
-                    "paused"
-                },
-                uid
-            ],
-        )?;
-        job(c, uid)
-    })
+    let j = job(c, uid)?;
+    c.execute(
+        "UPDATE mx_import_jobs SET state=?1 WHERE uid=?2",
+        params![
+            if j["pending"] == 0 {
+                "completed"
+            } else {
+                "paused"
+            },
+            uid
+        ],
+    )?;
+    let result = job(c, uid)?;
+    transaction.commit()?;
+    Ok(result)
 }
 async fn process(claims: Claims, Path((module, uid)): Path<(String, String)>) -> Response {
     let _lock = WRITE.lock().await;
@@ -634,7 +672,7 @@ async fn retry(
     let actor = claims.uid.clone();
     let event_module = module.clone();
     let result=tokio::task::spawn_blocking(move||{
-    let existing=with_sql_connection(|c|{
+    let existing=with_sql_write(|c|{
         own(c,&claims,&module,&uid)?;
         let tx=rusqlite::Transaction::new_unchecked(c,rusqlite::TransactionBehavior::Immediate)?;
         let (state,values,record):(String,String,Option<String>)=tx.query_row("SELECT state,values_json,record_uid FROM mx_import_rows WHERE job_uid=?1 AND sheet=?2 AND source_row=?3",params![uid,request.sheet,request.row],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?)))?;
@@ -681,6 +719,115 @@ async fn discard(claims: Claims, Path((module, uid)): Path<(String, String)>) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn batch_fixture() -> (Connection, Claims) {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch("PRAGMA foreign_keys=ON;CREATE TABLE users(uid TEXT PRIMARY KEY,name TEXT NOT NULL,email TEXT NOT NULL,access_level INTEGER NOT NULL,auth_version INTEGER NOT NULL);INSERT INTO users VALUES('actor','Actor','actor@test',0,1);").unwrap();
+        crate::db::schema::initialize(&c).unwrap();
+        c.execute_batch("INSERT INTO mx_modules(uid,slug,name,singular_name,created_at,updated_at) VALUES('batch','batch','Batch','Row',0,0);
+            INSERT INTO mx_module_permissions(module_uid,access_level,can_read,can_create) VALUES('batch',0,1,1);
+            INSERT INTO mx_fields(uid,module_uid,field_key,module_key,label,field_type,unique_value,required) VALUES('batch-name','batch','batch-name','name','Name','text',1,1);
+            INSERT INTO mx_import_jobs(uid,module_uid,actor_uid,filename,fingerprint,sheets_json,state) VALUES('job','batch','actor','source','hash','[]','paused');").unwrap();
+        for (row, name) in [(2, "One"), (3, "One"), (4, "Two")] {
+            c.execute("INSERT INTO mx_import_rows(job_uid,sheet,source_row,cells_json,values_json,operation_uid,state) VALUES('job',0,?1,'{}',?2,?3,'pending')",params![row,json!({"name":name}).to_string(),Uuid::new_v4().to_string()]).unwrap();
+        }
+        let claims = Claims {
+            uid: "actor".into(),
+            email: "actor@test".into(),
+            access_level: 0,
+            auth_version: 1,
+            token_kind: "access".into(),
+            exp: usize::MAX,
+        };
+        (c, claims)
+    }
+
+    #[test]
+    fn import_batch_savepoints_isolate_invalid_rows_and_commit_progress_once() {
+        let (c, claims) = batch_fixture();
+        let result = run_on_connection(&c, &claims, "batch", "job", None).unwrap();
+        assert_eq!(result["imported"], 2);
+        assert_eq!(result["failed"], 1);
+        assert_eq!(result["pending"], 0);
+        assert_eq!(
+            c.query_row(
+                "SELECT count(*) FROM mx_records WHERE module_uid='batch'",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+            2
+        );
+        assert_eq!(
+            c.query_row(
+                "SELECT count(*) FROM mx_record_versions WHERE module_uid='batch'",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+            2
+        );
+        assert_eq!(c.query_row("SELECT count(*) FROM mx_import_rows WHERE state='imported' AND record_uid IS NOT NULL",[],|r|r.get::<_,i64>(0)).unwrap(),2);
+        assert!(
+            c.query_row(
+                "SELECT errors_json FROM mx_import_rows WHERE source_row=3",
+                [],
+                |r| r.get::<_, String>(0)
+            )
+            .unwrap()
+            .contains("Name must be unique")
+        );
+        let again = run_on_connection(&c, &claims, "batch", "job", None).unwrap();
+        assert_eq!(again["imported"], 2);
+    }
+
+    #[test]
+    fn infrastructure_failure_rolls_back_every_unacknowledged_import_row() {
+        let (c, claims) = batch_fixture();
+        c.execute_batch("CREATE TRIGGER fail_batch_storage BEFORE INSERT ON mx_records WHEN (SELECT count(*) FROM mx_records WHERE module_uid='batch')>0 BEGIN SELECT RAISE(ABORT,'injected storage failure'); END;").unwrap();
+        assert!(run_on_connection(&c, &claims, "batch", "job", None).is_err());
+        assert_eq!(
+            c.query_row(
+                "SELECT count(*) FROM mx_records WHERE module_uid='batch'",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+            0
+        );
+        assert_eq!(
+            c.query_row(
+                "SELECT count(*) FROM mx_import_rows WHERE state='pending'",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+            3
+        );
+        assert_eq!(
+            c.query_row(
+                "SELECT count(*) FROM mx_record_versions WHERE module_uid='batch'",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+            0
+        );
+        assert_eq!(
+            c.query_row(
+                "SELECT count(*) FROM mx_audit_log WHERE action='record.create'",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+            0
+        );
+        c.execute_batch("DROP TRIGGER fail_batch_storage;").unwrap();
+        assert_eq!(
+            run_on_connection(&c, &claims, "batch", "job", None).unwrap()["imported"],
+            2
+        );
+    }
     #[test]
     fn preview_counts_rows_and_groups_blockers_without_changing_progress() {
         let c = Connection::open_in_memory().unwrap();

@@ -2,7 +2,24 @@
 
 [Documentation index](README.md) · [Project overview](../README.md)
 
-## Current candidate: MX 1.0.0-rc.10
+## Current candidate: MX 1.0.0-rc.11
+
+RC.11 combines the compact, configurable workspace/Office theme with fair
+SQLite writer scheduling, bounded durable audit/import/notification work and
+indexed inbox reads. Startup adds account read-all watermarks before requests;
+original notification payloads, records, histories, modules and N1 bytes remain.
+FULL-synchronous WAL commits are retained with a separate passive checkpoint
+worker. Allow for durable-write I/O when sizing a deployment.
+
+Publisher trust, package format 1, the independent update worker and N1 storage
+encoding are unchanged. No database reset or re-import is required. Install the
+matching signed binary/frontend pair using the normal updater; retain its final
+verified SQLite snapshot and previous application slot. The extended 100-account
+SSD workload passed, but shared rotational-HDD mixed load, 1,000 users and slow
+large-workbook rendering are not qualified. See
+[RC.11 instructions and boundaries](releases/1.0.0-rc.11.md).
+
+## Previous candidate: MX 1.0.0-rc.10
 
 RC.10 hardens concurrent saves, notification delivery and uploads. A legacy
 global control-number mirror no longer rejects repeated values in independent

@@ -1,7 +1,7 @@
 // Real independent systemd worker + MX/SQLite, locally signed RC fixtures.
 // No existing deployment, N1 data, production signing key or desktop audio.
 import assert from 'node:assert/strict';
-import {mkdtemp,mkdir,readFile,writeFile,copyFile,cp,symlink,readlink,stat,unlink,realpath} from 'node:fs/promises';
+import {mkdtemp,mkdir,readFile,writeFile,copyFile,cp,symlink,readlink,stat,unlink,realpath,chmod} from 'node:fs/promises';
 import {createReadStream,constants} from 'node:fs';
 import {join,resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -14,10 +14,12 @@ import {DatabaseSync} from 'node:sqlite';
 import {request,chromium,firefox,webkit} from 'playwright';
 import {startN1Fixture} from './n1-contract-fixture.mjs';
 import {disconnectedBrowserAudio} from './silent-audio.mjs';
+import {onTestDisk} from './concurrency-fixture.mjs';
 
-assert.ok(process.env.MX_TEST_ARTIFACTS?.startsWith('/mnt/ST1000LM049/tests'));
-assert.ok(process.env.MX_TEST_BINARY?.startsWith('/mnt/ST1000LM049/'));
-assert.ok(process.env.MX_TEST_STATIC_SITE_PATH?.startsWith('/mnt/ST1000LM049/'));
+const allowedPath=path=>onTestDisk(path)||path?.startsWith('/mnt/ST1000LM049/');
+assert.ok(allowedPath(process.env.MX_TEST_ARTIFACTS));
+assert.ok(allowedPath(process.env.MX_TEST_BINARY));
+assert.ok(allowedPath(process.env.MX_TEST_STATIC_SITE_PATH));
 assert.ok(!process.env.MX_TEST_N1_URL,'Never use live N1 for an updater fault test');
 const exec=promisify(execFile),repository=fileURLToPath(new URL('../../',import.meta.url));
 const bootstrapVersion=process.env.MX_TEST_BOOTSTRAP_VERSION||'1.0.0-rc.1';
@@ -44,7 +46,7 @@ async function call(path,method='GET',data,token=user?.access_token,expected=[20
 async function queued(action,version){const uid=randomUUID();await call(`/mx/v1/admin/updates/${action}`,'POST',{operation_uid:uid,version:version||null},undefined,[202]);return uid;}
 async function done(uid,phase='completed'){let operation;await until(async()=>{const value=await state();operation=value.operation?.uid===uid?value.operation:value.history.find(op=>op.uid===uid);if(operation&&['completed','failed','rolled_back','deferred'].includes(operation.phase)){assert.equal(operation.phase,phase,JSON.stringify(operation));return true;}return false;},`${uid} ${phase}`);await until(async()=>{try{return (await json(join(root,'request.json'))).uid!==uid;}catch(error){if(error.code==='ENOENT')return true;throw error;}},'durable job cleanup');return operation;}
 async function idle(){await until(async()=>!(await call('/mx/v1/admin/updates')).body.busy,'worker idle');}
-async function safeCopy(source,target){await copyFile(source,target,constants.COPYFILE_FICLONE);}
+async function safeCopy(source,target){await copyFile(source,target,constants.COPYFILE_FICLONE);await chmod(target,0o755);}
 async function bundle(source,version){const output=join(directory,`mx-${version}.mxupdate`);await exec(binary,['--update-package',source,join(directory,'test-signing.pk8'),output,'rc'],{timeout:120000});return {path:output,metadata:await json(output.replace(/\.mxupdate$/,'.json'))};}
 function offer(version,bundle){resources.set(`/${version}.json`,{bytes:Buffer.from(JSON.stringify(bundle.metadata)),type:'application/json'});resources.set(`/${version}.mxupdate`,{path:bundle.path,type:'application/octet-stream'});return {tag_name:`v${version}`,draft:false,prerelease:true,body:`Fixture ${version}: signed update verification.`,assets:[{name:'mx-x86_64-unknown-linux-gnu.json',browser_download_url:`${feed.origin}/${version}.json`},{name:'mx-x86_64-unknown-linux-gnu.mxupdate',browser_download_url:`${feed.origin}/${version}.mxupdate`}]};}
 async function savedRecords(){const db=new DatabaseSync(join(deployment,'test.db'),{readOnly:true});try{return Number(db.prepare('SELECT COUNT(*) AS count FROM mx_records').get().count);}finally{db.close();}}
@@ -59,6 +61,14 @@ try{
  await cp(process.env.MX_TEST_STATIC_SITE_PATH,join(root,'slots/bootstrap/frontend/dist'),{recursive:true,force:true});await copyFile(join(repository,'LICENSE'),join(root,'slots/bootstrap/LICENSE'));
  await symlink('slots/bootstrap',join(root,'current'));
  const key=await exec(binary,['--update-keygen',join(directory,'test-signing.pk8')]);const keys=JSON.parse(key.stdout.match(/trusted_keys: (\{[^\n]+\})/)[1]);
+ // Release qualification may supply the exact publisher-signed package.
+ // Keep a separate disposable test key for intentionally broken fixtures;
+ // never copy the production private key into this updater deployment.
+ if(process.env.MX_TEST_CANDIDATE_PACKAGE){
+   assert.ok(allowedPath(process.env.MX_TEST_CANDIDATE_PACKAGE));
+   const publisher=await json(join(repository,'deploy/mx-release-signing-public-key.json'));
+   Object.assign(keys,publisher.trusted_keys);
+ }
  n1=await startN1Fixture();
  const server=createServer(async(req,res)=>{try{
    if(req.url==='/releases'){if(holdFeed)await new Promise(resolve=>setTimeout(resolve,holdFeed));if(failFeed){res.writeHead(503);res.end('test release connection failure');return;}res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify(releases));return;}
@@ -97,8 +107,8 @@ try{
  // a real second version from disposable source, without changing the repository.
  let candidateBinary=process.env.MX_TEST_CANDIDATE_BINARY;
  if(candidateBinary){
-   assert.ok(candidateBinary.startsWith('/mnt/ST1000LM049/'));
-   assert.ok(process.env.MX_TEST_CANDIDATE_STATIC_SITE_PATH?.startsWith('/mnt/ST1000LM049/'));
+   assert.ok(allowedPath(candidateBinary));
+   assert.ok(allowedPath(process.env.MX_TEST_CANDIDATE_STATIC_SITE_PATH));
    assert.equal((await exec(candidateBinary,['--version'])).stdout.trim(),`litiaina-mx ${candidateVersion}`);
  }else{
  const candidate=join(directory,'candidate-source');await mkdir(candidate);await cp(join(repository,'src'),join(candidate,'src'),{recursive:true});
@@ -113,7 +123,10 @@ try{
  if(process.env.MX_TEST_CANDIDATE_STATIC_SITE_PATH){await mkdir(join(release,'frontend'));await cp(process.env.MX_TEST_CANDIDATE_STATIC_SITE_PATH,join(release,'frontend/dist'),{recursive:true});}
  else{await cp(join(root,'slots/bootstrap/frontend'),join(release,'frontend'),{recursive:true});}
  await copyFile(join(repository,'LICENSE'),join(release,'LICENSE'));
- const good=await bundle(release,candidateVersion);releases=[offer(candidateVersion,good)];
+ const good=process.env.MX_TEST_CANDIDATE_PACKAGE?{
+   path:process.env.MX_TEST_CANDIDATE_PACKAGE,
+   metadata:await json(process.env.MX_TEST_CANDIDATE_PACKAGE.replace(/\.mxupdate$/,'.json')),
+ }:await bundle(release,candidateVersion);releases=[offer(candidateVersion,good)];
  failFeed=true;await done(await queued('check'), 'failed');failFeed=false;assert.equal((await call('/mx/v1/system/update-health', 'GET',undefined,null)).body.version,bootstrapVersion);
  const metadataResource=resources.get(`/${candidateVersion}.json`);const originalMetadata=metadataResource.bytes;metadataResource.bytes=Buffer.from(JSON.stringify({...good.metadata,signature:Buffer.alloc(64).toString('base64')}));await done(await queued('check'),'failed');metadataResource.bytes=originalMetadata;
  await done(await queued('check'));assert.equal((await state()).available.version,candidateVersion);passed('release outage and invalid signatures leave the running binary/database unchanged');

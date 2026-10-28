@@ -95,6 +95,13 @@ try {
       await browser.close();continue;
     }
     await until(() => mx.n1.sessions.size && [...mx.n1.sessions.values()].some(session => session.key.endsWith('.MP4') && session.parts.has(0)), 'first part stored');
+    // N1 having bytes is not the browser receiving MX's durable acknowledgement.
+    // This scenario deliberately tests resuming an ACKNOWLEDGED part; switching
+    // offline before its HTTP reply would correctly leave storedBytes at zero.
+    await until(() => page.evaluate(uid => Object.keys(localStorage)
+      .filter(key => key.startsWith(`mx:drive:pending:${uid}:`))
+      .map(key => JSON.parse(localStorage.getItem(key)))
+      .some(entry => entry.storedBytes >= 4 * 1024 ** 2), owner.uid), 'browser persisted the first part acknowledgement');
     // A real module transition must keep the selected File and queue alive.
     await page.evaluate(() => location.hash = '#dashboard');
     await page.getByRole('heading', { name: 'Dashboard', exact: true }).waitFor();
@@ -106,7 +113,14 @@ try {
     assert.equal(cached.length, 1); assert.ok(cached[0].storedBytes >= 4 * 1024 ** 2); assert.equal('file' in cached[0], false);
     const operation = cached[0].operationUid;
     await page.evaluate(() => document.documentElement.dataset.theme = 'dark');
-    assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('.upload-panel')).backgroundColor), 'rgb(23, 25, 27)', 'Waiting panel uses the real dark palette');
+    const darkPalette=await page.evaluate(()=>{
+      const probe=document.createElement('span');probe.style.backgroundColor='var(--collab-bg)';
+      probe.style.position='absolute';probe.style.visibility='hidden';document.body.append(probe);
+      const expected=getComputedStyle(probe).backgroundColor;probe.remove();
+      return {actual:getComputedStyle(document.querySelector('.upload-panel')).backgroundColor,expected};
+    });
+    assert.equal(darkPalette.actual,darkPalette.expected,'Waiting panel follows the shared MX dark chrome token');
+    assert.ok(darkPalette.actual.match(/\d+/g).slice(0,3).map(Number).every(channel=>channel<64),'Dark mode must not silently fall back to the light palette');
     await page.screenshot({ path: join(mx.directory, `${name}-waiting-dark.png`) });
     await page.getByRole('button', { name: `Pause ${filename}`, exact: true }).click();
     const priorInits = initCount;
@@ -150,6 +164,10 @@ try {
     await page.getByRole('heading', { name: 'MX Drive', exact: true }).waitFor();
     await page.locator('input[type=file]:not([webkitdirectory])').first().setInputFiles(automaticPath);
     await until(() => [...mx.n1.sessions.values()].some(session => session.parts.has(0)), 'automatic case first part');
+    await until(() => page.evaluate(({uid,name}) => Object.keys(localStorage)
+      .filter(key => key.startsWith(`mx:drive:pending:${uid}:`))
+      .map(key => JSON.parse(localStorage.getItem(key)))
+      .some(entry => entry.name === name && entry.storedBytes >= 4 * 1024 ** 2), {uid:owner.uid,name:automatic}), 'automatic case browser acknowledgement');
     await context.setOffline(true); await page.locator('.transfer[data-status=waiting]').waitFor();
     await mx.restart(); holdParts = false; releaseParts.splice(0).forEach(resolve => resolve());
     await context.setOffline(false); await page.locator('.transfer[data-status=done]').waitFor({ state: 'attached', timeout: 45000 });

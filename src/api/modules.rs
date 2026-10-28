@@ -14,7 +14,7 @@ use crate::{
         live::{publish_live_event, publish_user_event},
         mx::handler::{ensure_mx_record_schema, n1_recover, n1_soft_delete},
     },
-    db::connector::{SqliteDatabaseError, with_sql_connection},
+    db::connector::{SqliteDatabaseError, with_sql_connection, with_sql_write},
     middleware::auth::Claims,
     util::authentication::{CredentialStatus, verify_user_credentials},
 };
@@ -676,12 +676,8 @@ pub async fn get_account_module_grants(claims: Claims, Path(user_uid): Path<Stri
             let Some((account_name, access_level)) = account else {
                 return Ok(None);
             };
-            connection.execute(
-                "INSERT OR IGNORE INTO mx_module_access_revisions(user_uid,revision) VALUES(?1,0)",
-                params![user_uid],
-            )?;
             let revision = connection.query_row(
-                "SELECT revision FROM mx_module_access_revisions WHERE user_uid=?1",
+                "SELECT COALESCE((SELECT revision FROM mx_module_access_revisions WHERE user_uid=?1),0)",
                 params![user_uid],
                 |row| row.get::<_, i64>(0),
             )?;
@@ -802,7 +798,7 @@ pub async fn save_account_module_grants(
     let event_actor_uid = actor_uid.clone();
     let event_user_uid = user_uid.clone();
     let result = tokio::task::spawn_blocking(move || {
-        with_sql_connection(|connection| {
+        with_sql_write(|connection| {
             ensure_module_schema(connection)?;
             let account_level = connection
                 .query_row(
@@ -817,7 +813,7 @@ pub async fn save_account_module_grants(
             if access_level == 0 {
                 return Ok(SaveAccountGrantsOutcome::Administrator);
             }
-            let transaction = connection.unchecked_transaction()?;
+            let transaction = rusqlite::Transaction::new_unchecked(connection, rusqlite::TransactionBehavior::Immediate)?;
             transaction.execute(
                 "INSERT OR IGNORE INTO mx_module_access_revisions(user_uid,revision) VALUES(?1,0)",
                 params![user_uid],
@@ -961,7 +957,7 @@ pub async fn create_module(claims: Claims, Json(request): Json<CreateModuleReque
         );
     }
     let position = request.position;
-    let result = tokio::task::spawn_blocking(move || -> Result<ModuleDefinition, SqliteDatabaseError> { with_sql_connection(|connection| {
+    let result = tokio::task::spawn_blocking(move || -> Result<ModuleDefinition, SqliteDatabaseError> { with_sql_write(|connection| {
         ensure_module_schema(connection)?; let transaction = rusqlite::Transaction::new_unchecked(connection,rusqlite::TransactionBehavior::Immediate)?; let now = chrono::Utc::now().timestamp_millis();
         let mut candidate = base_slug.clone(); let mut suffix = 2; while transaction.query_row("SELECT EXISTS(SELECT 1 FROM mx_modules WHERE slug = ?1)", params![candidate], |row| row.get::<_,bool>(0))? { candidate = format!("{base_slug}-{suffix}"); suffix += 1; }
         let position = position.unwrap_or(transaction.query_row("SELECT COALESCE(MAX(position), -10) + 10 FROM mx_modules", [], |row| row.get(0))?);
@@ -1011,7 +1007,7 @@ pub async fn update_module(
     }
     let db_uid = uid.clone();
     let actor_uid = claims.uid;
-    let result = tokio::task::spawn_blocking(move || -> Result<ModuleDefinition, SqliteDatabaseError> { with_sql_connection(|connection| {
+    let result = tokio::task::spawn_blocking(move || -> Result<ModuleDefinition, SqliteDatabaseError> { with_sql_write(|connection| {
         ensure_module_schema(connection)?; let transaction = rusqlite::Transaction::new_unchecked(connection,rusqlite::TransactionBehavior::Immediate)?; let existing = load_module_db(&transaction,&db_uid)?.ok_or(rusqlite::Error::QueryReturnedNoRows)?;
         let name = request.name.as_deref().map(|value| clean(value,80)).filter(|value| !value.is_empty()).unwrap_or(existing.name);
         let singular = request.singular_name.as_deref().map(|value| clean(value,80)).filter(|value| !value.is_empty()).unwrap_or(existing.singular_name);
@@ -1080,9 +1076,9 @@ pub async fn delete_module(
     let admin_uid = claims.uid.clone();
     let preflight_uid = uid.clone();
     let preflight = tokio::task::spawn_blocking(move || -> Result<ModuleDeletionPreflight, SqliteDatabaseError> {
-        with_sql_connection(|connection| {
+        with_sql_write(|connection| {
             ensure_module_schema(connection)?;
-            let transaction = connection.unchecked_transaction()?;
+            let transaction = rusqlite::Transaction::new_unchecked(connection, rusqlite::TransactionBehavior::Immediate)?;
             if table_exists(&transaction,"mx_book_audit")? { crate::api::books::prevent_delete(&transaction,&preflight_uid)?; }
             if table_exists(&transaction, "mx_fields")? {
                 let dependencies=transaction.prepare("SELECT m.name || ' → ' || f.label FROM mx_fields f JOIN mx_modules m ON m.uid=f.module_uid WHERE f.module_uid!=?1 AND f.active=1 AND ((f.field_type='relationship' AND json_extract(f.config_json,'$.target_module_uid')=?1) OR (f.field_type='rollup' AND json_extract(f.config_json,'$.direction')='incoming' AND json_extract(f.config_json,'$.source_module_uid')=?1)) ORDER BY m.name,f.label")?.query_map([&preflight_uid],|r|r.get::<_,String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
@@ -1210,7 +1206,7 @@ pub async fn delete_module(
 
     let delete_uid = uid.clone();
     let deletion = tokio::task::spawn_blocking(move || -> Result<bool, SqliteDatabaseError> {
-        with_sql_connection(|connection| {
+        with_sql_write(|connection| {
             let transaction = rusqlite::Transaction::new_unchecked(connection,rusqlite::TransactionBehavior::Immediate)?;
             if table_exists(&transaction,"mx_book_audit")? { crate::api::books::prevent_delete(&transaction,&delete_uid)?; }
             if table_exists(&transaction, "mx_notifications")? {

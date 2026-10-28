@@ -9,6 +9,7 @@
   import { loadDeployment } from './lib/api/workspace';
   import { currentSession, endSession, reloadSession, restoreSession } from './lib/auth/session';
   import { DEFAULT_APPEARANCE, applyPrimaryAccent, primaryForeground, usesProductAccent } from './lib/util/appearance';
+  import { applyBrandIcon } from './lib/util/branding';
 
   let loading = $state(true);
   let authMessage = $state('');
@@ -52,16 +53,7 @@
     document.documentElement.style.setProperty('--on-brand', primaryForeground(deployment.appearance.sidebar_color));
     document.documentElement.style.setProperty('--corner-radius', ({ square: '3px', subtle: '7px', rounded: '12px', soft: '18px' } as Record<string, string>)[deployment.appearance.radius] || '12px');
     document.title = deployment.branding.display_name.trim() || 'MX';
-    const favicon = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
-    const fallbackIcon = '/images/system-icon.png';
-    const configuredIcon = deployment.branding.logo_url.trim() || fallbackIcon;
-    if (favicon) {
-      favicon.onerror = configuredIcon === fallbackIcon ? null : () => {
-        favicon.onerror = null;
-        favicon.href = fallbackIcon;
-      };
-      favicon.href = configuredIcon;
-    }
+    applyBrandIcon(deployment.branding.logo_url);
     const themeColor = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
     if (themeColor) themeColor.content = deployment.appearance.sidebar_color;
   });

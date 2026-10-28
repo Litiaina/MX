@@ -31,7 +31,6 @@
   let engine: OfficeEngine, disposed = false;
 
   onMount(() => {
-    document.documentElement.dataset.theme = sessionStorage.getItem('mx_office_theme') || 'light';
     const readOnlyNotice = () => { notice = `This ${sourceName} attachment is read-only. Download the original to edit a local copy, or use a shared MX Drive file for editable versions.`; };
     engine = new OfficeEngine(() => {}, message => { if (!disposed) { error = message; ready = false; failed = true; } }, readOnlyNotice, message => { notice = message; }, () => {}, value => {
       if (!disposed && !ready && !failed && ['engine', 'runtime'].includes(progress.phase)) progress = value;
@@ -118,14 +117,13 @@
 </main>
 
 <style>
-  :global(html),:global(body),:global(#office-app){height:100%;margin:0;overflow:hidden;font-family:system-ui,sans-serif;}
-  main{height:100dvh;display:flex;flex-direction:column;color:#20242a;background:#fff;}
-  header{height:40px;box-sizing:border-box;padding:5px 8px;display:flex;align-items:center;gap:10px;border-bottom:1px solid #cdd4df;font-size:13px;}
+  :global(html),:global(body),:global(#office-app){height:100%;margin:0;overflow:hidden;}
+  main{height:100dvh;display:flex;flex-direction:column;color:var(--text);background:var(--surface);}
+  header{height:max(40px,2.5rem);box-sizing:border-box;padding:5px 8px;display:flex;align-items:center;gap:10px;border-bottom:1px solid var(--line-strong);font-size:0.8125rem;}
   header strong{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}header a{display:inline-flex;color:inherit;}header button{flex:none;}
-  .read-only{font-size:11px;color:#657285;}button{display:inline-flex;align-items:center;gap:6px;padding:5px 9px;border:1px solid #cdd4df;border-radius:6px;background:transparent;color:inherit;font:inherit;cursor:pointer;}button:disabled{opacity:.5;cursor:default;}
-  a:focus-visible,button:focus-visible{outline:2px solid #4773c9;outline-offset:2px;}
+  .read-only{font-size:0.6875rem;color:var(--muted);}button{display:inline-flex;align-items:center;gap:6px;padding:5px 9px;border:1px solid var(--line-strong);border-radius:6px;background:transparent;color:inherit;font:inherit;cursor:pointer;}button:disabled{opacity:.5;cursor:default;}
+  a:focus-visible,button:focus-visible{outline:2px solid var(--primary);outline-offset:2px;}
   .viewer{position:relative;flex:1;min-height:0;overflow-x:auto;overflow-y:hidden;background:#e7e7e7;}canvas{display:block;height:100%;box-sizing:border-box;border:0;padding:0;outline:0;}.inactive canvas{visibility:hidden;}
-  .notice{position:absolute;z-index:30;bottom:20px;left:50%;transform:translateX(-50%);box-sizing:border-box;width:min(760px,calc(100% - 24px));display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid #cdd4df;border-radius:8px;background:#eef5ef;font-size:13px;overflow-wrap:anywhere;}.notice button{margin-left:auto;}.error{background:#fff0f0;color:#a32828;}
-  :global(html[data-theme='dark']) main{background:#20242a;color:#e3e6eb;}:global(html[data-theme='dark']) header,:global(html[data-theme='dark']) button{border-color:#3e4754;}:global(html[data-theme='dark']) .read-only{color:#a5b0bf;}
-  @media(max-width:600px){header{gap:7px;}.read-only{font-size:10px;}header button span{display:none;}}
+  .notice{position:absolute;z-index:30;bottom:20px;left:50%;transform:translateX(-50%);box-sizing:border-box;width:min(760px,calc(100% - 24px));display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--line-strong);border-radius:8px;background:var(--success-surface);font-size:0.8125rem;overflow-wrap:anywhere;}.notice button{margin-left:auto;}.error{background:var(--danger-surface);color:var(--danger);}
+  @media(max-width:600px){header{gap:7px;}.read-only{font-size:0.625rem;}header button span{display:none;}}
 </style>

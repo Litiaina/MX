@@ -3,6 +3,7 @@
 use super::{
     Error, database, error, store,
     uploads::{Reservation, Upload, commit, reserve_inner},
+    write_database,
 };
 use crate::{
     api::mx::handler::{n1_access_token, n1_storage},
@@ -96,7 +97,6 @@ fn load(c: &Connection, actor: &str, operation: &str) -> rusqlite::Result<Sessio
     Ok(session)
 }
 pub(super) async fn init(claims: Claims, Json(value): Json<Init>) -> Result<Json<Value>, Error> {
-    let _permit = transfer_permit().await?;
     if value.size < 0
         || (!value.sha256.is_empty()
             && (value.sha256.len() != 64 || !value.sha256.bytes().all(|b| b.is_ascii_hexdigit())))
@@ -107,7 +107,7 @@ pub(super) async fn init(claims: Claims, Json(value): Json<Init>) -> Result<Json
         return Err(error(400, "Invalid content type."));
     }
     let actor = claims.uid.clone();
-    let r = database(move |c| {
+    let r = write_database(move |c| {
         reserve_inner(
             c,
             &actor,
@@ -131,6 +131,9 @@ pub(super) async fn init(claims: Claims, Json(value): Json<Init>) -> Result<Json
     let op = operation.clone();
     let exists=database(move|c|c.query_row("SELECT EXISTS(SELECT 1 FROM mx_drive_sessions WHERE actor_uid=?1 AND operation_uid=?2)",params![actor,op],|row|row.get::<_,bool>(0))).await?;
     if !exists {
+        // Reserve metadata before taking a transfer slot. The slot bounds N1
+        // work, not time spent waiting for MX's unrelated database writers.
+        let permit = transfer_permit().await?;
         let token = n1_access_token()
             .await
             .map_err(|_| error(502, "N1 authentication is temporarily unavailable."))?;
@@ -164,7 +167,8 @@ pub(super) async fn init(claims: Claims, Json(value): Json<Init>) -> Result<Json
             .and_then(|v| v.as_str())
             .map(str::to_owned);
         let reservation = r.clone();
-        database(move|c| {
+        drop(permit);
+        let session = write_database(move|c| {
         let tx=rusqlite::Transaction::new_unchecked(c,rusqlite::TransactionBehavior::Immediate)?;
         let valid:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM mx_drive_uploads WHERE actor_uid=?1 AND operation_uid=?2 AND attempt_uid=?3 AND completed=0)",params![reservation.actor,reservation.operation,reservation.attempt],|row|row.get(0))?;
         if !valid {
@@ -173,8 +177,13 @@ pub(super) async fn init(claims: Claims, Json(value): Json<Init>) -> Result<Json
             tx.commit()?;super::gc::wake();
             return Err(store::problem(409,"This upload was canceled or superseded."));
         }
-        tx.execute("INSERT OR IGNORE INTO mx_drive_sessions(actor_uid,operation_uid,n1_version,n1_session,coordinator,part_size) VALUES(?1,?2,?3,?4,?5,?6)",params![reservation.actor,reservation.operation,version,session_id,coordinator,part_size as i64])?;tx.commit()
+        tx.execute("INSERT OR IGNORE INTO mx_drive_sessions(actor_uid,operation_uid,n1_version,n1_session,coordinator,part_size) VALUES(?1,?2,?3,?4,?5,?6)",params![reservation.actor,reservation.operation,version,session_id,coordinator,part_size as i64])?;
+        // Reconcile against the authoritative row in this same transaction,
+        // rather than queueing another writer turn just to build init's reply.
+        let loaded = load(&tx, &reservation.actor, &reservation.operation)?;
+        tx.commit()?; Ok(loaded)
       }).await?;
+        return session_status(session).await;
     }
     status(claims, Path(operation)).await
 }
@@ -182,7 +191,11 @@ pub(super) async fn status(
     claims: Claims,
     Path(operation): Path<String>,
 ) -> Result<Json<Value>, Error> {
-    let session = database(move |c| load(c, &claims.uid, &operation)).await?;
+    let session = write_database(move |c| load(c, &claims.uid, &operation)).await?;
+    session_status(session).await
+}
+
+async fn session_status(session: Session) -> Result<Json<Value>, Error> {
     let r = &session.reservation;
     if r.completed {
         let r = r.clone();
@@ -239,7 +252,7 @@ pub(super) async fn part(
         .await
         .map_err(|_| error(500, "Could not validate this upload part. Retry it."))?;
     let size = bytes.len() as i64;
-    let session=database(move|c|{
+    let session=write_database(move|c|{
       let tx=rusqlite::Transaction::new_unchecked(c,rusqlite::TransactionBehavior::Immediate)?;let s=load(&tx,&actor,&op)?;let r=&s.reservation;
       if r.completed {return Err(store::problem(409,"This file is already uploaded."));}
       let parts=(r.size as u64).div_ceil(s.part_size as u64).max(1);
@@ -281,14 +294,14 @@ pub(super) async fn finish(
     claims: Claims,
     Path(operation): Path<String>,
 ) -> Result<Json<store::Item>, Error> {
-    let _permit = transfer_permit().await?;
-    let s = database(move |c| load(c, &claims.uid, &operation)).await?;
+    let s = write_database(move |c| load(c, &claims.uid, &operation)).await?;
     let r = s.reservation;
     if r.completed {
         return Ok(Json(
             database(move |c| store::accessible(c, &r.item, &r.actor, false)).await?,
         ));
     }
+    let permit = transfer_permit().await?;
     let token = n1_access_token()
         .await
         .map_err(|_| error(502, "N1 is unavailable. Retry finalization."))?;
@@ -317,7 +330,8 @@ pub(super) async fn finish(
     // No whole-file checksum is computed for multipart. Never record an unverified
     // legacy client declaration as a verified content digest. Per-part receipts remain.
     copy.checksum.clear();
-    match database(move |c| commit(c, &copy)).await {
+    drop(permit);
+    match write_database(move |c| commit(c, &copy)).await {
         Ok(item) => Ok(Json(item)),
         Err(failure) => {
             let _ = super::uploads::release(r, failure.0.is_client_error()).await;

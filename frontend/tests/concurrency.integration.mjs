@@ -10,28 +10,31 @@ import {createRequire} from 'node:module';
 import {cpus,totalmem,platform,release} from 'node:os';
 import {DatabaseSync} from 'node:sqlite';
 import {startIsolatedMx} from './isolated-mx.mjs';
-import {startN1Lab,client,until,sleep,distribution,resourceSample,safeDisk,digest} from './concurrency-fixture.mjs';
+import {startN1Lab,client,until,sleep,distribution,resourceSample,safeDisk,digest,onTestDisk,testDiskRoot} from './concurrency-fixture.mjs';
 import {workflowTemplate} from '../src/lib/util/workflowTemplates.ts';
+import {officeFixture,unzip,zip} from './office-fixtures.mjs';
+import {officeChaosWitness} from './office-chaos-witness.mjs';
 
 const require=createRequire(import.meta.url);
 // Use Playwright's already-installed WebSocket transport, not a download.
 const {ws:WebSocket}=require('../node_modules/playwright-core/lib/utilsBundle.js');
-assert.ok(process.env.MX_TEST_ARTIFACTS?.startsWith('/mnt/PROJECT-DISK-1TB/'));
-assert.ok(process.env.TMPDIR?.startsWith('/mnt/PROJECT-DISK-1TB/'));
-assert.ok(process.env.MX_TEST_BINARY?.startsWith('/mnt/PROJECT-DISK-1TB/'));
+assert.ok(onTestDisk(process.env.MX_TEST_ARTIFACTS));
+assert.ok(onTestDisk(process.env.TMPDIR));
+assert.ok(onTestDisk(process.env.MX_TEST_BINARY));
 assert.ok(!process.env.MX_TEST_N1_URL,'Only the owned N1 is allowed');
 const count=Number(process.env.MX_LOAD_USERS||100),rounds=Number(process.env.MX_LOAD_ROUNDS||3);
 const seedRows=Number(process.env.MX_LOAD_SEED_ROWS||0),soakSeconds=Number(process.env.MX_LOAD_SOAK_SECONDS||0);
 const importRows=Number(process.env.MX_LOAD_IMPORT_ROWS||0);
+const mixedSeconds=Number(process.env.MX_LOAD_MIXED_SECONDS||0);
 assert.ok(Number.isInteger(count)&&count>=1&&count<=1000);
 const directory=await mkdtemp(join(process.env.MX_TEST_ARTIFACTS,'mx-concurrency-'));
 console.log(`Concurrency evidence: ${directory}`);
-const report={passed:false,scope:'API virtual users with real WebSockets, not 100/1000 graphical browsers; single HDD; no physical power-cut qualification',users:count,rounds,seedRows,soakSeconds,importRows,started:new Date().toISOString(),phases:[],resources:[],failures:[]};
+const report={passed:false,scope:'API virtual users with real WebSockets; optional explicitly reported graphical Office witness, not 100/1000 graphical editors; no physical power-cut qualification',testDiskRoot,users:count,rounds,seedRows,soakSeconds,mixedSeconds,importRows,started:new Date().toISOString(),phases:[],resources:[],failures:[]};
 report.host={cpu:cpus()[0]?.model,logicalCpus:cpus().length,ramBytes:totalmem(),os:platform(),kernel:release(),node:process.version,loadGenerator:'Same host; loopback HTTPS/WebSockets'};
 report.calibration=process.env.MX_LOAD_CALIBRATION==='1';
 report.fileProbe=process.env.MX_LOAD_FILE_PROBE==='1';
 report.filePayload=process.env.MX_LOAD_RANDOM_FILES==='1'?'crypto-random':'repeated-byte diagnostic payload';
-const sockets=[],records=[];let n1,mx,http,monitor,database,phase='setup',resourceFailure;
+const sockets=[],records=[],importedRecords=[],mixedRecords=[],mixedAttachments=[],mixedVersions=[],mixedFinalEdits=new Map(),readWatermarks=new Map();let n1,mx,http,monitor,database,phase='setup',resourceFailure;
 const password=`Disposable!${randomUUID()}`;
 const users=[];
 async function save(){await writeFile(join(directory,'results.json'),JSON.stringify(report,null,2));}
@@ -163,6 +166,32 @@ try{
     await until(()=>database.prepare("SELECT count(*) n FROM mx_notifications WHERE target_type='channel' AND target_uid=? AND kind='message.created'").get(channel).n===count*(count-1),'all durable channel notifications',120000);
     return {messages:count,duplicateReplayRows:0,durableMessageNotifications:count*(count-1)};
   });
+  await run('notification-receipts-with-active-writers',async()=>{
+    const results=await Promise.all(users.map(async(user,i)=>{
+      const inbox=(await call('/mx/v1/notifications?limit=10',user)).body.notifications;
+      assert.ok(inbox.length>0);
+      await call(`/mx/v1/notifications/${inbox[0].uid}/read`,user,'POST',undefined,[204]);
+      if(count>1)await call(`/mx/v1/notifications/${inbox[0].uid}/read`,users[(i+1)%count],'POST',undefined,[404]);
+      const own=records.find(r=>r.user.uid===user.uid).record;
+      const row=(await call(`${base}/${own.uid}`,user)).body;
+      await call(`${base}/${own.uid}`,user,'PATCH',{base_revision:row.revision,changes:{amount:900+i}});
+      await call('/mx/v1/notifications/read-all',user,'POST');
+      const after=(await call('/mx/v1/notifications?limit=10',user)).body;
+      const watermark=database.prepare('SELECT through_created_at,read_at FROM mx_notification_read_state WHERE recipient_uid=?').get(user.uid);
+      assert.ok(watermark);
+      readWatermarks.set(user.uid,watermark);
+      for(const notice of after.notifications){
+        if(notice.created_at<=watermark.through_created_at)assert.notEqual(notice.read_at,null,'Read-all is reflected by the API, including old payload rows');
+      }
+      // New deliveries may displace the receipt from the first API page. Check
+      // the exact acknowledged row rather than accepting an empty filtered list.
+      const receipt=database.prepare('SELECT recipient_uid,read_at FROM mx_notifications WHERE uid=?').get(inbox[0].uid);
+      assert.equal(receipt.recipient_uid,user.uid);assert.notEqual(receipt.read_at,null);
+      return own.uid;
+    }));
+    assert.equal(new Set(results).size,count);
+    return {accounts:count,concurrentEdits:count,readReceipts:count,readAllReceipts:count,foreignReceiptAttemptsDenied:count>1?count:0};
+  });
   if(importRows)await run('import-with-active-readers-and-editors',async()=>{
     assert.ok(Number.isInteger(importRows)&&importRows>=1&&importRows<=100000);
     const before=database.prepare('SELECT count(*) n FROM mx_records WHERE module_uid=?').get(module.uid).n;
@@ -182,6 +211,10 @@ try{
     assert.deepEqual(failures,[]);assert.equal(job.imported,importRows);assert.equal(job.state,'completed');
     assert.equal(database.prepare('SELECT count(*) n FROM mx_records WHERE module_uid=?').get(module.uid).n,before+importRows);
     assert.equal(database.prepare("SELECT count(*) n FROM mx_import_rows WHERE job_uid=? AND state='imported'").get(job.uid).n,importRows);
+    for(const row of database.prepare("SELECT source_row,record_uid FROM mx_import_rows WHERE job_uid=? AND state='imported' ORDER BY source_row").all(job.uid)){
+      const index=row.source_row-2;
+      importedRecords.push({uid:row.record_uid,expectedName:`Imported ${index}`,expectedAmount:index+.25});
+    }
     return {imported:importRows,failedRows:0,concurrentAccounts:count,backgroundIterations:requests};
   });
   await run('workflow-and-operational-books',async()=>{
@@ -241,6 +274,62 @@ try{
     assert.ok(sockets.every(s=>!s.closed&&!s.error),'All live clients survive the soak');
     return {iterations,writes,seconds:soakSeconds};
   });
+  if(mixedSeconds)await run('mixed-chaos-records-uploads-and-office',async()=>{
+    assert.ok(Number.isInteger(mixedSeconds)&&mixedSeconds>=30&&mixedSeconds<=3600);
+    const iterations=Array(count).fill(0);
+    const totals={recordCreates:0,recordEdits:0,attachmentUploads:0,driveVersionCommits:0,reads:0,uploadedBytes:0,downloadedBytes:0};
+    let failure;const mixedAbort=new AbortController();
+    const attach=async(user,row,data,name)=>{
+      const boundary=`mixed-${randomUUID()}`;
+      const payload=Buffer.concat([Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="base_revision"\r\n\r\n${row.revision}\r\n--${boundary}\r\nContent-Disposition: form-data; name="files"; filename="${name}"\r\nContent-Type: application/octet-stream\r\n\r\n`),data,Buffer.from(`\r\n--${boundary}--\r\n`)]);
+      const uploaded=(await call(`/mx/v1/records/${row.uid}/attachments/fields/${attachmentField.uid}`,user,'POST',payload,[201],{'Content-Type':`multipart/form-data; boundary=${boundary}`})).body;
+      const attachment=uploaded.attachments[0];assert.ok(attachment?.uid);
+      const ticket=(await call(`/mx/v1/records/${row.uid}/attachments/${attachment.uid}/preview-ticket`,user,'POST',undefined,[201])).body;
+      mixedAttachments.push({recordUid:row.uid,uid:attachment.uid,user,dataHash:digest(data),length:data.length});
+      assert.deepEqual((await call(ticket.url,user)).bytes,data);totals.attachmentUploads++;totals.uploadedBytes+=data.length;totals.downloadedBytes+=data.length;
+    };
+    // Begin the measured load with an already usable editor, as requested for
+    // "someone is editing while 100 users work". Cold-load timing has its own
+    // separate gate. A setup error still fails this run; it is never retried.
+    const ready=Promise.withResolvers();
+    const witness=process.env.MX_LOAD_OFFICE_BROWSER ? officeChaosWitness({mx,owner,call,directory,seconds:mixedSeconds,signal:mixedAbort.signal,onReady:ready.resolve}) : Promise.resolve({enabled:false});
+    witness.catch(error=>{failure=error;mixedAbort.abort(error);ready.reject(error);});
+    if(process.env.MX_LOAD_OFFICE_BROWSER)await ready.promise;
+    const started=Date.now(),end=started+mixedSeconds*1000;
+    // Stop all workers after a failed operation; never retry a failed measured write.
+    const load=users.map(async(user,i)=>{
+      let turn=0,driveItem;
+      while(Date.now()<end&&!failure){
+        try{
+          const own=records.find(r=>r.user.uid===user.uid).record;
+          if(i%5===0){const values={name:`Mixed ${i}-${turn}`,amount:turn+i};const created=(await call(base,user,'POST',{operation_uid:randomUUID(),values},[201])).body;mixedRecords.push({uid:created.uid,user,values});totals.recordCreates++;}
+          else if(i%5===1){const row=(await call(`${base}/${own.uid}`,user)).body;const amount=turn+i+5000;await call(`${base}/${own.uid}`,user,'PATCH',{base_revision:row.revision,changes:{amount}});mixedFinalEdits.set(own.uid,{user,amount});totals.recordEdits++;}
+          else if(i%5===2){const row=(await call(`${base}/${own.uid}`,user)).body;await attach(user,row,randomBytes(turn%4===0?1024*1024:256*1024),`mixed-${turn}.bin`);}
+          else if(i%5===3){
+            const entries=unzip(officeFixture('.docx'));entries['word/document.xml']=entries['word/document.xml'].replace('MX original document',`Mixed Office version ${i}-${turn}`);const bytes=zip(entries);
+            const operation_uid=randomUUID(),path='/mx/v1/drive/uploads';
+            await call(path,user,'POST',{operation_uid,...(driveItem?{item_uid:driveItem.uid,base_revision:driveItem.revision}:{}),file_name:`Office-${i}.docx`,mime_type:'application/vnd.openxmlformats-officedocument.wordprocessingml.document',size:bytes.length,last_modified:turn});
+            await call(`${path}/${operation_uid}/parts/0`,user,'PUT',bytes);
+            driveItem=(await call(`${path}/${operation_uid}/finish`,user,'POST')).body;
+            const version=database.prepare('SELECT current_version_uid uid FROM mx_drive_items WHERE uid=?').get(driveItem.uid);assert.ok(version?.uid);
+            mixedVersions.push({itemUid:driveItem.uid,versionUid:version.uid,user,dataHash:digest(bytes),length:bytes.length});
+            assert.deepEqual((await call(`/mx/v1/drive/items/${driveItem.uid}/download`,user)).bytes,bytes);totals.driveVersionCommits++;totals.uploadedBytes+=bytes.length;totals.downloadedBytes+=bytes.length;
+          }else{await call(turn%2?'/mx/v1/notifications?limit=20':`${base}?window=start&limit=20&metadata=false`,user);totals.reads++;}
+          iterations[i]++;turn++;await sleep(250+(i%7)*31);
+        }catch(error){failure=error;mixedAbort.abort(error);throw error;}
+      }
+    });
+    const [workers,editor]=await Promise.all([Promise.allSettled(load).then(results=>({results,finishedAtMs:Date.now()})),Promise.allSettled([witness])]);
+    const outcomes=[...workers.results,...editor];
+    report.mixedSnapshot={iterations,totals,office:outcomes.at(-1).status==='fulfilled'?outcomes.at(-1).value:{...outcomes.at(-1).reason.officeEvidence,error:outcomes.at(-1).reason.message},startedAtMs:started,workersFinishedAtMs:workers.finishedAtMs,elapsedSeconds:(Date.now()-started)/1000};
+    const rejected=outcomes.filter(r=>r.status==='rejected');assert.deepEqual(rejected.map(r=>r.reason.stack),[]);
+    assert.ok(iterations.every(n=>n>0),'Every account must perform real work');
+    assert.ok(sockets.every(s=>!s.closed&&!s.error),'All live connections survive the mixed workload');
+    const office=outcomes.at(-1).value;
+    const overlappingOfficeSaves=office.acknowledgedVersions?.filter(v=>v.verifiedAtMs>=started&&v.verifiedAtMs<=workers.finishedAtMs).length||0;
+    if(process.env.MX_LOAD_OFFICE_BROWSER)assert.ok(overlappingOfficeSaves>=3,'At least three real, byte-verified Office saves must overlap the active mixed workers');
+    return {activeAccounts:count,seconds:(Date.now()-started)/1000,iterations,totals,office,overlappingOfficeSaves,failedMeasuredOperations:0};
+  });
   await run('N1-record-file-round-trip',async()=>{
     await Promise.all(users.map(async(user,i)=>{
       const item=records.find(r=>r.user.uid===user.uid);const row=(await call(`${base}/${item.record.uid}`,user)).body;
@@ -254,7 +343,7 @@ try{
       const partial=await call(ticket.url,user,'GET',undefined,[206],{Range:'bytes=1024-2047'});assert.deepEqual(partial.bytes,data.subarray(1024,2048));
       item.file={uid:attachment.uid,dataHash:digest(data),length:data.length};
     }));
-    return {files:count,bytes:count*256*1024,byteExact:true,rangeExact:true,storage:'latest real N1, strict durability, isolated 1+0 pool on HDD'};
+    return {files:count,bytes:count*256*1024,byteExact:true,rangeExact:true,storage:'real N1, strict durability, isolated 1+0 pool on authorized test volume'};
   });
   if(count>1)await run('same-name-upload-collision-preserves-winner',async()=>{
     const target=records[0].record.uid,row=(await call(`${base}/${target}`,users[0])).body;
@@ -270,9 +359,32 @@ try{
     return {concurrentAttempts:2,committed:1,winningBytesPreserved:true};
   });
   await run('process-crash-recovery',async()=>{
+    // Snapshot every acknowledged initial record, not only the first record per
+    // account selected for a file upload. Preserve exact field values/revision.
+    await parallel(records,20,async item=>{
+      const row=(await call(`${base}/${item.record.uid}`,item.user)).body;
+      item.beforeCrash={values:row.values,revision:row.revision};
+    });
+    await parallel(importedRecords,20,async item=>{
+      const row=(await call(`${base}/${item.uid}`,owner)).body;
+      assert.equal(row.values.name,item.expectedName);assert.equal(row.values.amount,item.expectedAmount);
+      assert.equal(row.values.double,item.expectedAmount*2);
+      item.beforeCrash={values:row.values,revision:row.revision};
+    });
     for(const s of sockets)s.socket.terminate();
     await mx.restart({signal:'SIGKILL'});await n1.restart('SIGKILL');
     sockets.length=0;await connectLive();
+    for(const [uid,expected] of readWatermarks){
+      assert.deepEqual(database.prepare('SELECT through_created_at,read_at FROM mx_notification_read_state WHERE recipient_uid=?').get(uid),expected,'Acknowledged account read state survives restart');
+    }
+    await parallel(records,20,async item=>{
+      const row=(await call(`${base}/${item.record.uid}`,item.user)).body;
+      assert.deepEqual({values:row.values,revision:row.revision},item.beforeCrash,'Every acknowledged initial record retains its exact fields and revision');
+    });
+    await parallel(importedRecords,20,async item=>{
+      const row=(await call(`${base}/${item.uid}`,owner)).body;
+      assert.deepEqual({values:row.values,revision:row.revision},item.beforeCrash,'Every acknowledged imported record retains its exact fields and revision');
+    });
     await Promise.all(users.map(async user=>{
       const item=records.find(r=>r.user.uid===user.uid);
       const row=(await call(`${base}/${item.record.uid}`,user)).body;assert.ok(row.revision>=2);
@@ -280,9 +392,35 @@ try{
       const ticket=(await call(`/mx/v1/records/${row.uid}/attachments/${attachment.uid}/preview-ticket`,user,'POST',undefined,[201])).body;
       assert.equal(digest((await call(ticket.url,user)).bytes),item.file.dataHash);
     }));
+    // Inspect every acknowledged mixed create/upload, including historical Drive
+    // versions beyond the history UI's 100-item display limit. These are reads,
+    // never retries/replays of a measured failed write.
+    await parallel(mixedRecords,20,async item=>{
+      const row=(await call(`${base}/${item.uid}`,item.user)).body;
+      assert.equal(row.values.name,item.values.name);assert.equal(row.values.amount,item.values.amount);
+      assert.equal(row.values.double,item.values.amount*2);
+    });
+    await parallel([...mixedFinalEdits],20,async([uid,item])=>{
+      const row=(await call(`${base}/${uid}`,item.user)).body;
+      assert.equal(row.values.amount,item.amount);assert.equal(row.values.double,item.amount*2);
+    });
+    await parallel(mixedAttachments,20,async item=>{
+      const ticket=(await call(`/mx/v1/records/${item.recordUid}/attachments/${item.uid}/preview-ticket`,item.user,'POST',undefined,[201])).body;
+      const bytes=(await call(ticket.url,item.user)).bytes;
+      assert.equal(bytes.length,item.length);assert.equal(digest(bytes),item.dataHash);
+    });
+    await parallel(mixedVersions,20,async item=>{
+      const bytes=(await call(`/mx/v1/drive/items/${item.itemUid}/download?version_uid=${item.versionUid}`,item.user)).bytes;
+      assert.equal(bytes.length,item.length);assert.equal(digest(bytes),item.dataHash);
+    });
+    const office=report.mixedSnapshot?.office;
+    if(office?.enabled)await parallel(office.acknowledgedVersions,10,async item=>{
+      const bytes=(await call(`/mx/v1/drive/items/${office.itemUid}/download?version_uid=${item.versionUid}`,owner)).bytes;
+      assert.equal(bytes.length,item.length);assert.equal(digest(bytes),item.dataHash);
+    });
     assert.equal(database.prepare('PRAGMA integrity_check').get().integrity_check,'ok');
     assert.deepEqual(database.prepare('PRAGMA foreign_key_check').all(),[]);
-    return {acknowledgedRecordsSurvived:true,acknowledgedFileBytesSurvived:true,sqliteIntegrity:'ok',foreignKeyViolations:0,liveClientsReconnected:count};
+    return {acknowledgedRecordsSurvived:true,initialRecordSnapshotsVerified:records.length,importedRecordSnapshotsVerified:importedRecords.length,acknowledgedFileBytesSurvived:true,accountReadWatermarksVerified:readWatermarks.size,mixedRecordCreatesVerified:mixedRecords.length,mixedFinalEditsVerified:mixedFinalEdits.size,mixedAttachmentHashesVerified:mixedAttachments.length,mixedHistoricalVersionHashesVerified:mixedVersions.length,actualOfficeSavedVersionHashesVerified:office?.acknowledgedVersions?.length||0,sqliteIntegrity:'ok',foreignKeyViolations:0,liveClientsReconnected:count};
   });
   await run('interrupted-writes-and-pending-notification-recovery',async()=>{
     // Hold delivery with an explicit disposable fault, not a long writer lock.
@@ -328,12 +466,21 @@ try{
   // acknowledged data. This is evidence, never a substitute for a passing run.
   if(database)try{
     const exists=database.prepare('SELECT EXISTS(SELECT 1 FROM mx_records WHERE uid=?) ok');
-    report.failureSnapshot={acknowledgedRecordCreates:records.length,missingAcknowledgedRecords:records.filter(r=>!exists.get(r.record.uid).ok).length,sqliteIntegrity:database.prepare('PRAGMA integrity_check').get().integrity_check,foreignKeyViolations:database.prepare('PRAGMA foreign_key_check').all().length,pendingNotificationJobs:database.prepare('SELECT count(*) n FROM mx_notification_outbox').get().n};
+    report.failureSnapshot={acknowledgedRecordCreates:records.length+importedRecords.length+mixedRecords.length,missingAcknowledgedRecords:records.filter(r=>!exists.get(r.record.uid).ok).length+importedRecords.filter(r=>!exists.get(r.uid).ok).length+mixedRecords.filter(r=>!exists.get(r.uid).ok).length,acknowledgedMixedAttachments:mixedAttachments.length,acknowledgedMixedDriveVersions:mixedVersions.length,fileHashesRecheckedAfterRestart:report.phases.some(p=>p.name==='process-crash-recovery'&&p.passed),sqliteIntegrity:database.prepare('PRAGMA integrity_check').get().integrity_check,foreignKeyViolations:database.prepare('PRAGMA foreign_key_check').all().length,pendingNotificationJobs:database.prepare('SELECT count(*) n FROM mx_notification_outbox').get().n};
   }catch(error){report.failureSnapshot={inspectionError:error.message};}
 }
 finally{
   clearInterval(monitor);for(const s of sockets)s.socket.terminate();
   if(http){report.http={peakInFlight:http.peak,requests:http.samples.length,latencyMs:distribution(http.samples.map(s=>s.ms))};await writeFile(join(directory,'http-samples.json'),JSON.stringify(http.samples));http.close();}
   database?.close();if(mx)await mx.close();else if(n1)await n1.close();
+  // Keep an independent, credential-free acknowledgement ledger even for failed
+  // runs. A later read-only/restart audit must not depend on vanished JS memory.
+  const withoutCredentials=({user,...item})=>({...item,actorUid:user.uid});
+  await writeFile(join(directory,'acknowledged-data.json'),JSON.stringify({
+    records:records.map(withoutCredentials),importedRecords,mixedRecords:mixedRecords.map(withoutCredentials),
+    mixedFinalEdits:[...mixedFinalEdits].map(([uid,item])=>({uid,...withoutCredentials(item)})),
+    mixedAttachments:mixedAttachments.map(withoutCredentials),mixedVersions:mixedVersions.map(withoutCredentials),
+    graphicalOffice:report.mixedSnapshot?.office||null,
+  },null,2),{mode:0o600});
   report.finished=new Date().toISOString();await save();console.log(`Results: ${directory}/results.json; passed=${report.passed}`);
 }

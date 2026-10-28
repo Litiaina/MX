@@ -8,6 +8,8 @@ use axum::{
 use rusqlite::{OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::sync::{LazyLock, Mutex};
+use tokio::sync::{mpsc, oneshot};
 use uuid::Uuid;
 
 use crate::{
@@ -353,28 +355,92 @@ pub async fn get_audit_log(claims: Claims, Query(query): Query<AuditQuery>) -> R
 }
 
 async fn record_audit_event(write: AuditWrite) -> Result<(), String> {
-    let database_result =
-        tokio::task::spawn_blocking(move || -> Result<(), SqliteDatabaseError> {
-            with_sql_write(|connection| {
-                ensure_audit_schema(connection)?;
+    let (reply, receipt) = oneshot::channel();
+    audit_sender()
+        .send((write, reply))
+        .await
+        .map_err(|_| "audit queue is unavailable".to_owned())?;
+    receipt
+        .await
+        .map_err(|_| "audit writer stopped before acknowledging persistence".to_owned())?
+}
 
-                let actor_name: Option<String> = connection
-                    .query_row(
-                        r#"
-                                SELECT name
-                                FROM users
-                                WHERE uid = ?1
-                                LIMIT 1
-                                "#,
-                        params![&write.actor_uid],
-                        |row| row.get(0),
-                    )
-                    .optional()?;
+type PendingAudit = (AuditWrite, oneshot::Sender<Result<(), String>>);
+static AUDIT_QUEUE: LazyLock<Mutex<Option<mpsc::Sender<PendingAudit>>>> =
+    LazyLock::new(|| Mutex::new(None));
+const AUDIT_BATCH: usize = 32;
 
-                let actor_name = actor_name.unwrap_or_else(|| write.actor_email.clone());
+fn audit_sender() -> mpsc::Sender<PendingAudit> {
+    let mut queue = AUDIT_QUEUE.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(sender) = queue.as_ref().filter(|s| !s.is_closed()) {
+        return sender.clone();
+    }
+    let (sender, mut receiver) = mpsc::channel::<PendingAudit>(256);
+    tokio::spawn(async move {
+        while let Some(first) = receiver.recv().await {
+            // Bounded group commit; every requester still awaits the durable
+            // audit transaction, rather than enqueueing a fire-and-forget log.
+            tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+            let task = tokio::task::spawn_blocking(move || {
+                let (write, reply) = first;
+                let mut writes = vec![write];
+                let mut replies = vec![reply];
+                let result = with_sql_write(|c| {
+                    // Include arrivals while we waited for admission. Freezing
+                    // a one-event batch before a long writer wait needlessly
+                    // leaves those receipts waiting for another durable turn.
+                    while writes.len() < AUDIT_BATCH {
+                        match receiver.try_recv() {
+                            Ok((write, reply)) => { writes.push(write); replies.push(reply); }
+                            Err(_) => break,
+                        }
+                    }
+                    write_audit_batch(c, &writes)
+                }).map_err(|error| format!("failed to write MX audit batch: {error}"));
+                for reply in replies {
+                    let _ = reply.send(result.clone());
+                }
+                receiver
+            }).await;
+            match task {
+                Ok(next) => receiver = next,
+                // Dropping the receiver/replies closes pending receipts; a
+                // later request can start a new worker, never a false ACK.
+                Err(error) => {
+                    tracing::error!(%error, "Audit writer stopped before persistence acknowledgement");
+                    break;
+                }
+            }
+        }
+    });
+    *queue = Some(sender.clone());
+    sender
+}
 
-                connection.execute(
-                    r#"
+fn write_audit_batch(
+    connection: &rusqlite::Connection,
+    writes: &[AuditWrite],
+) -> rusqlite::Result<()> {
+    if writes.len() > AUDIT_BATCH {
+        return Err(rusqlite::Error::InvalidParameterName(
+            "audit batch exceeds its bounded writer slice".into(),
+        ));
+    }
+    ensure_audit_schema(connection)?;
+    let transaction =
+        rusqlite::Transaction::new_unchecked(connection, rusqlite::TransactionBehavior::Immediate)?;
+    let connection = &transaction;
+    for write in writes {
+        let actor_name: Option<String> = connection
+            .prepare_cached("SELECT name FROM users WHERE uid=?1 LIMIT 1")?
+            .query_row(params![&write.actor_uid], |row| row.get(0))
+            .optional()?;
+
+        let actor_name = actor_name.unwrap_or_else(|| write.actor_email.clone());
+
+        connection
+            .prepare_cached(
+                r#"
                         INSERT INTO mx_audit_log (
                             event_uid,
                             actor_uid,
@@ -395,36 +461,25 @@ async fn record_audit_event(write: AuditWrite) -> Result<(), String> {
                             ?8, ?9, ?10, ?11, ?12, ?13, ?14
                         )
                         "#,
-                    params![
-                        write.event_uid,
-                        write.actor_uid,
-                        actor_name,
-                        write.actor_email,
-                        write.access_level,
-                        write.action,
-                        write.method,
-                        write.path,
-                        write.target_type,
-                        write.target_uid,
-                        write.status_code as i64,
-                        if write.success { 1_i64 } else { 0_i64 },
-                        write.user_agent,
-                        write.created_at,
-                    ],
-                )?;
-
-                Ok(())
-            })
-        })
-        .await;
-
-    match database_result {
-        Ok(Ok(())) => Ok(()),
-
-        Ok(Err(error)) => Err(format!("failed to write MX audit event: {error}")),
-
-        Err(error) => Err(format!("audit write blocking task failed: {error}")),
+            )?
+            .execute(params![
+                write.event_uid,
+                write.actor_uid,
+                actor_name,
+                write.actor_email,
+                write.access_level,
+                write.action,
+                write.method,
+                write.path,
+                write.target_type,
+                write.target_uid,
+                write.status_code as i64,
+                if write.success { 1_i64 } else { 0_i64 },
+                write.user_agent,
+                write.created_at,
+            ])?;
     }
+    transaction.commit()
 }
 
 pub(crate) fn ensure_audit_schema(
@@ -1066,6 +1121,49 @@ fn classify_action(method: &Method, path: &str) -> Option<AuditClassification> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn audit_write(index: usize) -> AuditWrite {
+        AuditWrite {
+            event_uid: format!("event-{index}"),
+            actor_uid: "actor".into(),
+            actor_email: "actor@test".into(),
+            access_level: 0,
+            action: "record.create".into(),
+            method: "POST".into(),
+            path: "/mx/v1/modules/test/records".into(),
+            target_type: Some("record".into()),
+            target_uid: Some(format!("record-{index}")),
+            status_code: 201,
+            success: true,
+            user_agent: None,
+            created_at: index as i64,
+        }
+    }
+
+    #[test]
+    fn bounded_audit_batch_commits_all_rows_or_none() {
+        let c = rusqlite::Connection::open_in_memory().unwrap();
+        c.execute_batch("CREATE TABLE users(uid TEXT PRIMARY KEY,name TEXT NOT NULL,email TEXT NOT NULL,access_level INTEGER NOT NULL); INSERT INTO users VALUES('actor','Actor','actor@test',0);").unwrap();
+        crate::db::schema::initialize(&c).unwrap();
+        let mut bad = vec![audit_write(0), audit_write(0)];
+        assert!(write_audit_batch(&c, &bad).is_err());
+        assert_eq!(
+            c.query_row("SELECT count(*) FROM mx_audit_log", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+        bad[1] = audit_write(1);
+        write_audit_batch(&c, &bad).unwrap();
+        assert_eq!(c.query_row("SELECT count(*) FROM mx_audit_log WHERE actor_name='Actor' AND success=1 AND status_code=201",[],|r|r.get::<_,i64>(0)).unwrap(),2);
+        assert!(write_audit_batch(&c, &(2..35).map(audit_write).collect::<Vec<_>>()).is_err());
+        assert_eq!(
+            c.query_row("SELECT count(*) FROM mx_audit_log", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            2
+        );
+    }
 
     #[test]
     fn classifies_custom_module_record_writes() {

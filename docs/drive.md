@@ -10,6 +10,14 @@ search, list/grid layouts, file-type icons, image thumbnails, preview navigation
 downloads, rename/move, file versions, and activity. The interface follows MX's
 neutral light/dark surfaces independently of the custom accent color.
 
+RC.11's Office appearance update also applies MX's configured logo,
+theme, accent and personal text size to the separate document window's loading
+screen, header and options. The document itself retains its own formatting and
+native zoom controls; changing the workspace theme does not recolor document
+contents or change saved file bytes. First-time engine startup and complex
+workbook import are separate loading stages. Do not treat an open loader or
+local prepared copy as an acknowledged server save.
+
 Use **Upload files** or **Upload folder** to queue files; folder uploads preserve
 the selected directory structure. You can also drop files or folders into Drive
 (or directly onto an owned folder), or paste an external clipboard image/file

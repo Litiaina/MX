@@ -1,4 +1,4 @@
-use super::{Error, database, error, store};
+use super::{Error, database, error, store, write_database};
 use crate::{config::load_config::CONFIG, middleware::auth::Claims};
 use axum::{Json, extract::Path};
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
@@ -94,7 +94,7 @@ pub(super) async fn set(
         return Err(error(403, "Only administrators can manage Drive quotas."));
     }
     Ok(Json(
-        database(move |c| {
+        write_database(move |c| {
             change(c, &claims.uid, &uid, value.base_revision, value.quota_bytes)?;
             snapshot(c, &uid)
         })

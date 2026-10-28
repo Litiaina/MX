@@ -34,12 +34,21 @@ export async function verifyFileManager({page,engine,call,base,user,directory}) 
   const folder=(await call(base,user)).items.find(i=>i.name===`UI ${engine}`);
   const copied=(await call(`${base}?parent_uid=${folder.uid}`,user)).items;
   assert.ok(copied.some(i=>i.name===`notes-${engine} (copy).txt`),'Copy collision keeps original extension');
+  const moving=copied.find(i=>i.name===`notes-${engine}.txt`);
+  assert.ok(moving,'The exact source file exists before Cut');
   await name(`notes-${engine}.txt`).click();await page.keyboard.press('Control+x');
   await until(()=>page.getByRole('button',{name:'Paste 1 to move',exact:true}).isVisible(),'Ctrl+X staged the selected copy');
   await page.locator('.breadcrumbs').getByRole('button',{name:'My Drive',exact:true}).click();
   // Moving to root would collide with the original; choose another destination.
-  await name(`References-${engine}`).dblclick();await page.keyboard.press('Control+v');
-  await until(async()=>await name(`notes-${engine}.txt`).count()===1,'Ctrl+X/V moved the selected file');
+  await name(`References-${engine}`).dblclick();
+  // Navigation preserves old rows while loading. A matching filename alone
+  // can therefore pass before the destination, or even the move, has loaded.
+  await until(async()=>(await page.locator('.breadcrumbs').textContent()).includes(`References-${engine}`)&&await page.locator('.files').getAttribute('aria-busy')==='false','Cut destination is loaded');
+  const destination=(await call(base,user)).items.find(i=>i.name===`References-${engine}`);
+  assert.ok(destination,'The destination folder exists');
+  await page.keyboard.press('Control+v');
+  await until(async()=>(await call(`${base}?parent_uid=${destination.uid}`,user)).items.some(i=>i.uid===moving.uid),'Ctrl+X/V persisted the exact file in its destination');
+  await until(async()=>await name(`notes-${engine}.txt`).count()===1&&await page.getByRole('button',{name:'Paste 1 to move',exact:true}).count()===0,'The completed move is reflected in the destination');
   assert.equal((await call(`${base}?parent_uid=${folder.uid}`,user)).items.length,4,'Cut removed only the selected copy');
   await page.locator('.breadcrumbs').getByRole('button',{name:'My Drive',exact:true}).click();
   // Paste an external image through the actual ClipboardEvent path, without permissions or file scans.

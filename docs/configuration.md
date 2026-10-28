@@ -35,8 +35,8 @@ must allow a part at least this large. Increasing an upload limit does not
 require sending the complete object as one N1 part.
 
 RC.10 adds `max_concurrent_uploads` (default **8**, allowed
-**1–64**). This is a shared active-transfer budget for module/chat uploads, Drive
-batches and durable Drive part/finalize requests—not a per-user rate or bandwidth
+**1–64**). This is a shared active-transfer budget for module/chat uploads and Drive
+batches—not a per-user rate or bandwidth
 limit. Record/chat files waiting for a slot remain disk-spooled and are not read
 into N1 part buffers or sent on upstream sockets yet. Waiting is asynchronous;
 cancelled waits release their place. A wait exceeding five minutes returns 503
@@ -45,6 +45,28 @@ changing the value. Keep it within the actual N1/disk/RAM capacity; increasing i
 is not automatically faster. This setting does not change the per-file limits
 above or disable N1's own configured admission/rate policy. See the bounded-workload results and limitations in
 [Concurrent-user qualification](concurrency-qualification.md).
+
+Durable resumable Drive requests have a **separate eight-transfer budget** and
+ten-second admission wait; saturation returns HTTP 429 with a busy-transfer
+message. Changing `max_concurrent_uploads` does not change that separate budget.
+These are bounded concurrent-work guards, not upload-speed throttles.
+
+### SQLite save/checkpoint policy — RC.11
+
+RC.11 uses FULL-synchronous WAL commits and a dedicated
+passive-checkpoint worker. A successful database commit includes its WAL sync;
+slower database-page checkpoint work does not hold the application writer's FIFO
+turn. Checkpoints retry work pinned by readers; worker errors restore automatic
+checkpointing on subsequent operations. The journal retention-size setting is
+not a hard limit while readers retain WAL pages. No new `mx.config` setting or
+manual database migration is required for this policy.
+
+This is not proof against every power/storage failure: disks and controllers
+must honor sync requests, and backups remain necessary. Keep SQLite on a local
+filesystem. Use MX's online backup operation for a running server; never copy
+only the live `.db` file or remove its `-wal`/`-shm` files to free space. Check
+repeated checkpoint-error/deferred-work logs and available disk space before
+restarting a busy deployment. N1's own durability configuration is unchanged.
 
 ### Administrator upload settings (RC.7 onward)
 

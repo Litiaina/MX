@@ -18,7 +18,7 @@ async function freePort() {
   return port;
 }
 
-export async function startIsolatedMx(root,{seedDatabase,beforeStart,storage,loginTokenExpiration=900,binary}={}) {
+export async function startIsolatedMx(root,{seedDatabase,beforeStart,storage,loginTokenExpiration=900,binary,jwtSecret=randomUUID()+randomUUID()}={}) {
   const directory = await mkdtemp(join(process.env.MX_TEST_ARTIFACTS || tmpdir(), 'mx-eight-user-'));
   if(seedDatabase){const source=new DatabaseSync(resolve(seedDatabase),{readOnly:true});try{await backup(source,join(directory,'test.db'));}finally{source.close();}}
   if(beforeStart)await beforeStart(join(directory,'test.db'));
@@ -26,7 +26,7 @@ export async function startIsolatedMx(root,{seedDatabase,beforeStart,storage,log
   const signupKey = randomUUID();
   const n1 = storage || (process.env.MX_TEST_N1_URL ? await startLiveN1(directory) : await startN1Fixture());
   const n1Secret = n1.live ? n1.secret : 'unused-isolated-test';
-  await writeFile(join(directory, 'mx.env'), `JWT_SECRET=${randomUUID()}${randomUUID()}\nAUTH_KEYS=${signupKey}\nN1_MX_SECRET=${n1Secret}\n`, { mode: 0o600 });
+  await writeFile(join(directory, 'mx.env'), `JWT_SECRET=${jwtSecret}\nAUTH_KEYS=${signupKey}\nN1_MX_SECRET=${n1Secret}\n`, { mode: 0o600 });
   await writeFile(join(directory, 'mx.config'), `[server]
 host=127.0.0.1
 http_port=${redirectPort}
@@ -57,7 +57,7 @@ max_participants=12
   execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', join(directory, 'key.pem'), '-out', join(directory, 'cert.pem'), '-days', '1', '-subj', '/CN=localhost'], { stdio: 'ignore' });
   const log = await open(join(directory, 'server.log'), 'w');
   // Explicitly replace secrets inherited from a developer's shell.
-  const childEnvironment = { ...process.env, JWT_SECRET: randomUUID() + randomUUID(), AUTH_KEYS: signupKey, N1_MX_SECRET: n1Secret, RUST_LOG: 'warn' };
+  const childEnvironment = { ...process.env, JWT_SECRET: jwtSecret, AUTH_KEYS: signupKey, N1_MX_SECRET: n1Secret, RUST_LOG: 'warn' };
   // A developer's updater must never manage a disposable test process.
   delete childEnvironment.MX_UPDATE_CONFIG;
   delete childEnvironment.MX_UPDATE_GITHUB_TOKEN;

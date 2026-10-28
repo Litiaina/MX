@@ -32,7 +32,7 @@ implementation details and advanced configuration.
 
 ## Deployment administrators
 
-- [Current candidate: MX 1.0.0-rc.10](releases/1.0.0-rc.10.md)
+- [Current candidate: MX 1.0.0-rc.11](releases/1.0.0-rc.11.md)
 - [Published candidate: MX 1.0.0-rc.9](releases/1.0.0-rc.9.md)
 - [Published candidate: MX 1.0.0-rc.8](releases/1.0.0-rc.8.md)
 - [Published candidate: MX 1.0.0-rc.7](releases/1.0.0-rc.7.md)

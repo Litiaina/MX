@@ -21,7 +21,7 @@ async function worker() {
       interceptor.setSlaveDispatchProvider({ queryDispatch: () => ({ provider: name }) });
     },
     releaseDispatchProviderInterceptor(interceptor: Interceptor) { releases.push(interceptor); },
-    getContainerWindow: () => ({}), getComponentWindow: () => ({ setFocus() {} }), activate(){operations.push('activate-frame');}, contextChanged() {}
+    getContainerWindow: () => ({setVisible(){}}), getComponentWindow: () => ({ setFocus() {} }), activate(){operations.push('activate-frame');}, contextChanged() {}
   }));
   const [desktop, frame] = providers;
   let modifyListener: {modified:()=>void};

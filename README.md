@@ -11,18 +11,19 @@
 
 </div>
 
-Self-hosted, modular digital workplace platform. **Current candidate: 1.0.0-rc.10.**
+Self-hosted, modular digital workplace platform. **Current candidate: 1.0.0-rc.11.**
 
-RC.10 hardens concurrent record saves, durable notification delivery and file
-uploads. It fixes a legacy control-number conflict in modules without unique
-fields and preserves unsaved administration forms across background reconnects.
-Existing modules, records, numbering and file references remain intact.
+RC.11 refines workspace and Office appearance and hardens concurrent records,
+imports, uploads and large notification histories. The reviewed build passed
+an extended 100-account mixed workload on SSD, including a real Office editor
+and restart recovery. Existing modules, records and file references remain intact.
+Large-workbook rendering and shared rotational-HDD capacity remain documented limits.
 It remains a release candidate, not a stable-release certification.
 Publication does not force an immediate restart.
 
 This is a candidate for the new 1.0 release line, not the final stable release.
 The earlier 4.x labels remain development history. Read the
-[current candidate notes](docs/releases/1.0.0-rc.10.md) and, for a 4.x deployment,
+[current candidate notes](docs/releases/1.0.0-rc.11.md) and, for a 4.x deployment,
 the [one-time version-reset instructions](docs/releases/1.0.0-rc.1.md#upgrading-a-4x-development-installation)
 before upgrading an existing installation.
 

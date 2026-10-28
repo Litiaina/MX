@@ -1,4 +1,4 @@
-use super::{database, store};
+use super::{store, write_database};
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde::Deserialize;
 use uuid::Uuid;
@@ -300,7 +300,7 @@ fn release_inner(c: &Connection, r: &Reservation, discard: bool) -> rusqlite::Re
     tx.commit()
 }
 pub(super) async fn release(r: Reservation, discard: bool) -> Result<(), super::Error> {
-    database(move |c| release_inner(c, &r, discard)).await?;
+    write_database(move |c| release_inner(c, &r, discard)).await?;
     if discard {
         super::gc::wake();
     }

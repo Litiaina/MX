@@ -20,7 +20,7 @@ use crate::{
             records::recalculate_module_formulas, storage::ensure_storage_layout_schema,
         },
     },
-    db::connector::{SqliteDatabaseError, with_sql_connection},
+    db::connector::{SqliteDatabaseError, with_sql_connection, with_sql_write},
     middleware::auth::Claims,
 };
 
@@ -1673,7 +1673,7 @@ pub async fn create_schema_field(
 
     let database_result =
         tokio::task::spawn_blocking(move || -> Result<CreateFieldOutcome, SqliteDatabaseError> {
-            with_sql_connection(|connection| {
+            with_sql_write(|connection| {
                 ensure_dynamic_schema(connection)?;
                 let schema_transaction = rusqlite::Transaction::new_unchecked(
                     connection,
@@ -2006,7 +2006,7 @@ pub async fn update_system_schema_field(
 
     let database_result = tokio::task::spawn_blocking(
         move || -> Result<SystemFieldDefinition, SqliteDatabaseError> {
-            with_sql_connection(|connection| {
+            with_sql_write(|connection| {
                 ensure_dynamic_schema(connection)?;
 
                 let existing = connection.query_row(
@@ -2151,7 +2151,7 @@ async fn update_schema_order_for_module(
 
     let database_result =
         tokio::task::spawn_blocking(move || -> Result<u64, SqliteDatabaseError> {
-            with_sql_connection(|connection| {
+            with_sql_write(|connection| {
                 ensure_dynamic_schema(connection)?;
 
                 let active_field_uids = {
@@ -2392,7 +2392,7 @@ pub async fn update_schema_field(
 
     let database_result =
         tokio::task::spawn_blocking(move || -> Result<FieldUpdate, SqliteDatabaseError> {
-            with_sql_connection(|connection| {
+            with_sql_write(|connection| {
                 ensure_dynamic_schema(connection)?;
                 ensure_storage_layout_schema(connection)?;
                 let archive_transaction = Some(rusqlite::Transaction::new_unchecked(connection, rusqlite::TransactionBehavior::Immediate)?);

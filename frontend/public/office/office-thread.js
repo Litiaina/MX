@@ -50,7 +50,10 @@ Module.zetajs.then((zeta) => {
         generation = 0;
         model = desktop.loadComponentFromURL(path, '_default', 0, [
           property('ReadOnly', readOnly), property('MacroExecutionMode', 0),
-          property('UpdateDocMode', 0), property('Hidden', false)
+          // Build the document before revealing its native window. The MX
+          // loading surface already covers it; intermediate native layouts
+          // need not be painted while the workbook is being imported.
+          property('UpdateDocMode', 0), property('Hidden', true)
         ]);
         if (!model) throw new Error('This document could not be opened by the Office engine.');
         listener = zeta.unoObject(['com.sun.star.util.XModifyListener'], {
@@ -62,6 +65,7 @@ Module.zetajs.then((zeta) => {
         frameInterception = intercept(frame);
         frame.contextChanged();
         frame.getContainerWindow().FullScreen = true;
+        frame.getContainerWindow().setVisible(true);
         frame.activate();
         frame.getComponentWindow().setFocus();
         if(['.xls','.xlsx','.ods'].includes(data.extension)) {

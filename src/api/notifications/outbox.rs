@@ -92,7 +92,16 @@ pub(crate) fn queue_record_activity(
 // The notification rows and removal of their jobs commit together. A crash at
 // ANY earlier point leaves the entire batch pending for startup recovery.
 pub(super) fn drain(c: &rusqlite::Connection) -> rusqlite::Result<Vec<(String, Notification)>> {
+    drain_slice(c, 100, std::time::Duration::from_millis(25))
+}
+
+fn drain_slice(
+    c: &rusqlite::Connection,
+    recipient_budget: usize,
+    time_budget: std::time::Duration,
+) -> rusqlite::Result<Vec<(String, Notification)>> {
     let tx = rusqlite::Transaction::new_unchecked(c, rusqlite::TransactionBehavior::Immediate)?;
+    let started = std::time::Instant::now();
     let jobs = tx
         .prepare("SELECT id,job_json FROM mx_notification_outbox ORDER BY id LIMIT 8")?
         .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))?
@@ -120,9 +129,27 @@ pub(super) fn drain(c: &rusqlite::Connection) -> rusqlite::Result<Vec<(String, N
                         continue;
                     }
                     if let Some(module) = request.module_uid.as_deref() {
-                        let level=crate::api::mx::privacy::level(&tx,&request.recipient_uid)?;
-                        if !crate::api::modules::module_can_for_user_initialized(&tx,module,&request.recipient_uid,level,"read")? {continue;}
-                        if request.target_type.as_deref()==Some("record") && !crate::api::mx::privacy::field_record_allowed(&tx,request.target_uid.as_deref().unwrap_or(""),request.data["attachment_field_uid"].as_str().unwrap_or(""),&request.recipient_uid,level)? {continue;}
+                        let level = crate::api::mx::privacy::level(&tx, &request.recipient_uid)?;
+                        if !crate::api::modules::module_can_for_user_initialized(
+                            &tx,
+                            module,
+                            &request.recipient_uid,
+                            level,
+                            "read",
+                        )? {
+                            continue;
+                        }
+                        if request.target_type.as_deref() == Some("record")
+                            && !crate::api::mx::privacy::field_record_allowed(
+                                &tx,
+                                request.target_uid.as_deref().unwrap_or(""),
+                                request.data["attachment_field_uid"].as_str().unwrap_or(""),
+                                &request.recipient_uid,
+                                level,
+                            )?
+                        {
+                            continue;
+                        }
                     }
                     if request.target_type.as_deref() == Some("channel")
                         && (request.kind == "message.created" || request.kind == "mention.created")
@@ -141,6 +168,13 @@ pub(super) fn drain(c: &rusqlite::Connection) -> rusqlite::Result<Vec<(String, N
             }
         }
         tx.execute("DELETE FROM mx_notification_outbox WHERE id=?1", [id])?;
+        // Yield only between whole jobs: a notification fan-out and retirement
+        // of its outbox job still commit together, including on crash/retry.
+        // Eight 100-person fan-outs must not monopolize the foreground writer.
+        // A single larger job is atomic even if it exceeds this soft slice.
+        if deliveries.len() >= recipient_budget || started.elapsed() >= time_budget {
+            break;
+        }
     }
     tx.commit()?;
     Ok(deliveries)
@@ -160,7 +194,11 @@ pub(crate) fn start_delivery_worker() {
             })
             .await;
             match work {
-                Ok(Ok(true)) => match tokio::task::spawn_blocking(|| with_sql_write(drain)).await {
+                Ok(Ok(true)) => match tokio::task::spawn_blocking(|| {
+                    crate::db::connector::with_sql_delivery(drain)
+                })
+                .await
+                {
                     Ok(Ok(deliveries)) => {
                         for (uid, notification) in deliveries {
                             deliver_notification(&uid, &notification);
@@ -220,6 +258,85 @@ mod tests {
                 .get::<_, i64>(0))
                 .unwrap(),
             1
+        );
+    }
+
+    #[test]
+    fn sliced_fanout_rolls_back_as_a_batch_and_rechecks_between_slices() {
+        let c = super::super::tests::fanout_fixture();
+        c.execute(
+            "UPDATE mx_user_preferences SET preferences_json=?1 WHERE user_uid='muted'",
+            [r#"{"notifications":{"record_created":false,"record_updated":false}}"#],
+        )
+        .unwrap();
+        queue_record_activity(&c, "capacity", "actor", "record", "record.created").unwrap();
+        queue_record_activity(&c, "capacity", "actor", "record", "record.updated").unwrap();
+        c.execute_batch("CREATE TRIGGER fail_second_job BEFORE INSERT ON mx_notifications WHEN NEW.kind='record.updated' BEGIN SELECT RAISE(ABORT,'injected-second-job'); END;").unwrap();
+        assert!(drain_slice(&c, 1000, std::time::Duration::from_secs(60)).is_err());
+        assert_eq!(
+            c.query_row("SELECT count(*) FROM mx_notifications", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            c.query_row("SELECT count(*) FROM mx_notification_outbox", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            2
+        );
+        c.execute_batch("DROP TRIGGER fail_second_job").unwrap();
+        let first = drain_slice(&c, 1, std::time::Duration::from_secs(60)).unwrap();
+        assert_eq!(
+            first.len(),
+            2,
+            "Never split one activity's recipients to meet a soft budget"
+        );
+        assert_eq!(
+            c.query_row("SELECT count(*) FROM mx_notification_outbox", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+        c.execute_batch(
+            "UPDATE mx_module_account_permissions SET can_read=0 WHERE user_uid='reader'",
+        )
+        .unwrap();
+        let second = drain_slice(&c, 1, std::time::Duration::from_secs(60)).unwrap();
+        assert_eq!(second.len(), 1);
+        assert_eq!(
+            second[0].0, "admin",
+            "Permissions must be rechecked for the next committed slice"
+        );
+        assert!(drain(&c).unwrap().is_empty());
+    }
+
+    #[test]
+    fn elapsed_slice_always_makes_progress_even_with_duplicate_jobs() {
+        let c = super::super::tests::fanout_fixture();
+        queue_record_activity(&c, "capacity", "actor", "record", "record.created").unwrap();
+        assert_eq!(drain(&c).unwrap().len(), 2);
+        for _ in 0..3 {
+            queue_record_activity(&c, "capacity", "actor", "record", "record.created").unwrap();
+        }
+        for remaining in (0..3).rev() {
+            assert!(
+                drain_slice(&c, 100, std::time::Duration::ZERO)
+                    .unwrap()
+                    .is_empty()
+            );
+            assert_eq!(
+                c.query_row("SELECT count(*) FROM mx_notification_outbox", [], |r| r
+                    .get::<_, i64>(0))
+                    .unwrap(),
+                remaining
+            );
+        }
+        assert_eq!(
+            c.query_row("SELECT count(*) FROM mx_notifications", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            2
         );
     }
 }

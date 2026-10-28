@@ -5,7 +5,77 @@ deployment maintainer's local date.
 
 ## [Unreleased]
 
-### Product theme and compact workspaces — unreleased
+## [1.0.0-rc.11] - 2026-10-28
+
+Release candidate, not stable 1.0.0. The reviewed source passed the extended
+100-account SSD workload, with the hardware and Office limits retained in
+[the qualification report](docs/concurrency-qualification.md). See the
+[upgrade and rollback instructions](docs/releases/1.0.0-rc.11.md).
+
+### Concurrent records, Drive and notifications
+
+- Coordinate Drive metadata writes, cleanup, quotas and notification read
+  receipts through the same FIFO SQLite writer as record saves. Keep pure reads
+  on the independent connection pool and N1 requests outside database turns.
+- Reserve/reconcile upload metadata before taking N1 transfer slots, and release
+  slots before metadata commits. Reject invalid initialization metadata before
+  admission. Preserve the eight-part memory cap and existing admission deadline.
+- Yield notification delivery between atomic activities using bounded soft
+  work slices. Keep recipient inserts and outbox retirement in the same commit;
+  retain current permission/preference checks and crash recovery.
+- Reuse prepared notification statements with a bounded writer statement cache,
+  without caching authorization results across transactions. Add non-sensitive
+  slow-operation diagnostics distinguishing queue/pool waits from execution.
+- Persist account-scoped read-all watermarks instead of rewriting every inbox
+  payload and index entry. Preserve individual/legacy read times, unread counts,
+  current visibility checks and new deliveries across read-all and restart.
+- Seek notification pages and acknowledged unread ranges through existing
+  indexes. Evaluate module grants once per query, retaining live record/field
+  visibility checks and stable catch-up cursors instead of sorting whole inboxes
+  during concurrent reconnects. Add large-history and permission regressions.
+- Move passive SQLite checkpoints to a dedicated worker, retaining automatic
+  checkpoint fallback if it fails. Use FULL-synchronous WAL commits so a save's
+  WAL sync is independent of checkpoint timing; no physical-power-loss claim.
+- Commit bounded import slices in one writer turn with per-row savepoints.
+  Invalid rows remain inspectable without partial records; infrastructure
+  failures roll back the unacknowledged slice and preserve pending rows.
+- Batch audit writes through a bounded queue and up to 32 events per transaction.
+  Requesters still await persistence confirmation; audit logging is not changed
+  into a fire-and-forget success claim.
+- Coordinate Collaboration channel, membership, message, reaction, pin and read
+  mutations with the same writer. Make membership/history and pin/tombstone
+  changes atomic; retain pooled reads when reusing existing direct conversations.
+- Coordinate module/field administration and personal preference mutations with
+  the shared writer. Keep viewing account grants read-only, including accounts
+  without a revision row. Retain revision-conflict and permission checks.
+- Reconcile new Drive sessions in the initialization commit instead of taking
+  another writer turn for the reply. Fill bounded audit batches after writer
+  admission so arrivals during contention can share the same durable commit.
+- Interleave bounded notification-delivery turns with FIFO foreground writes.
+  Neither a busy foreground queue nor a delivery backlog can monopolize writer
+  admission; recipient checks, atomic job retirement and commit durability remain.
+- Expand concurrency verification with simultaneous notification receipts and
+  edits, timestamped real Office save overlap, complete acknowledgement ledgers,
+  and historical version/attachment hash checks after process restart. Failed
+  baselines remain recorded alongside the passing qualification.
+
+### Office appearance and release qualification
+
+- Share MX light/dark tokens, configured accents, readable text sizing and reduced
+  motion with the Office loading screen, document controls and read-only viewers.
+  Preserve the compact toolbar and native document canvas/input geometry.
+- Use the configured MX logo for Office and attachment browser tabs as well as
+  the workspace. Resolve relative branding paths from the MX root, remove stale
+  icon MIME hints, and fall back safely when a custom image cannot load.
+- Open the native document window out of view and reveal it after loading,
+  avoiding intermediate visible layouts. This does not claim instant loading
+  for complex workbooks or replace the bundled document engine.
+- Add real-workbook cold/warm browser timings and a mixed-user qualification
+  scenario covering concurrent records, random attachment bytes, Drive versions,
+  live connections and a real graphical Office edit/save witness. Keep failed
+  runs as failures and document the large-workbook rendering limit explicitly.
+
+### Product theme and compact workspaces
 
 - Rework records as console-style tables with sentence-case headers, quiet row
   separators, aligned numeric values, readable type and personal color/badge
@@ -30,9 +100,8 @@ deployment maintainer's local date.
 - Anchor record dialogs while asynchronous process information arrives; retain
   keyboard focus and guarded Escape closing. Do not change record-save, upload,
   workflow-decision or posted-balance semantics.
-- Keep this work unreleased for acceptance testing. Source-only commits do not
-  publish RC.11, change the 1.0.0-rc.10 version, replace signed release assets or
-  deploy the design to production.
+- Preserve configured branding and publish matching executable/frontend assets.
+  Publishing a release does not itself deploy or restart production servers.
 
 ## [1.0.0-rc.10] - 2026-10-27
 

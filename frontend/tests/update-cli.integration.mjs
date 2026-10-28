@@ -2,9 +2,10 @@ import assert from 'node:assert/strict';
 import {spawnSync} from 'node:child_process';
 import {mkdtempSync,mkdirSync,readdirSync,readFileSync,statSync,writeFileSync} from 'node:fs';
 import {join} from 'node:path';
+import {onTestDisk} from './concurrency-fixture.mjs';
 const binary=process.env.MX_TEST_BINARY;
-assert.ok(binary?.startsWith('/mnt/ST1000LM049/'));
-assert.ok(process.env.MX_TEST_ARTIFACTS?.startsWith('/mnt/ST1000LM049/tests'));
+assert.ok(onTestDisk(binary)||binary?.startsWith('/mnt/ST1000LM049/'));
+assert.ok(onTestDisk(process.env.MX_TEST_ARTIFACTS)||process.env.MX_TEST_ARTIFACTS?.startsWith('/mnt/ST1000LM049/tests'));
 const directory=mkdtempSync(join(process.env.MX_TEST_ARTIFACTS,'mx-update-cli-')),results=[];
 const expectedVersion=JSON.parse(readFileSync(new URL('../package.json',import.meta.url),'utf8')).version;
 for(const [args,code,includes] of [

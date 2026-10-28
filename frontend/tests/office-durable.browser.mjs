@@ -11,7 +11,8 @@ import {chromium,firefox} from 'playwright';
 import {startIsolatedMx} from './isolated-mx.mjs';
 import {officeFixture,unzip} from './office-fixtures.mjs';
 import {disconnectedBrowserAudio} from './silent-audio.mjs';
-assert.ok(process.env.MX_TEST_ARTIFACTS?.startsWith('/mnt/ST1000LM049/tests'));
+import {onTestDisk} from './concurrency-fixture.mjs';
+assert.ok(onTestDisk(process.env.MX_TEST_ARTIFACTS));assert.ok(onTestDisk(process.env.TMPDIR));
 if(process.env.MX_TEST_N1_URL){
  // Live storage is forbidden except the RC.1 runner's kernel-verified owned
  // disposable engine. Never accept a mere "allow live" flag or production URL.

@@ -8,9 +8,10 @@ import {writeFile} from 'node:fs/promises';
 import {chromium, firefox, webkit} from 'playwright';
 import {startIsolatedMx} from './isolated-mx.mjs';
 import {disconnectedBrowserAudio} from './silent-audio.mjs';
+import {onTestDisk} from './concurrency-fixture.mjs';
 
-assert.ok(process.env.MX_TEST_ARTIFACTS?.startsWith('/mnt/PROJECT-DISK-1TB/'));
-assert.ok(process.env.TMPDIR?.startsWith('/mnt/PROJECT-DISK-1TB/'));
+assert.ok(onTestDisk(process.env.MX_TEST_ARTIFACTS));
+assert.ok(onTestDisk(process.env.TMPDIR));
 assert.ok(!process.env.MX_TEST_N1_URL, 'Only isolated fixture storage is permitted');
 const mx = await startIsolatedMx(fileURLToPath(new URL('../', import.meta.url)));
 const result = {passed: false, browsers: {}, boundary: 'Local visual/functional qualification, not production deployment or a capacity test.'};
@@ -28,8 +29,25 @@ try {
   const module = (await call('/mx/v1/admin/modules', owner, 'POST', {name: 'Customer relationships', singular_name: 'Opportunity', icon: 'users', description: 'Full instructions remain available on demand. Configure your customer relationships without losing room for the actual work.'}, [201])).module;
   const base = `/mx/v1/modules/${module.uid}`;
   for (const [key, label, field_type] of [['name', 'Opportunity', 'text'], ['notes', 'Notes', 'long_text']]) await call(`/mx/v1/admin/modules/${module.uid}/fields`, owner, 'POST', {key, label, field_type}, [201]);
-  for (let i = 0; i < 8; i++) await call(`${base}/records`, owner, 'POST', {operation_uid: randomUUID(), values: {name: `Customer ${String(i + 1).padStart(2, '0')}`, notes: 'A complete readable description.\nThe second line is retained.'}}, [201]);
-  await call(`${base}/workflow`, owner, 'PUT', {revision: 0, confirm_existing_records: true, definition: {enabled: true, name: 'Sales pipeline', kind: 'crm', initial_state: 'new', title_field: 'name', restart_on_edit: false, states: [{key: 'new', name: 'New leads'}, {key: 'progress', name: 'In progress'}, {key: 'won', name: 'Won'}], actions: [{key: 'qualify', name: 'Qualify', from: 'new', to: 'progress', access_levels: [0], creator_policy: 'any', required_fields: [], note_required: false}]}});
+  await call(`/mx/v1/admin/modules/${module.uid}/fields`,owner,'POST',{key:'priority',label:'Priority',field_type:'select',config:{options:['Routine','Important','Urgent']}},[201]);
+  await call(`/mx/v1/admin/modules/${module.uid}/fields`,owner,'POST',{key:'amount',label:'Estimated value',field_type:'decimal'},[201]);
+  const samples=[
+    ['Community services','Ready for the handover meeting.\nDelivery scope confirmed.'],
+    ['School administration','Workspace approved for onboarding.\nTraining plan is ready.'],
+    ['Inventory workspace','Proposal is with the review team.\nConfirm the stock approval process.'],
+    ['Facilities requests','Mapped the request and review stages.\nAwaiting feedback from operations.'],
+    ['Records workspace','Reviewed document access requirements.\nPrepare a sample filing structure.'],
+    ['Clinic onboarding','Discovery meeting scheduled.\nConfirm who owns the next step.'],
+    ['Citizen support desk','Collecting the team’s requirements.\nArrange an introductory walkthrough.'],
+    ['Permit information system','Initial enquiry received.\nReview the existing intake form.']
+  ];
+  for (const [i,[name,notes]] of samples.entries()) await call(`${base}/records`, owner, 'POST', {operation_uid: randomUUID(), values: {name,notes,priority:['Routine','Important','Urgent'][i%3],amount:12500+i*2750}}, [201]);
+  await call(`${base}/workflow`, owner, 'PUT', {revision: 0, confirm_existing_records: true, definition: {enabled: true, name: 'Sales pipeline', kind: 'crm', initial_state: 'new', title_field: 'name', restart_on_edit: false, states: [{key: 'new', name: 'New leads'}, {key: 'progress', name: 'In progress'}, {key: 'won', name: 'Won'}], actions: [{key: 'qualify', name: 'Qualify', from: 'new', to: 'progress', access_levels: [0], creator_policy: 'any', required_fields: [], note_required: false}, {key: 'win', name: 'Mark won', from: 'progress', to: 'won', access_levels: [0], creator_policy: 'any', required_fields: [], note_required: false}]}});
+  const demoRows=(await call(`${base}/records?limit=8`,owner)).data;
+  for(let i=3;i<demoRows.length;i++)for(const action of i>=6?['qualify','win']:['qualify']){
+    const path=`${base}/records/${demoRows[i].uid}/workflow`,state=await call(path,owner);
+    await call(path+'/actions',owner,'POST',{action,configuration_revision:state.configuration_revision,record_revision:state.record_revision,workflow_revision:state.workflow_revision,note:'Synthetic demonstration only',operation_uid:randomUUID()});
+  }
   const view = (id, kind, name) => ({id, kind, name, title_field: kind === 'board' ? '' : 'name', fields: kind === 'board' ? [] : ['notes'], summary_fields: [], description: ''});
   await call(`${base}/workspace`, owner, 'PUT', {revision: 0, layout: {default_view: 'pipeline', views: [view('pipeline', 'board', 'Pipeline'), view('directory', 'cards', 'Directory'), view('operations', 'overview', 'Operations'), view('records', 'records', 'All records')], sections: []}});
   await call('/mx/v1/drive/folders', owner, 'POST', {operation_uid: randomUUID(), name: 'Team documents'}, [200, 201]);

@@ -1,5 +1,5 @@
 //! Atomic, payload-bound file-manager transfers; never download bytes to copy.
-use super::{Error, database, store};
+use super::{Error, store, write_database};
 use crate::middleware::auth::Claims;
 use axum::{Json, extract::Path};
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
@@ -25,7 +25,7 @@ pub(super) async fn transfer(
 ) -> Result<Json<Value>, Error> {
     let default_quota = crate::config::load_config::CONFIG.drive.quota_mb as i64 * 1024 * 1024;
     Ok(Json(
-        database(move |c| apply(c, &claims.uid, input, default_quota)).await?,
+        write_database(move |c| apply(c, &claims.uid, input, default_quota)).await?,
     ))
 }
 
@@ -42,7 +42,7 @@ pub(super) async fn restore(
 ) -> Result<Json<Value>, Error> {
     let default = crate::config::load_config::CONFIG.drive.quota_mb as i64 * 1024 * 1024;
     Ok(Json(
-        database(move |c| restore_version(c, &claims.uid, &uid, input, default)).await?,
+        write_database(move |c| restore_version(c, &claims.uid, &uid, input, default)).await?,
     ))
 }
 fn restore_version(

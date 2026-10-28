@@ -22,7 +22,7 @@ use crate::{
         live::publish_user_event,
         mx::handler::{n1_access_token, n1_download, n1_soft_delete, n1_upload},
     },
-    db::connector::{SqliteDatabaseError, with_sql_connection},
+    db::connector::{SqliteDatabaseError, with_sql_connection, with_sql_write},
     middleware::auth::Claims,
 };
 
@@ -410,7 +410,7 @@ pub async fn upload_notification_sound(claims: Claims, mut multipart: Multipart)
     let stored_type = mime_type.to_string();
     let size = bytes.len() as i64;
     let result = tokio::task::spawn_blocking(move || {
-        with_sql_connection(|connection| {
+        with_sql_write(|connection| {
             ensure_preferences_schema(connection)?;
             let old_key = connection
                 .query_row(
@@ -569,7 +569,7 @@ pub async fn delete_notification_sound(claims: Claims) -> Response {
     let user_uid = claims.uid;
     let delete_uid = user_uid.clone();
     let result = tokio::task::spawn_blocking(move || {
-        with_sql_connection(|connection| {
+        with_sql_write(|connection| {
             ensure_preferences_schema(connection)?;
             let object_key = connection
                 .query_row(
@@ -700,7 +700,7 @@ pub async fn save_preferences(
     let preferences = request.preferences;
     let expected_revision = request.revision;
     let result = tokio::task::spawn_blocking(move || -> Result<(i64, i64), SqliteDatabaseError> {
-        with_sql_connection(|connection| {
+        with_sql_write(|connection| {
             ensure_preferences_schema(connection)?;
             Ok(save_preferences_db(
                 connection,

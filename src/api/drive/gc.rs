@@ -1,4 +1,4 @@
-use super::{database, store};
+use super::{database, store, write_database};
 use crate::api::mx::handler::{n1_access_token, n1_soft_delete, n1_storage};
 use rusqlite::params;
 use std::{sync::LazyLock, time::Duration};
@@ -40,9 +40,9 @@ async fn batch() -> Result<(), super::Error> {
             },
             Err(_) => false,
         };
-        database(move|c|{if success {c.execute("DELETE FROM mx_drive_cancel WHERE object_key=?1 AND n1_version=?2",params![key,version])?;}else{c.execute("UPDATE mx_drive_cancel SET attempts=attempts+1,next_attempt_at=?1 WHERE object_key=?2 AND n1_version=?3",params![store::now()+(5_000i64*2i64.pow(attempts.min(10))).min(3_600_000),key,version])?;}Ok(())}).await?;
+        write_database(move|c|{if success {c.execute("DELETE FROM mx_drive_cancel WHERE object_key=?1 AND n1_version=?2",params![key,version])?;}else{c.execute("UPDATE mx_drive_cancel SET attempts=attempts+1,next_attempt_at=?1 WHERE object_key=?2 AND n1_version=?3",params![store::now()+(5_000i64*2i64.pow(attempts.min(10))).min(3_600_000),key,version])?;}Ok(())}).await?;
     }
-    let jobs=database(|c|{
+    let jobs=write_database(|c|{
         let tx=rusqlite::Transaction::new_unchecked(c,rusqlite::TransactionBehavior::Immediate)?;
         // Abandoned reservations are not permanent storage leaks after process crashes.
         // A negative attempted_at marks a retryable failure. Quota and cleanup
@@ -59,7 +59,7 @@ async fn batch() -> Result<(), super::Error> {
     for (key, attempts) in jobs {
         // N1 DELETE is soft deletion. N1 retention/TTL, not MX, reclaims bytes.
         let ok = n1_soft_delete(&key).await.is_ok();
-        database(move|c|{
+        write_database(move|c|{
             if ok {c.execute("DELETE FROM mx_drive_gc WHERE object_key=?1",[key])?;}else{
                 let delay=(5_000i64*2i64.pow(attempts.min(10))).min(3_600_000);
                 c.execute("UPDATE mx_drive_gc SET attempts=attempts+1,next_attempt_at=?1 WHERE object_key=?2",params![store::now()+delay,key])?;

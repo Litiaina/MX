@@ -21,7 +21,7 @@ use crate::{
         model::FileAttachment,
     },
     config::load_config::CONFIG,
-    db::connector::{SqliteDatabaseError, with_sql_connection},
+    db::connector::{SqliteDatabaseError, with_sql_connection, with_sql_write},
     middleware::auth::{Claims, auth},
 };
 use axum::{
@@ -57,7 +57,20 @@ pub(super) fn error(code: u16, message: &str) -> Error {
 pub(super) async fn database<T: Send + 'static>(
     operation: impl FnOnce(&Connection) -> rusqlite::Result<T> + Send + 'static,
 ) -> Result<T, Error> {
-    tokio::task::spawn_blocking(move || with_sql_connection(operation))
+    run_database(move || with_sql_connection(operation)).await
+}
+// Drive mutations share the same FIFO writer as records/auditing/notifications.
+// Waiting for that turn must not occupy a pooled reader connection. Network and
+// file-transfer work remains outside this synchronous database-only closure.
+pub(super) async fn write_database<T: Send + 'static>(
+    operation: impl FnOnce(&Connection) -> rusqlite::Result<T> + Send + 'static,
+) -> Result<T, Error> {
+    run_database(move || with_sql_write(operation)).await
+}
+async fn run_database<T: Send + 'static>(
+    operation: impl FnOnce() -> Result<T, SqliteDatabaseError> + Send + 'static,
+) -> Result<T, Error> {
+    tokio::task::spawn_blocking(operation)
         .await
         .map_err(|_| error(500, "Drive database task failed."))?
         .map_err(|failure| {
@@ -166,7 +179,7 @@ async fn create_folder(
     Json(value): Json<Folder>,
 ) -> Result<Json<store::Item>, Error> {
     Ok(Json(
-        database(move |c| {
+        write_database(move |c| {
             store::folder(
                 c,
                 &claims.uid,
@@ -196,7 +209,7 @@ async fn change(
     Json(value): Json<Change>,
 ) -> Result<Json<store::Item>, Error> {
     Ok(Json(
-        database(move |c| {
+        write_database(move |c| {
             store::mutate(
                 c,
                 &claims.uid,
@@ -219,7 +232,7 @@ async fn star(
     Path(uid): Path<String>,
     Json(value): Json<Star>,
 ) -> Result<Json<Value>, Error> {
-    database(move |c| {
+    write_database(move |c| {
         let tx = rusqlite::Transaction::new_unchecked(c, rusqlite::TransactionBehavior::Immediate)?;
         store::accessible(&tx, &uid, &claims.uid, false)?;
         if value.starred {
@@ -255,7 +268,7 @@ async fn grant(
     Json(value): Json<Grant>,
 ) -> Result<Json<Value>, Error> {
     let delivery =
-        database(
+        write_database(
             move |c| match (value.user_uid.as_deref(), value.space_uid.as_deref()) {
                 (Some(user), None) => {
                     store::grant(c, &claims.uid, &uid, user, value.role.as_deref())
@@ -291,14 +304,14 @@ async fn create_link(
         ));
     }
     Ok(Json(
-        database(move |c| store::link(c, &claims.uid, &uid, value.expires_at)).await?,
+        write_database(move |c| store::link(c, &claims.uid, &uid, value.expires_at)).await?,
     ))
 }
 async fn revoke_link(
     claims: Claims,
     Path((uid, link)): Path<(String, String)>,
 ) -> Result<Json<Value>, Error> {
-    database(move |c| {
+    write_database(move |c| {
         let tx = rusqlite::Transaction::new_unchecked(c, rusqlite::TransactionBehavior::Immediate)?;
         store::owner(&tx, &uid, &claims.uid, false)?;
         tx.execute(
@@ -339,7 +352,7 @@ async fn empty_trash(claims: Claims) -> Result<Json<Value>, Error> {
     purge_for(claims.uid, None).await
 }
 async fn purge_for(actor: String, uid: Option<String>) -> Result<Json<Value>, Error> {
-    let removed = database(move |c| store::purge(c, &actor, uid.as_deref())).await?;
+    let removed = write_database(move |c| store::purge(c, &actor, uid.as_deref())).await?;
     gc::wake();
     Ok(Json(
         json!({"removed":removed,"storage_cleanup":"queued","response":"Removed from MX. N1 soft deletion is queued; physical reclamation follows N1 retention."}),
@@ -382,7 +395,7 @@ async fn ticket(
 ) -> Result<Json<Value>, Error> {
     let token = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
     let hash = store::digest(token.as_bytes());
-    let metadata=database(move|c| {
+    let metadata=write_database(move|c| {
       let tx=rusqlite::Transaction::new_unchecked(c,rusqlite::TransactionBehavior::Immediate)?;
       let item=version(&tx,store::accessible(&tx,&uid,&claims.uid,false)?,value.version_uid.as_deref())?;
       if item.kind!="file" {return Err(store::problem(400,"Select a file to preview."));}

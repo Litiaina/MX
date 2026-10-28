@@ -9,6 +9,9 @@ import {spawn,execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 
 export const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+export const testDiskRoot=process.env.MX_TEST_DISK_ROOT||'/mnt/PROJECT-DISK-1TB';
+assert.ok(['/mnt/PROJECT-DISK-1TB','/mnt/DATA_SSD','/media/altear/TEST-1TB'].includes(testDiskRoot),'Only explicitly authorized test volumes are supported');
+export const onTestDisk=path=>typeof path==='string'&&resolve(path).startsWith(testDiskRoot+'/');
 export async function until(test,label,ms=30000){const end=Date.now()+ms;do{if(await test())return;await sleep(100);}while(Date.now()<end);throw Error(`Timeout: ${label}`);}
 export async function freePort(){const s=createServer();await new Promise(r=>s.listen(0,'127.0.0.1',r));const p=s.address().port;await new Promise(r=>s.close(r));return p;}
 export const digest=data=>createHash('sha256').update(data).digest('hex');
@@ -38,14 +41,14 @@ export function client(url,{ca,timeout=30000}={}){
 }
 
 export async function startN1Lab(parent){
-  assert.ok(resolve(parent).startsWith('/mnt/PROJECT-DISK-1TB/'),'Test data must be on the HDD');
+  assert.ok(onTestDisk(parent),'Test data must be on the authorized test volume');
   const dir=await mkdtemp(join(parent,'n1-'));
   const device=(await stat(parent)).dev;
   for(const name of ['control','member','refresh','tmp'])await mkdir(join(dir,name),{mode:0o700});
   const port=await freePort(),native=await freePort();
   const secret=randomUUID()+randomUUID(),master=randomUUID()+randomUUID();
   const sourceBinary=process.env.N1_TEST_BINARY;
-  assert.ok(sourceBinary?.startsWith('/mnt/PROJECT-DISK-1TB/'),'Explicit HDD N1 release binary required');
+  assert.ok(onTestDisk(sourceBinary),'Explicit test-volume N1 release binary required');
   const binary=join(dir,'litiaina-n1');await copyFile(sourceBinary,binary);await chmod(binary,0o500);
   const n1Source=process.env.N1_TEST_SOURCE||fileURLToPath(new URL('../../../N1/',import.meta.url));
   let config=await readFile(join(n1Source,'shell/web/n1_config.default.ini'),'utf8');
@@ -62,7 +65,7 @@ export async function startN1Lab(parent){
   set('upload_config','upload_part_strict_durability_default','true');
   // Explicit operator profile for a trusted MX backend on one HDD. Keep rate
   // limiting/adaptive admission enabled; this does not increase disk throughput.
-  const capacityProfile=process.env.N1_TEST_CAPACITY_PROFILE==='hdd-100';
+  const capacityProfile=['hdd-100','backend-100'].includes(process.env.N1_TEST_CAPACITY_PROFILE);
   if(capacityProfile){
     set('io_control','foreground_wait_timeout_ms',120000);
     set('rate_limiter_config','view_limit_per_second',1000);
@@ -78,14 +81,15 @@ export async function startN1Lab(parent){
   const log=await open(join(dir,'engine.log'),'w');
   const env=Object.fromEntries(Object.entries(process.env).filter(([k])=>!k.startsWith('N1_')&&!['MASTER_KEY','AUTH_KEY','ADMIN_KEY','JWT_SECRET'].includes(k)));
   Object.assign(env,{N1_REFRESH_STORE_ROOT:join(dir,'refresh'),TMPDIR:join(dir,'tmp'),RUST_LOG:'warn',RUST_BACKTRACE:'1'});
-  let child;
+  let child,trace;
   async function start(){assert.equal((await stat(parent)).dev,device,'HDD unmounted');child=spawn(binary,[],{cwd:dir,env,stdio:['ignore',log.fd,log.fd]});await until(async()=>{assert.equal(child.exitCode,null,`N1 exited; ${dir}/engine.log`);try{return(await api.call('/noa/v1/ping')).status===200;}catch{return false;}},'N1 startup',60000);}
   async function stop(signal='SIGTERM'){if(child&&child.exitCode===null&&child.signalCode===null){const exited=new Promise(r=>child.once('exit',r));child.kill(signal);let timer;await Promise.race([exited,new Promise(r=>timer=setTimeout(()=>{child.kill('SIGKILL');r();},10000))]);clearTimeout(timer);}}
   try{
     await start();
     const fragment=(await api.call('/noa/v1/fragments',null,'POST',{name:`mx-concurrency-${randomUUID()}`,key:secret,secret:master},[200,201])).body.fragment_hash;
     assert.ok(fragment,'N1 fragment creation');
-    return {dir,binary,capacityProfile:capacityProfile?'hdd-100':'N1 defaults',fragment,secret,live:true,url:`https://127.0.0.1:${port}`,api,get pid(){return child.pid;},async restart(signal='SIGKILL'){await stop(signal);await start();},async close(){await stop();api.close();await log.close();}};
+    if(process.env.MX_LOAD_TRACE_N1==='1'){const {startN1Trace}=await import('./n1-trace-proxy.mjs');trace=await startN1Trace(dir,`https://127.0.0.1:${port}`);}
+    return {dir,binary,capacityProfile:capacityProfile?'backend-100: view 1000/s burst 3000; global 2000/s burst 5000; foreground wait 120s; limiter enabled':'N1 defaults',fragment,secret,live:true,url:trace?.url||`https://127.0.0.1:${port}`,api,get pid(){return child.pid;},async restart(signal='SIGKILL'){await stop(signal);await start();},async close(){await stop();await trace?.close();api.close();await log.close();}};
   }catch(e){await stop();api.close();await log.close();throw e;}
 }
 

@@ -638,6 +638,23 @@ fn channel_members(
         .collect()
 }
 
+// Membership checks and their mutations share one writer turn and transaction.
+// Never hold this turn while delivering events or transferring file contents.
+fn with_channel_transaction<T>(
+    operation: impl FnOnce(&rusqlite::Connection) -> rusqlite::Result<T>,
+) -> Result<T, SqliteDatabaseError> {
+    with_sql_write(|connection| {
+        ensure_collaboration_schema(connection)?;
+        let transaction = rusqlite::Transaction::new_unchecked(
+            connection,
+            rusqlite::TransactionBehavior::Immediate,
+        )?;
+        let result = operation(&transaction)?;
+        transaction.commit()?;
+        Ok(result)
+    })
+}
+
 fn channel_member_details(
     connection: &rusqlite::Connection,
     channel_uid: &str,
@@ -1269,7 +1286,7 @@ pub async fn update_channel(
     let event_channel_uid = channel_uid.clone();
     let result = tokio::task::spawn_blocking(
         move || -> Result<Vec<(String, String)>, SqliteDatabaseError> {
-            with_sql_connection(|connection| {
+            with_channel_transaction(|connection| {
                 ensure_collaboration_schema(connection)?;
                 let role = member_role(connection, &channel_uid, &db_actor_uid)?
                     .ok_or(rusqlite::Error::QueryReturnedNoRows)?;
@@ -1341,7 +1358,7 @@ pub async fn remove_channel_member(
     let event_target_uid = target_uid.clone();
     let result = tokio::task::spawn_blocking(
         move || -> Result<(ChatMessage, Vec<(String, String)>), SqliteDatabaseError> {
-            with_sql_connection(|connection| {
+            with_channel_transaction(|connection| {
                 ensure_collaboration_schema(connection)?;
                 let actor_role = member_role(connection, &channel_uid, &db_actor_uid)?
                     .ok_or(rusqlite::Error::QueryReturnedNoRows)?;
@@ -1535,9 +1552,9 @@ pub async fn create_channel(claims: Claims, Json(request): Json<CreateChannelReq
     let kind = request.kind;
     let member_uids = request.member_uids;
     let result = tokio::task::spawn_blocking(move || -> Result<Vec<String>, SqliteDatabaseError> {
-        with_sql_connection(|connection| {
+        with_sql_write(|connection| {
             ensure_collaboration_schema(connection)?;
-            let transaction = connection.unchecked_transaction()?;
+            let transaction = rusqlite::Transaction::new_unchecked(connection, rusqlite::TransactionBehavior::Immediate)?;
             let now = chrono::Utc::now().timestamp_millis();
             transaction.execute(
                 "INSERT INTO mx_channels(uid, kind, name, description, created_by, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -1602,13 +1619,17 @@ pub async fn create_direct_channel(
     let db_other_uid = other_uid.clone();
     let db_actor_uid = actor_uid.clone();
     let result = tokio::task::spawn_blocking(move || -> Result<(String, bool), SqliteDatabaseError> {
-        with_sql_connection(|connection| {
+        let existing = with_sql_connection(|connection| {
             ensure_collaboration_schema(connection)?;
             // Reusing a conversation is read-only: do not compete with record
             // imports for SQLite's writer slot on every contextual send.
-            if let Some(uid) = connection.query_row("SELECT uid FROM mx_channels WHERE direct_key = ?1", params![direct_key], |row| row.get::<_, String>(0)).optional()? {
-                return Ok((uid, false));
-            }
+            connection.query_row("SELECT uid FROM mx_channels WHERE direct_key = ?1", params![direct_key], |row| row.get::<_, String>(0)).optional()
+        })?;
+        if let Some(uid) = existing {
+            return Ok((uid, false));
+        }
+        with_sql_write(|connection| {
+            ensure_collaboration_schema(connection)?;
             // Serialize the find-or-create decision; simultaneous sends must
             // reuse the same conversation rather than race its unique key.
             let transaction = rusqlite::Transaction::new_unchecked(connection, rusqlite::TransactionBehavior::Immediate)?;
@@ -1849,7 +1870,7 @@ pub async fn edit_message(
     let event_actor_uid = claims.uid;
     let access_level = claims.access_level;
     let result = tokio::task::spawn_blocking(move || -> Result<(ChatMessage, Vec<(String, String)>), SqliteDatabaseError> {
-        with_sql_connection(|connection| {
+        with_channel_transaction(|connection| {
             ensure_collaboration_schema(connection)?;
             let (channel_uid, sender_uid): (String, String) = connection.query_row("SELECT channel_uid, sender_uid FROM mx_messages WHERE uid = ?1 AND deleted_at IS NULL", params![message_uid], |row| Ok((row.get(0)?, row.get(1)?)))?;
             member_role(connection, &channel_uid, &actor_uid)?.ok_or(rusqlite::Error::QueryReturnedNoRows)?;
@@ -1899,7 +1920,7 @@ pub async fn toggle_message_reaction(
     let access_level = claims.access_level;
     let event_message_uid = message_uid.clone();
     let result = tokio::task::spawn_blocking(move || -> Result<(ChatMessage, Vec<(String, String)>), SqliteDatabaseError> {
-        with_sql_connection(|connection| {
+        with_channel_transaction(|connection| {
             ensure_collaboration_schema(connection)?;
             let channel_uid: String = connection.query_row(
                 "SELECT channel_uid FROM mx_messages WHERE uid=?1 AND deleted_at IS NULL",
@@ -1959,7 +1980,7 @@ async fn set_message_pin(claims: Claims, message_uid: String, pinned: bool) -> R
     let access_level = claims.access_level;
     let result = tokio::task::spawn_blocking(
         move || -> Result<(ChatMessage, Vec<(String, String)>), SqliteDatabaseError> {
-            with_sql_connection(|connection| {
+            with_channel_transaction(|connection| {
                 ensure_collaboration_schema(connection)?;
                 let (channel_uid, channel_kind, deleted_at): (String, String, Option<i64>) =
                     connection.query_row(
@@ -2055,7 +2076,7 @@ pub async fn delete_message(claims: Claims, Path(message_uid): Path<String>) -> 
     let event_actor_uid = claims.uid;
     let db_message_uid = message_uid.clone();
     let result = tokio::task::spawn_blocking(move || -> Result<(String, Vec<(String, String)>), SqliteDatabaseError> {
-        with_sql_connection(|connection| {
+        with_channel_transaction(|connection| {
             ensure_collaboration_schema(connection)?;
             let (channel_uid, sender_uid): (String, String) = connection.query_row("SELECT channel_uid, sender_uid FROM mx_messages WHERE uid = ?1 AND deleted_at IS NULL", params![db_message_uid], |row| Ok((row.get(0)?, row.get(1)?)))?;
             let role = member_role(connection, &channel_uid, &actor_uid)?.ok_or(rusqlite::Error::QueryReturnedNoRows)?;
@@ -2096,7 +2117,7 @@ pub async fn mark_channel_read(claims: Claims, Path(channel_uid): Path<String>) 
     let event_channel_uid = channel_uid.clone();
     let result =
         tokio::task::spawn_blocking(move || -> Result<ChannelReadAdvance, SqliteDatabaseError> {
-            with_sql_connection(|connection| advance_channel_read(connection, &channel_uid, &uid))
+            with_sql_write(|connection| advance_channel_read(connection, &channel_uid, &uid))
         })
         .await;
     match result {
@@ -2155,7 +2176,7 @@ pub async fn add_channel_member(
     let event_user_uid = user_uid.clone();
     let channel_for_event = channel_uid.clone();
     let role_value = request.role;
-    let result = tokio::task::spawn_blocking(move || -> Result<MemberSave, SqliteDatabaseError> { with_sql_connection(|connection| {
+    let result = tokio::task::spawn_blocking(move || -> Result<MemberSave, SqliteDatabaseError> { with_channel_transaction(|connection| {
         ensure_collaboration_schema(connection)?;
         let actor_role = member_role(connection, &channel_uid, &actor_uid)?.ok_or(rusqlite::Error::QueryReturnedNoRows)?;
         let (kind, invite_policy): (String, String) = connection.query_row("SELECT kind, invite_policy FROM mx_channels WHERE uid = ?1", params![channel_uid], |row| Ok((row.get(0)?, row.get(1)?)))?;
@@ -2172,16 +2193,14 @@ pub async fn add_channel_member(
         validate_member_save_permission(&actor_role, &role_value, existing_role.as_deref())
             .map_err(|message| rusqlite::Error::InvalidParameterName(message.to_string()))?;
         if role_value == "owner" {
-            let transaction = connection.unchecked_transaction()?;
-            transaction.execute(
+            connection.execute(
                 "UPDATE mx_channel_members SET role = 'admin' WHERE channel_uid = ?1 AND user_uid = ?2 AND role = 'owner'",
                 params![channel_uid, actor_uid],
             )?;
-            transaction.execute(
+            connection.execute(
                 "UPDATE mx_channel_members SET role = 'owner' WHERE channel_uid = ?1 AND user_uid = ?2",
                 params![channel_uid, user_uid],
             )?;
-            transaction.commit()?;
         } else {
             connection.execute("INSERT INTO mx_channel_members(channel_uid, user_uid, role, joined_at) VALUES (?1, ?2, ?3, ?4) ON CONFLICT(channel_uid, user_uid) DO UPDATE SET role = excluded.role", params![channel_uid, user_uid, role_value, chrono::Utc::now().timestamp_millis()])?;
         }

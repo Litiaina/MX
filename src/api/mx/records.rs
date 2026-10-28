@@ -1591,90 +1591,113 @@ pub(super) fn create_record_commit(
     import: Option<super::imports::Commit>,
 ) -> Result<(String, bool), SqliteDatabaseError> {
     with_sql_write(|connection| {
-        ensure_dynamic_schema(connection)?;
-        ensure_record_collaboration_schema(connection)?;
-        ensure_record_lifecycle_schema(connection)?;
-        operations::ensure_schema(connection)?;
+        ensure_create_schema(connection)?;
         let transaction = rusqlite::Transaction::new_unchecked(
             connection,
             rusqlite::TransactionBehavior::Immediate,
         )?;
-        if import.is_none() {
-            require_current_write_permission(&transaction, &module_uid, &actor_uid, "create")?;
-        }
-        let scope = format!("record:create:{module_uid}");
+        let result = create_record_in_transaction(
+            &transaction,
+            module_uid,
+            request_values,
+            actor_uid,
+            operation,
+            import,
+        )?;
+        transaction.commit()?;
+        Ok(result)
+    })
+}
+
+pub(super) fn ensure_create_schema(connection: &rusqlite::Connection) -> rusqlite::Result<()> {
+    ensure_dynamic_schema(connection)?;
+    ensure_record_collaboration_schema(connection)?;
+    ensure_record_lifecycle_schema(connection)?;
+    operations::ensure_schema(connection)
+}
+
+// Shared interactive/import write semantics. The caller owns the transaction
+// and may only acknowledge/publish after committing it. Import row savepoints
+// permit validation failures without partially committing a row or its audit.
+pub(super) fn create_record_in_transaction(
+    transaction: &rusqlite::Transaction<'_>,
+    module_uid: String,
+    request_values: BTreeMap<String, Value>,
+    actor_uid: String,
+    operation: Option<ClientOperation>,
+    import: Option<super::imports::Commit>,
+) -> rusqlite::Result<(String, bool)> {
+    if import.is_none() {
+        require_current_write_permission(&transaction, &module_uid, &actor_uid, "create")?;
+    }
+    let scope = format!("record:create:{module_uid}");
+    if let Some(import) = &import {
+        super::imports::admit(
+            &transaction,
+            import,
+            &module_uid,
+            &actor_uid,
+            &request_values,
+        )?;
+    }
+    if let Some(uid) = operations::existing(&transaction, &actor_uid, &scope, operation.as_ref())? {
         if let Some(import) = &import {
-            super::imports::admit(
-                &transaction,
-                import,
-                &module_uid,
-                &actor_uid,
-                &request_values,
-            )?;
+            super::imports::complete(&transaction, import, &uid)?;
         }
-        if let Some(uid) =
-            operations::existing(&transaction, &actor_uid, &scope, operation.as_ref())?
+        return Ok((uid, false));
+    }
+    // A committed operation must remain reconcilable even if required
+    // fields changed while its acknowledgement was lost. New creates are
+    // validated against the actual schema inside the write transaction.
+    let fields = load_module_fields_db(&transaction, &module_uid, false)?;
+    let mut request_values = request_values;
+    super::privacy::check_values(&transaction, None, &fields, &request_values, &actor_uid)?;
+    super::relationships::fill_missing(&transaction, &fields, &mut request_values, &actor_uid)?;
+    request_values = super::form_rules::prepare(&fields, &request_values, &BTreeMap::new(), false)
+        .map_err(rusqlite::Error::InvalidParameterName)?;
+    let mut effective_fields = super::form_rules::effective_fields(&fields, &request_values);
+    super::privacy::waive_hidden_requirements(&transaction, &mut effective_fields, &actor_uid)?;
+    let mut values = validate_payload(&effective_fields, &request_values)
+        .map_err(rusqlite::Error::InvalidParameterName)?;
+    let uid = Uuid::new_v4().to_string();
+
+    fill_auto_numbers(&transaction, &fields, &mut values)?;
+    apply_formula_values(&fields, &mut values)
+        .map_err(|error| rusqlite::Error::InvalidParameterName(format!("MX_FORMULA:{error}")))?;
+
+    if import.is_some() {
+        // Explain the exact offending field instead of exposing a generic
+        // UNIQUE constraint. This check shares the final write transaction.
+        for field in fields
+            .iter()
+            .filter(|f| f.unique_value && f.field_type != "auto_number")
         {
-            if let Some(import) = &import {
-                super::imports::complete(&transaction, import, &uid)?;
-                transaction.commit()?;
-            }
-            return Ok((uid, false));
-        }
-        // A committed operation must remain reconcilable even if required
-        // fields changed while its acknowledgement was lost. New creates are
-        // validated against the actual schema inside the write transaction.
-        let fields = load_module_fields_db(&transaction, &module_uid, false)?;
-        let mut request_values = request_values;
-        super::privacy::check_values(&transaction, None, &fields, &request_values, &actor_uid)?;
-        super::relationships::fill_missing(&transaction, &fields, &mut request_values, &actor_uid)?;
-        request_values =
-            super::form_rules::prepare(&fields, &request_values, &BTreeMap::new(), false)
-                .map_err(rusqlite::Error::InvalidParameterName)?;
-        let mut effective_fields = super::form_rules::effective_fields(&fields, &request_values);
-        super::privacy::waive_hidden_requirements(&transaction, &mut effective_fields, &actor_uid)?;
-        let mut values = validate_payload(&effective_fields, &request_values)
-            .map_err(rusqlite::Error::InvalidParameterName)?;
-        let uid = Uuid::new_v4().to_string();
-
-        fill_auto_numbers(&transaction, &fields, &mut values)?;
-        apply_formula_values(&fields, &mut values).map_err(|error| {
-            rusqlite::Error::InvalidParameterName(format!("MX_FORMULA:{error}"))
-        })?;
-
-        if import.is_some() {
-            // Explain the exact offending field instead of exposing a generic
-            // UNIQUE constraint. This check shares the final write transaction.
-            for field in fields
-                .iter()
-                .filter(|f| f.unique_value && f.field_type != "auto_number")
-            {
-                if let Some(value) = values.get(&field.key) {
-                    let exists:bool=transaction.query_row("SELECT EXISTS(SELECT 1 FROM mx_unique_values WHERE field_uid=?1 AND normalized_value=?2)",params![field.uid,value.normalized_unique()],|r|r.get(0))?;
-                    if exists {
-                        return Err(rusqlite::Error::InvalidParameterName(format!(
-                            "{} must be unique. This submitted value already exists; correct this field or leave the row skipped.",
-                            field.label
-                        )));
-                    }
+            if let Some(value) = values.get(&field.key) {
+                let exists:bool=transaction.query_row("SELECT EXISTS(SELECT 1 FROM mx_unique_values WHERE field_uid=?1 AND normalized_value=?2)",params![field.uid,value.normalized_unique()],|r|r.get(0))?;
+                if exists {
+                    return Err(rusqlite::Error::InvalidParameterName(format!(
+                        "{} must be unique. This submitted value already exists; correct this field or leave the row skipped.",
+                        field.label
+                    )));
                 }
             }
         }
+    }
 
-        let date = value_as_text(&values, "date", "");
-        let office = value_as_text(&values, "office", "");
-        let requestor = value_as_text(&values, "requestor", "");
-        let subject = value_as_text(&values, "subject", "");
-        let routed_to_div = value_as_text(&values, "routed_to_div", "");
-        let remarks = value_as_text(&values, "remarks", "");
+    let date = value_as_text(&values, "date", "");
+    let office = value_as_text(&values, "office", "");
+    let requestor = value_as_text(&values, "requestor", "");
+    let subject = value_as_text(&values, "subject", "");
+    let routed_to_div = value_as_text(&values, "routed_to_div", "");
+    let remarks = value_as_text(&values, "remarks", "");
 
-        let configured_control = value_as_i64(&values, "control_no");
+    let configured_control = value_as_i64(&values, "control_no");
 
-        let (control_year, control_no) =
-            record_control_number(&transaction, configured_control, &date)?;
+    let (control_year, control_no) =
+        record_control_number(&transaction, configured_control, &date)?;
 
-        transaction.execute(
-            r#"
+    transaction.execute(
+        r#"
             INSERT INTO mx_records (
                 uid,
                 control_year,
@@ -1690,44 +1713,47 @@ pub(super) fn create_record_commit(
                 ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10
             )
             "#,
-            params![
-                &uid,
-                control_year,
-                control_no,
-                date,
-                office,
-                requestor,
-                subject,
-                routed_to_div,
-                remarks,
-                module_uid,
-            ],
+        params![
+            &uid,
+            control_year,
+            control_no,
+            date,
+            office,
+            requestor,
+            subject,
+            routed_to_div,
+            remarks,
+            module_uid,
+        ],
+    )?;
+
+    super::privacy::claim(&transaction, &uid, &actor_uid)?;
+    write_dynamic_values(&transaction, &uid, &fields, &values)?;
+    initialize_field_revisions(&transaction, &uid, &fields, &values, &actor_uid)?;
+    let version_uid =
+        capture_record_version(&transaction, &uid, &module_uid, "created", &actor_uid)?;
+    if import.is_some() {
+        crate::api::audit::record_import_creation(
+            &transaction,
+            &version_uid,
+            &uid,
+            &module_uid,
+            &actor_uid,
         )?;
-
-        super::privacy::claim(&transaction, &uid, &actor_uid)?;
-        write_dynamic_values(&transaction, &uid, &fields, &values)?;
-        initialize_field_revisions(&transaction, &uid, &fields, &values, &actor_uid)?;
-        let version_uid =
-            capture_record_version(&transaction, &uid, &module_uid, "created", &actor_uid)?;
-        if import.is_some() {
-            crate::api::audit::record_import_creation(
-                &transaction,
-                &version_uid,
-                &uid,
-                &module_uid,
-                &actor_uid,
-            )?;
-        }
-        operations::complete(&transaction, &actor_uid, &scope, operation.as_ref(), &uid)?;
-        if let Some(import) = &import {
-            super::imports::complete(&transaction, import, &uid)?;
-        } else {
-            queue_record_activity(&transaction, &module_uid, &actor_uid, &uid, "record.created")?;
-        }
-        transaction.commit()?;
-
-        Ok((uid, true))
-    })
+    }
+    operations::complete(&transaction, &actor_uid, &scope, operation.as_ref(), &uid)?;
+    if let Some(import) = &import {
+        super::imports::complete(&transaction, import, &uid)?;
+    } else {
+        queue_record_activity(
+            &transaction,
+            &module_uid,
+            &actor_uid,
+            &uid,
+            "record.created",
+        )?;
+    }
+    Ok((uid, true))
 }
 
 fn update_record_db(

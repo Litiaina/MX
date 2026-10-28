@@ -1,0 +1,4 @@
+/* Isolated Office chrome: share MX tokens, never the workspace's canvas rules. */
+html, body, #office-app { margin:0; height:100%; overflow:hidden; }
+body { font-family:inherit; color:var(--text); background:var(--bg); }
+button, input { font-family:inherit; }

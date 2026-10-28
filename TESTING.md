@@ -1,5 +1,270 @@
 # MX validation
 
+Historical hold/unreleased statements below describe the dated attempts in
+which they were recorded. Final RC.11 release checks are listed first.
+
+## Final MX 1.0.0-rc.11 release verification — 2026-10-28
+
+Final optimized executable SHA-256:
+`b20dfe9f1d712e449cc0b48da4ae2fe407fbb90141a4f8a0e680682191e87099`.
+All runtime Rust source matches the reviewed build below; Cargo changes only
+the root version. The rebuilt frontend is byte-identical to the reviewed assets.
+The final build passes 252 native tests (two opt-in ignored), 408 frontend tests,
+zero frontend diagnostics and signed-package/CLI/upgrade/browser checks.
+
+The exact versioned executable passes the complete **100-account extended SSD
+scenario**: **117,134 requests**, three record rounds, 1,000 imports under active
+readers/editors, a 60-second soak and **602.723 seconds of mixed work**. Mixed
+totals are 7,421 creates, 7,293 edits, 3,861 attachments, 2,420 Drive versions,
+32,388 reads and 64 actual, byte-verified graphical Office saves. Upload and
+download each verify 1,782,437,523 bytes. Zero failed measured mixed operations;
+mixed p95 2.666 s, maximum 8.427 s. Peak MX RSS 1,366,680 KiB; N1 91,968 KiB.
+
+Forced MX/N1 restart verifies 300 initial and 1,000 imported snapshots, every
+mixed create, 20 final edited records, every attachment/historical-version hash,
+all 64 Office versions, 100 read watermarks and 100 live reconnects. All 100
+intentionally interrupted transports reconcile exactly once, and 10,000 delayed
+notifications recover in the 7.208-second phase. Integrity is `ok`, zero FK
+violations and zero hidden server errors. The tested N1 executable remains
+`ed248278…2197da`, commit `f1e78c58963b28efb6ae382fe95b1b4d61cc8008`.
+
+The actual publisher-signed package verifies all 29 file hashes and activates
+from preserved RC.10 using its independent worker. Final backup, data/history/
+file preservation, paired rollback after a deliberate failed migration,
+SIGKILL recovery, maintenance gating and four-browser updater UI all pass.
+Chromium/Firefox/WebKit workspace theme and Office loading/branding checks pass;
+WebKit's explicit unsupported-worker-graphics/download path is not Office editing.
+A separate online-backup upgrade preserves all 10,623 records and complete hashes
+of 17 business tables across startup/restart. Legacy receipt migration preserves
+5,000 notification payloads, 20 records and account-private receipt state.
+
+Two initial fixture failures are retained, not counted as passing attempts:
+the direct metadata-corruption connection used SQLite's zero-wait default while
+the live outbox wrote, and `strip` could not rewrite an immutable copied artifact.
+The fixture now uses the existing 10-second busy budget for its direct injection
+and makes only its disposable executable copy writable. Runtime code/deadlines
+and the original assertions were not changed to conceal an application failure.
+
+Evidence: `/media/altear/TEST-1TB/mx-tests/rc11-release-20261028.YpiRMK/qualification.json`
+and remote `/mnt/DATA_SSD/mx-rc11-final-20261028.GJUYTP/final-100-01/mx-concurrency-ijq6RL`.
+The host/profile and limits remain those in the qualification guide: 100 API
+accounts plus one graphical editor on the stated SSD host, not 1,000 users,
+100 graphical editors, shared rotational-HDD qualification or physical power loss.
+The original large workbook still exceeds its 60-second target; no fix is claimed.
+
+## RC.11 reviewed-source qualification — 2026-10-28
+
+Current local executable `04e0b260…73998` **passes the complete extended
+100-account home-SSD scenario**: 115,767 requests, ten minutes of mixed activity,
+forced MX/N1 restarts and final notification/error/integrity checks. Mixed:
+7,328 creates, 7,190 edits, 3,788 attachments, 2,375 Drive versions, 32,086 reads
+and 63 verified real Office saves; zero failed measured mixed operations. All
+tracked record/import snapshots and file/history hashes survive restart. The
+100 deliberately interrupted writes reconcile exactly once; all 10,000 delayed
+notifications recover. This is not a shared-HDD, 1,000-user, 100-graphical-editor
+or physical-power-cut qualification. Large-workbook rendering remains a disclosed
+limitation, accepted for this candidate; no rendering-speed fix is claimed.
+
+The maintainer accepted the populated local preview and authorized RC.11 release
+preparation. The executable below still identifies as RC.10 because it is the
+reviewed, unreleased build. Final RC.11 packaging, upgrade/rollback and versioned
+verification are recorded separately; do not confuse the two binary hashes.
+
+252 native tests and 408 frontend unit tests pass; frontend diagnostics report
+zero errors/warnings. The 100-reader copied-history regression passes all three
+rounds in 2.67–2.75 seconds, with zero retries/errors; the previous executable
+fails at 11.82 seconds. All 100 acknowledged-unread inboxes return empty in
+0.16 seconds. Current Drive/recovery/sharing/import, administration/Collaboration,
+admission/audit, legacy receipt migration and Office loading/branding controls
+pass. Standalone Office idle/draft recovery passes on Chromium, Brave and
+Firefox: unfinished input, scrolling/dragging/composition, queued saves, tab
+closure during upload, lost acknowledgements, offline recovery and visible
+local-storage failures. Product-theme checks pass on Chromium, Firefox and
+WebKit, including compact layouts and 200% text reflow. Linux WebKit verifies
+an explicit unsupported-Office-rendering message and exact original download,
+not graphical document editing. None of these tests certifies physical power loss.
+
+Evidence: `/media/altear/TEST-1TB/mx-tests/rc11-candidate8-20261028.2t9rKo/VERIFICATION.md`
+and `/mnt/DATA_SSD/mx-rc11-inbox-20261028.pGU99b/candidate-extended-100-01`.
+
+### Retained earlier candidate results (not current qualification)
+
+The later ten-minute repeat of `775c6dff…a4787` **failed** at the final
+100-account inbox burst (HTTP 500), after passing the measured mixed workload
+and forced-restart byte/snapshot verification. All 8,328 tracked acknowledged
+records survived, including 7,028 mixed creates, and 3,518 attachment hashes,
+2,157 historical Drive versions and 65 actual Office saves were verified.
+Notification page sorting exhausted the read pool as history grew. That result
+prompted the indexed-page/unread-range repair verified in the current section
+above; no pass is inherited from the earlier executable.
+
+The unchanged original workbook now measures 82.7 seconds cold and 80.1 seconds
+warm on the home PC, above the unchanged 60-second opening target. The prior
+Drive failure was an early test assertion: the exact file had moved correctly.
+Waiting for the real destination and persisted file UID fixes that test;
+Drive then passes in Chromium, Firefox and WebKit.
+
+Previous build `775c6dff…a4787` passes the complete expanded 100-account test on
+the home SSD: 64,686 requests, 37 actual Office saves, all acknowledged record,
+import and file/history hashes after forced MX/N1 restart, and all 10,000
+crash-delayed notifications within 10.88 seconds. It **fails the shared HDD
+mixed workload** at unchanged 30-second write/Drive-init deadlines, despite
+passing preliminary bursts, imports and soak. All 1,300 tracked acknowledged
+rows remained present. Do not generalize the SSD pass to that HDD profile.
+Its extended ten-minute repeat later failed the inbox burst, as retained above.
+No release/version change was made; large-workbook opening remains unresolved.
+That candidate's native checks: 250 passed, zero failed,
+two existing opt-in ignored. See the scoped evidence below, not a universal
+100-user/zero-bug or 1,000-user claim.
+
+The later one-for-one interleaving build (`b8b65fb8…21ff`) **passed the full
+100-account scenario on the home SSD**: 66,521 requests, 100 live clients,
+1,000 imported rows, the five-minute mixed workload, forced MX/N1 restarts and
+interrupted-write/notification recovery. It verified 300 initial and 1,000
+imported snapshots, 3,886 mixed creates, 2,149 attachment hashes, 1,335 historical
+Drive versions and 39 real Office saves. Notification backlog peaked at 80
+sampled jobs; all 10,000 crash-delayed notifications recovered in 10.41 seconds.
+There were no failed measured mixed operations or hidden server errors.
+
+That same build **failed the HDD burst**: 36 creates exceeded the unchanged
+30-second deadline. No acknowledged row was missing. A delivery slice after
+every foreground turn was too costly there. The current source therefore uses
+up to four FIFO foreground turns between waiting delivery slices. It passes all
+250 native tests but requires its own optimized SSD/HDD runs; do not attach
+the earlier build's SSD pass to this changed binary. Large-workbook opening and
+the remaining release gates are still unresolved. No release has been made.
+
+Earlier home-SSD candidate (`7f72381b…d0d56`) completed the five-minute,
+100-account mixed workload without failed measured operations: 7,073 creates,
+7,011 edits, 4,357 attachment uploads, 2,946 Drive version commits and 55 real
+Office saves. Save confirmations took 2.3–5.4 seconds. All tracked records and
+file/version hashes passed forced MX/N1 restart verification. **The complete
+run still failed:** notification recovery exceeded 120 seconds after the later
+injected crash. There were no missing tracked acknowledgements, SQLite/FK
+violations or unexpected server errors, but 3,140 outbox jobs remained at the
+deadline. Do not describe that run as a complete 100-user pass.
+
+Telemetry showed a delivery-admission backlog during the burst: every bounded
+slice queued behind the whole foreground burst again. The next local candidate
+interleaves delivery and foreground turns without changing the slice limits,
+durability, request deadlines or N1 settings. Its **250 native tests pass**
+(zero failed, two opt-in ignored), including lane fairness and foreground order.
+Optimized/full verification is still required. Restart checks now additionally
+verify every imported record's expected values and exact pre-crash revision.
+
+RC.11 has **not** been published. Source changes remain local on top of the
+1.0.0-rc.10 executable. New Office controls/loading use the shared MX palette,
+personal text sizing and configured browser-tab branding. Unit checks pass
+408 tests in 66 files; Svelte reports zero errors/warnings. Real Chromium and
+Firefox spreadsheet round trips cover formulas, native toolbar Save, unaccepted
+cell input and account recovery. New configured-logo/loading checks cover both
+Office entry points and WebKit's explicit graphics fallback, not WebKit editing.
+Read-only record attachment checks also pass real rendering in Chromium, Brave
+and Firefox, with permission/field-isolation and unchanged-original checks;
+WebKit passes its explicit graphics fallback and original download instead.
+
+The 100-account run uses independent sessions and live sockets, 10,000 seeded
+records, real N1 storage, active record writers, imports, random-byte uploads,
+Drive version commits and a real graphical document editor. It is **not** 100
+graphical Office engines. A successful sub-phase is not a full qualification.
+The earlier larger-host mixed runs failed: first at default N1 read-admission limits, then
+at an N1 pending-upload metadata read race after an explicit backend profile.
+Acknowledged record IDs and SQLite integrity remained intact; this is not a pass.
+
+The earlier FULL-synchronous repairs had **246 passing native tests, zero failed,
+two existing opt-in tests ignored**. That frozen repaired executable is
+`4d95bce5414f4bdc697ba3cffa1a6b383490c2b93c3f78bebcd20908ee94fb55`.
+It coordinates Drive metadata with the record writer, bounds atomic outbox work,
+stores per-account read-all watermarks, and separates passive checkpoints from
+FULL-synchronous WAL commits. A five-account control passed real Office saves,
+file/version hashes, persisted read receipts and interrupted-delivery recovery.
+The legacy upgrade test passed with 5,000 notifications and 20 API-created
+records/field values, including exact payload fingerprints and restart checks.
+These are supporting checks, **not a 100-user pass**. Evidence remains under
+`/mnt/PROJECT-DISK-1TB/tests/mx-rc11-concurrency-fix-20261028.xBSUz2`.
+
+That FULL-synchronous candidate passed all three 100-account record rounds,
+replay/conflict checks, Collaboration, and the 100-account receipt/edit phase.
+Its import attempt was **intentionally stopped**, not qualified: only 19/1,000
+rows had committed in 284 seconds. Resulting connection-refused errors reflect
+the owned test server's deliberate shutdown; see `full-v2-100-01/ABORT-NOTE.md`.
+No mixed file/Office or full crash gates were reached. This prompted bounded
+transactional import slices with row savepoints and acknowledged audit group
+commits. Those changes passed **249 native tests, zero failed, two ignored**;
+the optimized successor's mixed run is recorded below.
+
+The next optimized candidate (`2e4dbde1…e213`) passed all preliminary 100-account
+phases, including 1,000 imports with zero failed rows in 62.82 seconds while
+100 accounts read/edited records. Its mixed phase had no unexpected API errors:
+97 creates, 89 edits, 58 attachments and 31 Drive versions completed. However,
+the real graphical Office save exceeded its unchanged 60-second deadline, so
+the **complete run failed**, and its later crash/hash gates were not reached.
+This is not a 100-user qualification. A diagnostic isolated about 30 seconds
+in Drive initialization and 14 seconds in part upload; native document export
+was about two seconds. Those timings do not identify N1 as the cause.
+
+A subsequent diagnostic also exposed a Collaboration channel-creation HTTP 500
+during notification delivery. The next local patch moves those mutations to
+the shared writer and makes membership/history changes atomic. Its deterministic
+regression fails against the previous executable: a failed history insert left
+the new membership committed. The new patch passes all **249 native tests**;
+optimized API/browser and mixed-workload verification are still in progress.
+
+From the operator's 28 October path change onward, all new build caches, browser
+profiles, disposable storage/databases and evidence are under
+`/media/altear/TEST-1TB`. Earlier evidence is retained on its original volume.
+The source repository remains `/home/altear/Development/mx`; no N1 source,
+production deployment, published release or version is modified.
+
+The Collaboration successor (`0405dda5…83774`) passed its atomic membership,
+direct-channel race, reaction, permission and restart regression, along with
+upload-admission and audit-durability controls. Its five-account graphical
+Office/mixed/restart control also passed. The full 100-account run on the new
+external drive passed records, Collaboration, notification receipts, all 1,000
+imports (119.84 seconds) and operational books, but then **failed** with HTTP 500
+when reverting module visibility during notification delivery. It did not reach
+the mixed Office/recovery phases. The module update used an independent pooled
+writer and exhausted SQLite's ten-second busy wait. This is an MX failure,
+not proof of an N1 fault. A preceding small control also failed before Office
+launched because the test's TMPDIR exceeded Chromium's Unix-socket path limit;
+its rerun used a shorter path on the same authorized disk, not system `/tmp`.
+
+The subsequent local patch coordinates module/field/preference mutations,
+removes the hidden grant-view write, and reduces redundant Drive/audit writer
+turns. Its native checks pass **249 tests, zero failed, two opt-in ignored**;
+optimized API and full qualification remain pending. The home SSD host is now
+reachable again by operator instruction; new tests there remain exclusively
+under `/mnt/DATA_SSD`, with the same frozen N1 executable and no N1 source edits.
+
+The first repaired 100-user attempt also remains a failure: it passed ordinary
+record rounds and Collaboration but timed out during concurrent notification
+read-all/edit work. That result prompted the watermark/checkpoint repairs; it
+is not silently discarded or counted as qualification.
+
+The latest rerun rebuilt the user's patched N1 commit `f1e78c5` and used its frozen
+optimized binary `ed248278…2197da`. The larger host was unreachable, so this run
+used the authorized external HDD. It completed 63,028 requests and passed eleven
+preliminary phases, including all 1,000 imported rows under 100-account read/edit
+load. The full mixed phase **failed**: four record creates exceeded 30 seconds
+and four Drive parts hit MX's own eight-slot/ten-second admission timeout. N1's
+previous metadata error did not recur, but the graphical Office save and full
+crash/recovery gates were not completed. All 336 tracked acknowledged record IDs
+were present and SQLite integrity/foreign keys were clean. Do not qualify RC.11
+or turn these sub-phase results into a full pass. Private evidence is under
+`/mnt/PROJECT-DISK-1TB/tests/mx-rc11-patched-n1-20261028.xkBeaP`.
+
+The supplied ten-sheet workbook reproduced slow opening in Chromium, Brave and
+Firefox. The pre-optimization timings were approximately 119, 109 and 166 seconds,
+respectively. The new real-file test uses a 60-second opening target, checks cold
+and warm starts separately, and never changes the supplied original. Do not
+describe large-workbook performance or the full mixed-user test as qualified yet.
+
+Evidence stays on the authorized test volumes: laptop builds and browser profiles
+under `/mnt/PROJECT-DISK-1TB/tests/mx-rc11-office`; larger-machine test data under
+`/mnt/DATA_SSD/mx-rc11-chaos-20261028.frPj98`. Production data, N1 source, published
+release artifacts and the MX version are unchanged. See the
+[concurrency qualification](docs/concurrency-qualification.md) for scope and gates.
+
 ## Console-style records and neutral dark mode — local acceptance, 2026-10-27
 
 This iteration supersedes the earlier design preview below. It remains an

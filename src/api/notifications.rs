@@ -14,7 +14,7 @@ pub(crate) use outbox::{queue_notifications, queue_record_activity, start_delive
 
 #[cfg(test)]
 pub(crate) fn drain_notifications_for_test(c: &rusqlite::Connection) -> rusqlite::Result<usize> {
-    outbox::drain(c).map(|notifications|notifications.len())
+    outbox::drain(c).map(|notifications| notifications.len())
 }
 
 use crate::{
@@ -100,6 +100,12 @@ pub(crate) fn ensure_notification_schema(
         CREATE UNIQUE INDEX IF NOT EXISTS idx_mx_notifications_dedup
             ON mx_notifications(recipient_uid, dedup_key)
             WHERE dedup_key IS NOT NULL;
+
+        CREATE TABLE IF NOT EXISTS mx_notification_read_state (
+            recipient_uid TEXT PRIMARY KEY NOT NULL REFERENCES users(uid) ON DELETE CASCADE,
+            through_created_at INTEGER NOT NULL,
+            read_at INTEGER NOT NULL
+        );
         "#,
     )?;
     outbox::ensure(connection)
@@ -141,11 +147,8 @@ fn notifications_enabled(
 ) -> rusqlite::Result<bool> {
     ensure_preferences_schema(connection)?;
     let text = connection
-        .query_row(
-            "SELECT preferences_json FROM mx_user_preferences WHERE user_uid = ?1",
-            params![user_uid],
-            |row| row.get::<_, String>(0),
-        )
+        .prepare_cached("SELECT preferences_json FROM mx_user_preferences WHERE user_uid = ?1")?
+        .query_row(params![user_uid], |row| row.get::<_, String>(0))
         .optional()?;
     let preferences = text
         .as_deref()
@@ -176,7 +179,8 @@ fn select_columns() -> &'static str {
     r#"
         n.uid, n.kind, n.title, n.body, n.actor_uid, u.name,
         n.target_type, n.target_uid, n.module_uid, n.data_json,
-        n.created_at, n.read_at
+        n.created_at, COALESCE(n.read_at,
+            CASE WHEN n.created_at <= read_state.through_created_at THEN read_state.read_at END)
     "#
 }
 
@@ -218,16 +222,22 @@ impl NotificationBatch {
         }
 
         let uid = Uuid::new_v4().to_string();
-        let created_at = chrono::Utc::now().timestamp_millis();
+        let created_at = notification_created_at(
+            connection,
+            &request.recipient_uid,
+            chrono::Utc::now().timestamp_millis(),
+        )?;
         let data_json = serde_json::to_string(&request.data).unwrap_or_else(|_| "{}".to_string());
-        let inserted = connection.execute(
-            r#"
+        let inserted = connection
+            .prepare_cached(
+                r#"
         INSERT OR IGNORE INTO mx_notifications(
             uid, recipient_uid, kind, title, body, actor_uid, target_type,
             target_uid, module_uid, data_json, dedup_key, created_at
         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
         "#,
-            params![
+            )?
+            .execute(params![
                 uid,
                 request.recipient_uid,
                 request.kind,
@@ -240,8 +250,7 @@ impl NotificationBatch {
                 data_json,
                 request.dedup_key,
                 created_at,
-            ],
-        )?;
+            ])?;
         if inserted == 0 {
             return Ok(None);
         }
@@ -249,9 +258,8 @@ impl NotificationBatch {
         let actor_name = if let Some(actor) = &request.actor_uid {
             if !self.actors.contains_key(actor) {
                 let name = connection
-                    .query_row("SELECT name FROM users WHERE uid=?1", [actor], |r| {
-                        r.get::<_, String>(0)
-                    })
+                    .prepare_cached("SELECT name FROM users WHERE uid=?1")?
+                    .query_row([actor], |r| r.get::<_, String>(0))
                     .optional()?;
                 self.actors.insert(actor.clone(), name);
             }
@@ -274,6 +282,49 @@ impl NotificationBatch {
             read_at: None,
         }))
     }
+}
+
+// A read-all receipt is one account-scoped watermark, not hundreds/thousands
+// of rewrites of notification payload/index pages. New deliveries must be
+// newer than that watermark, including within the same millisecond and after
+// a wall-clock correction. This is per-recipient, not a global clock/cache.
+fn notification_created_at(
+    c: &rusqlite::Connection,
+    recipient: &str,
+    now: i64,
+) -> rusqlite::Result<i64> {
+    let through = c
+        .prepare_cached(
+            "SELECT through_created_at FROM mx_notification_read_state WHERE recipient_uid=?1",
+        )?
+        .query_row([recipient], |r| r.get::<_, i64>(0))
+        .optional()?;
+    Ok(through.map_or(now, |through| now.max(through.saturating_add(1))))
+}
+
+fn mark_all_read(c: &rusqlite::Connection, recipient: &str, now: i64) -> rusqlite::Result<i64> {
+    let tx = rusqlite::Transaction::new_unchecked(c, rusqlite::TransactionBehavior::Immediate)?;
+    let updated: i64 = tx.query_row(
+        "SELECT count(*) FROM mx_notifications WHERE recipient_uid=?1 AND read_at IS NULL
+          AND created_at > COALESCE((SELECT through_created_at FROM mx_notification_read_state WHERE recipient_uid=?1),-1)",
+        [recipient], |r| r.get(0),
+    )?;
+    let through: Option<i64> = tx.query_row(
+        "SELECT max(created_at) FROM mx_notifications WHERE recipient_uid=?1",
+        [recipient],
+        |r| r.get(0),
+    )?;
+    if let Some(through) = through {
+        tx.execute(
+            "INSERT INTO mx_notification_read_state(recipient_uid,through_created_at,read_at) VALUES(?1,?2,?3)
+             ON CONFLICT(recipient_uid) DO UPDATE SET
+                read_at=CASE WHEN excluded.through_created_at>through_created_at THEN excluded.read_at ELSE read_at END,
+                through_created_at=max(through_created_at,excluded.through_created_at)",
+            params![recipient, through, now],
+        )?;
+    }
+    tx.commit()?;
+    Ok(updated)
 }
 
 /// Persist a notification before attempting real-time delivery. Callers do not
@@ -390,9 +441,9 @@ fn insert_module_notifications_in_transaction(
         .map(str::to_owned);
     // Load shared record/field policy once per activity, not once per account.
     // The whole batch still uses the same current authorization snapshot.
-    let policy: Option<(String, Option<String>)> = transaction.query_row(
+    let policy: Option<(String, Option<String>)> = transaction.prepare_cached(
         "SELECT COALESCE(json_extract(m.config_json,'$.record_visibility'),'module'),o.creator_uid FROM mx_records r JOIN mx_modules m ON m.uid=r.module_uid LEFT JOIN mx_record_owners o ON o.record_uid=r.uid WHERE r.uid=?1 AND m.uid=?2",
-        params![lookup_record,lookup_module],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
+        )?.query_row(params![lookup_record,lookup_module],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
     let Some((record_scope, creator)) = policy else {
         return Ok(Vec::new());
     };
@@ -406,7 +457,7 @@ fn insert_module_notifications_in_transaction(
         "module".to_owned()
     };
     let recipients = {
-        let mut statement = transaction.prepare(
+        let mut statement = transaction.prepare_cached(
             r#"SELECT u.uid,u.access_level FROM users u
                    JOIN mx_module_permissions role
                      ON role.access_level=u.access_level AND role.module_uid=?1
@@ -422,9 +473,10 @@ fn insert_module_notifications_in_transaction(
                      ))"#,
         )?;
         let recipients = statement
-            .query_map(params![lookup_module, lookup_actor, request.dedup_key], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
-            })?
+            .query_map(
+                params![lookup_module, lookup_actor, request.dedup_key],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
+            )?
             .collect::<Result<Vec<_>, _>>()?;
         recipients
     };
@@ -446,6 +498,69 @@ fn insert_module_notifications_in_transaction(
     Ok(notifications)
 }
 
+// Keep ordering indexable. A parameter-dependent CASE in ORDER BY forces
+// SQLite to visit, authorize and sort an entire account's inbox before LIMIT.
+// With 100 reconnecting accounts that can occupy every read connection and
+// even prevent authentication from checking its tiny auth-version row.
+fn notification_page_sql(privacy_scope: &str, catch_up: bool, unread_only: bool) -> String {
+    let order = if catch_up {
+        "n.created_at ASC,n.uid ASC"
+    } else {
+        "n.created_at DESC,n.uid DESC"
+    };
+    let cursor = if catch_up {
+        "n.created_at>=?6 AND (n.created_at>?6 OR n.uid>?7)"
+    } else {
+        "(?6 IS NULL OR n.created_at>?6 OR (n.created_at=?6 AND n.uid>?7))"
+    };
+    let unread = if unread_only {
+        "n.read_at IS NULL AND n.created_at>COALESCE((SELECT through_created_at FROM mx_notification_read_state WHERE recipient_uid=?1),-1)"
+    } else {
+        "?3=0"
+    };
+    format!(
+        r#"SELECT {} FROM mx_notifications n
+        LEFT JOIN users u ON u.uid=n.actor_uid
+        LEFT JOIN mx_notification_read_state read_state ON read_state.recipient_uid=n.recipient_uid
+        WHERE n.recipient_uid=?1 AND n.created_at<?2
+          AND {unread}
+          AND {cursor}
+          AND {privacy_scope}
+          AND (n.module_uid IS NULL OR ?5=0 OR n.module_uid IN (
+            SELECT role.module_uid FROM mx_module_permissions role
+            JOIN mx_module_account_permissions account ON account.module_uid=role.module_uid AND account.user_uid=?1
+            JOIN mx_modules module ON module.uid=role.module_uid AND module.active=1
+            WHERE role.access_level=?5
+              AND role.can_read=1 AND account.can_read=1))
+        ORDER BY {order} LIMIT ?4"#,
+        select_columns()
+    )
+}
+
+fn notification_unread_sql(privacy_scope: &str) -> String {
+    // An account-constant scalar boundary lets the existing unread index seek
+    // past acknowledged history, rather than looking up a joined watermark
+    // for every historical row. Access checks remain current, never cached.
+    format!(
+        r#"SELECT COUNT(*) FROM mx_notifications n
+        WHERE n.recipient_uid=?1 AND n.read_at IS NULL
+          AND n.created_at>COALESCE((SELECT through_created_at FROM mx_notification_read_state WHERE recipient_uid=?1),-1)
+          AND {privacy_scope}
+          AND (n.module_uid IS NULL OR ?2=0 OR n.module_uid IN (
+            SELECT role.module_uid FROM mx_module_permissions role
+            JOIN mx_module_account_permissions account ON account.module_uid=role.module_uid AND account.user_uid=?1
+            JOIN mx_modules module ON module.uid=role.module_uid AND module.active=1
+            WHERE role.access_level=?2
+              AND role.can_read=1 AND account.can_read=1))"#
+    )
+}
+
+fn notification_privacy_sql(uid: &str, access_level: i64) -> String {
+    let record_scope = crate::api::mx::privacy::record_sql("nr", uid, access_level);
+    let attachment_scope = crate::api::mx::privacy::field_sql("nf", "nr", uid, access_level);
+    format!("(n.target_type IS NOT 'record' OR EXISTS(SELECT 1 FROM mx_records nr WHERE nr.uid=n.target_uid AND {record_scope} AND (json_extract(n.data_json,'$.attachment_field_uid') IS NULL OR EXISTS(SELECT 1 FROM mx_fields nf WHERE nf.uid=json_extract(n.data_json,'$.attachment_field_uid') AND {attachment_scope}))))")
+}
+
 pub async fn list_notifications(
     claims: Claims,
     Query(query): Query<NotificationQuery>,
@@ -462,40 +577,9 @@ pub async fn list_notifications(
             ensure_notification_schema(connection)?;
             ensure_module_schema(connection)?;
             crate::api::mx::privacy::ensure(connection)?;
-            let record_scope=crate::api::mx::privacy::record_sql("nr",&uid,access_level);
-            let attachment_scope=crate::api::mx::privacy::field_sql("nf","nr",&uid,access_level);
-            let privacy_scope=format!("(n.target_type IS NOT 'record' OR EXISTS(SELECT 1 FROM mx_records nr WHERE nr.uid=n.target_uid AND {record_scope} AND (json_extract(n.data_json,'$.attachment_field_uid') IS NULL OR EXISTS(SELECT 1 FROM mx_fields nf WHERE nf.uid=json_extract(n.data_json,'$.attachment_field_uid') AND {attachment_scope}))))");
-            let sql = format!(
-                r#"
-                SELECT {} FROM mx_notifications n
-                LEFT JOIN users u ON u.uid = n.actor_uid
-                WHERE n.recipient_uid = ?1
-                  AND n.created_at < ?2
-                  AND (?3 = 0 OR n.read_at IS NULL)
-                  AND (?6 IS NULL OR n.created_at>?6 OR (n.created_at=?6 AND n.uid>?7))
-                  AND {privacy_scope}
-                  AND (
-                    n.module_uid IS NULL OR ?5=0 OR EXISTS(
-                      SELECT 1
-                      FROM mx_module_permissions role
-                      JOIN mx_module_account_permissions account
-                        ON account.module_uid=role.module_uid AND account.user_uid=?1
-                      JOIN mx_modules module
-                        ON module.uid=role.module_uid AND module.active=1
-                      WHERE role.module_uid=n.module_uid
-                        AND role.access_level=?5
-                        AND role.can_read=1
-                        AND account.can_read=1
-                    )
-                  )
-                ORDER BY CASE WHEN ?6 IS NOT NULL THEN n.created_at END ASC,
-                         CASE WHEN ?6 IS NOT NULL THEN n.uid END ASC,
-                         n.created_at DESC,n.uid DESC
-                LIMIT ?4
-                "#,
-                select_columns()
-            );
-            let mut statement = connection.prepare(&sql)?;
+            let privacy_scope=notification_privacy_sql(&uid,access_level);
+            let sql = notification_page_sql(&privacy_scope,after.is_some(),unread_only);
+            let mut statement = connection.prepare_cached(&sql)?;
             let rows = statement.query_map(
                 params![
                     uid,
@@ -508,17 +592,7 @@ pub async fn list_notifications(
             )?;
             let notifications = rows.collect::<Result<Vec<_>, _>>()?;
             let unread: i64 = connection.query_row(
-                &format!(r#"SELECT COUNT(*) FROM mx_notifications n
-                    WHERE recipient_uid=?1 AND read_at IS NULL
-                      AND {privacy_scope}
-                      AND (n.module_uid IS NULL OR ?2=0 OR EXISTS(
-                        SELECT 1 FROM mx_module_permissions role
-                        JOIN mx_module_account_permissions account
-                          ON account.module_uid=role.module_uid AND account.user_uid=?1
-                        JOIN mx_modules module ON module.uid=role.module_uid AND module.active=1
-                        WHERE role.module_uid=n.module_uid AND role.access_level=?2
-                          AND role.can_read=1 AND account.can_read=1
-                      ))"#),
+                &notification_unread_sql(&privacy_scope),
                 params![uid, access_level],
                 |row| row.get(0),
             )?;
@@ -554,7 +628,7 @@ pub async fn mark_notification_read(claims: Claims, Path(uid): Path<String>) -> 
     let event_user_uid = claims.uid;
     let notification_uid = uid.clone();
     let result = tokio::task::spawn_blocking(move || {
-        with_sql_connection(|connection| {
+        with_sql_write(|connection| {
             ensure_notification_schema(connection)?;
             connection.execute(
                 "UPDATE mx_notifications SET read_at = COALESCE(read_at, ?1) WHERE uid = ?2 AND recipient_uid = ?3",
@@ -588,12 +662,9 @@ pub async fn mark_all_notifications_read(claims: Claims) -> Response {
     let uid = claims.uid.clone();
     let event_uid = claims.uid;
     let result = tokio::task::spawn_blocking(move || {
-        with_sql_connection(|connection| {
+        with_sql_write(|connection| {
             ensure_notification_schema(connection)?;
-            connection.execute(
-                "UPDATE mx_notifications SET read_at = ?1 WHERE recipient_uid = ?2 AND read_at IS NULL",
-                params![chrono::Utc::now().timestamp_millis(), uid],
-            )
+            mark_all_read(connection, &uid, chrono::Utc::now().timestamp_millis())
         })
     })
     .await;
@@ -649,6 +720,187 @@ mod tests {
             dedup_key: Some("test-event".into()),
             mandatory: false,
         }
+    }
+
+    fn inbox_page(
+        c: &rusqlite::Connection,
+        before: i64,
+        after: Option<i64>,
+        after_uid: &str,
+        unread: bool,
+    ) -> (Vec<Notification>, i32) {
+        let sql = notification_page_sql(&notification_privacy_sql("reader", 2), after.is_some(), unread);
+        let mut statement = c.prepare(&sql).unwrap();
+        let rows = statement
+            .query_map(
+                params!["reader", before, unread as i64, 100, 2, after, after_uid],
+                notification_from_row,
+            )
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap();
+        (rows, statement.get_status(rusqlite::StatementStatus::VmStep))
+    }
+
+    #[test]
+    fn inbox_page_and_unread_count_seek_past_large_acknowledged_history() {
+        let c = fanout_fixture();
+        c.execute_batch("WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<20000)
+            INSERT INTO mx_notifications(uid,recipient_uid,kind,title,target_type,target_uid,module_uid,created_at)
+            SELECT printf('notice-%05d',x),'reader','record.created','Saved','record','record','capacity',x FROM n;").unwrap();
+        let (latest, steps) = inbox_page(&c, i64::MAX, None, "", false);
+        assert_eq!(latest.len(), 100);
+        assert_eq!(latest[0].created_at, 20000);
+        assert_eq!(latest[99].created_at, 19901);
+        assert!(steps < 30000, "A page must not authorize and sort all 20,000 rows: {steps} VM steps");
+        let (next, _) = inbox_page(&c, 19901, None, "", false);
+        assert_eq!(next[0].created_at, 19900);
+        let (catch_up, steps) = inbox_page(&c, i64::MAX, Some(19990), "notice-19990", false);
+        assert_eq!(catch_up.len(), 10);
+        assert_eq!(catch_up[0].created_at, 19991);
+        assert_eq!(catch_up[9].created_at, 20000);
+        assert!(steps < 30000, "Catch-up must seek, not rescan acknowledged history: {steps}");
+        assert_eq!(mark_all_read(&c, "reader", 30000).unwrap(), 20000);
+        let mut count = c.prepare(&notification_unread_sql(&notification_privacy_sql("reader", 2))).unwrap();
+        assert_eq!(count.query_row(params!["reader", 2], |r| r.get::<_, i64>(0)).unwrap(), 0);
+        assert!(count.get_status(rusqlite::StatementStatus::VmStep) < 1000, "An empty unread range must not scan 20,000 acknowledged rows");
+        let (read, _) = inbox_page(&c, i64::MAX, None, "", false);
+        assert!(read.iter().all(|n| n.read_at == Some(30000)));
+        let (unread, steps) = inbox_page(&c, i64::MAX, None, "", true);
+        assert!(unread.is_empty());
+        assert!(steps < 1000, "An unread page must seek past acknowledged history too: {steps}");
+    }
+
+    #[test]
+    fn inbox_optimization_preserves_tied_cursors_and_current_access_checks() {
+        let c = fanout_fixture();
+        c.execute_batch("INSERT INTO mx_notifications(uid,recipient_uid,kind,title,target_type,target_uid,module_uid,created_at)
+            VALUES('a','reader','record.created','Saved','record','record','capacity',100),
+                  ('b','reader','record.created','Saved','record','record','capacity',100),
+                  ('c','reader','record.created','Saved','record','record','capacity',101);").unwrap();
+        let ids = |rows: Vec<Notification>| rows.into_iter().map(|n| n.uid).collect::<Vec<_>>();
+        assert_eq!(ids(inbox_page(&c, i64::MAX, None, "", false).0), ["c", "b", "a"]);
+        assert_eq!(ids(inbox_page(&c, i64::MAX, Some(100), "a", false).0), ["b", "c"]);
+        assert_eq!(ids(inbox_page(&c, 101, Some(100), "a", false).0), ["b"]);
+        let unread = || c.query_row(&notification_unread_sql(&notification_privacy_sql("reader", 2)), params!["reader", 2], |r| r.get::<_, i64>(0)).unwrap();
+        assert_eq!(unread(), 3);
+        for mutation in [
+            "UPDATE mx_module_account_permissions SET can_read=0 WHERE user_uid='reader'",
+            "UPDATE mx_module_account_permissions SET can_read=1 WHERE user_uid='reader'; UPDATE mx_module_permissions SET can_read=0 WHERE access_level=2",
+            "UPDATE mx_module_permissions SET can_read=1 WHERE access_level=2; UPDATE mx_modules SET active=0",
+            "UPDATE mx_modules SET active=1,config_json='{\"record_visibility\":\"creator\"}'; UPDATE mx_record_owners SET creator_uid='actor'",
+        ] {
+            c.execute_batch(mutation).unwrap();
+            assert!(inbox_page(&c, i64::MAX, None, "", false).0.is_empty(), "Revocation must apply immediately: {mutation}");
+            assert_eq!(unread(), 0);
+        }
+        c.execute_batch("UPDATE mx_record_owners SET creator_uid='reader'").unwrap();
+        assert_eq!(unread(), 3);
+        assert_eq!(inbox_page(&c, i64::MAX, None, "", false).0.len(), 3);
+        c.execute_batch("INSERT INTO mx_fields(uid,field_key,label,field_type,module_uid,config_json)
+            VALUES('restricted-file','restricted_file','Restricted file','attachments','capacity','{\"access_scope\":\"administrators\"}');
+            UPDATE mx_notifications SET data_json='{\"attachment_field_uid\":\"restricted-file\"}' WHERE uid='c';").unwrap();
+        assert_eq!(unread(), 2, "Restricted attachment notifications must not leak through counts");
+        assert_eq!(ids(inbox_page(&c, i64::MAX, None, "", false).0), ["b", "a"]);
+        c.execute_batch("UPDATE mx_fields SET config_json='{\"access_scope\":\"creator\"}' WHERE uid='restricted-file'").unwrap();
+        assert_eq!(unread(), 3, "Creator attachment access is evaluated on every read");
+        c.execute_batch("DELETE FROM mx_fields WHERE uid='restricted-file'").unwrap();
+        assert_eq!(unread(), 2, "A missing attachment definition never grants visibility");
+    }
+
+    #[test]
+    fn read_all_is_account_scoped_and_does_not_rewrite_notification_payloads() {
+        let c = fanout_fixture();
+        c.execute_batch("WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<2500)
+            INSERT INTO mx_notifications(uid,recipient_uid,kind,title,created_at,read_at)
+            SELECT 'notice-'||x,'reader','record.created','Saved',x,CASE WHEN x=1 THEN 77 END FROM n;
+            INSERT INTO mx_notifications(uid,recipient_uid,kind,title,created_at) VALUES('other','admin','record.created','Other',100);").unwrap();
+        let before = c.total_changes();
+        assert_eq!(mark_all_read(&c, "reader", 5000).unwrap(), 2499);
+        assert_eq!(
+            c.total_changes() - before,
+            1,
+            "Only one watermark row is written, regardless of inbox size"
+        );
+        assert_eq!(
+            c.query_row(
+                "SELECT count(*) FROM mx_notifications WHERE read_at IS NOT NULL",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+            1
+        );
+        assert_eq!(
+            c.query_row(
+                "SELECT read_at FROM mx_notifications WHERE uid='notice-1'",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+            77
+        );
+        assert_eq!(mark_all_read(&c, "reader", 6000).unwrap(), 0);
+        assert_eq!(
+            c.query_row(
+                "SELECT read_at FROM mx_notification_read_state WHERE recipient_uid='reader'",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+            5000,
+            "Repeated acknowledgement retains its original time"
+        );
+        assert_eq!(mark_all_read(&c, "admin", 6000).unwrap(), 1);
+        assert_eq!(mark_all_read(&c, "muted", 6000).unwrap(), 0);
+    }
+
+    #[test]
+    fn deliveries_after_read_all_remain_unread_even_with_a_clock_correction() {
+        let c = fanout_fixture();
+        let mut request = activity();
+        request.recipient_uid = "reader".into();
+        let first = insert_notification(&c, &request).unwrap().unwrap();
+        assert_eq!(mark_all_read(&c, "reader", first.created_at).unwrap(), 1);
+        assert_eq!(
+            notification_created_at(&c, "reader", first.created_at).unwrap(),
+            first.created_at + 1
+        );
+        assert_eq!(
+            notification_created_at(&c, "reader", first.created_at - 10_000).unwrap(),
+            first.created_at + 1
+        );
+        assert!(
+            insert_notification(&c, &request).unwrap().is_none(),
+            "Replay never creates a fresh unread event"
+        );
+        request.dedup_key = Some("next-event".into());
+        let second = insert_notification(&c, &request).unwrap().unwrap();
+        assert!(second.created_at > first.created_at);
+        let notices = c.prepare(&format!("SELECT {} FROM mx_notifications n LEFT JOIN users u ON u.uid=n.actor_uid LEFT JOIN mx_notification_read_state read_state ON read_state.recipient_uid=n.recipient_uid WHERE n.recipient_uid='reader' ORDER BY n.created_at", select_columns())).unwrap()
+            .query_map([], notification_from_row).unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap();
+        assert_eq!(notices.len(), 2);
+        assert_eq!(notices[0].read_at, Some(first.created_at));
+        assert_eq!(notices[1].read_at, None);
+        assert_eq!(mark_all_read(&c, "reader", second.created_at).unwrap(), 1);
+    }
+
+    #[test]
+    fn failed_read_all_cannot_advance_the_watermark() {
+        let c = fanout_fixture();
+        let mut request = activity();
+        request.recipient_uid = "reader".into();
+        insert_notification(&c, &request).unwrap();
+        c.execute_batch("CREATE TRIGGER fail_read_receipt BEFORE INSERT ON mx_notification_read_state BEGIN SELECT RAISE(ABORT,'injected read receipt failure'); END;").unwrap();
+        assert!(mark_all_read(&c, "reader", 5000).is_err());
+        assert_eq!(
+            c.query_row("SELECT count(*) FROM mx_notification_read_state", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+        c.execute_batch("DROP TRIGGER fail_read_receipt;").unwrap();
+        assert_eq!(mark_all_read(&c, "reader", 6000).unwrap(), 1);
     }
 
     #[test]

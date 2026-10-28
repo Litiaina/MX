@@ -75,7 +75,12 @@ async function holdItemResponse(page,item){
   await page.route(pattern,handler);
   return{started:seen,release:async()=>{resume();await done;await page.unroute(pattern,handler);if(failure)throw failure;}};
 }
-async function videoNavigationChecks(page,item,other,channel){
+async function openModule(page,module){
+  await page.getByRole('complementary',{name:'Workspace navigation'}).getByRole('button',{name:'Modules',exact:true}).click();
+  await page.getByRole('dialog',{name:'Browse modules',exact:true}).getByRole('button',{name:`Open ${module.name}`,exact:true}).click();
+  await page.waitForURL(new RegExp(`#module/${module.uid}`));
+}
+async function videoNavigationChecks(page,item,other,channel,module){
   const navigation=page.getByRole('navigation',{name:'Main navigation'}),close=page.getByRole('button',{name:'Close preview',exact:true});
   const chatHash=`collaboration?channel=${channel}`;
   const chatCard=page.locator('.chat-message').getByRole('link',{name:`Open ${item.name} in MX Drive`,exact:true});
@@ -106,7 +111,7 @@ async function videoNavigationChecks(page,item,other,channel){
     try{
       await page.evaluate(uid=>location.hash=`drive?item=${uid}`,item.uid);await held.started;
       if(action==='module'){
-        await navigation.getByRole('button',{name:'Records',exact:true}).click();await page.waitForURL(/#module\//);await plainDrive();
+        await openModule(page,module);await plainDrive();
       }else if(action==='drive-view'){
         await page.getByRole('navigation',{name:'Drive views'}).getByRole('button',{name:'My Drive',exact:true}).click();
       }else{
@@ -144,8 +149,11 @@ try{
     await call('/mx/v1/user/create',owner,'POST',{email:`recipient${i}@test.invalid`,name:`Recipient ${i}`,password,access_level:2},[201]);
     users.push(await call('/mx/v1/auth/authenticate',null,'POST',{email:`recipient${i}@test.invalid`,password}));
   }
+  // Fresh installations intentionally have no starter module. Provision this
+  // navigation fixture explicitly rather than depending on a removed default.
+  const navigationModule=(await call('/mx/v1/admin/modules',owner,'POST',{name:'Sharing navigation',singular_name:'Entry'},[201])).module;
   const moduleAccess=await call(`/mx/v1/admin/accounts/${users[0].uid}/modules`,owner);
-  await call(`/mx/v1/admin/accounts/${users[0].uid}/modules`,owner,'PUT',{revision:moduleAccess.revision,grants:[{module_uid:'mx-default-records',can_read:true,can_create:false,can_update:false,can_delete:false,can_configure:false,can_report:true,can_attachments:true}]});
+  await call(`/mx/v1/admin/accounts/${users[0].uid}/modules`,owner,'PUT',{revision:moduleAccess.revision,grants:[{module_uid:navigationModule.uid,can_read:true,can_create:false,can_update:false,can_delete:false,can_configure:false,can_report:true,can_attachments:true}]});
   const file=await upload(owner,'Concurrent reference.png');
   const group=await call('/mx/v1/collaboration/channels',owner,'POST',{kind:'group',name:'Eight users',member_uids:users.map(u=>u.uid)},[201]);
   const requestsBefore=mx.n1.requests.length;
@@ -194,8 +202,7 @@ try{
     let staleOpens=0;
     const countStale=request=>{if(request.method()==='GET'&&new URL(request.url()).pathname===`${base}/items/${item.uid}`)staleOpens++;};
     recipient.on('request',countStale);
-    await recipient.getByRole('navigation',{name:'Main navigation'}).getByRole('button',{name:'Records',exact:true}).click();
-    await recipient.waitForURL(/#module\//);
+    await openModule(recipient,navigationModule);
     const driveLoaded=recipient.waitForResponse(response=>response.request().method()==='GET'&&new URL(response.url()).pathname===base);
     await recipient.getByRole('navigation',{name:'Main navigation'}).getByRole('button',{name:'MX Drive',exact:true}).click();
     await driveLoaded;await recipient.getByRole('heading',{name:'MX Drive',exact:true}).waitFor();
@@ -203,7 +210,7 @@ try{
     recipient.off('request',countStale);
     assert.equal(staleOpens,0,'Module → Drive must not reload the dismissed shared video');
     assert.equal(await recipient.getByRole('button',{name:'Close preview',exact:true}).count(),0,'Module → Drive must not reopen the dismissed preview');
-    await videoNavigationChecks(recipient,item,file,(await grant(item,owner,users[0])).channel_uid);
+    await videoNavigationChecks(recipient,item,file,(await grant(item,owner,users[0])).channel_uid,navigationModule);
     await sender.getByRole('button',{name:'Close dialog',exact:true}).click();
     await shareUi(sender,item,teamName,teamName,true);
     await recipient.locator('.notification-toast').filter({hasText:item.name}).waitFor();

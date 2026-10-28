@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { writeFile } from 'node:fs/promises';
+import { writeFile, readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import { chromium, firefox, webkit } from 'playwright';
@@ -54,6 +54,9 @@ try {
   const password = `Test-only!${randomUUID()}`;
   await call('/mx/v1/auth/create', { access_token: mx.signupKey }, 'POST', { name: 'Loading tester', email: 'loading@test.invalid', password }, [201]);
   const user = await call('/mx/v1/auth/authenticate', null, 'POST', { email: 'loading@test.invalid', password });
+  const logo = await mx.api.post('/mx/v1/admin/deployment-logo', {headers:{Authorization:`Bearer ${user.access_token}`},multipart:{logo:{name:'configured-logo.png',mimeType:'image/png',buffer:await readFile(fileURLToPath(new URL('../public/images/system-icon.png',import.meta.url)))}}});
+  assert.equal(logo.status(),200,await logo.text());
+  const configuredLogo=(await logo.json()).logo_url;assert.ok(configuredLogo);
   const entries = unzip(officeFixture('.docx'));
   // A large ignored XML comment provides a real multi-chunk transfer without
   // making the synthetic document hundreds of pages or using personal files.
@@ -97,10 +100,12 @@ try {
     await until(() => metadataSeen, 'metadata held', 20000);
     const loading = page.getByRole('region', { name: 'Office loading progress' });
     await loading.getByText('Prepare document', { exact: false }).first().waitFor();
+    await until(()=>page.locator('link[rel="icon"]').getAttribute('href').then(href=>href===new URL(configuredLogo,origin).href),'Drive Office configured tab logo');
     assert.equal(await loading.getByRole('list', { name: 'Loading stages' }).getByRole('listitem').count(), 5);
     assert.equal(await loading.getByRole('progressbar').evaluate(node => node.hasAttribute('value')), false, 'Access check has no invented percentage');
     for (const [theme, width] of [['light',1280], ['dark',1280], ['dark',390]]) {
       await page.evaluate(value => document.documentElement.dataset.theme = value, theme); await page.setViewportSize({ width, height: 900 });
+      assert.equal(await loading.evaluate(node=>getComputedStyle(node).backgroundColor),theme==='dark'?'rgb(9, 10, 11)':'rgb(250, 251, 248)','Office uses shared MX light/dark tokens');
       const box = await loading.locator('.loading-card').boundingBox();
       assert.ok(box.x >= 0 && box.x + box.width <= width + 1 && box.height < 862);
       assert.equal((await page.locator('.toolbar').boundingBox()).height, 38);
@@ -141,6 +146,11 @@ try {
     }
     assert.equal((await call(`${base}/items/${item.uid}`, user)).revision, 1, 'Opening/reloading never creates a saved version');
     await page.close();
+    const attachment=await context.newPage();
+    await attachment.goto(`${origin}/office/attachment.html#message_file=${randomUUID()}`);
+    await until(()=>attachment.locator('link[rel="icon"]').getAttribute('href').then(href=>href===new URL(configuredLogo,origin).href),'Attachment Office configured tab logo');
+    assert.equal(await attachment.locator('link[rel="icon"]').getAttribute('type'),null,'Uploaded PNG is not labeled as an SVG');
+    await attachment.close();
     const missing = await context.newPage(); inspected = missing; missing.on('pageerror', error => errors.push(error.message));
     await missing.goto(`${origin}/office/index.html#file=${randomUUID()}`);
     await missing.getByRole('heading', { name: 'The editor could not finish opening', exact: true }).waitFor();
